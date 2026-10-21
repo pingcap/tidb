@@ -15,15 +15,111 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/server/v3/embed"
 )
+
+func TestClusterMonitoring(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	const query = "SELECT * FROM information_schema.cluster_monitoring"
+	const configuredAddress = "https://prometheus.example:9443/prometheus"
+	const topologyAddress = "http://[2001:db8::20]:9090"
+
+	var pdConfig atomic.Value
+	pdConfig.Store(fmt.Sprintf(`{"pd-server":{"metric-storage":%q}}`, configuredAddress))
+	var configRequests atomic.Int32
+	cfg := embed.NewConfig()
+	cfg.Dir = t.TempDir()
+	cfg.LogLevel = "error"
+	localURL := url.URL{Scheme: "http", Host: "127.0.0.1:0"}
+	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{localURL}, []url.URL{localURL}
+	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{localURL}, []url.URL{localURL}
+	cfg.InitialCluster = "default=" + localURL.String()
+	cfg.UserHandlers = map[string]http.Handler{
+		"/pd/api/v1/config": http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			configRequests.Add(1)
+			fmt.Fprint(w, pdConfig.Load().(string))
+		}),
+	}
+	etcd, err := embed.StartEtcd(cfg)
+	require.NoError(t, err)
+	t.Cleanup(etcd.Close)
+	select {
+	case <-etcd.Server.ReadyNotify():
+	case <-time.After(10 * time.Second):
+		t.Fatal("etcd did not become ready")
+	}
+	cli, err := clientv3.New(clientv3.Config{
+		Endpoints:   []string{"http://" + etcd.Clients[0].Addr().String()},
+		DialTimeout: 5 * time.Second,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, cli.Close()) })
+	initSyncer := func(t *testing.T) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(t.Context())
+		t.Cleanup(cancel)
+		_, err := infosync.GlobalInfoSyncerInit(ctx, "cluster-monitoring-test", func() uint64 { return 1 }, cli, cli, nil, nil, keyspace.CodecV1, true, nil)
+		require.NoError(t, err)
+	}
+
+	t.Run("configuration_priority_and_cache_refresh", func(t *testing.T) {
+		initSyncer(t)
+		tk := testkit.NewTestKit(t, store)
+		_, err := cli.Put(t.Context(), infosync.TopologyPrometheus, `{"ip":"2001:db8::20","port":9090}`)
+		require.NoError(t, err)
+		tk.MustQuery(query).Check(testkit.Rows("prometheus " + configuredAddress))
+		tk.MustQuery("SELECT address FROM information_schema.cluster_monitoring WHERE type = 'prometheus'").Check(testkit.Rows(configuredAddress))
+		tk.MustQuery("SELECT count(*) FROM information_schema.cluster_monitoring").Check(testkit.Rows("1"))
+		address, err := infosync.GetPrometheusAddr()
+		require.NoError(t, err)
+		require.Equal(t, configuredAddress, address)
+		require.EqualValues(t, 1, configRequests.Load())
+		tk.MustQuery("SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_schema = 'INFORMATION_SCHEMA' AND table_name = 'CLUSTER_MONITORING' ORDER BY ordinal_position").Check(testkit.Rows("TYPE varchar NO", "ADDRESS longtext NO"))
+
+		pdConfig.Store(`{"pd-server":{"metric-storage":""}}`)
+		tk.MustQuery(query).Check(testkit.Rows("prometheus " + configuredAddress))
+		require.EqualValues(t, 1, configRequests.Load())
+		time.Sleep(infosync.TablePrometheusCacheExpiry)
+		tk.MustQuery(query).Check(testkit.Rows("prometheus " + topologyAddress))
+		address, err = infosync.GetPrometheusAddr()
+		require.NoError(t, err)
+		require.Equal(t, topologyAddress, address)
+		require.EqualValues(t, 2, configRequests.Load())
+	})
+
+	t.Run("missing_address_returns_empty_with_warning", func(t *testing.T) {
+		initSyncer(t)
+		tk := testkit.NewTestKit(t, store)
+		pdConfig.Store(`{"pd-server":{"metric-storage":""}}`)
+		_, err := cli.Delete(t.Context(), infosync.TopologyPrometheus)
+		require.NoError(t, err)
+		tk.MustQuery(query).Check(testkit.Rows())
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 9009 Prometheus address is not set in PD and etcd"))
+		tk.MustQuery("SELECT count(*) FROM information_schema.cluster_monitoring").Check(testkit.Rows("0"))
+		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 9009 Prometheus address is not set in PD and etcd"))
+	})
+
+	t.Run("discovery_errors", func(t *testing.T) {
+		initSyncer(t)
+		tk := testkit.NewTestKit(t, store)
+		pdConfig.Store(`invalid-json`)
+		require.ErrorContains(t, tk.QueryToErr(query), "invalid character")
+	})
+}
 
 func TestTableRegions(t *testing.T) {
 	store := testkit.CreateMockStore(t)

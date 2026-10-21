@@ -164,6 +164,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPartitions(ctx, sctx)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
+		case infoschema.TableClusterMonitoring:
+			err = e.setDataForClusterMonitoring(sctx)
 		case infoschema.TableAnalyzeStatus:
 			err = e.setDataForAnalyzeStatus(ctx, sctx)
 		case infoschema.TableTiDBIndexes:

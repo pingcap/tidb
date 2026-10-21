@@ -2519,6 +2519,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableCollations),
 			strings.ToLower(infoschema.TableAnalyzeStatus),
 			strings.ToLower(infoschema.TableClusterInfo),
+			strings.ToLower(infoschema.TableClusterMonitoring),
 			strings.ToLower(infoschema.TableProfiling),
 			strings.ToLower(infoschema.TableCharacterSets),
 			strings.ToLower(infoschema.TableKeyColumn),

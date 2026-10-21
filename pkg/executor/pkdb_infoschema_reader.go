@@ -7,6 +7,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -15,6 +16,21 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
+
+func (e *memtableRetriever) setDataForClusterMonitoring(sctx sessionctx.Context) error {
+	prometheusAddr, err := infosync.GetPrometheusAddr()
+	if err != nil {
+		if infosync.ErrPrometheusAddrIsNotSet.Equal(err) {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			return nil
+		}
+		return err
+	}
+	row := types.MakeDatums("prometheus", prometheusAddr)
+	e.recordMemoryConsume(row)
+	e.rows = [][]types.Datum{row}
+	return nil
+}
 
 func (e *memtableRetriever) setDataForLogReplStatusGlobal(ctx context.Context, sctx sessionctx.Context) error {
 	do := domain.GetDomain(sctx)

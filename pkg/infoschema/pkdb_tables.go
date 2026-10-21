@@ -18,6 +18,7 @@ func init() {
 	tableIDMap[TableLogReplClusterStatusGlobal] = autoid.ReservedTablesBaseID + 6
 	tableIDMap[TableLogReplWorkflowHistoryGlobal] = autoid.ReservedTablesBaseID + 7
 	tableIDMap[TableLogReplStatusLocal] = autoid.ReservedTablesBaseID + 8
+	tableIDMap[TableClusterMonitoring] = autoid.ReservedTablesBaseID + 9
 
 	init2()
 }
@@ -142,4 +143,9 @@ var TableLogReplStatusLocalCols = []columnInfo{
 	{name: "SWITCHOVER_READY", tp: mysql.TypeEnum, enumElems: ReadyStatusStrs, size: 16},
 	{name: "FAILOVER_READY", tp: mysql.TypeEnum, enumElems: ReadyStatusStrs, size: 16},
 	{name: "INITIALIZING_PROGRESS", tp: mysql.TypeFloat, size: 12},
+}
+
+var tableClusterMonitoringCols = []columnInfo{
+	{name: "TYPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "ADDRESS", tp: mysql.TypeLongBlob, flag: mysql.NotNullFlag},
 }
