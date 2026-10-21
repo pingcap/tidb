@@ -40,3 +40,14 @@ jobs:
           # Avoid the TiDB CI path that assumes Jenkins-owned temp directories.
           unset CI
           make check-bazel-prepare
+      - name: Test x/tools export-data formats
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset CI
+          # External tests are not included by TiDB's //... target pattern.
+          bazel test @org_golang_x_tools//internal/pkgbits:pkgbits_test \
+            --test_output=all \
+            --nocache_test_results \
+            --flaky_test_attempts=1 \
+            --test_arg=-test.v

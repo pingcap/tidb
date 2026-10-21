@@ -11,12 +11,15 @@ Source: https://go.googlesource.com/tools/+/refs/tags/v0.50.0/internal/pkgbits/v
 Include upstream V0-V5 format tests and a real-compiler regression checking
 interleaved ordinary/generic method order. The latter skips pre-Go 1.27.
 
-Maintenance: these upstream tests are not run by TiDB's default //... CI.
+CI: Check Bazel Prepare explicitly runs the external pkgbits_test target for
+format coverage; TiDB's //... pattern alone does not include external tests.
+The gcimporter tests still require the manual compiler-specific checks below.
 Whenever x/tools or this patch changes, reapply it to a pristine, writable
 checkout of the selected x/tools module and run both commands from that module
 root. Replace <go1.25.14> and <go1.27.2> with those exact SDK directories;
 GOTOOLCHAIN=local prevents an implicit compiler upgrade. Keep the command logs
-and actual compiler versions as manual compatibility evidence, not CI coverage.
+and actual compiler versions as manual importer compatibility evidence, separate
+from the automated pkgbits format test.
 
     GOTOOLCHAIN=local <go1.25.14>/bin/go test ./internal/pkgbits ./internal/gcimporter \
         -run '^(TestRoundTrip|TestVersions|TestImportTestdata)$' -count=1 -v
