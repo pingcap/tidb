@@ -49,6 +49,7 @@ go_library(
         "@com_github_coocood_freecache//:freecache",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
@@ -87,7 +88,7 @@ go_test(
     ],
     embed = [":kv"],
     flaky = True,
-    shard_count = 28,
+    shard_count = 29,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/keyspace",
