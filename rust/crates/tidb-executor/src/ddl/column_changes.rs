@@ -107,7 +107,7 @@ fn check_column_qualifier_part(
     }
     Err(if schema {
         DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrWrongDBName,
+            proto: &tidb_util::dbterror::ERR_WRONG_DB_NAME,
             message: format!("Incorrect database name '{written}'"),
         }
     } else {

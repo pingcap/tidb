@@ -253,8 +253,7 @@ fn admin_index_table_mut<'a>(
 /// `errors.Errorf("secondary index `%v` is not found in table `%v`")`, which
 /// names the index as written and the table by its stored name.
 fn secondary_index_not_found(index: &str, table: &str) -> DriverError {
-    DriverError::Mysql(tidb_executor::driver::MysqlError::new(
-        1105,
+    DriverError::Mysql(tidb_executor::driver::MysqlError::unknown(
         format!("secondary index `{index}` is not found in table `{table}`"),
     ))
 }

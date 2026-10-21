@@ -100,7 +100,7 @@ pub fn run_create_placement_policy(
     // syntax. The refusal happens before catalog insertion.
     if statement.name.go_lower_eq(DEFAULT_PLACEMENT_POLICY_NAME) {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrReservedSyntax,
+            proto: &tidb_error::catalog::infoschema::ERR_RESERVED_SYNTAX,
             message: "The 'default' syntax is reserved for purposes internal to the MySQL server"
                 .to_owned(),
         });

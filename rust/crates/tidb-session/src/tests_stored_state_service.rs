@@ -177,8 +177,7 @@ mod analyze {
             self.0
                 .borrow_mut()
                 .push(format!("execute {}", statement.table));
-            Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                1105,
+            Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
                 "sampling failed",
             )))
         }

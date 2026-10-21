@@ -44,10 +44,7 @@ fn text(value: &str) -> Datum {
 }
 
 fn plain_error(message: &str) -> DriverError {
-    DriverError::DdlCoded {
-        errno: 1105,
-        message: message.to_owned(),
-    }
+    DriverError::unsupported(message.to_owned())
 }
 
 /// Go `MetricsSummaryRetriever.retrieve` (`by_label` false) and

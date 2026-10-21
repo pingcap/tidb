@@ -306,7 +306,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let (_, stored) = locate_table(&catalog, schema, table)?;
             if stored.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(coded_refusal(
-                    8006,
+                    &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
                     "`shard_row_id_bits` is unsupported on temporary tables.".to_owned(),
                 ));
             }
@@ -316,8 +316,8 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                 )));
             }
             if *bits > 0 && (stored.pk_is_handle || stored.is_common_handle) {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    8200,
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                     "Unsupported shard_row_id_bits for table with primary key as row id",
                 )));
             }
@@ -465,7 +465,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     crate::table_info_build::check_ttl_info_valid(&candidate, referred).map_err(
                         |error| {
                             let error = error.to_mysql_error();
-                            coded_refusal(error.code, error.message)
+                            DdlPlanError::from_mysql_error(error)
                         },
                     )?;
                 }
@@ -478,7 +478,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     let error =
                         tidb_executor::DriverError::SetTtlOptionForNonTtlTable(option.to_owned())
                             .to_mysql_error();
-                    return Err(coded_refusal(error.code, error.message));
+                    return Err(DdlPlanError::from_mysql_error(error));
                 }
                 None => {}
             }
@@ -519,7 +519,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             let (_, stored) = locate_table(catalog, schema, table)?;
             if stored.temp_table_type != tidb_model::TempTableType::NONE {
                 return Err(coded_refusal(
-                    8006,
+                    &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
                     "`placement` is unsupported on temporary tables.".to_owned(),
                 ));
             }
@@ -782,7 +782,7 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
             if *cache {
                 if tidb_metadef::is_mem_or_sys_db(&schema.go_to_lower()) {
                     return Err(coded_refusal(
-                        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         "ALTER table cache for tables in system database is currently unsupported",
                     ));
                 }
@@ -843,12 +843,12 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
 
 fn driver_refusal(error: tidb_executor::DriverError) -> DdlPlanError {
     let error = error.to_mysql_error();
-    coded_refusal(error.code, error.message)
+    DdlPlanError::from_mysql_error(error)
 }
 
 fn invalid_attributes_spec(error: tidb_executor::ddl_label::LabelError) -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrInvalidAttributesSpec,
+        &tidb_util::dbterror::ERR_INVALID_ATTRIBUTES_SPEC,
         label_rules::invalid_attributes_spec_message(&error),
     )
 }
@@ -874,7 +874,7 @@ fn label_rule_step(rule: &serde_json::Value) -> Result<LabelRuleStep, DdlPlanErr
 /// Go `ErrOptOnTemporaryTable` for ALTER TABLE CACHE.
 fn alter_temporary_table_cache() -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrOptOnTemporaryTable,
+        &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
         "`alter temporary table cache` is unsupported on temporary tables.",
     )
 }
@@ -882,7 +882,7 @@ fn alter_temporary_table_cache() -> DdlPlanError {
 /// Go `ErrOptOnCacheTable` for a partitioned table.
 fn partition_mode_on_cache_table() -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrOptOnCacheTable,
+        &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
         "'partition mode' is unsupported on cache tables.",
     )
 }
@@ -890,7 +890,7 @@ fn partition_mode_on_cache_table() -> DdlPlanError {
 /// Go `table.ErrUnknownPartition` as the partition jobs answer it.
 fn unknown_partition(info: &TableInfo) -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrUnknownPartition,
+        &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION,
         format!(
             "Unknown partition 'drop?' in table '{}'",
             info.name.original()
@@ -943,7 +943,7 @@ pub(super) fn check_placement_policy_ref_valid<S: MetaSnapshot>(
     let id = reference.read().id;
     if snapshot.get(&key::policy_kv_key(id))?.is_none() {
         return Err(coded_refusal(
-            8239,
+            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
             format!("Unknown placement policy '(Policy ID {id})'"),
         ));
     }
@@ -1121,7 +1121,7 @@ fn revertible_point_with_table(
 fn check_rename_index_cache(info: &TableInfo) -> Result<(), DdlPlanError> {
     if info.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrOptOnCacheTable,
+            &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
             "'Rename Index' is unsupported on cache tables.",
         ));
     }
@@ -1160,10 +1160,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     let mut label_steps = Vec::new();
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let placement_error = |error: tidb_placement::PlacementError| {
-        coded_refusal(
-            GENERIC_ERROR_CODE,
-            format!("building placement rules: {error}"),
-        )
+        DdlPlanError::plain_refusal(format!("building placement rules: {error}"))
     };
     match active.job.type_ {
         ActionType::ACTION_MODIFY_TABLE_COMMENT => {
@@ -1286,7 +1283,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 let error =
                     tidb_executor::DriverError::SetTtlOptionForNonTtlTable(option.to_owned())
                         .to_mysql_error();
-                coded_refusal(error.code, error.message)
+                DdlPlanError::from_mysql_error(error)
             };
             if let Some(ttl_info) = ttl_info {
                 let mut ttl = ttl_info.read().clone();

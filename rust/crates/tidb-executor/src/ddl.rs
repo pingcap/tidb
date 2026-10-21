@@ -614,16 +614,16 @@ pub fn validate_comment_length(
     }
     // `%-.64s`: the name as Go prints it.
     let shown: String = name.chars().take(64).collect();
-    let (errno, owner) = match owner {
-        CommentOwner::Table => (tidb_error::mysql::errcode::ErrTooLongTableComment, "table"),
-        CommentOwner::Field => (tidb_error::mysql::errcode::ErrTooLongFieldComment, "field"),
-        CommentOwner::Index => (tidb_error::mysql::errcode::ErrTooLongIndexComment, "index"),
+    let (proto, owner) = match owner {
+        CommentOwner::Table => (&*tidb_util::dbterror::ERR_TOO_LONG_TABLE_COMMENT, "table"),
+        CommentOwner::Field => (&*tidb_util::dbterror::ERR_TOO_LONG_FIELD_COMMENT, "field"),
+        CommentOwner::Index => (&*tidb_util::dbterror::ERR_TOO_LONG_INDEX_COMMENT, "index"),
     };
     let message = format!("Comment for {owner} '{shown}' is too long (max = {max_len})");
     if ctx.strict() {
-        return Err(DriverError::DdlCoded { errno, message });
+        return Err(DriverError::DdlCoded { proto, message });
     }
-    ctx.append_warning_parts(errno, &message);
+    ctx.append_warning_parts(proto.to_sql_error().code, &message);
     let mut end = max_len;
     while !comment.is_char_boundary(end) {
         end -= 1;
@@ -645,7 +645,7 @@ pub(crate) fn table_compression_option(options: &[tidb_ast::TableOption]) -> Opt
 /// (8266) for a level it does not know.
 pub fn table_affinity(level: &str) -> Result<Option<tidb_model::TableAffinityInfo>, DriverError> {
     tidb_model::new_table_affinity_info_with_level(level).map_err(|_| DriverError::DdlCoded {
-        errno: tidb_error::tidb::errcode::ErrInvalidAffinityOption,
+        proto: &tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE,
         message: format!("Invalid AFFINITY '{level}'"),
     })
 }
@@ -662,7 +662,7 @@ pub fn validate_table_affinity(
         return Ok(());
     };
     let refuse = |what: String, kind: &str| DriverError::DdlCoded {
-        errno: tidb_error::tidb::errcode::ErrInvalidAffinityOption,
+        proto: &tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE,
         message: format!("Can not set {what} on a {kind}."),
     };
     if temporary {
@@ -1203,9 +1203,9 @@ fn create_table_in(
     // wire; ordinary grammar failures stay the plain 1064-style parse error.
     let stmt =
         tidb_parser::parse_with_sql_mode_and_config(sql, sql_mode, parser_config).map_err(|e| {
-            match e.errno {
-                Some(errno) => DriverError::ParseCoded {
-                    errno,
+            match e.terror {
+                Some(proto) => DriverError::ParseCoded {
+                    proto,
                     message: e.message,
                 },
                 None => DriverError::Parse(format!("{e:?}")),
@@ -1244,7 +1244,7 @@ fn create_table_in(
             .any(|constraint| matches!(constraint, tidb_ast::TableConstraint::ForeignKey(_)))
     {
         return Err(DriverError::DdlCoded {
-            errno: 1215,
+            proto: &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
             message: "Cannot add foreign key constraint".to_owned(),
         });
     }
@@ -1424,11 +1424,11 @@ fn create_table_in(
     // answers `Error|1061|Duplicate key name 'i'`.
     let constraint_names =
         constraint_names::check_constraint_names(create, ctx.enable_check_constraint()).map_err(
-            |error| match error.code {
+            |error| match error.proto.code().value() {
                 1061 => DriverError::DuplicateKeyName(error.name),
                 1826 => DriverError::FkDupName(error.name),
-                errno => DriverError::DdlCoded {
-                    errno,
+                _ => DriverError::DdlCoded {
+                    proto: error.proto,
                     message: error.message,
                 },
             },
@@ -1441,7 +1441,7 @@ fn create_table_in(
     // racing unrelated catalogs.
     if create.columns.len() > catalog.table_column_count_limit() {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            proto: &tidb_util::dbterror::ERR_TOO_MANY_FIELDS,
             message: "Too many columns".to_owned(),
         });
     }
@@ -2061,7 +2061,7 @@ fn create_table_in(
         })
     {
         return Err(DriverError::DdlCoded {
-            errno: 8200,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message:
                 "Unsupported create an index that is both a global index and a clustered index"
                     .to_owned(),
@@ -2122,7 +2122,7 @@ fn create_table_in(
             ctx,
         )
         .map_err(|error| DriverError::DdlCoded {
-            errno: error.code,
+            proto: error.proto,
             message: error.message,
         })?;
         // Go checks the schema in `onCreateTable`, the DDL job a local
@@ -2138,7 +2138,7 @@ fn create_table_in(
                 )
         }) {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                proto: &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
                 message: format!(
                     "Duplicate check constraint name '{}'.",
                     info.name.original()
@@ -2147,10 +2147,7 @@ fn create_table_in(
         }
         table
             .set_check_constraint_infos(infos, &ctx.session_zone(), ctx.like_default_escape())
-            .map_err(|error| DriverError::DdlCoded {
-                errno: 1105,
-                message: format!("{error:?}"),
-            })?;
+            .map_err(|error| DriverError::unsupported(format!("{error:?}")))?;
     }
     for foreign_key in foreign_keys {
         if foreign_key.version < tidb_model::table::FK_VERSION1 {
@@ -2199,7 +2196,7 @@ fn create_table_in(
                 .any(|index| index.name.go_lower_eq(&foreign_key.name))
             {
                 return Err(DriverError::DdlCoded {
-                    errno: tidb_error::mysql::errcode::ErrDupKeyName,
+                    proto: &tidb_util::dbterror::ERR_DUP_KEY_NAME,
                     message: format!("duplicate key name {}", foreign_key.name),
                 });
             }
@@ -2549,7 +2546,7 @@ pub fn check_table_info_valid_extra<'a>(
     }
     if seen.len() > column_count_limit {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            proto: &tidb_util::dbterror::ERR_TOO_MANY_FIELDS,
             message: tidb_error::mysql::errname::ErrTooManyFields.raw.to_owned(),
         });
     }
@@ -2562,7 +2559,7 @@ pub fn check_too_many_indexes(index_count: usize) -> Result<(), DriverError> {
     let limit = tidb_config::config_tree::config::get_global_config().index_limit;
     if i64::try_from(index_count).unwrap_or(i64::MAX) > limit {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTooManyKeys,
+            proto: &tidb_util::dbterror::ERR_TOO_MANY_KEYS,
             message: format!("Too many keys specified; max {limit} keys allowed"),
         });
     }
@@ -2676,8 +2673,9 @@ fn column_dependent_error_text(
     dependent: crate::kv_table::ColumnDependent,
     column: &str,
 ) -> String {
-    let rendered = column_dependent_error(dependent, column).to_mysql_error();
-    format!("[ddl:{}]{}", rendered.code, rendered.message)
+    column_dependent_error(dependent, column)
+        .to_mysql_error()
+        .error_string()
 }
 
 /// Names a generated-column DDL refusal the way Go's own error does.
@@ -2693,7 +2691,7 @@ pub(crate) fn generated_column_error(
         GeneratedDdlError::NonPrior => DriverError::GeneratedColumnNonPrior,
         GeneratedDdlError::IllegalFunction(error) => error,
         GeneratedDdlError::RefAutoInc(column) => DriverError::DdlCoded {
-            errno: 3109,
+            proto: &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
             message: format!("Generated column '{column}' cannot refer to auto-increment column."),
         },
         GeneratedDdlError::Unsupported(reason) => {

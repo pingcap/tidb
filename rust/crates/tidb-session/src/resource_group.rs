@@ -49,16 +49,16 @@ fn plain_error(message: &str) -> DriverError {
 
 /// Go `infoschema.ErrResourceGroupExists` (8248).
 fn resource_group_exists(name: &str) -> DriverError {
-    DriverError::Mysql(MysqlError::new(
-        tidb_error::tidb::errcode::ErrResourceGroupExists,
+    DriverError::Mysql(MysqlError::terror(
+        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_EXISTS,
         format!("Resource group '{name}' already exists"),
     ))
 }
 
 /// Go `infoschema.ErrResourceGroupNotExists` (8249).
 pub(crate) fn resource_group_not_exists(name: &str) -> DriverError {
-    DriverError::Mysql(MysqlError::new(
-        tidb_error::tidb::errcode::ErrResourceGroupNotExists,
+    DriverError::Mysql(MysqlError::terror(
+        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS,
         format!("Unknown resource group '{name}'"),
     ))
 }
@@ -69,8 +69,8 @@ pub(crate) fn check_resource_control_enabled() -> Result<(), DriverError> {
     if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
-    Err(DriverError::Mysql(MysqlError::new(
-        tidb_error::tidb::errcode::ErrResourceGroupSupportDisabled,
+    Err(DriverError::Mysql(MysqlError::terror(
+        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_SUPPORT_DISABLED,
         tidb_error::tidb::errname::ErrResourceGroupSupportDisabled.raw,
     )))
 }
@@ -205,8 +205,8 @@ fn set_direct_resource_group_background_option(
                     continue;
                 }
                 if !EXPLICIT_TYPE_LIST.contains(&job_type.as_str()) {
-                    return Err(DriverError::Mysql(MysqlError::new(
-                        tidb_error::tidb::errcode::ErrResourceGroupInvalidBackgroundTaskName,
+                    return Err(DriverError::Mysql(MysqlError::terror(
+                        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME,
                         format!("Unknown background task name '{job_type}'"),
                     )));
                 }
@@ -305,8 +305,8 @@ impl Session {
     ) -> Result<String, DriverError> {
         check_resource_control_enabled()?;
         if is_role {
-            return Err(DriverError::Mysql(MysqlError::new(
-                tidb_error::tidb::errcode::ErrResourceGroupInvalidForRole,
+            return Err(DriverError::Mysql(MysqlError::terror(
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE,
                 tidb_error::tidb::errname::ErrResourceGroupInvalidForRole.raw,
             )));
         }

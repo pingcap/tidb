@@ -100,8 +100,8 @@ impl QueryRecordSet {
     pub fn next(&mut self, req: &mut Chunk) -> Result<(), DriverError> {
         self.memory.check()?;
         let executor = self.executor.as_mut().ok_or_else(|| {
-            DriverError::Mysql(crate::MysqlError::new(
-                tidb_error::mysql::errcode::ErrQueryInterrupted,
+            DriverError::Mysql(crate::MysqlError::terror(
+                &tidb_util::dbterror::exeerrors::ERR_QUERY_INTERRUPTED,
                 "Query execution was interrupted",
             ))
         })?;

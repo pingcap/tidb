@@ -44,7 +44,10 @@ pub(crate) fn parse(parser: &mut Parser) -> PResult<Option<AlterTableAction>> {
         AlterTableLockMode::Exclusive
     } else {
         let value = parser.peek().text.clone();
-        return Err(parser.err_coded(1801, &format!("Unknown LOCK type '{value}'")));
+        return Err(parser.err_coded(
+            &tidb_error::catalog::parser::ERR_UNKNOWN_ALTER_LOCK,
+            &format!("Unknown LOCK type '{value}'"),
+        ));
     };
     Ok(Some(AlterTableAction::Lock(AlterTableLock { mode })))
 }

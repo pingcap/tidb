@@ -258,7 +258,7 @@ fn replaced_partitions(
         if ordinals.contains(&ordinal) {
             // Go returns the bare error, so the name slot stays unformatted.
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::mysql::errcode::ErrSameNamePartition,
+                proto: &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
                 message: "Duplicate partition name %-.192s".to_owned(),
             });
         }
@@ -272,7 +272,7 @@ fn replaced_partitions(
     ) && ordinals.len() != last - first + 1
     {
         return Err(DriverError::DdlCoded {
-            errno: 8200,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message: "Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions"
                 .to_owned(),
         });
@@ -318,7 +318,7 @@ pub fn plan_reorganize_partition(
                 | PartitionKind::ListColumns { .. }
         ) {
             return Err(DriverError::DdlCoded {
-                errno: 8200,
+                proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 message: "Unsupported reorganize partition".to_owned(),
             });
         }
@@ -593,10 +593,9 @@ pub fn plan_alter_table_partitioning(
         // method that resolved no column has no expression to build
         // (`extractPartitionExprColumns`).
         if matches!(spec.kind, PartitionKind::Key) && spec.dependencies.is_empty() {
-            return Err(DriverError::DdlCoded {
-                errno: tidb_error::mysql::errcode::ErrUnknown,
-                message: "expression should not be an empty string".to_owned(),
-            });
+            return Err(DriverError::unsupported(
+                "expression should not be an empty string".to_owned(),
+            ));
         }
         let updated =
             table_partition::apply_update_indexes(partitioning, table.indexes(), &handle_offsets)?;

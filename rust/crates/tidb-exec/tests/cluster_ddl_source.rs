@@ -1169,7 +1169,7 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
         ),
         (DdlPlanError::AutoIdReadFailed, 1467),
         (
-            DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+            DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(
                 3819,
                 "invalid row",
             )),
@@ -1208,7 +1208,11 @@ fn persisted_errors_keep_the_same_codes_as_direct_ddl() {
                 source.rfc_code().to_owned()
             }
             _ if code == -1 => "ddl:-1".to_owned(),
-            _ => String::new(),
+            // A refusal Go raises as a `*terror.Error` persists its class and
+            // RFC identity; a plain error has neither.
+            _ => error
+                .identity()
+                .map_or_else(String::new, |identity| identity.rfc_code()),
         };
         let direct = error.to_sql_error();
         assert_eq!(direct.code, if code == -1 { 1105 } else { code as u16 });
@@ -1290,7 +1294,7 @@ fn persisted_check_failure_uses_source_identity_for_rollback() {
             "ddl:-1",
         ),
         (
-            DdlPlanError::Admission(tidb_exec::cluster_ddl::DdlAdmissionError::with_code(
+            DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(
                 3819,
                 "number without source identity",
             )),
@@ -5966,4 +5970,30 @@ fn cluster_column_batch_positions_keep_index_identity() {
     );
     assert_eq!(stored["index_info"][0]["idx_cols"][0]["offset"], 3);
     assert_eq!(stored["cols"][3]["id"], 2);
+}
+
+/// Go persists a job's `*terror.Error` with its class: `{"class":8,"code":1062,
+/// "rfccode":"kv:1062"}` (captured from the oracle's `mysql.tidb_ddl_history`
+/// for `add unique index` over duplicate rows). The classes below are those of
+/// the Go definitions (`pkg/infoschema/error.go`,
+/// `pkg/util/dbterror/ddl_terror.go`, `pkg/meta/autoid/errors.go`).
+#[test]
+fn persisted_job_errors_carry_the_go_class() {
+    for (error, rfc) in [
+        (DdlPlanError::UnknownDatabase("db".into()), "schema:1049"),
+        (DdlPlanError::DatabaseExists("db".into()), "schema:1007"),
+        (
+            DdlPlanError::TableExists {
+                schema: "db".into(),
+                table: "t".into(),
+            },
+            "schema:1050",
+        ),
+        (DdlPlanError::DuplicateKeyName("idx".into()), "ddl:1061"),
+        (DdlPlanError::CantDropFieldOrKey("c".into()), "ddl:1091"),
+        (DdlPlanError::AutoIdReadFailed, "autoid:1467"),
+    ] {
+        let job_error = error.to_job_error();
+        assert_eq!(job_error.rfc_code(), rfc, "{error:?}");
+    }
 }

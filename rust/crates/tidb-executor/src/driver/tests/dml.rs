@@ -179,13 +179,19 @@ fn failed_in_process_backfill_restores_its_storage_image() {
     .unwrap();
     *index_fault.lock().unwrap() = Some((
         1,
-        StorageError::Sql(crate::MysqlError::new(9007, "backfill read failed")),
+        StorageError::Sql(crate::MysqlError::terror(
+            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT,
+            "backfill read failed",
+        )),
     ));
     let sql = "CREATE UNIQUE INDEX unique_v ON backfill_error(v)";
     let error = crate::run_create_index_in(sql, &mut catalog, "test", &ctx).unwrap_err();
     assert_eq!(
         error.to_mysql_error(),
-        crate::MysqlError::new(9007, "backfill read failed")
+        crate::MysqlError::terror(
+            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT,
+            "backfill read failed"
+        )
     );
     let TableEntry::Kv(table) = catalog.get_mut_in("test", "backfill_error").unwrap() else {
         unreachable!()
@@ -282,7 +288,10 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
 fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
     use crate::storage::StorageError;
     for storage in [
-        StorageError::Sql(crate::MysqlError::new(9007, "write conflict")),
+        StorageError::Sql(crate::MysqlError::terror(
+            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT,
+            "write conflict",
+        )),
         StorageError::Backend("backend unavailable".to_owned()),
         StorageError::Backend("Retryable(backend diagnostic text)".to_owned()),
     ] {

@@ -451,10 +451,12 @@ impl KeysReadBudget {
             .fetch_add(keys, Ordering::Relaxed)
             .saturating_add(keys);
         if self.max > 0 && total > self.max {
-            return Err(crate::storage::StorageError::Sql(crate::MysqlError::new(
-                tidb_error::tidb::errcode::ErrMaxKeysReadExceeded,
-                "tidb_max_keys_read limit exceeded",
-            )));
+            return Err(crate::storage::StorageError::Sql(
+                crate::MysqlError::terror(
+                    &tidb_util::dbterror::exeerrors::ERR_MAX_KEYS_READ_EXCEEDED,
+                    "tidb_max_keys_read limit exceeded",
+                ),
+            ));
         }
         Ok(())
     }

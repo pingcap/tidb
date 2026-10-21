@@ -585,7 +585,7 @@ pub fn find_depended_column_names(
         if let Some(db) = db.filter(|db| !db.is_empty() && !schema.is_empty()) {
             if tidb_hack::go_to_lower(db) != schema {
                 return Err(crate::DriverError::DdlCoded {
-                    errno: tidb_error::mysql::errcode::ErrWrongDBName,
+                    proto: &tidb_util::dbterror::ERR_WRONG_DB_NAME,
                     message: format!("Incorrect database name '{db}'"),
                 });
             }
@@ -593,7 +593,7 @@ pub fn find_depended_column_names(
         if let Some(tbl) = tbl.filter(|tbl| !tbl.is_empty() && !table.is_empty()) {
             if tidb_hack::go_to_lower(tbl) != table {
                 return Err(crate::DriverError::DdlCoded {
-                    errno: tidb_error::mysql::errcode::ErrWrongTableName,
+                    proto: &tidb_util::dbterror::ERR_WRONG_TABLE_NAME,
                     message: format!("Incorrect table name '{tbl}'"),
                 });
             }

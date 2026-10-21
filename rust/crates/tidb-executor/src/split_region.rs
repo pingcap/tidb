@@ -177,10 +177,10 @@ fn plan_index_split<'a>(
 ) -> Result<(&'a KvIndex, SplitValues), DriverError> {
     let clustered = table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
     if index_name.go_lower_eq("primary") && clustered {
-        return Err(coded(
-            errcode::ErrKeyDoesNotExist,
+        return Err(DriverError::Mysql(MysqlError::terror(
+            &tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST,
             "unable to split clustered index, please split table instead.",
-        ));
+        )));
     }
     let index = table
         .indexes()
@@ -635,19 +635,19 @@ impl ValueConverter<'_> {
             reported.code,
             errcode::WarnDataTruncated | errcode::ErrTruncatedWrongValue | errcode::ErrBadNumber
         ) {
-            return Err(coded(reported.code, &reported.message));
+            return Err(DriverError::Mysql(MysqlError::from_sql_error(reported)));
         }
         let Ok(text) = value.sql_string() else {
-            return Err(coded(reported.code, &reported.message));
+            return Err(DriverError::Mysql(MysqlError::from_sql_error(reported)));
         };
-        Err(coded(
-            errcode::WarnDataTruncated,
-            &format!(
+        Err(DriverError::Mysql(MysqlError::terror(
+            &tidb_error::catalog::types::ERR_TRUNCATED,
+            format!(
                 "Incorrect value: '{}' for column '{}'",
                 truncate_chars(&text, 128),
                 truncate_chars(column_name, 192)
             ),
-        ))
+        )))
     }
 }
 
@@ -667,21 +667,17 @@ impl tidb_datatype::ConversionWarningAppender for StatementWarnings<'_> {
     }
 }
 
-fn coded(code: u16, message: &str) -> DriverError {
-    DriverError::Mysql(MysqlError::new(code, message))
-}
-
 /// Go `errors.Errorf`: an unclassified error, 1105 on the wire.
 fn unknown(message: String) -> DriverError {
-    coded(errcode::ErrUnknown, &message)
+    DriverError::Mysql(MysqlError::unknown(message))
 }
 
 /// Go `exeerrors.ErrInvalidSplitRegionRanges` (8212).
 fn invalid_ranges(message: String) -> DriverError {
-    coded(
-        errcode::ErrInvalidSplitRegionRanges,
-        &format!("Failed to split region ranges: {message}"),
-    )
+    DriverError::Mysql(MysqlError::terror(
+        &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES,
+        format!("Failed to split region ranges: {message}"),
+    ))
 }
 
 #[cfg(test)]

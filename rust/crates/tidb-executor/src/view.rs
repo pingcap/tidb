@@ -233,7 +233,7 @@ pub fn check_create_view_with_select(query: &mut QueryStmt) -> Result<Vec<bool>,
     fn check(select: &mut tidb_ast::SelectStmt, locked: &mut Vec<bool>) -> Result<(), DriverError> {
         if select.into_outfile.is_some() {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrViewSelectClause,
+                proto: &tidb_util::dbterror::ERR_VIEW_SELECT_CLAUSE,
                 message: "View's SELECT contains a 'INFO' clause".to_owned(),
             });
         }

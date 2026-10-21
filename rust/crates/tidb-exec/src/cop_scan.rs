@@ -1010,7 +1010,10 @@ impl CopRowStream {
                 .next_chunk_with_required_rows(required_rows.max(1))
                 .map_err(|error| match error {
                     tidb_distsql::ResponseChannelError::SelectResponse { code, message } => {
-                        StorageError::Sql(tidb_executor::MysqlError::new(code as u16, message))
+                        StorageError::Sql(tidb_executor::MysqlError::from_select_response(
+                            code as u16,
+                            message,
+                        ))
                     }
                     other => StorageError::Backend(other.to_string()),
                 })?;

@@ -70,7 +70,7 @@ fn extract_tbl_infos(
         }
         other => {
             let error = other.to_mysql_error();
-            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
         }
     })?;
     if !admitted {
@@ -108,14 +108,14 @@ fn check_renamable(
     };
     if table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrOptOnCacheTable,
+            &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
             format!("'{operation}' is unsupported on cache tables."),
         ));
     }
     // Go `dbutil.CheckTableModeIsNormal`.
     if table.mode != tidb_model::TableMode::NORMAL {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrProtectedTableMode,
+            &tidb_error::catalog::infoschema::ERR_PROTECTED_TABLE_MODE,
             format!("Table {} is in mode {}", table.name.original(), table.mode),
         ));
     }

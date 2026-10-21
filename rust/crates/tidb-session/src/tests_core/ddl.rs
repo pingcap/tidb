@@ -70,7 +70,9 @@ fn create_drop_database() {
     session.run("DROP DATABASE drop_test").unwrap();
     assert!(matches!(
         session.run("DROP DATABASE drop_test"),
-        Err(DriverError::DdlCoded { errno: 1008, .. })
+        Err(DriverError::DdlCoded { proto, .. })
+            if proto.identity()
+                == tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS.identity()
     ));
     session.run("DROP DATABASE IF EXISTS drop_test").unwrap();
 

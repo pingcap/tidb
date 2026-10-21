@@ -97,7 +97,10 @@ impl Parser {
             true
         } else if supports_string_options && self.is_kw("UNICODE") {
             self.bump();
-            return Err(self.err_coded(1115, "Unknown character set: 'ucs2'"));
+            return Err(self.err_coded(
+                &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                "Unknown character set: 'ucs2'",
+            ));
         } else if supports_string_options && self.is_kw("BINARY") {
             self.bump();
             ty.binary = true;
@@ -119,7 +122,10 @@ impl Parser {
                 // parse fails with `ErrUnknownCharacterSet` (`[parser:1115]
                 // Unknown character set: 'utf16'`) naming the written token.
                 let charset = canonical_field_charset(&raw).ok_or_else(|| {
-                    self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
+                    self.err_coded(
+                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                        &format!("Unknown character set: '{raw}'"),
+                    )
                 })?;
                 ty.charset = Some(charset.to_ascii_uppercase());
                 if ty.charset.as_deref() == Some("BINARY") {

@@ -63,8 +63,7 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
             session,
         } => {
             let first = lock_tables.first().ok_or_else(|| {
-                DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                DdlPlanError::Admission(DdlAdmissionError::plain(
                     "LOCK TABLES names no table".to_owned(),
                 ))
             })?;
@@ -88,8 +87,7 @@ pub fn prepare_table_lock_job_submission<S: MetaSnapshot>(
             is_cleanup,
         } => {
             let first = unlock_tables.first().ok_or_else(|| {
-                DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                DdlPlanError::Admission(DdlAdmissionError::plain(
                     "UNLOCK TABLES names no table".to_owned(),
                 ))
             })?;

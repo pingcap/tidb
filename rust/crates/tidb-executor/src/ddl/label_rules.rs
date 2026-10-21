@@ -421,10 +421,7 @@ pub(crate) fn apply_label_writes(
 
 /// A label manager failure, as the in-process DDL reports one.
 pub(crate) fn label_error(error: String) -> DriverError {
-    DriverError::DdlCoded {
-        errno: 1105,
-        message: error,
-    }
+    DriverError::unsupported(error)
 }
 
 /// Go `onExchangeTablePartition`'s label step, run once the physical IDs
@@ -511,7 +508,7 @@ pub fn invalid_attributes_spec_message(error: &ddl_label::LabelError) -> String 
 
 fn invalid_attributes_spec(error: &ddl_label::LabelError) -> DriverError {
     DriverError::DdlCoded {
-        errno: 8237,
+        proto: &tidb_util::dbterror::ERR_INVALID_ATTRIBUTES_SPEC,
         message: invalid_attributes_spec_message(error),
     }
 }

@@ -22,6 +22,7 @@ harness = true
 workspace = true
 
 [dependencies]
+tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-ast = { path = "../tidb-ast" }

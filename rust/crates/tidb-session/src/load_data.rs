@@ -151,7 +151,7 @@ impl crate::Session {
         // accept before anything else runs.
         if load.local && (!self.local_infile_accepted || data.is_none()) {
             return Err(DriverError::DdlCoded {
-                errno: 1148,
+                proto: &tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND,
                 message: "The used command is not allowed with this MySQL version".to_owned(),
             });
         }
@@ -160,7 +160,7 @@ impl crate::Session {
             // Go `InitDataFiles`: only a remote URL is read; a server path is
             // refused once the executor is built.
             return Err(DriverError::DdlCoded {
-                errno: 8154,
+                proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_FROM_SERVER_DISK,
                 message: format!(
                     "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '{}' needs to specify the clause of LOCAL first",
                     load.path

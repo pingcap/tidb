@@ -185,7 +185,7 @@ pub(crate) fn is_visible(options: &tidb_ast::IndexOptions) -> bool {
 /// correct accept/refuse decisions observably different.
 pub(crate) fn unsupported_partial_index(reason: impl Into<String>) -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         message: format!("Unsupported add partial index: {}", reason.into()),
     }
 }
@@ -195,7 +195,7 @@ pub(crate) fn unsupported_partial_index(reason: impl Into<String>) -> DriverErro
 /// no longer exists.
 pub(crate) fn partial_index_column_dependency(column: &str, index: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::tidb::errcode::ErrModifyColumnReferencedByPartialCondition,
+        proto: &tidb_util::dbterror::ERR_MODIFY_COLUMN_REFERENCED_BY_PARTIAL_CONDITION,
         message: format!(
             "Cannot drop, change or modify column '{column}': it is referenced in partial index '{index}'"
         ),
@@ -504,7 +504,7 @@ pub(crate) fn foreign_key_part_names(
         .position(|part| matches!(part, tidb_ast::IndexPart::Expr { .. }))
     {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+            proto: &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
             message: format!("Key column '_V$_{key_name}_{position}' doesn't exist in table"),
         });
     }
@@ -676,7 +676,7 @@ pub(super) fn build_index_definition(
                     .iter()
                     .position(|candidate| candidate.name.go_lower_eq(name))
                     .ok_or_else(|| DriverError::DdlCoded {
-                        errno: 1072,
+                        proto: &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                         message: format!("column does not exist: {name}"),
                     })?;
                 offsets.push(offset);
@@ -979,7 +979,7 @@ pub(crate) fn pk_index_cant_be_invisible() -> DriverError {
 /// table that is not partitioned.
 pub(crate) fn global_index_on_non_partitioned_table() -> DriverError {
     DriverError::DdlCoded {
-        errno: 8200,
+        proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         message: "Unsupported Global Index on non-partitioned table".to_owned(),
     }
 }
@@ -1377,7 +1377,7 @@ pub(super) fn drop_prepared_index(
 /// replaces the template with `message` (8200).
 fn unsupported_modify_primary_key(message: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: 8200,
+        proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         message: message.to_owned(),
     }
 }
@@ -1425,7 +1425,7 @@ pub(super) fn prepare_add_primary_key(
         .any(|part| matches!(part, tidb_ast::IndexPart::Expr { .. }))
     {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrFunctionalIndexPrimaryKey,
+            proto: &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
             message: "The primary key cannot be an expression index".to_owned(),
         });
     }
@@ -1450,7 +1450,7 @@ pub(super) fn prepare_add_primary_key(
             .is_some_and(|generated| !generated.stored)
         {
             return Err(DriverError::DdlCoded {
-                errno: 3106,
+                proto: &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 message: "'Defining a virtual generated column as primary key' is not supported for generated columns.".to_owned(),
             });
         }

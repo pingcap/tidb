@@ -800,6 +800,21 @@ impl ColumnAttributeError {
         }
     }
 
+    /// The Go definition each refused attribute is raised as, `None` for the
+    /// plain HY000 error.
+    #[must_use]
+    pub fn go_proto(&self) -> Option<&'static tidb_error::terror::TerrorError> {
+        Some(match self {
+            Self::MBiggerThanD => &tidb_error::catalog::types::ERR_M_BIGGER_THAN_D,
+            Self::TooBigPrecision { .. } => &tidb_error::catalog::types::ERR_TOO_BIG_PRECISION,
+            Self::DuplicatedValueInType { .. } => {
+                &tidb_error::catalog::types::ERR_DUPLICATED_VALUE_IN_TYPE
+            }
+            Self::TooLongEnumSetValue => &tidb_util::dbterror::ERR_TOO_LONG_VALUE_FOR_TYPE,
+            Self::InvalidVectorDimension(_) => return None,
+        })
+    }
+
     /// The client-visible message go raises, formatted with the declaring
     /// column's name exactly as the `%-.192s` verbs render it.
     #[must_use]

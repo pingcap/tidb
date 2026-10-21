@@ -27,6 +27,7 @@ fn error(message: &str) -> SqlError {
         code: 1105,
         message: message.into(),
         state: "HY000",
+        identity: None,
     }
 }
 

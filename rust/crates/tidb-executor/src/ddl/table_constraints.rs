@@ -105,7 +105,7 @@ pub(crate) fn table_indexes(
             // Go `buildIndexColumns`: `ErrKeyColumnDoesNotExits` (1072)
             // with its own "column does not exist" text.
             .ok_or_else(|| DriverError::DdlCoded {
-                errno: 1072,
+                proto: &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                 message: format!("column does not exist: {name}"),
             })?;
         if columns[offset].field_type.code() == FieldTypeCode::Json {
@@ -130,7 +130,7 @@ pub(crate) fn table_indexes(
             && index.kind != tidb_ast::IndexConstraintKind::PrimaryKey
         {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 message: "CLUSTERED/NONCLUSTERED keyword is only supported for primary key"
                     .to_owned(),
             });
@@ -406,7 +406,7 @@ pub(crate) fn table_foreign_keys(
         if let Some(name) = definition.name.as_deref() {
             if name.is_empty() {
                 return Err(DriverError::DdlCoded {
-                    errno: tidb_error::tidb::errcode::ErrWrongNameForIndex,
+                    proto: &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX,
                     message: "Incorrect index name ''".to_owned(),
                 });
             }
@@ -693,7 +693,7 @@ pub(crate) fn build_foreign_key(
             // `TableInfo`, then rejects a constraint that writes back to the
             // same columns with ErrCannotAddForeign (1215).
             return Err(DriverError::DdlCoded {
-                errno: 1215,
+                proto: &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
                 message: "Cannot add foreign key constraint".to_owned(),
             });
         }
@@ -793,7 +793,7 @@ pub(crate) fn build_foreign_key(
                     // GLOBAL temporary metadata is shared, but Go refuses a
                     // foreign-key relationship to it outright (1215).
                     return Err(DriverError::DdlCoded {
-                        errno: 1215,
+                        proto: &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
                         message: "Cannot add foreign key constraint".to_owned(),
                     });
                 }
@@ -879,7 +879,7 @@ fn child_generated_column_rules(
                 );
                 if on_update_writes || on_delete_writes {
                     return Err(DriverError::DdlCoded {
-                        errno: 1215,
+                        proto: &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
                         message: "Cannot add foreign key constraint".to_owned(),
                     });
                 }
@@ -1074,7 +1074,7 @@ pub(crate) fn primary_key_column(
                 // Go `CheckPKOnGeneratedColumn`: the key part is a hidden
                 // virtual column, which a primary key may not be (3756).
                 return Err(DriverError::DdlCoded {
-                    errno: tidb_error::tidb::errcode::ErrFunctionalIndexPrimaryKey,
+                    proto: &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
                     message: "The primary key cannot be an expression index".to_owned(),
                 });
             };

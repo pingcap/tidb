@@ -101,8 +101,12 @@ impl Parser {
                 } else {
                     self.parse_charset_name()?
                 };
-                let collation = canonical_collation(&name)
-                    .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{name}'")))?;
+                let collation = canonical_collation(&name).ok_or_else(|| {
+                    self.err_coded(
+                        &tidb_error::catalog::charset::ERR_UNKNOWN_COLLATION,
+                        &format!("Unknown collation: '{name}'"),
+                    )
+                })?;
                 if duplicate_first_option {
                     return Err(self.err_here("Multiple COLLATE clauses"));
                 }

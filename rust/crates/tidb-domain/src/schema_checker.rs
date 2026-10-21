@@ -173,6 +173,16 @@ pub enum SchemaCheckError {
 }
 
 impl SchemaCheckError {
+    /// The Go definition (`domain.ErrInfoSchemaChanged` /
+    /// `ErrInfoSchemaExpired`, class `domain`) this error is raised as.
+    #[must_use]
+    pub fn proto(self) -> &'static tidb_error::terror::TerrorError {
+        match self {
+            Self::InfoSchemaChanged => &tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED,
+            Self::InfoSchemaExpired => &tidb_error::catalog::domain::ERR_INFO_SCHEMA_EXPIRED,
+        }
+    }
+
     /// The MySQL error code, as `dbterror.ClassDomain.NewStd*` assigns it.
     #[must_use]
     pub fn code(self) -> u16 {

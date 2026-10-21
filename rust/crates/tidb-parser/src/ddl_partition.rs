@@ -153,7 +153,7 @@ fn parse_partition_method(parser: &mut Parser, subpartition: bool) -> PResult<Pa
                 let algorithm = parse_partition_count(parser, "KEY ALGORITHM")?;
                 if !(1..=2).contains(&algorithm) {
                     // Go `p.syntaxError(0)`: ErrSyntax (1149).
-                    return Err(parser.err_coded(1149, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use"));
+                    return Err(parser.err_coded(&tidb_error::catalog::parser::ERR_SYNTAX, "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use"));
                 }
                 method.key_algorithm = Some(algorithm);
             }
@@ -290,7 +290,7 @@ fn parse_partition_count(parser: &mut Parser, what: &str) -> PResult<u64> {
     if count == 0 {
         // Go `ast.ErrNoParts`: [ddl:1504], raised by the grammar action.
         return Err(parser.err_coded(
-            1504,
+            &tidb_error::catalog::ast::ERR_NO_PARTS,
             &format!("Number of {what} = 0 is not an allowed value"),
         ));
     }
@@ -424,14 +424,14 @@ fn validate_definition(
                 // Go `ErrTooManyValues.GenWithStackByArgs("RANGE")`:
                 // [ddl:1657], template "%-.64s" -> "RANGE".
                 return Err(parser.err_coded(
-                    1657,
+                    &tidb_error::catalog::ast::ERR_TOO_MANY_VALUES,
                     "Cannot have more than one value for this type of RANGE partitioning",
                 ));
             }
             if columns > 0 && values.len() != columns {
                 // Go `ErrPartitionColumnList`: [ddl:1653].
                 return Err(parser.err_coded(
-                    1653,
+                    &tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST,
                     "Inconsistency in usage of column lists for partitioning",
                 ));
             }
@@ -471,7 +471,7 @@ fn validate_definition(
                     }
                     // Go `ErrPartitionColumnList`: [ddl:1653].
                     return Err(parser.err_coded(
-                        1653,
+                        &tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST,
                         "Inconsistency in usage of column lists for partitioning",
                     ));
                 }
@@ -480,7 +480,7 @@ fn validate_definition(
             if columns == 0 && expected != 1 {
                 // Go `ErrRowSinglePartitionField`: [ddl:1658].
                 return Err(parser.err_coded(
-                    1658,
+                    &tidb_error::catalog::ast::ERR_ROW_SINGLE_PARTITION_FIELD,
                     "Row expressions in VALUES IN only allowed for multi-field column partitioning",
                 ));
             }
@@ -491,7 +491,7 @@ fn validate_definition(
                 }
                 // Go `ErrPartitionColumnList`: [ddl:1653].
                 return Err(parser.err_coded(
-                    1653,
+                    &tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST,
                     "Inconsistency in usage of column lists for partitioning",
                 ));
             }
@@ -502,29 +502,29 @@ fn validate_definition(
         // The rest of Go's `Validate` matrix (ast/ddl.go), each a coded DDL
         // terror the grammar action appends.
         (_, PartitionDefinitionClause::LessThan(_)) => Err(parser.err_coded(
-            1480,
+            &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES,
             "Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition",
         )),
         (_, PartitionDefinitionClause::In(_) | PartitionDefinitionClause::Default) => {
             Err(parser.err_coded(
-                1480,
+                &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES,
                 "Only LIST PARTITIONING can use VALUES IN in partition definition",
             ))
         }
         (_, PartitionDefinitionClause::History { .. }) => Err(parser.err_coded(
-            4113,
+            &tidb_error::catalog::ast::ERR_WRONG_PARTITION_TYPE_EXPECTED_SYSTEM_TIME,
             "Wrong partitioning type, expected type: `SYSTEM_TIME`",
         )),
         (PartitionType::RANGE, PartitionDefinitionClause::None) => Err(parser.err_coded(
-            1479,
+            &tidb_error::catalog::ast::ERR_PARTITION_REQUIRES_VALUES,
             "Syntax : RANGE PARTITIONING requires definition of VALUES LESS THAN for each partition",
         )),
         (PartitionType::LIST, PartitionDefinitionClause::None) => Err(parser.err_coded(
-            1479,
+            &tidb_error::catalog::ast::ERR_PARTITION_REQUIRES_VALUES,
             "Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition",
         )),
         (PartitionType::SYSTEM_TIME, PartitionDefinitionClause::None) => Err(parser.err_coded(
-            4128,
+            &tidb_error::catalog::ast::ERR_SYSTEM_VERSIONING_WRONG_PARTITIONS,
             "Wrong Partitions: must have at least one HISTORY and exactly one last CURRENT",
         )),
         _ => Err(parser.err_here("partition definition clause does not match partition method")),

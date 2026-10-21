@@ -62,10 +62,9 @@ impl Session {
 
     /// Go `addHistoryDDLJob2Table`.
     fn insert_ddl_history_row(&mut self, job: &mut Job) -> Result<(), DriverError> {
-        let encoded = job.encode(true).map_err(|error| DriverError::DdlCoded {
-            errno: 1105,
-            message: error.to_string(),
-        })?;
+        let encoded = job
+            .encode(true)
+            .map_err(|error| DriverError::unsupported(error.to_string()))?;
         let hex = encoded
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -98,10 +97,7 @@ impl Session {
         if let Some(store) = self.ddl_job_history_store.clone() {
             return store
                 .all_ddl_jobs()
-                .map_err(|message| DriverError::DdlCoded {
-                    errno: 1105,
-                    message,
-                });
+                .map_err(|message| DriverError::unsupported(message));
         }
         let history = self.lock_catalog()?.last_history_ddl_jobs()?;
         Ok((Vec::new(), history))

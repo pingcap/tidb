@@ -305,7 +305,7 @@ fn last_query_info_follows_statements_and_failures() {
     let after_failure = one(&mut session, "SELECT @@tidb_last_query_info");
     let parsed: serde_json::Value = serde_json::from_str(&after_failure).unwrap();
     assert_eq!(
-        parsed["error"], "Duplicate entry '1' for key 'lqi_t.PRIMARY'",
+        parsed["error"], "[kv:1062]Duplicate entry '1' for key 'lqi_t.PRIMARY'",
         "{after_failure}"
     );
 

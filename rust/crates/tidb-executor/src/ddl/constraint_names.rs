@@ -75,9 +75,9 @@ impl CreateTableConstraintNames {
 /// A duplicate explicit constraint name, with the code Go raises for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConstraintNameError {
-    /// 1061 (`ErrDupKeyName`), 1826 (`ErrFkDupName`) or 3822
-    /// (`ErrCheckConstraintDupName`).
-    pub code: u16,
+    /// `dbterror.ErrDupKeyName` (1061), `ErrFkDupName` (1826) or
+    /// `ErrCheckConstraintDupName` (3822).
+    pub proto: &'static tidb_error::terror::TerrorError,
     /// The duplicate name as it is spelled.
     pub name: String,
     /// Go's message, naming the duplicate as it is spelled.
@@ -194,17 +194,17 @@ pub fn check_constraint_names(
             let name = &constraint.name;
             return Err(match constraint.kind {
                 Kind::ForeignKey => ConstraintNameError {
-                    code: 1826,
+                    proto: &tidb_util::dbterror::ERR_FK_DUP_NAME,
                     name: name.clone(),
                     message: format!("Duplicate foreign key constraint name '{name}'"),
                 },
                 Kind::Check => ConstraintNameError {
-                    code: 3822,
+                    proto: &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
                     name: name.clone(),
                     message: format!("Duplicate check constraint name '{name}'."),
                 },
                 Kind::Key => ConstraintNameError {
-                    code: 1061,
+                    proto: &tidb_util::dbterror::ERR_DUP_KEY_NAME,
                     name: name.clone(),
                     message: format!("Duplicate key name '{name}'"),
                 },
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(
             names("create table t (a int, key c (a), constraint c check (a > 0))").unwrap_err(),
             ConstraintNameError {
-                code: 3822,
+                proto: &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
                 name: "c".to_owned(),
                 message: "Duplicate check constraint name 'c'.".to_owned()
             }
@@ -354,7 +354,7 @@ mod tests {
         assert_eq!(
             names("create table t (a int, constraint c check (a > 0), key c (a))").unwrap_err(),
             ConstraintNameError {
-                code: 1061,
+                proto: &tidb_util::dbterror::ERR_DUP_KEY_NAME,
                 name: "c".to_owned(),
                 message: "Duplicate key name 'c'".to_owned()
             }
@@ -422,7 +422,9 @@ mod tests {
                  constraint fk foreign key (a) references q (a))"
             )
             .unwrap_err()
-            .code,
+            .proto
+            .code()
+            .value(),
             1826
         );
     }

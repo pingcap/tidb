@@ -1225,8 +1225,8 @@ impl Session {
 
 /// Go `plannererrors.ErrViewNoExplain` (1345).
 fn view_no_explain() -> DriverError {
-    DriverError::Mysql(tidb_executor::MysqlError::new(
-        1345,
+    DriverError::Mysql(tidb_executor::MysqlError::terror(
+        &tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN,
         "EXPLAIN/SHOW can not be issued; lacking privileges for underlying table",
     ))
 }

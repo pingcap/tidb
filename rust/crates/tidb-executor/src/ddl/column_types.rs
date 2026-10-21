@@ -78,7 +78,7 @@ fn collation_named(name: &str) -> Result<Collation, DriverError> {
     let normalized = name.to_ascii_lowercase();
     if matches!(normalized.as_str(), "utf8_roman_ci" | "utf8mb4_roman_ci") {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+            proto: &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION,
             message: format!("Unsupported collation when new collation is enabled: '{normalized}'"),
         });
     }
@@ -105,7 +105,7 @@ pub(crate) fn table_charset_of(
                     None => charset = Some(named),
                     Some(current) if current != named => {
                         return Err(DriverError::DdlCoded {
-                            errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                            proto: &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS,
                             message: format!(
                                 "Conflicting declarations: 'CHARACTER SET {}' and 'CHARACTER SET {}'",
                                 current.name(),
@@ -125,7 +125,7 @@ pub(crate) fn table_charset_of(
                     None => charset = Some(named.charset()),
                     Some(current) if current != named.charset() => {
                         return Err(DriverError::DdlCoded {
-                            errno: tidb_error::mysql::errcode::ErrCollationCharsetMismatch,
+                            proto: &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH,
                             message: format!(
                                 "COLLATION '{}' is not valid for CHARACTER SET '{}'",
                                 named.name(),

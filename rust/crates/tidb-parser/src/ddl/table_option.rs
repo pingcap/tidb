@@ -70,7 +70,10 @@ impl Parser {
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
                 let charset = canonical_charset(&raw).ok_or_else(|| {
-                    self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
+                    self.err_coded(
+                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                        &format!("Unknown character set: '{raw}'"),
+                    )
                 })?;
                 Some(TableOption::CharacterSet(charset.to_ascii_uppercase()))
             }
@@ -79,7 +82,10 @@ impl Parser {
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
                 let charset = canonical_charset(&raw).ok_or_else(|| {
-                    self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
+                    self.err_coded(
+                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                        &format!("Unknown character set: '{raw}'"),
+                    )
                 })?;
                 Some(TableOption::CharacterSet(charset.to_ascii_uppercase()))
             }
@@ -87,8 +93,12 @@ impl Parser {
                 self.bump();
                 self.accept_optional_equals();
                 let raw = self.parse_table_option_word()?;
-                let collation = canonical_collation(&raw)
-                    .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?;
+                let collation = canonical_collation(&raw).ok_or_else(|| {
+                    self.err_coded(
+                        &tidb_error::catalog::charset::ERR_UNKNOWN_COLLATION,
+                        &format!("Unknown collation: '{raw}'"),
+                    )
+                })?;
                 Some(TableOption::Collate(collation.to_ascii_uppercase()))
             }
             "ENCRYPTION" => {
@@ -98,7 +108,7 @@ impl Parser {
                 if !matches!(value.as_str(), "Y" | "y" | "N" | "n") {
                     // Go `ddl_table_option_parser.go`: ErrWrongValue (1525).
                     return Err(self.err_coded(
-                        1525,
+                        &tidb_error::catalog::parser::ERR_WRONG_VALUE,
                         &format!("Incorrect argument (should be Y or N) value: '{value}'"),
                     ));
                 }

@@ -44,9 +44,9 @@ pub(crate) fn parse_one_sql(text: &str) -> Result<Stmt> {
 }
 
 fn parse_failure(error: &tidb_parser::ParseError, sql: &str) -> tidb_executor::DriverError {
-    match error.errno {
-        Some(errno) => tidb_executor::DriverError::ParseCoded {
-            errno,
+    match error.terror {
+        Some(proto) => tidb_executor::DriverError::ParseCoded {
+            proto,
             message: error.message.clone(),
         },
         None => tidb_executor::DriverError::Parse(error.compatibility_message(sql)),
@@ -56,8 +56,7 @@ fn parse_failure(error: &tidb_parser::ParseError, sql: &str) -> tidb_executor::D
 /// The text Go's `err` prints for a parse failure: the terror's `[class:code]`
 /// prefix and its message.
 fn parse_failure_text(error: &tidb_parser::ParseError, sql: &str) -> String {
-    let mysql = parse_failure(error, sql).to_mysql_error();
-    format!("[parser:{}]{}", mysql.code, mysql.message)
+    parse_failure(error, sql).to_mysql_error().error_string()
 }
 
 struct FnVisitor<E, L> {

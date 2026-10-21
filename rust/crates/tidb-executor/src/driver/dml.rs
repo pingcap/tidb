@@ -303,8 +303,8 @@ fn physical_dml_plan_with_cache_mode(
             catalog.get_in(&spec.database, &spec.table),
             Some(TableEntry::Mem(_))
         ) {
-            return Err(DriverError::Mysql(MysqlError::new(
-                tidb_error::tidb::errcode::ErrUnsupportedOp,
+            return Err(DriverError::Mysql(MysqlError::terror(
+                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP,
                 "operation not supported",
             )));
         }
@@ -562,8 +562,8 @@ fn resolve_insert_target(
         return Err(DriverError::InsertIntoSequenceUnsupported(table_name));
     }
     let TableEntry::Kv(kv) = table else {
-        return Err(DriverError::Mysql(MysqlError::new(
-            tidb_error::tidb::errcode::ErrUnsupportedOp,
+        return Err(DriverError::Mysql(MysqlError::terror(
+            &tidb_error::catalog::table::ERR_UNSUPPORTED_OP,
             "operation not supported",
         )));
     };
@@ -642,7 +642,7 @@ fn resolve_insert_target(
     for (position, &offset) in target_offsets.iter().enumerate() {
         if target_offsets[..position].contains(&offset) {
             return Err(DriverError::DdlCoded {
-                errno: 1110,
+                proto: &tidb_error::catalog::table::ERR_DUPLICATE_COLUMN,
                 message: format!("Column '{}' specified twice", column_list[offset].0),
             });
         }
@@ -4551,8 +4551,8 @@ impl PhysicalWriteShape {
             )))
         })?;
         let TableEntry::Kv(table) = table else {
-            return Err(DriverError::Mysql(MysqlError::new(
-                tidb_error::tidb::errcode::ErrUnsupportedOp,
+            return Err(DriverError::Mysql(MysqlError::terror(
+                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP,
                 "operation not supported",
             )));
         };

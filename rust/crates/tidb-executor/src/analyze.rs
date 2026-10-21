@@ -1243,7 +1243,10 @@ mod tests {
 
     #[test]
     fn execution_errors_retain_column_and_storage_identity() {
-        let original = crate::MysqlError::new(1292, "Truncated incorrect date value: '0000-00-00'")
+        let original = crate::MysqlError::terror(
+            &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
+            "Truncated incorrect date value: '0000-00-00'",
+        )
             .from_evaluation();
         for error in [
             crate::kv_table::KvTableError::ColumnCast(original.clone()),

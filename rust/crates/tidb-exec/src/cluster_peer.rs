@@ -300,7 +300,7 @@ impl ClusterPeerClient {
                     let response = tipb::SelectResponse::decode(response.data.as_ref())
                         .map_err(|error| DriverError::unsupported(error.to_string()))?;
                     if let Some(error) = response.error {
-                        return Err(DriverError::Mysql(MysqlError::new(
+                        return Err(DriverError::Mysql(MysqlError::sql_error(
                             error.code.unwrap_or(1105) as u16,
                             error.msg.unwrap_or_default(),
                         )));

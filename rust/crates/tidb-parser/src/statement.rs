@@ -735,7 +735,7 @@ impl Parser {
                 message: "unsupported statement in this phase".to_owned(),
                 offset: target.end_offset,
                 near_offset: target.offset,
-                errno: None,
+                terror: None,
             })
         } else {
             Err(self.err_here("unsupported statement in this phase"))

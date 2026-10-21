@@ -111,7 +111,7 @@ pub(super) fn prepare_rename_column(
     {
         let error = super::check_constraint::column_dependency_error(info.name.original(), from);
         return Err(DriverError::DdlCoded {
-            errno: error.code,
+            proto: error.proto,
             message: error.message,
         });
     }

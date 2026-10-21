@@ -24,22 +24,28 @@ use tidb_datatype::FieldTypeFlags;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
-fn coded(errno: u16, message: impl Into<String>) -> DriverError {
+fn coded(
+    proto: &'static tidb_error::terror::TerrorError,
+    message: impl Into<String>,
+) -> DriverError {
     DriverError::DdlCoded {
-        errno,
+        proto,
         message: message.into(),
     }
 }
 
 /// Go `ErrTablesDifferentMetadata` (1736).
 fn different_metadata() -> DriverError {
-    coded(1736, "Tables have different definitions")
+    coded(
+        &tidb_util::dbterror::ERR_TABLES_DIFFERENT_METADATA,
+        "Tables have different definitions",
+    )
 }
 
 /// Go `ErrPartitionExchangeDifferentOption` (1731).
 fn different_option(attribute: String) -> DriverError {
     coded(
-        1731,
+        &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
         format!("Non matching attribute '{attribute}' between partition and table"),
     )
 }
@@ -47,7 +53,7 @@ fn different_option(attribute: String) -> DriverError {
 /// Go `ErrPartitionExchangeTempTable` (1733).
 fn temporary_table(name: &str) -> DriverError {
     coded(
-        1733,
+        &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_TEMP_TABLE,
         format!("Table to exchange with partition is temporary: '{name}'"),
     )
 }
@@ -93,7 +99,10 @@ pub(super) fn exchange_partition_action(
     let standalone = match standalone_entry {
         TableEntry::Kv(table) => table,
         TableEntry::View(_) | TableEntry::Sequence(_) | TableEntry::Mem(_) => {
-            return Err(coded(1177, "Can't open table"));
+            return Err(coded(
+                &tidb_util::dbterror::ERR_CHECK_NO_SUCH_TABLE,
+                "Can't open table",
+            ));
         }
     };
     let Some(partition_info) = partitioned.partition() else {
@@ -101,7 +110,7 @@ pub(super) fn exchange_partition_action(
     };
     if standalone.partition().is_some() {
         return Err(coded(
-            1732,
+            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_PART_TABLE,
             format!(
                 "Table to exchange with partition is partitioned: '{}'",
                 standalone.name
@@ -110,13 +119,13 @@ pub(super) fn exchange_partition_action(
     }
     if standalone.has_affinity() || partitioned.has_affinity() {
         return Err(coded(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "Unsupported EXCHANGE PARTITION of a table with AFFINITY option",
         ));
     }
     if !standalone.foreign_keys().is_empty() {
         return Err(coded(
-            1740,
+            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_FOREIGN_KEY,
             format!(
                 "Table to exchange with partition has foreign key references: '{}'",
                 standalone.name
@@ -227,7 +236,7 @@ fn check_table_def_compatible(source: &KvTable, target: &KvTable) -> Result<(), 
         };
         if virtual_generated(source_column) != virtual_generated(target_column) {
             return Err(coded(
-                3106,
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 "'Exchanging partitions for non-generated columns' is not supported for generated columns.",
             ));
         }
@@ -340,7 +349,12 @@ fn validate_records(
     standalone: &mut KvTable,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let mismatch = || coded(1737, "Found a row that does not match the partition");
+    let mismatch = || {
+        coded(
+            &tidb_util::dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION,
+            "Found a row that does not match the partition",
+        )
+    };
     let read_error = |error| crate::driver::kv_read_error("exchange partition", error);
     let kind = &partitioned
         .partition()
@@ -348,7 +362,7 @@ fn validate_records(
         .kind;
     if matches!(kind, crate::partition_routing::PartitionKind::Key) {
         return Err(coded(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             format!(
                 "Unsupported partition type of table {} when exchanging partition",
                 partitioned.name

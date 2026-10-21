@@ -60,7 +60,11 @@ struct UnistoreSession {
 }
 
 fn driver_error(error: SqlQueryError) -> DriverError {
-    DriverError::Mysql(MysqlError::new(error.code, error.message))
+    let mut mapped = MysqlError::from_parts(error.code, error.state, error.message);
+    if let Some(identity) = error.identity {
+        mapped = mapped.with_identity(identity);
+    }
+    DriverError::Mysql(mapped)
 }
 
 fn source_error(error: MysqlError) -> DriverError {
@@ -115,10 +119,9 @@ impl ReplaySession for UnistoreSession {
             let data =
                 std::fs::read(difftest_result_tests::replay::integrationtest_dir().join(&path))
                     .map_err(|error| {
-                        DriverError::Mysql(MysqlError::new(
-                            1105,
-                            format!("client file `{path}`: {error}"),
-                        ))
+                        DriverError::Mysql(MysqlError::unknown(format!(
+                            "client file `{path}`: {error}"
+                        )))
                     })?;
             let outcome = match &parsed {
                 Some(stmt) => self.session.execute_local_infile_parsed(sql, stmt, &data),
@@ -175,10 +178,7 @@ impl ReplaySession for UnistoreSession {
 /// wire text, typed as a plain string so the harness renders it unchanged.
 fn decode_text_result_set(framed: &[u8]) -> Result<StmtOutput, DriverError> {
     fn malformed(what: &str) -> DriverError {
-        DriverError::Mysql(MysqlError::new(
-            1105,
-            format!("malformed result set: {what}"),
-        ))
+        DriverError::Mysql(MysqlError::unknown(format!("malformed result set: {what}")))
     }
     fn packets(framed: &[u8]) -> Result<Vec<&[u8]>, DriverError> {
         let mut packets = Vec::new();

@@ -201,7 +201,7 @@ fn check_add_foreign_key_valid_in_owner(
         .any(|existing| existing.read().name.lowercase() == fk.name.lowercase())
     {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrFkDupName,
+            &tidb_util::dbterror::ERR_FK_DUP_NAME,
             format!(
                 "Duplicate foreign key constraint name '{}'",
                 fk.name.original()
@@ -225,9 +225,7 @@ fn check_add_foreign_key_valid_in_owner(
     if tidb_model::index::find_index_by_columns_for_foreign_key(info, &info.indices, &cols)
         .is_none()
     {
-        return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrUnknown,
-            format!(
+        return Err(DdlPlanError::plain_refusal(format!(
                 "Failed to add the foreign key constraint. Missing index for '{}' foreign key columns in the table '{}'",
                 fk.name.original(),
                 info.name.original()
@@ -310,7 +308,7 @@ pub(super) fn plan_persisted_add_foreign_key_job_step(
                     }
                     Some(Some((code, message))) => {
                         active.job.state = JobState::ROLLINGBACK;
-                        return Err(coded_refusal(code, message));
+                        return Err(checked_refusal(code, message));
                     }
                     Some(None) => {}
                 }

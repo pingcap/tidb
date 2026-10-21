@@ -824,8 +824,8 @@ fn check_update_list(
                     || other.partition_col_updated
                     || partition_col_updated
                 {
-                    return Err(DriverError::Mysql(MysqlError::new(
-                        1706,
+                    return Err(DriverError::Mysql(MysqlError::terror(
+                        &tidb_error::plannererrors::ERR_MULTI_UPDATE_KEY_CONFLICT,
                         format!(
                             "Primary key/partition key update is not allowed since the table is updated both as '{}' and '{}'.",
                             other.name, table.visible

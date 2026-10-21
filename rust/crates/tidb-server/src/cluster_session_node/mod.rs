@@ -5362,7 +5362,7 @@ impl ClusterServerSession {
         self.session.finish_routed_statement_observation_with_error(
             result.is_ok(),
             result.as_ref().map_or(0, |outcome| outcome.affected_rows),
-            result.as_ref().err().map(|error| error.message.clone()),
+            result.as_ref().err().map(|error| error.error_string()),
         );
         result
     }
@@ -8245,7 +8245,7 @@ impl QuerySession for ClusterServerSession {
             self.session.finish_routed_statement_observation_with_error(
                 result.is_ok(),
                 0,
-                result.as_ref().err().map(|error| error.message.clone()),
+                result.as_ref().err().map(|error| error.error_string()),
             );
         }
         result
@@ -8735,7 +8735,7 @@ impl QuerySession for ClusterServerSession {
             self.session.finish_routed_statement_observation_with_error(
                 attempt.is_ok(),
                 affected_rows,
-                attempt.as_ref().err().map(|error| error.message.clone()),
+                attempt.as_ref().err().map(|error| error.error_string()),
             );
         }
         let output = attempt?;
@@ -9067,7 +9067,7 @@ impl tidb_session::ddl_service::DdlService for ClusterDdlService {
 
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.to_mysql_error();
-    SqlQueryError::new(mapped.code, mapped.state, mapped.message)
+    SqlQueryError::new(mapped.code, mapped.state, mapped.message).with_identity(mapped.identity)
 }
 
 /// Storage bound to no snapshot, used only to decide which tables a catalog

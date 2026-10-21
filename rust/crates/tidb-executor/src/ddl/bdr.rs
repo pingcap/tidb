@@ -65,7 +65,7 @@ fn role_of(stored: &str) -> Option<BdrRole> {
 /// `dbterror.ErrBDRRestrictedDDL` (8263).
 fn restricted(stored: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::tidb::errcode::ErrBDRRestrictedDDL,
+        proto: &tidb_util::dbterror::ERR_BDR_RESTRICTED_DDL,
         message: format!(
             "The operation is not allowed while the bdr role of this cluster is set to {stored}."
         ),

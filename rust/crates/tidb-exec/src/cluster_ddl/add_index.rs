@@ -267,15 +267,15 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
     let (schema_id, stored) = locate_table(&catalog, schema, table)?;
     if index.primary && (find_index(stored, "PRIMARY").is_some() || stored.pk_is_handle) {
         return Err(DdlPlanError::Admission(
-            crate::table_info_build::DdlAdmissionError::with_code(
-                1068,
+            crate::table_info_build::DdlAdmissionError::with_proto(
+                &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY,
                 "Multiple primary key defined",
             ),
         ));
     }
     if index.primary && expressions.iter().any(Option::is_some) {
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrFunctionalIndexPrimaryKey,
+            &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
             "The primary key cannot be an expression index",
         ));
     }
@@ -427,7 +427,7 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
 
 pub(super) fn unsupported_partial_index() -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         "Unsupported add partial index: add partial index without fast reorg is not supported",
     )
 }
@@ -691,8 +691,8 @@ fn check_and_build_index_info(
         if existing.read().state == SchemaState::PUBLIC {
             if is_pk {
                 return Err(DdlPlanError::Admission(
-                    crate::table_info_build::DdlAdmissionError::with_code(
-                        1068,
+                    crate::table_info_build::DdlAdmissionError::with_proto(
+                        &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY,
                         "Multiple primary key defined",
                     ),
                 ));
@@ -711,7 +711,7 @@ fn check_and_build_index_info(
                 && column.name.lowercase() == hidden.name.lowercase()
         }) {
             return Err(coded_refusal(
-                tidb_error::mysql::errcode::ErrDupFieldName,
+                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS,
                 format!("Duplicate column name '{}'", hidden.name.original()),
             ));
         }
@@ -817,7 +817,7 @@ pub(super) fn plan_persisted_add_index_job_step<S: MetaSnapshot>(
         return Err(cancel_ddl_job(
             active,
             coded_refusal(
-                tidb_error::tidb::errcode::ErrOptOnCacheTable,
+                &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE,
                 "'Create Index' is unsupported on cache tables.",
             ),
         ));
@@ -1138,10 +1138,9 @@ pub(super) fn do_reorg_work_for_create_index<S: MetaSnapshot>(
         }) => {
             // Go `runReorgJob` records the count first.
             active.job.row_count = *rows;
-            return Ok(CreateIndexReorg::Failed(coded_refusal(
-                *code,
-                message.clone(),
-            )));
+            return Ok(CreateIndexReorg::Failed(
+                crate::cluster_ddl::checked_refusal(*code, message.clone()),
+            ));
         }
     };
     active.job.row_count = finished;

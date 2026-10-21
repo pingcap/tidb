@@ -146,13 +146,13 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
             });
             let Some((db_id, stored)) = found else {
                 return Err(coded_refusal(
-                    tidb_error::tidb::errcode::ErrUnknownSequence,
+                    &tidb_util::dbterror::ERR_UNKNOWN_SEQUENCE,
                     format!("Unknown SEQUENCE: '{schema}.{name}'"),
                 ));
             };
             if !stored.is_sequence() {
                 return Err(coded_refusal(
-                    tidb_error::tidb::errcode::ErrWrongObject,
+                    &tidb_util::dbterror::ERR_WRONG_OBJECT,
                     format!("'{schema}.{name}' is not SEQUENCE"),
                 ));
             }
@@ -177,8 +177,8 @@ pub fn prepare_drop_object_job_submission<S: MetaSnapshot>(
                     }));
                 }
                 // Go `executor.DropSchema`: `ErrDatabaseDropExists` (1008).
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    1008,
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
+                    &tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS,
                     format!("Can't drop database '{name}'; database doesn't exist"),
                 )));
             };

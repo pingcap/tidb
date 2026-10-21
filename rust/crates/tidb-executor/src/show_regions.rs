@@ -259,7 +259,7 @@ fn collect(
 ) -> Result<(), DriverError> {
     let regions = catalog
         .region_metas_in(&range.0, &range.1)
-        .map_err(|error| DriverError::Mysql(MysqlError::new(errcode::ErrUnknown, error)))?;
+        .map_err(|error| DriverError::Mysql(MysqlError::unknown(error)))?;
     for region in regions {
         if !seen.insert(region.id) {
             continue;
@@ -347,10 +347,10 @@ pub fn policy_placement(
         return Ok(None);
     };
     let Some(found) = catalog.policy(policy.name.original()) else {
-        return Err(DriverError::Mysql(MysqlError::new(
-            errcode::ErrUnknown,
-            &format!("Policy with name '{}' not found", policy.name.original()),
-        )));
+        return Err(DriverError::Mysql(MysqlError::unknown(&format!(
+            "Policy with name '{}' not found",
+            policy.name.original()
+        ))));
     };
     Ok(found
         .placement_settings
@@ -436,7 +436,7 @@ pub fn show_table_regions(
     for row in &mut rows {
         row.region.scattering = store
             .check_region_in_scattering(row.region.id)
-            .map_err(|error| DriverError::Mysql(MysqlError::new(errcode::ErrUnknown, error)))?;
+            .map_err(|error| DriverError::Mysql(MysqlError::unknown(error)))?;
     }
     let placements = scheduling(catalog, &target)?;
     Ok(rows
@@ -484,8 +484,7 @@ pub fn show_table_distributions(
 ) -> Result<(), DriverError> {
     let target = resolve(catalog, database, table_name, "show table distributions")?;
     physical_ids(&target, partitions)?;
-    Err(DriverError::Mysql(MysqlError::new(
-        errcode::ErrUnknown,
+    Err(DriverError::Mysql(MysqlError::unknown(
         "[PD:client:ErrClientGetLeader]get leader failed, pd http cli is nil",
     )))
 }

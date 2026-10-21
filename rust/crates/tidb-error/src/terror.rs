@@ -526,6 +526,7 @@ impl TerrorError {
             code,
             message: self.message.to_string(),
             state: mysql_state(code),
+            identity: Some(self.identity),
         }
     }
 

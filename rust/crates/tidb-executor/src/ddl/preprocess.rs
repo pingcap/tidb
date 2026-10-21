@@ -133,7 +133,7 @@ fn path_name(path: &[String]) -> &str {
 /// `dbterror.ErrWrongDBName` (1102).
 fn wrong_db_name(name: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::mysql::errcode::ErrWrongDBName,
+        proto: &tidb_util::dbterror::ERR_WRONG_DB_NAME,
         message: format!("Incorrect database name '{name}'"),
     }
 }
@@ -141,7 +141,7 @@ fn wrong_db_name(name: &str) -> DriverError {
 /// `dbterror.ErrWrongNameForIndex` (1280).
 pub(crate) fn wrong_name_for_index(name: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::mysql::errcode::ErrWrongNameForIndex,
+        proto: &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX,
         message: format!("Incorrect index name '{name}'"),
     }
 }
@@ -149,7 +149,7 @@ pub(crate) fn wrong_name_for_index(name: &str) -> DriverError {
 /// `dbterror.ErrWrongPartitionName` (1567).
 pub(crate) fn wrong_partition_name() -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::mysql::errcode::ErrWrongPartitionName,
+        proto: &tidb_util::dbterror::ERR_WRONG_PARTITION_NAME,
         message: "Incorrect partition name".to_owned(),
     }
 }
@@ -177,7 +177,7 @@ fn check_table_name(name: &str) -> Result<(), DriverError> {
 pub fn wrong_string_length_error(value: &str, kind: &str, maximum: usize) -> DriverError {
     let shown: String = value.chars().take(70).collect();
     DriverError::DdlCoded {
-        errno: tidb_error::mysql::errcode::ErrWrongStringLength,
+        proto: &tidb_util::dbterror::ERR_WRONG_STRING_LENGTH,
         message: format!(
             "String '{shown}' is too long for {kind} (should be no longer than {maximum})"
         ),
@@ -266,7 +266,7 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Driv
     }
     if create.columns.is_empty() && create.like_table.is_none() {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTableMustHaveColumns,
+            proto: &tidb_util::dbterror::ERR_TABLE_MUST_HAVE_COLUMNS,
             message: "A table must have at least 1 column".to_owned(),
         });
     }
@@ -348,7 +348,7 @@ fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), DriverError> 
     }
     if parts.len() > MAX_KEY_PARTS {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTooManyKeyParts,
+            proto: &tidb_error::catalog::infoschema::ERR_TOO_MANY_KEY_PARTS,
             message: format!("Too many key parts specified; max {MAX_KEY_PARTS} parts allowed"),
         });
     }
@@ -430,15 +430,17 @@ impl ColumnCheckError {
     fn into_driver_error(self, column: &ColumnDef) -> DriverError {
         use tidb_error::mysql::errcode;
         let name = &column.name;
-        let coded = |errno: u16, message: String| DriverError::DdlCoded { errno, message };
+        let coded = |proto: &'static tidb_error::terror::TerrorError, message: String| {
+            DriverError::DdlCoded { proto, message }
+        };
         match self {
             Self::WrongColumnName => DriverError::WrongColumnName(name.clone()),
             Self::InvalidDefault => coded(
-                errcode::ErrInvalidDefault,
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE,
                 format!("Invalid default value for '{name}'"),
             ),
             Self::DisplayWidthOutOfRange => coded(
-                errcode::ErrTooBigDisplaywidth,
+                &tidb_error::catalog::types::ERR_TOO_BIG_DISPLAY_WIDTH,
                 format!("Display width out of range for column '{name}' (max = {})", u32::MAX),
             ),
             Self::TooBigFieldLength => {
@@ -448,41 +450,41 @@ impl ColumnCheckError {
                     MAX_FIELD_CHAR_LENGTH
                 };
                 coded(
-                    errcode::ErrTooBigFieldlength,
+                    &tidb_error::catalog::types::ERR_TOO_BIG_FIELD_LENGTH,
                     format!(
                         "Column length too big for column '{name}' (max = {maximum}); use BLOB or TEXT instead"
                     ),
                 )
             }
             Self::WrongFieldSpec => coded(
-                errcode::ErrWrongFieldSpec,
+                &tidb_error::catalog::types::ERR_WRONG_FIELD_SPEC,
                 format!("Incorrect column specifier for column '{name}'"),
             ),
             Self::TooBigScale { scale, maximum } => coded(
-                errcode::ErrTooBigScale,
+                &tidb_error::catalog::types::ERR_TOO_BIG_SCALE,
                 format!("Too big scale {scale} specified for column '{name}'. Maximum is {maximum}."),
             ),
             Self::TooBigDisplayWidth { maximum } => coded(
-                errcode::ErrTooBigDisplaywidth,
+                &tidb_error::catalog::types::ERR_TOO_BIG_DISPLAY_WIDTH,
                 format!("Display width out of range for column '{name}' (max = {maximum})"),
             ),
             Self::MBiggerThanD => DriverError::MBiggerThanD(name.clone()),
             Self::TooBigSet => coded(
-                errcode::ErrTooBigSet,
+                &tidb_error::catalog::types::ERR_TOO_BIG_SET,
                 format!("Too many strings for column {name} and SET"),
             ),
             Self::IllegalSetValue(value) => coded(
-                errcode::ErrIllegalValueForType,
+                &tidb_error::catalog::types::ERR_ILLEGAL_VALUE_FOR_TYPE,
                 format!("Illegal set '{value}' value found during parsing"),
             ),
             Self::TooBigPrecision { precision } => coded(
-                errcode::ErrTooBigPrecision,
+                &tidb_error::catalog::types::ERR_TOO_BIG_PRECISION,
                 format!(
                     "Too-big precision {precision} specified for '{name}'. Maximum is {MAX_DECIMAL_WIDTH}."
                 ),
             ),
             Self::InvalidFieldSize => coded(
-                errcode::ErrInvalidFieldSize,
+                &tidb_error::catalog::types::ERR_INVALID_FIELD_SIZE,
                 format!("Invalid size for column '{name}'."),
             ),
         }
@@ -658,7 +660,7 @@ fn value_expr_is_null(expr: &tidb_ast::Expr) -> Option<bool> {
 fn check_auto_increment_op(column: &ColumnDef, index: usize) -> Result<bool, DriverError> {
     let options = &column.options;
     let invalid_default = || DriverError::DdlCoded {
-        errno: tidb_error::mysql::errcode::ErrInvalidDefault,
+        proto: &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE,
         message: format!("Invalid default value for '{}'", column.name),
     };
     let mut has_auto_increment = false;

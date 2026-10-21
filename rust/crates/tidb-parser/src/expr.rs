@@ -127,7 +127,12 @@ impl Parser {
                 self.bump(); // COLLATE
                 let raw = self.parse_using_charset_name()?;
                 let collation = canonical_collation(&raw)
-                    .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?
+                    .ok_or_else(|| {
+                        self.err_coded(
+                            &tidb_error::catalog::charset::ERR_UNKNOWN_COLLATION,
+                            &format!("Unknown collation: '{raw}'"),
+                        )
+                    })?
                     .to_owned();
                 left = Expr::Collate {
                     expr: Box::new(left),
@@ -392,7 +397,7 @@ impl Parser {
                 // parses, `1.8e308` doesn't).
                 if !f.is_finite() {
                     return Err(self.err_coded(
-                        1367,
+                        &tidb_error::catalog::parser_types::ERR_ILLEGAL_VALUE_FOR_TYPE,
                         &format!("Illegal double '{}' value found during parsing", t.text),
                     ));
                 }
@@ -472,7 +477,7 @@ impl Parser {
                     // terror `ErrUnknownCharacterSet` (1115), not as a 1064
                     // syntax error wrapping the coded text.
                     self.err_coded(
-                        1115,
+                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
                         &format!("Unsupported character introducer: '{}'", t.text),
                     )
                 })?;

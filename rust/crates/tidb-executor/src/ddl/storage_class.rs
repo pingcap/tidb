@@ -55,14 +55,14 @@ impl StorageClassDef {
 
 fn invalid_spec(message: impl std::fmt::Display) -> DriverError {
     DriverError::DdlCoded {
-        errno: ErrStorageClassInvalidSpec,
+        proto: &tidb_util::dbterror::ERR_STORAGE_CLASS_INVALID_SPEC,
         message: format!("Invalid storage class: {message}"),
     }
 }
 
 fn invalid_format(error: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: ErrEngineAttributeInvalidFormat,
+        proto: &tidb_util::dbterror::ERR_ENGINE_ATTRIBUTE_INVALID_FORMAT,
         message: format!("Invalid engine attribute format: '{error}'"),
     }
 }
@@ -350,7 +350,7 @@ fn validate_engine_attribute_table_option(input: &str) -> Result<(), DriverError
     let attribute = parse_engine_attribute(input)?;
     let Some(storage_class) = attribute.storage_class else {
         return Err(DriverError::DdlCoded {
-            errno: ErrEngineAttributeNotSupported,
+            proto: &tidb_util::dbterror::ERR_UNSUPPORTED_ENGINE_ATTRIBUTE,
             message: "Storage engine does not support ENGINE_ATTRIBUTE.".to_owned(),
         });
     };

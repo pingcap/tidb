@@ -1147,7 +1147,7 @@ impl Parser {
                     // boundary every other arm reports.
                     offset: start.saturating_add(1).min(self.source.len()),
                     near_offset: start,
-                    errno: None,
+                    terror: None,
                 });
             }
             _ => {}

@@ -337,7 +337,7 @@ fn test_error_msg() {
         ),
         (
             "SELECT CAST(1 AS FLOAT(54))",
-            "[expression:1426]Too-big precision 54 specified for 'CAST'. Maximum is 53.",
+            "[parser:1426]Too-big precision 54 specified for 'CAST'. Maximum is 53.",
         ),
         (
             "ALTER TABLE t ALGORITHM = FOO",

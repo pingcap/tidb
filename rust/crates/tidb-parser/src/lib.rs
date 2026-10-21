@@ -107,11 +107,20 @@ pub struct ParseError {
     pub near_offset: usize,
     /// Go's parser raises SOME refusals through classed terrors rather than
     /// yacc's 1064 — `ast.ErrNoParts` is `[ddl:1504]` straight from the
-    /// grammar action. `None` is the ordinary 1064 syntax error.
-    pub errno: Option<u16>,
+    /// grammar action. This is that Go definition (class and code); `None` is
+    /// the ordinary 1064 syntax error.
+    pub terror: Option<&'static tidb_error::terror::TerrorError>,
 }
 
 impl ParseError {
+    /// The MySQL error number of [`Self::terror`], `None` for the ordinary
+    /// 1064 syntax error.
+    #[must_use]
+    pub fn errno(&self) -> Option<u16> {
+        self.terror
+            .and_then(|terror| u16::try_from(terror.code().value()).ok())
+    }
+
     /// Renders the parser diagnostic using Go TiDB's observable error format.
     /// Semantic errors already carry their `[class:code]` prefix; ordinary
     /// grammar failures use the source location and remaining SQL excerpt.
@@ -120,11 +129,9 @@ impl ParseError {
             return self.message.clone();
         }
         // A grammar-action terror keeps its bare message (the wire text) and
-        // its errno; Go's `terror.Error.Error()` renders `[class:code]msg`.
-        if let Some(errno) = self.errno {
-            if let Some(class) = go_terror_class(errno) {
-                return format!("[{class}:{errno}]{}", self.message);
-            }
+        // its Go definition; `terror.Error.Error()` renders `[class:code]msg`.
+        if let Some(terror) = self.terror {
+            return format!("[{}]{}", terror.rfc_code(), self.message);
         }
         let near_offset = self.near_offset.min(sql.len());
         let offset = self.offset.min(sql.len());
@@ -178,26 +185,6 @@ fn go_line_column(source: &str, limit: usize) -> (usize, usize) {
         column += 1;
     }
     (line, column)
-}
-
-/// The Go terror class of each errno this parser raises through
-/// `Parser::err_coded` with a bare message.
-fn go_terror_class(errno: u16) -> Option<&'static str> {
-    match errno {
-        // parser_api.go: ErrUnknownCharacterSet, ErrSyntax and
-        // ErrWrongArguments are `terror.ClassParser`.
-        // ErrWrongFieldTerminators, ErrWrongDBName, ErrWrongValue,
-        // ErrUnknownAlterAlgorithm/Lock and ErrInvalidYearColumnLength too.
-        1083 | 1102 | 1115 | 1149 | 1210 | 1525 | 1800 | 1801 | 1818 => Some("parser"),
-        // ast/ddl.go: ErrWrongUsage (the generated-column check),
-        // ErrNoParts, ErrPartitionColumnList, ErrTooManyValues and
-        // ErrRowSinglePartitionField are `terror.ClassDDL`, as is
-        // charset.ErrUnknownCollation.
-        1221 | 1273 | 1479 | 1480 | 1504 | 1653 | 1657 | 1658 | 4113 | 4128 => Some("ddl"),
-        // types/etc.go: ErrIllegalValueForType is `terror.ClassTypes`.
-        1367 => Some("types"),
-        _ => None,
-    }
 }
 
 type PResult<T> = Result<T, ParseError>;
@@ -479,7 +466,7 @@ fn parse_one_with_parser_grammar(sql: &str, p: &mut Parser) -> PResult<Stmt> {
             message: "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use".to_owned(),
             offset: p.peek().end_offset,
             near_offset: p.peek().offset,
-            errno: Some(1149),
+            terror: Some(&tidb_error::catalog::parser::ERR_SYNTAX),
         });
     }
     Ok(stmt)
@@ -837,7 +824,7 @@ fn parentheses_depth_error(toks: &[Token]) -> Option<ParseError> {
                     ),
                     offset: token.end_offset,
                     near_offset: token.offset,
-                    errno: None,
+                    terror: None,
                 });
             }
         } else if token.kind == TokenKind::Op && token.text == ")" && depth > 0 {
@@ -861,7 +848,7 @@ fn recursive_ast_depth_error(toks: &[Token]) -> Option<ParseError> {
                     message: format!("AST nesting depth exceeds maximum {MAX_AST_DEPTH}"),
                     offset: token.end_offset,
                     near_offset: token.offset,
-                    errno: None,
+                    terror: None,
                 });
             }
         } else {
@@ -875,7 +862,7 @@ fn recursive_ast_depth_error(toks: &[Token]) -> Option<ParseError> {
                     message: format!("AST nesting depth exceeds maximum {MAX_AST_DEPTH}"),
                     offset: token.end_offset,
                     near_offset: token.offset,
-                    errno: None,
+                    terror: None,
                 });
             }
         } else if token.kind == TokenKind::Keyword
@@ -941,7 +928,7 @@ fn ast_depth_error(p: &Parser) -> ParseError {
         message: format!("AST nesting depth exceeds maximum {MAX_AST_DEPTH}"),
         offset: p.peek().end_offset,
         near_offset: p.peek().offset,
-        errno: None,
+        terror: None,
     }
 }
 
@@ -1148,7 +1135,7 @@ impl Parser {
                             message: conversion.error.to_string(),
                             offset,
                             near_offset: offset,
-                            errno: Some(1300),
+                            terror: Some(&tidb_error::catalog::charset::ERR_INVALID_CHARACTER_STRING),
                         };
                         self.scanner_error = Some((offset, error));
                     }
@@ -1363,7 +1350,7 @@ impl Parser {
             message: msg.to_string(),
             offset: self.peek().end_offset,
             near_offset: self.peek().offset,
-            errno: None,
+            terror: None,
         }
     }
 
@@ -1376,15 +1363,15 @@ impl Parser {
             message: msg.to_owned(),
             offset: self.peek().end_offset,
             near_offset: self.source.len(),
-            errno: None,
+            terror: None,
         }
     }
 
-    /// A grammar-action refusal that carries its own errno, the way Go's
+    /// A grammar-action refusal that carries its own Go error, the way Go's
     /// parser raises `ast.ErrNoParts` as `[ddl:1504]` rather than 1064.
-    fn err_coded(&self, errno: u16, msg: &str) -> ParseError {
+    fn err_coded(&self, terror: &'static tidb_error::terror::TerrorError, msg: &str) -> ParseError {
         ParseError {
-            errno: Some(errno),
+            terror: Some(terror),
             ..self.err_here(msg)
         }
     }
@@ -1479,7 +1466,7 @@ impl Parser {
                 message: format!("expected '{op}'"),
                 offset: unexpected.end_offset,
                 near_offset: unexpected.offset,
-                errno: None,
+                terror: None,
             })
         }
     }
@@ -1494,7 +1481,7 @@ impl Parser {
                 message: format!("expected keyword {kw}"),
                 offset: unexpected.end_offset,
                 near_offset: unexpected.offset,
-                errno: None,
+                terror: None,
             })
         }
     }

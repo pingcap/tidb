@@ -47,7 +47,7 @@ pub(crate) fn check_and_normalize_placement_policy(
 
 fn conflicting_charsets(previous: &str, next: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+        proto: &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS,
         message: format!(
             "Conflicting declarations: 'CHARACTER SET {previous}' and 'CHARACTER SET {next}'"
         ),
@@ -77,7 +77,7 @@ impl Session {
                 > 1
         {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 message: "Unsupported multi schema change for set tiflash replica".to_owned(),
             });
         }
@@ -97,7 +97,7 @@ impl Session {
                 DatabaseOption::Collate(value) => {
                     let collation =
                         Collation::from_name(value).ok_or_else(|| DriverError::DdlCoded {
-                            errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+                            proto: &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION,
                             message: format!("Unknown collation: '{value}'"),
                         })?;
                     let charset = collation.charset().name();
@@ -118,7 +118,7 @@ impl Session {
         }
         if let Some(charset) = to_charset {
             let charset = Charset::from_name(&charset).ok_or_else(|| DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrUnknownCharacterSet,
+                proto: &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
                 message: format!("Unknown character set: '{charset}'"),
             })?;
             let collation = to_collate.unwrap_or_else(|| charset.default_collation());

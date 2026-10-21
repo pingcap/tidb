@@ -1281,8 +1281,7 @@ fn database_charset_collation(
             // Resolved when the statement is planned.
             DatabaseOption::PlacementPolicy(_) => {}
             other => {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                return Err(DdlAdmissionError::plain(
                     format!("CREATE DATABASE option {other:?} is not supported by this node"),
                 ))
             }
@@ -1336,8 +1335,8 @@ pub fn lower_ddl_with_context(
                 .count()
                 > 1
             {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                     "Unsupported multi schema change for set tiflash replica",
                 ));
             }
@@ -1350,9 +1349,7 @@ pub fn lower_ddl_with_context(
                     DatabaseOption::Collate(value) => collate = Some(value.as_str()),
                     DatabaseOption::PlacementPolicy(value) => placement_policy = Some(value),
                     other => {
-                        return Err(DdlAdmissionError::with_code(
-                            GENERIC_ERROR_CODE,
-                            format!(
+                        return Err(DdlAdmissionError::plain(format!(
                                 "ALTER DATABASE option {other:?} is not supported by this node"
                             ),
                         ))
@@ -1364,9 +1361,7 @@ pub fn lower_ddl_with_context(
                 // Go submits the charset job and then the placement job; this
                 // node publishes one change per statement.
                 if charset.is_some() || collate.is_some() {
-                    return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        "this node runs ALTER DATABASE charset and placement changes as \
+                    return Err(DdlAdmissionError::plain("this node runs ALTER DATABASE charset and placement changes as \
                          separate statements"
                             .to_owned(),
                     ));
@@ -1424,8 +1419,8 @@ pub fn lower_ddl_with_context(
             // statement wrong in both ways reports the contradiction
             // (`ddl/executor.go:6808`).
             if create.or_replace && create.if_not_exists {
-                return Err(DdlAdmissionError::with_code(
-                    1221,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_WRONG_USAGE,
                     "Incorrect usage of OR REPLACE and IF NOT EXISTS".to_owned(),
                 ));
             }
@@ -1456,7 +1451,7 @@ pub fn lower_ddl_with_context(
             let (info, comment) = tidb_executor::build_create_sequence(create, &schema, &name)
                 .map_err(|error| {
                     let error = error.to_mysql_error();
-                    DdlAdmissionError::with_code(error.code, error.message)
+                    DdlAdmissionError::from_mysql_error(error)
                 })?;
             let info = build_sequence_table_info(&name, info, comment);
             Ok(Some(DdlStatement::CreateSequence {
@@ -1519,8 +1514,7 @@ fn rebuilt_bundles_for_policy(
     settings: &tidb_model::PlacementSettings,
 ) -> Result<Vec<tidb_placement::Bundle>, DdlPlanError> {
     let bundle = tidb_placement::new_bundle_from_options(Some(settings)).map_err(|error| {
-        DdlPlanError::Admission(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        DdlPlanError::Admission(DdlAdmissionError::plain(
             format!("building placement rules: {error}"),
         ))
     })?;
@@ -1615,8 +1609,8 @@ fn check_and_normalize_placement_policy<S: MetaSnapshot>(
         return Ok(None);
     }
     let Some(policy) = find_policy(snapshot, name)? else {
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-            8239,
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
+            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
             format!("Unknown placement policy '{name}'"),
         )));
     };
@@ -1730,7 +1724,7 @@ fn lower_alter_table_catalog(
         // specification runs.
         let admission = |error: tidb_executor::DriverError| {
             let error = error.to_mysql_error();
-            DdlAdmissionError::with_code(error.code, error.message)
+            DdlAdmissionError::from_mysql_error(error)
         };
         tidb_executor::ddl::storage_class::check_storage_class_conflict_in_alter_specs(
             alter
@@ -1835,14 +1829,14 @@ fn lower_alter_table_catalog(
                 tidb_ast::AlterTableAction::SetTableOptions { options }
                     if options.iter().any(is_ttl_table_option) =>
                 {
-                    return Err(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         "Unsupported multi schema change for alter table ttl",
                     ));
                 }
                 tidb_ast::AlterTableAction::RemoveTtl(_) => {
-                    return Err(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         "Unsupported multi schema change for alter table no_ttl",
                     ));
                 }
@@ -1910,21 +1904,21 @@ fn lower_alter_table_catalog(
                                 return Ok(None);
                             }
                             tidb_ast::TableOption::AutoIdCache(_) => {
-                                return Err(DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                                return Err(DdlAdmissionError::with_proto(
+                                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                                     "Unsupported multi schema change for modify auto id cache",
                                 ));
                             }
                             tidb_ast::TableOption::ShardRowIdBits(_) => {
-                                return Err(DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                                return Err(DdlAdmissionError::with_proto(
+                                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                                     "Unsupported multi schema change for shard row ID",
                                 ));
                             }
                             tidb_ast::TableOption::AutoRandomBase(_)
                             | tidb_ast::TableOption::ForceAutoRandomBase(_) => {
-                                return Err(DdlAdmissionError::with_code(
-                                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                                return Err(DdlAdmissionError::with_proto(
+                                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                                     "Unsupported multi schema change for rebase auto_random ID",
                                 ));
                             }
@@ -2201,7 +2195,7 @@ fn lower_alter_table_catalog(
         {
             let ttl_info = tidb_executor::ddl::ttl_info_from_options(options).map_err(|error| {
                 let error = error.to_mysql_error();
-                DdlAdmissionError::with_code(error.code, error.message)
+                DdlAdmissionError::from_mysql_error(error)
             })?;
             let enable = options.iter().rev().find_map(|option| match option {
                 tidb_ast::TableOption::TtlEnable(enabled) => Some(*enabled),
@@ -2243,7 +2237,7 @@ fn lower_alter_table_catalog(
             )
             .map_err(|error| {
                 let error = error.to_mysql_error();
-                DdlAdmissionError::with_code(error.code, error.message)
+                DdlAdmissionError::from_mysql_error(error)
             })?;
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             Ok(Some(DdlStatement::ModifyTableCharsetAndCollate {
@@ -2272,7 +2266,7 @@ fn lower_alter_table_catalog(
                     tidb_executor::ddl::storage_class::engine_attribute_from_table_options(options)
                         .map_err(|error| {
                             let error = error.to_mysql_error();
-                            DdlAdmissionError::with_code(error.code, error.message)
+                            DdlAdmissionError::from_mysql_error(error)
                         })?
                         .expect("the options are all storage-class options");
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -2287,14 +2281,12 @@ fn lower_alter_table_catalog(
             };
             if let tidb_ast::TableOption::AutoIdCache(value) = option {
                 let new_cache = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
+                    DdlAdmissionError::plain(
                         "AUTO_ID_CACHE needs an integer value",
                     )
                 })?;
                 if new_cache > i64::MAX as u64 {
-                    return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
+                    return Err(DdlAdmissionError::plain(
                         "table option auto_id_cache overflows int64",
                     ));
                 }
@@ -2312,7 +2304,7 @@ fn lower_alter_table_catalog(
                     tidb_executor::ddl::storage_class::engine_attribute_from_table_options(options)
                         .map_err(|error| {
                             let error = error.to_mysql_error();
-                            DdlAdmissionError::with_code(error.code, error.message)
+                            DdlAdmissionError::from_mysql_error(error)
                         })?
                         .expect("the one option is a storage-class option");
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -2358,8 +2350,7 @@ fn lower_alter_table_catalog(
                 // value is an unsigned literal that is then handed to
                 // `RebaseAutoID` as an `int64`.
                 let new_base = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
+                    DdlAdmissionError::plain(
                         "AUTO_INCREMENT needs an integer value",
                     )
                 })? as i64;
@@ -2384,7 +2375,7 @@ fn lower_alter_table_catalog(
                 )
                 .map_err(|error| {
                     let error = error.to_mysql_error();
-                    DdlAdmissionError::with_code(error.code, error.message)
+                    DdlAdmissionError::from_mysql_error(error)
                 })?;
                 return Ok(Some(DdlStatement::ModifyTableComment {
                     schema,
@@ -2396,8 +2387,7 @@ fn lower_alter_table_catalog(
             // `ShardRowID`.
             if let tidb_ast::TableOption::ShardRowIdBits(value) = option {
                 let bits = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
+                    DdlAdmissionError::plain(
                         "SHARD_ROW_ID_BITS needs an integer value",
                     )
                 })?;
@@ -2414,8 +2404,7 @@ fn lower_alter_table_catalog(
                 _ => return Ok(None),
             };
             let next = value.parse::<u64>().map_err(|_| {
-                DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                DdlAdmissionError::plain(
                     "AUTO_RANDOM_BASE needs an integer value",
                 )
             })? as i64;
@@ -2459,8 +2448,7 @@ fn lower_alter_table_catalog(
                 return Ok(None);
             }
             let [old] = old_name.as_slice() else {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                return Err(DdlAdmissionError::plain(
                     "CHANGE COLUMN takes an unqualified source column name here",
                 ));
             };
@@ -2501,8 +2489,8 @@ fn lower_alter_table_catalog(
                 // answers `ErrUnknownCharacterSet` (1115) when the name is
                 // not a charset — a collation name, say.
                 if tidb_datatype::get_charset_info(name).is_err() {
-                    return Err(DdlAdmissionError::with_code(
-                        1115,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
                         format!("Unknown character set: '{name}'"),
                     ));
                 }
@@ -2534,8 +2522,7 @@ fn lower_alter_table_catalog(
         tidb_ast::AlterTableAction::AlterColumnDefault(action) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
             let Some(column) = action.name.last() else {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                return Err(DdlAdmissionError::plain(
                     "ALTER COLUMN needs a column name",
                 ));
             };
@@ -2784,8 +2771,7 @@ fn lower_alter_table_catalog(
                 match option {
                     tidb_ast::TableOption::PlacementPolicy(name) => policy = Some(name.clone()),
                     _ => {
-                        return Err(DdlAdmissionError::with_code(
-                            GENERIC_ERROR_CODE,
+                        return Err(DdlAdmissionError::plain(
                             "unknown partition option".to_owned(),
                         ))
                     }
@@ -2862,8 +2848,8 @@ fn lower_alter_table_catalog(
                 warning: None,
             }))
         }
-        tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::with_code(
-            8200,
+        tidb_ast::AlterTableAction::SetStatsOptions(_) => Err(DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "This type of ALTER TABLE is currently unsupported",
         )),
         // Go `AlterTable`'s default arm: the specifications it has no job for.
@@ -2872,8 +2858,8 @@ fn lower_alter_table_catalog(
         | tidb_ast::AlterTableAction::Partition(
             tidb_ast::AlterPartitionAction::ImportTablespace { .. }
             | tidb_ast::AlterPartitionAction::DiscardTablespace { .. },
-        ) => Err(DdlAdmissionError::with_code(
-            8200,
+        ) => Err(DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "Unsupported Unsupported/unknown ALTER TABLE specification",
         )),
         _ => Ok(None),
@@ -2895,8 +2881,7 @@ fn lower_rename_table_stmt(
         .map(|(from, to)| lower_rename_table_pair(from, to, default_schema))
         .collect::<Result<Vec<_>, _>>()?;
     match pairs.as_slice() {
-        [] => Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        [] => Err(DdlAdmissionError::plain(
             "RENAME TABLE names no table",
         )),
         [pair] => Ok(Some(DdlStatement::RenameTable {
@@ -2946,8 +2931,8 @@ fn lower_alter_add_index(
             Some(tidb_ast::PrimaryKeyStorage::Clustered)
         )
     {
-        return Err(DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        return Err(DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "Adding clustered primary key is not supported. Please consider adding \
              NONCLUSTERED primary key instead",
         ));
@@ -2963,8 +2948,8 @@ fn lower_alter_add_index(
             // prefix `Unsupported ` onto a sentence that already reads as a
             // refusal (oracle g-alter: `8200 FULLTEXT index is only
             // supported in starter deployment mode`).
-            return Err(DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            return Err(DdlAdmissionError::with_proto(
+                &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 "FULLTEXT index is only supported in starter deployment mode",
             ));
         }
@@ -3033,8 +3018,8 @@ fn prepare_rename_column(
             constraint.name.original(),
             from,
         );
-        return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-            error.code,
+        return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
+            error.proto,
             error.message,
         )));
     }
@@ -3044,7 +3029,7 @@ fn prepare_rename_column(
     let new_name = to.go_to_lower();
     if new_name == "_tidb_rowid" {
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrWrongColumnName,
+            &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME,
             format!("Incorrect column name '{new_name}'"),
         ));
     }
@@ -3062,7 +3047,7 @@ fn prepare_rename_column(
     }) {
         return Err(if dependent.read().hidden {
             coded_refusal(
-                tidb_error::mysql::errcode::ErrDependentByFunctionalIndex,
+                &tidb_util::dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
                 format!(
                     "Column '{from}' has an expression index dependency and cannot be dropped \
                      or renamed"
@@ -3070,7 +3055,7 @@ fn prepare_rename_column(
             )
         } else {
             coded_refusal(
-                tidb_error::mysql::errcode::ErrDependentByGeneratedColumn,
+                &tidb_util::dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
                 format!("Column '{from}' has a generated column dependency."),
             )
         });
@@ -3146,8 +3131,8 @@ fn prepare_modify_column(
         rename_from.unwrap_or(column.name.as_str()),
     );
     if new_name != wanted {
-        if let Some((code, message)) = &generated_dependency {
-            return Err(coded_refusal(*code, message.clone()));
+        if let Some((proto, message)) = &generated_dependency {
+            return Err(coded_refusal(proto, message.clone()));
         }
     }
     let old = stored
@@ -3169,7 +3154,7 @@ fn prepare_modify_column(
     .map_err(DdlPlanError::Admission)?;
     let admission = |error: tidb_executor::DriverError| {
         let error = error.to_mysql_error();
-        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
     };
     // Go: "Copy index related options to the new spec", and a primary key
     // column stays NOT NULL.
@@ -3226,11 +3211,14 @@ fn prepare_modify_column(
         requested_position,
         context,
     )?;
-    if let Some((code, message)) = generated_dependency {
+    if let Some((proto, message)) = generated_dependency {
         // Go wraps `errG.Error()`, the terror text with its class prefix.
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrUnsupportedOnGeneratedColumn,
-            format!("'[ddl:{code}]{message}' is not supported for generated columns."),
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
+            format!(
+                "'{}' is not supported for generated columns.",
+                proto.generate(message)
+            ),
         ));
     }
     Ok(PreparedModifyColumn { column: changed })
@@ -3243,7 +3231,7 @@ fn check_modify_column_with_generated_columns_constraint(
     stored: &TableInfo,
     wanted: &str,
     written: &str,
-) -> Option<(u16, String)> {
+) -> Option<(&'static TerrorError, String)> {
     let dependent = stored.columns.iter_deref().find(|candidate| {
         let candidate = candidate.read();
         candidate.is_generated() && candidate.dependences.contains(wanted)
@@ -3251,7 +3239,7 @@ fn check_modify_column_with_generated_columns_constraint(
     let hidden = dependent.read().hidden;
     Some(if hidden {
         (
-            tidb_error::mysql::errcode::ErrDependentByFunctionalIndex,
+            &*tidb_util::dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
             format!(
                 "Column '{written}' has an expression index dependency and cannot be dropped or \
                  renamed"
@@ -3259,7 +3247,7 @@ fn check_modify_column_with_generated_columns_constraint(
         )
     } else {
         (
-            tidb_error::mysql::errcode::ErrDependentByGeneratedColumn,
+            &*tidb_util::dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
             format!("Column '{written}' has a generated column dependency."),
         )
     })
@@ -3274,7 +3262,7 @@ fn is_generated_related_column(
 ) -> Result<(), DdlPlanError> {
     let unsupported = |reason: String| {
         coded_refusal(
-            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             format!("Unsupported modify column: {reason}"),
         )
     };
@@ -3312,13 +3300,13 @@ fn check_modify_generated_column(
 ) -> Result<(), DdlPlanError> {
     let unsupported_on_generated = |what: &str| {
         coded_refusal(
-            tidb_error::mysql::errcode::ErrUnsupportedOnGeneratedColumn,
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
             format!("'{what}' is not supported for generated columns."),
         )
     };
     let bad_field = |column: &str| {
         coded_refusal(
-            tidb_error::mysql::errcode::ErrBadField,
+            &tidb_util::dbterror::ERR_BAD_FIELD,
             format!("Unknown column '{column}' in 'generated column function'"),
         )
     };
@@ -3397,7 +3385,7 @@ fn check_modify_generated_column(
             };
             if *dependency_generated && at <= dependency_at {
                 return Err(coded_refusal(
-                    tidb_error::mysql::errcode::ErrGeneratedColumnNonPrior,
+                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
                     "Generated column can refer only to generated columns defined prior to it."
                         .to_owned(),
                 ));
@@ -3408,7 +3396,7 @@ fn check_modify_generated_column(
     if new.is_generated() {
         let admission = |error: tidb_executor::DriverError| {
             let error = error.to_mysql_error();
-            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
         };
         // Rule 3: Go `checkIllegalFn4Generated(newCol.Name.L, typeColumn, ...)`.
         if let Some(tidb_ast::ColumnOption::Generated { expression, .. }) = new_def
@@ -3441,7 +3429,7 @@ fn check_modify_generated_column(
                     .any(|dependency| dependency == auto_increment.name.lowercase())
                 {
                     return Err(coded_refusal(
-                        tidb_error::tidb::errcode::ErrGeneratedColumnRefAutoInc,
+                        &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
                         format!(
                             "Generated column '{}' cannot refer to auto-increment column.",
                             new_def.name.go_to_lower()
@@ -3460,7 +3448,7 @@ fn check_modify_generated_column(
         });
         let covered_by_index = || {
             coded_refusal(
-                tidb_error::mysql::errcode::ErrUnsupportedOnGeneratedColumn,
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 "Unsupported modification for generated columns covered by an index".to_owned(),
             )
         };
@@ -3608,7 +3596,7 @@ fn apply_index_visibility(
     }
     if invisible && found.read().is_columnar_index() {
         return Err(coded_refusal(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             format!(
                 "INVISIBLE can not be used in {} INDEX",
                 found.read().tp.sql()
@@ -3667,8 +3655,8 @@ fn apply_set_column_default(
 fn check_table_charset_named(charset: &str, collate: &str) -> Result<(), DdlPlanError> {
     if charset.is_empty() && collate.is_empty() {
         return Err(DdlPlanError::Admission(
-            crate::table_info_build::DdlAdmissionError::with_code(
-                1115,
+            crate::table_info_build::DdlAdmissionError::with_proto(
+                &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
                 "Unknown character set: ''".to_owned(),
             ),
         ));
@@ -3720,8 +3708,8 @@ fn check_index_length_with_new_charset(
         let part_count = parts.len();
         check_index_key_length(parts, part_count, true, true).map_err(|error| match error {
             PrefixError::TooLongKey { length, max } => {
-                DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrTooLongKey,
+                DdlPlanError::Admission(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_TOO_LONG_KEY,
                     format!(
                         "Specified key was too long ({length} bytes); max key length is {max} bytes"
                     ),
@@ -3886,7 +3874,7 @@ fn verify_no_overflow_shard_bits<S: MetaSnapshot>(
     let mask = ((1u64 << shard_row_id_bits) - 1) << (ROW_ID_BIT_LENGTH - shard_row_id_bits - 1);
     if next_global & (mask as i64) > 0 {
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrAutoincReadFailed,
+            &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED,
             format!(
                 "shard_row_id_bits {shard_row_id_bits} will cause next global auto ID {next_global} overflow"
             ),
@@ -3925,7 +3913,7 @@ pub(super) fn build_add_column(
     }
     tidb_executor::ddl::check_too_long_identifier(&column.name).map_err(|error| {
         let error = error.to_mysql_error();
-        coded_refusal(error.code, error.message)
+        DdlPlanError::from_mysql_error(error)
     })?;
     // An admission refusal already carries Go's own error number (8200 for
     // `ErrUnsupportedDDLOperation`); wrapping it as an encode failure both
@@ -3961,7 +3949,7 @@ pub(super) fn build_add_column(
         })
     {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrGeneratedColumnNonPrior,
+            &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
             "Generated column can refer only to generated columns defined prior to it.",
         ));
     }
@@ -4061,8 +4049,35 @@ fn move_column_info(info: &mut TableInfo, from: usize, to: usize) {
     }
 }
 
-fn coded_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::with_code(code, message.into()))
+/// A column / foreign-key / exchange-partition check's refusal, which crosses
+/// the reorg boundary as the wire triple (`LockSqlError`) and so has lost the
+/// Go identity it was raised with. The checks raise a closed set of Go errors;
+/// this names them, and any other number stays a plain refusal.
+pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
+    use tidb_error::catalog::{kv, table, types};
+    let proto: Option<&'static TerrorError> = match code {
+        1062 => Some(&kv::ERR_KEY_EXISTS),
+        1048 => Some(&table::ERR_COLUMN_CANT_NULL),
+        1264 => Some(&types::ERR_WARN_DATA_OUT_OF_RANGE),
+        1265 => Some(&types::ERR_TRUNCATED),
+        1292 => Some(&types::ERR_TRUNCATED_WRONG_VAL),
+        1366 => Some(&table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD),
+        1406 => Some(&types::ERR_DATA_TOO_LONG),
+        1690 => Some(&types::ERR_OVERFLOW),
+        1365 => Some(&tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO),
+        1451 => Some(&tidb_error::plannererrors::ERR_ROW_IS_REFERENCED2),
+        1452 => Some(&tidb_util::dbterror::ERR_NO_REFERENCED_ROW2),
+        3819 => Some(&tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED),
+        _ => None,
+    };
+    match proto {
+        Some(proto) => coded_refusal(proto, message),
+        None => DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(code, message)),
+    }
+}
+
+fn coded_refusal(proto: &'static TerrorError, message: impl Into<String>) -> DdlPlanError {
+    DdlPlanError::Admission(DdlAdmissionError::with_proto(proto, message.into()))
 }
 
 /// Go `checkIsDroppableColumn` (`pkg/ddl/executor.go`): one DROP COLUMN as
@@ -4100,14 +4115,17 @@ fn check_is_droppable_column(
     check_drop_column_with_ttl_config(info, &col_name)?;
     // Go `ErrUnsupportedPKHandle`.
     if col.is_pk_handle_column(info) {
-        return Err(coded_refusal(8200, "Unsupported drop integer primary key"));
+        return Err(coded_refusal(
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
+            "Unsupported drop integer primary key",
+        ));
     }
     // Go `ErrCantDropColWithAutoInc`.
     if col.get_flag() & u64::from(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT) != 0
         && !allow_remove_auto_inc
     {
         return Err(coded_refusal(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "Unsupported can't remove column with auto_increment when \
              @@tidb_allow_remove_auto_inc disabled",
         ));
@@ -4134,7 +4152,7 @@ fn is_droppable_column(
     {
         return Err(if dependent.read().hidden {
             coded_refusal(
-                tidb_error::mysql::errcode::ErrDependentByFunctionalIndex,
+                &tidb_util::dbterror::ERR_DEPENDENT_BY_FUNCTIONAL_INDEX,
                 format!(
                     "Column '{col_name}' has an expression index dependency and cannot be \
                      dropped or renamed"
@@ -4142,14 +4160,14 @@ fn is_droppable_column(
             )
         } else {
             coded_refusal(
-                tidb_error::mysql::errcode::ErrDependentByGeneratedColumn,
+                &tidb_util::dbterror::ERR_DEPENDENT_BY_GENERATED_COLUMN,
                 format!("Column '{col_name}' has a generated column dependency."),
             )
         });
     }
     if column_count == 1 {
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrCantRemoveAllFields,
+            &tidb_util::dbterror::ERR_CANT_REMOVE_ALL_FIELDS,
             format!(
                 "can't drop only column {column} in table {}",
                 info.name.original()
@@ -4173,7 +4191,7 @@ fn is_droppable_column(
                 "with composite index covered or Primary Key covered now"
             };
             return Err(coded_refusal(
-                8200,
+                &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 format!("can't drop column {col_name} {covered}"),
             ));
         }
@@ -4192,7 +4210,7 @@ fn is_droppable_column(
             constraint.name.original(),
             column,
         );
-        return Err(coded_refusal(error.code, error.message));
+        return Err(coded_refusal(error.proto, error.message));
     }
     check_column_referenced_by_partial_condition(info, column)
 }
@@ -4213,7 +4231,7 @@ fn check_drop_column_with_partition_constraint(
         .any(|name| name.go_to_lower() == col_name)
     {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrDependentByPartitionFunctional,
+            &tidb_util::dbterror::ERR_DEPENDENT_BY_PARTITION_FUNCTIONAL,
             format!(
                 "Column '{col_name}' has a partitioning function dependency and cannot be \
                  dropped or renamed"
@@ -4228,7 +4246,7 @@ fn check_drop_column_with_ttl_config(info: &TableInfo, col_name: &str) -> Result
     if let Some(ttl) = &info.ttl_info {
         if ttl.read().column_name.lowercase() == col_name {
             return Err(coded_refusal(
-                tidb_error::tidb::errcode::ErrTTLColumnCannotDrop,
+                &tidb_util::dbterror::ERR_TTL_COLUMN_CANNOT_DROP,
                 format!("Cannot drop column '{col_name}': needed in TTL config"),
             ));
         }
@@ -4250,7 +4268,7 @@ fn check_column_referenced_by_partial_condition(
             .any(|affected| affected.read().name.lowercase() == col_name)
         {
             return Err(coded_refusal(
-                tidb_error::tidb::errcode::ErrModifyColumnReferencedByPartialCondition,
+                &tidb_util::dbterror::ERR_MODIFY_COLUMN_REFERENCED_BY_PARTIAL_CONDITION,
                 format!(
                     "Cannot drop, change or modify column '{column}': it is referenced in \
                      partial index '{}'",
@@ -4288,7 +4306,7 @@ fn check_table_info_valid_extra(
     )
     .map_err(|error| {
         let error = error.to_mysql_error();
-        coded_refusal(error.code, error.message)
+        DdlPlanError::from_mysql_error(error)
     })?;
     check_global_indexes(info, warnings)?;
     check_table_info_valid(info)
@@ -4311,7 +4329,7 @@ fn check_global_indexes(
         }
         if !partitioned {
             return Err(coded_refusal(
-                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 "Unsupported Global Index on non-partitioned table".to_owned(),
             ));
         }
@@ -4356,7 +4374,7 @@ fn check_invisible_index_on_pk(info: &TableInfo) -> Result<(), DdlPlanError> {
         .is_some_and(|primary| primary.read().invisible)
     {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrPKIndexCantBeInvisible,
+            &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE,
             "A primary key index cannot be invisible",
         ));
     }
@@ -4367,7 +4385,7 @@ fn check_invisible_index_on_pk(info: &TableInfo) -> Result<(), DdlPlanError> {
 fn check_add_column_too_many_columns(col_num: usize) -> Result<(), DdlPlanError> {
     if col_num > table_column_count_limit() {
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrTooManyFields,
+            &tidb_util::dbterror::ERR_TOO_MANY_FIELDS,
             "Too many columns",
         ));
     }
@@ -4391,12 +4409,12 @@ fn check_visible_column_cnt(
     if info.columns.len() > visible_column_cnt {
         // There are only invisible columns.
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrTableMustHaveColumns,
+            &tidb_util::dbterror::ERR_TABLE_MUST_HAVE_COLUMNS,
             "A table must have at least 1 column",
         ));
     }
     Err(coded_refusal(
-        tidb_error::mysql::errcode::ErrCantRemoveAllFields,
+        &tidb_util::dbterror::ERR_CANT_REMOVE_ALL_FIELDS,
         "You can't delete all columns with ALTER TABLE; use DROP TABLE instead",
     ))
 }
@@ -4432,7 +4450,7 @@ fn check_operate_drop_index_use_by_foreign_key(
             .is_none()
             {
                 return Err(coded_refusal(
-                    tidb_error::mysql::errcode::ErrDropIndexNeededInForeignKey,
+                    &tidb_util::dbterror::ERR_DROP_INDEX_NEEDED_IN_FOREIGN_KEY,
                     format!(
                         "Cannot drop index '{}': needed in a foreign key constraint",
                         dropping_idx.read().name
@@ -4447,7 +4465,7 @@ fn check_operate_drop_index_use_by_foreign_key(
 /// Go `infoschema.ErrForeignKeyNotExists` (1091).
 fn foreign_key_not_exists(name: &str) -> DdlPlanError {
     coded_refusal(
-        tidb_error::mysql::errcode::ErrCantDropFieldOrKey,
+        &tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
         format!("Can't DROP '{name}'; check that column/key exists"),
     )
 }
@@ -4493,15 +4511,13 @@ fn split_name(
         // answered `1049 Unknown database ''` where TiDB answers 1046 -- and
         // on a node that defaulted its sessions into `test`, the same
         // statement had silently created the table in the wrong schema.
-        [object] if default_schema.is_empty() => Err(DdlAdmissionError::with_code(
-            tidb_error::mysql::errcode::ErrNoDB,
+        [object] if default_schema.is_empty() => Err(DdlAdmissionError::with_proto(
+            &tidb_error::plannererrors::ERR_NO_DB,
             "No database selected",
         )),
         [object] => Ok((default_schema.to_owned(), object.clone())),
         [schema, object] => Ok((schema.clone(), object.clone())),
-        _ => Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            format!(
+        _ => Err(DdlAdmissionError::plain(format!(
                 "{what} name `{}` is not a `[schema.]name` path",
                 path.join(".")
             ),
@@ -4544,8 +4560,7 @@ fn lower_create_table(
     // be persisted by a cluster DDL job. The server routes it through the
     // session executor before lowering; retain this guard for direct callers.
     if create.temporary == tidb_ast::CreateTableTemporary::Local {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        return Err(DdlAdmissionError::plain(
             "LOCAL temporary-table DDL belongs to the session catalog",
         ));
     }
@@ -4649,8 +4664,7 @@ fn lower_create_index(
         }
     }
     if columns.is_empty() {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        return Err(DdlAdmissionError::plain(
             "CREATE INDEX names no column",
         ));
     }
@@ -4900,6 +4914,16 @@ impl fmt::Display for DdlPlanError {
 }
 
 impl DdlPlanError {
+    /// A refusal carrying an already classified driver-tier failure.
+    pub fn from_mysql_error(error: tidb_executor::MysqlError) -> Self {
+        Self::Admission(DdlAdmissionError::from_mysql_error(error))
+    }
+
+    /// A refusal Go raises as a plain `errors.Errorf` (1105, no class).
+    pub(crate) fn plain_refusal(message: impl Into<String>) -> Self {
+        Self::Admission(DdlAdmissionError::plain(message))
+    }
+
     /// The existing SQL contract is owned with the error, so direct execution
     /// and persisted action checkpoints cannot select different error numbers.
     pub(crate) fn mysql_error_code(&self) -> Option<u16> {
@@ -4930,6 +4954,37 @@ impl DdlPlanError {
         })
     }
 
+    /// The Go `*terror.Error` identity this refusal is raised as, `None` for
+    /// the plain errors and the failures that are not Go errors at all.
+    #[must_use]
+    pub fn identity(&self) -> Option<tidb_error::terror::TerrorIdentity> {
+        use tidb_error::catalog::{autoid, infoschema};
+        use tidb_util::dbterror;
+        let proto: &TerrorError = match self {
+            Self::Source(error) => return Some(error.identity()),
+            Self::Admission(error) => return error.identity,
+            Self::UnknownDatabase(_) => &infoschema::ERR_DATABASE_NOT_EXISTS,
+            Self::DatabaseExists(_) => &infoschema::ERR_DATABASE_EXISTS,
+            Self::UnknownTable { .. } | Self::UnknownTables(_) => {
+                &infoschema::ERR_TABLE_DROP_EXISTS
+            }
+            Self::TableNotExists { .. } => &infoschema::ERR_TABLE_NOT_EXISTS,
+            Self::TableExists { .. } => &infoschema::ERR_TABLE_EXISTS,
+            Self::DuplicateKeyName(_) => &dbterror::ERR_DUP_KEY_NAME,
+            Self::DuplicateColumnName(_) => &infoschema::ERR_COLUMN_EXISTS,
+            Self::UnknownIndexColumn { .. } => &dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
+            Self::KeyNotExists { .. } => &infoschema::ERR_KEY_NOT_EXISTS,
+            Self::CantDropFieldOrKey(_) | Self::UnknownIndex(_) | Self::IndexDoesNotExist(_) => {
+                &dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+            }
+            Self::UnknownColumn { .. } => &infoschema::ERR_COLUMN_NOT_EXISTS,
+            Self::InvalidAutoRandom(_) => &dbterror::ERR_INVALID_AUTO_RANDOM,
+            Self::AutoIdReadFailed => &autoid::ERR_AUTOINC_READ_FAILED,
+            _ => return None,
+        };
+        Some(proto.identity())
+    }
+
     /// Durable job error. Coded legacy errors retain their numeric envelope;
     /// uncoded errors follow Go `toTError`'s DDL/CodeUnknown fallback.
     /// Source RFC identities must be carried from their producers, not guessed
@@ -4937,6 +4992,16 @@ impl DdlPlanError {
     pub fn to_job_error(&self) -> tidb_error::terror::TerrorError {
         if let Self::Source(error) = self {
             return error.clone();
+        }
+        // The Go definition the refusal was raised as: the job's `err` JSON
+        // carries its class, code and RFC identity (`{"class":8,"code":1062,
+        // "rfccode":"kv:1062"}`), exactly as Go persists a `*terror.Error`.
+        if let Some(identity) = self.identity() {
+            return tidb_error::terror::TerrorError::synthesize(
+                identity.class(),
+                identity.code(),
+                self.to_string(),
+            );
         }
         match self.mysql_error_code() {
             Some(code) => tidb_error::terror::TerrorError::compatible(
@@ -4978,6 +5043,7 @@ pub fn ddl_job_error_to_sql_error(
         code,
         state: tidb_error::mysql::mysql_state(code),
         message: error.message().to_owned(),
+        identity: Some(error.identity()),
     }
 }
 
@@ -5114,8 +5180,8 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                     })
                 })
             {
-                return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+                return Err(DdlPlanError::Admission(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
                     format!("Duplicate check constraint name '{}'.", constraint.name),
                 )));
             }
@@ -5147,8 +5213,8 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .iter_deref()
                 .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                    DdlPlanError::Admission(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND,
                         format!("Constraint '{name}' does not exist."),
                     ))
                 })?;
@@ -5178,8 +5244,8 @@ pub fn prepare_check_constraint_job_submission<S: MetaSnapshot>(
                 .iter_deref()
                 .find(|constraint| constraint.read().name.lowercase() == name.go_to_lower())
                 .ok_or_else(|| {
-                    DdlPlanError::Admission(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrConstraintNotFound,
+                    DdlPlanError::Admission(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_CONSTRAINT_NOT_FOUND,
                         format!("Constraint '{name}' does not exist."),
                     ))
                 })?;
@@ -6601,7 +6667,7 @@ fn plan_persisted_drop_schema_job_step<S: MetaSnapshot>(
                     return Err(cancel_ddl_job(
                         active,
                         coded_refusal(
-                            tidb_error::tidb::errcode::ErrForeignKeyCannotDropParent,
+                            &tidb_util::dbterror::ERR_FOREIGN_KEY_CANNOT_DROP_PARENT,
                             format!(
                                 "Cannot drop table '{table_name}' referenced by a foreign key constraint '{}' on table '{}'.",
                                 referred.child_fk_name.original(),
@@ -6804,7 +6870,7 @@ fn plan_persisted_drop_table_job_step<S: MetaSnapshot>(
             return Err(cancel_ddl_job(
                 active,
                 coded_refusal(
-                    tidb_error::tidb::errcode::ErrTruncateIllegalForeignKey,
+                    &tidb_util::dbterror::ERR_TRUNCATE_ILLEGAL_FOREIGN_KEY,
                     format!(
                         "Cannot truncate a table referenced in a foreign key constraint (`{}`.`{}` CONSTRAINT `{}`)",
                         referred.child_schema.original(),
@@ -6963,8 +7029,7 @@ fn resource_group_proto(
         group.settings.as_deref(),
     )
     .map_err(|error| {
-        DdlPlanError::Admission(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        DdlPlanError::Admission(DdlAdmissionError::plain(
             error.to_string(),
         ))
     })
@@ -6991,7 +7056,7 @@ fn stored_resource_group(
         .find(|group| group.id == group_id)
         .ok_or_else(|| {
             coded_refusal(
-                tidb_error::tidb::errcode::ErrResourceGroupNotExists,
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS,
                 format!("Unknown resource group '(Group ID {group_id})'"),
             )
         })
@@ -7004,9 +7069,7 @@ const CREATE_TABLE_AFFINITY_ERROR: &str = "failed to create table affinity group
 /// cannot build, or a label-rule read -- as Go's `errors.Errorf` /
 /// `errors.Wrapf`, wrapped by its caller when it wraps one.
 fn pd_step_error(context: Option<&str>, error: String) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::with_code(
-        GENERIC_ERROR_CODE,
-        match context {
+    DdlPlanError::Admission(DdlAdmissionError::plain(match context {
             Some(context) => format!("{context}: {error}"),
             None => error,
         },
@@ -8009,8 +8072,8 @@ fn stored_partition_spec(
     use tidb_executor::ddl::StoredPartitionDefinition;
 
     let partition = stored.partition.as_ref().ok_or_else(|| {
-        DdlPlanError::Admission(DdlAdmissionError::with_code(
-            1505,
+        DdlPlanError::Admission(DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED,
             "Partition management on a not partitioned table is not possible".to_owned(),
         ))
     })?;
@@ -8073,7 +8136,7 @@ fn stored_partition_spec(
     )
     .map_err(|error| {
         let error = error.to_mysql_error();
-        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
     })
 }
 
@@ -8149,12 +8212,12 @@ fn apply_partition_change(
         .register_kv_in(schema, table, kv_table)
         .map_err(|error| {
             let error = error.to_mysql_error();
-            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
         })?;
     tidb_executor::ddl::run_alter_table_in(sql, &mut catalog, schema, context).map_err(
         |error| {
             let error = error.to_mysql_error();
-            DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+            DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
         },
     )?;
     let Some(TableEntry::Kv(table)) = catalog.table_in(schema, table) else {
@@ -8189,8 +8252,8 @@ fn metadata_kv_table(
     })
 }
 
-fn exchange_refusal(code: u16, message: impl Into<String>) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::with_code(code, message.into()))
+fn exchange_refusal(proto: &'static TerrorError, message: impl Into<String>) -> DdlPlanError {
+    DdlPlanError::Admission(DdlAdmissionError::with_proto(proto, message.into()))
 }
 
 /// Pinned Go `checkFieldTypeCompatible`.
@@ -8230,17 +8293,20 @@ fn check_exchange_tables(
     standalone: &TableInfo,
 ) -> Result<(), DdlPlanError> {
     if standalone.is_view() || standalone.is_sequence() {
-        return Err(exchange_refusal(1177, "Can't open table"));
+        return Err(exchange_refusal(
+            &tidb_util::dbterror::ERR_CHECK_NO_SUCH_TABLE,
+            "Can't open table",
+        ));
     }
     if partitioned.partition.is_none() {
         return Err(exchange_refusal(
-            1505,
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED,
             "Partition management on a not partitioned table is not possible",
         ));
     }
     if standalone.partition.is_some() {
         return Err(exchange_refusal(
-            1732,
+            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_PART_TABLE,
             format!(
                 "Table to exchange with partition is partitioned: '{}'",
                 standalone.name
@@ -8249,13 +8315,13 @@ fn check_exchange_tables(
     }
     if standalone.affinity.is_some() || partitioned.affinity.is_some() {
         return Err(exchange_refusal(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "Unsupported EXCHANGE PARTITION of a table with AFFINITY option",
         ));
     }
     if !standalone.foreign_keys.is_empty() {
         return Err(exchange_refusal(
-            1740,
+            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_FOREIGN_KEY,
             format!(
                 "Table to exchange with partition has foreign key references: '{}'",
                 standalone.name
@@ -8264,14 +8330,17 @@ fn check_exchange_tables(
     }
     if standalone.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(exchange_refusal(
-            1733,
+            &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_TEMP_TABLE,
             format!(
                 "Table to exchange with partition is temporary: '{}'",
                 standalone.name
             ),
         ));
     }
-    let different_metadata = || exchange_refusal(1736, "Tables have different definitions");
+    let different_metadata = || exchange_refusal(
+        &tidb_util::dbterror::ERR_TABLES_DIFFERENT_METADATA,
+        "Tables have different definitions",
+    );
     if partitioned.auto_random_bits != standalone.auto_random_bits
         || partitioned.auto_random_range_bits != standalone.auto_random_range_bits
         || partitioned.charset != standalone.charset
@@ -8294,7 +8363,7 @@ fn check_exchange_tables(
         let target = target.read();
         if source.is_virtual_generated() != target.is_virtual_generated() {
             return Err(exchange_refusal(
-                3106,
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 "'Exchanging partitions for non-generated columns' is not supported for generated columns.",
             ));
         }
@@ -8309,7 +8378,7 @@ fn check_exchange_tables(
         }
         if source.id != target.id {
             return Err(exchange_refusal(
-                1731,
+                &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
                 format!(
                     "Non matching attribute 'column: {}' between partition and table",
                     source.name
@@ -8324,7 +8393,7 @@ fn check_exchange_tables(
         let source = source.read();
         if source.global {
             return Err(exchange_refusal(
-                1731,
+                &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
                 format!(
                     "Non matching attribute 'global index: {}' between partition and table",
                     source.name
@@ -8359,7 +8428,7 @@ fn check_exchange_tables(
         }
         if source.id != target.id {
             return Err(exchange_refusal(
-                1731,
+                &tidb_util::dbterror::ERR_PARTITION_EXCHANGE_DIFFERENT_OPTION,
                 format!(
                     "Non matching attribute 'index: {}' between partition and table",
                     source.name
@@ -8532,7 +8601,7 @@ fn build_create_table_info<S: MetaSnapshot>(
             .is_empty()
     {
         let error = tidb_executor::DriverError::TtlReferencedByForeignKey.to_mysql_error();
-        return Err(coded_refusal(error.code, error.message));
+        return Err(DdlPlanError::from_mysql_error(error));
     }
     // Go `CreateTable`: the built table's `checkTableForeignKeysValid`
     // (executor.go:1106) comes before `createTableWithInfoJob`'s existence
@@ -8636,8 +8705,7 @@ fn apply_create_table<S: MetaSnapshot>(
         let policies = load_policies(snapshot)?;
         *placement_bundles =
             tidb_placement::new_full_table_bundles(&policies, info).map_err(|error| {
-                DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                DdlPlanError::Admission(DdlAdmissionError::plain(
                     format!("building placement rules: {error}"),
                 ))
             })?;
@@ -8760,8 +8828,7 @@ fn apply_truncate_table<S: MetaSnapshot>(
         let policies = load_policies(snapshot)?;
         *placement_bundles =
             tidb_placement::new_full_table_bundles(&policies, &info).map_err(|error| {
-                DdlPlanError::Admission(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
+                DdlPlanError::Admission(DdlAdmissionError::plain(
                     format!("building placement rules: {error}"),
                 ))
             })?;
@@ -8855,7 +8922,7 @@ fn check_modify_charset_and_collation(
         .is_ok_and(|info| info.charset_name.eq_ignore_ascii_case(to_charset));
     if !valid {
         return Err(unsupported_charset_change(
-            1115,
+            &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
             format!("Unknown character set: '{to_charset}', collation: '{to_collate}'"),
         ));
     }
@@ -8864,7 +8931,7 @@ fn check_modify_charset_and_collation(
         && !compatible_collate(from_collate, to_collate)
     {
         return Err(unsupported_charset_change(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             // go `errors.Trace(ErrUnsupportedModifyCollation.GenWithStackByArgs(
             // column, fromCollate, toCollate))`: the message names the
             // COLUMN, then from/to, and the index qualifier.
@@ -8881,22 +8948,22 @@ fn check_modify_charset_and_collation(
     }
     if to_charset != from_charset {
         return Err(unsupported_charset_change(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             format!("Unsupported modify charset from {from_charset} to {to_charset}"),
         ));
     }
     if to_collate != from_collate {
         return Err(unsupported_charset_change(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             format!("Unsupported modify charset from {from_charset} to {to_charset}"),
         ));
     }
     Ok(())
 }
 
-fn unsupported_charset_change(code: u16, reason: String) -> DdlPlanError {
-    DdlPlanError::Admission(crate::table_info_build::DdlAdmissionError::with_code(
-        code, reason,
+fn unsupported_charset_change(proto: &'static TerrorError, reason: String) -> DdlPlanError {
+    DdlPlanError::Admission(crate::table_info_build::DdlAdmissionError::with_proto(
+        proto, reason,
     ))
 }
 
@@ -8910,7 +8977,7 @@ fn check_varchar_field_length(flen: i64, name: &str, to_charset: &str) -> Result
     let max = MAX_FIELD_VARCHAR_LENGTH / info.maxlen as i64;
     if flen != tidb_datatype::UNSPECIFIED_LENGTH && flen > max {
         return Err(unsupported_charset_change(
-            1074,
+            &tidb_error::catalog::types::ERR_TOO_BIG_FIELD_LENGTH,
             format!(
                 "Column length too big for column '{name}' (max = {max}); \
                  use BLOB or TEXT instead"
@@ -8936,7 +9003,7 @@ fn is_column_with_index(name: &str, table: &TableInfo) -> bool {
 /// A lock job's refusal as the planner reports it.
 fn lock_plan_error(error: tidb_executor::DriverError) -> DdlPlanError {
     let error = error.to_mysql_error();
-    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+    DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
 }
 
 fn stored_table_by_ids(
@@ -9045,7 +9112,7 @@ fn refuse_non_base_table(
 ) -> Result<(), DdlPlanError> {
     if stored.is_view() || stored.is_sequence() {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrWrongObject,
+            &tidb_util::dbterror::ERR_WRONG_OBJECT,
             format!("'{schema}.{table}' is not BASE TABLE"),
         ));
     }
@@ -9119,7 +9186,7 @@ fn create_foreign_key(
     // A temporary table takes no foreign key.
     if stored.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrCannotAddForeign,
+            &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
             "Cannot add foreign key constraint",
         ));
     }
@@ -9135,7 +9202,7 @@ fn create_foreign_key(
         .any(|fk| fk.read().name.lowercase() == name.go_to_lower())
     {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrFkDupName,
+            &tidb_util::dbterror::ERR_FK_DUP_NAME,
             format!("Duplicate foreign key constraint name '{name}'"),
         ));
     }
@@ -9218,7 +9285,7 @@ fn plan_added_index(
     use tidb_executor::ddl::{IndexedTableColumn, ResolvedKeyPart};
     let admission = |error: tidb_executor::DriverError| {
         let error = error.to_mysql_error();
-        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
     };
     tidb_executor::ddl::check_too_long_identifier(name).map_err(admission)?;
     // Go `onCreateIndex`'s `checkTooManyIndexes`, counting the new index.
@@ -9368,9 +9435,7 @@ fn plan_added_index(
                     .iter()
                     .position(|column| column.name.original().go_lower_eq(dependency))
                 else {
-                    return Err(DdlPlanError::Admission(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        format!(
+                    return Err(DdlPlanError::Admission(DdlAdmissionError::plain(format!(
                             "the partition expression of `{}` reads column `{dependency}`, \
                              which the table does not define",
                             info.name.original()
@@ -9775,6 +9840,6 @@ fn check_cluster_drop_object(
     )
     .map_err(|error| {
         let error = error.to_mysql_error();
-        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
     })
 }

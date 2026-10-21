@@ -140,7 +140,7 @@ pub(crate) fn handle_bad_null_in_load_data(
     );
     if level == NullLevel::Error {
         return Err(DriverError::DdlCoded {
-            errno: 1263,
+            proto: &tidb_error::catalog::table::ERR_WARN_NULL_TO_NOTNULL,
             message,
         });
     }

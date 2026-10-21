@@ -31,7 +31,7 @@ const PARTITION_COUNT_LIMIT: usize = 8192;
 /// Go `ErrGeneralUnsupportedDDL` ("Unsupported %s").
 fn unsupported(message: impl std::fmt::Display) -> DriverError {
     DriverError::DdlCoded {
-        errno: 8200,
+        proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         message: format!("Unsupported {message}"),
     }
 }

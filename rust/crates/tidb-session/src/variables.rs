@@ -764,8 +764,8 @@ impl Session {
                 .eq_ignore_ascii_case("tx_isolation_one_shot")
             && self.in_transaction()
         {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                tidb_error::mysql::errcode::ErrCantChangeTxCharacteristics,
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+                &tidb_util::dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS,
                 "Transaction characteristics can't be changed while a transaction is in progress",
             )));
         }
@@ -875,8 +875,8 @@ impl Session {
 
     fn check_snapshot_change_in_transaction(&self, one_shot: bool) -> Result<(), DriverError> {
         if self.historical_read_ts().is_some() || (one_shot && self.in_transaction()) {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                tidb_error::mysql::errcode::ErrCantChangeTxCharacteristics,
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+                &tidb_util::dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS,
                 "Transaction characteristics can't be changed while a transaction is in progress",
             )));
         }

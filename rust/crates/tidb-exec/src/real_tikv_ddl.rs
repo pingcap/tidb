@@ -1525,8 +1525,9 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
             backfiller
                 .has_null_value(table, column_id, Arc::clone(&null_snapshot), &null_buffer)
                 .map_err(|error| {
-                    DdlPlanError::Admission(crate::table_info_build::DdlAdmissionError::with_code(
+                    DdlPlanError::from_mysql_error(tidb_executor::MysqlError::from_parts(
                         error.code,
+                        error.state,
                         error.message,
                     ))
                 })
@@ -2170,7 +2171,7 @@ mod tests {
     #[test]
     fn committed_action_retry_matches_go_classification_and_budget() {
         let coded = |code, message: &str| {
-            DdlPlanError::Admission(DdlAdmissionError::with_code(code, message))
+            DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(code, message))
         };
         for &code in tidb_util::dbterror::REORG_RETRYABLE_ERR_CODES.iter() {
             let error = coded(code, "temporary source error");

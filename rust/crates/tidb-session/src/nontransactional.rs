@@ -852,7 +852,11 @@ impl Session {
         let mut errors = String::new();
         for job in &failed {
             let error = job.err.as_ref().expect("a failed job has an error");
-            errors.push_str(&format!("{}, {error};\n", job.describe(&redact)));
+            errors.push_str(&format!(
+                "{}, {};\n",
+                job.describe(&redact),
+                error.error_string()
+            ));
         }
         let shown = &errors[..floor_char_boundary(&errors, 500.min(errors.len() - 1))];
         Err(plain_error(format!(
@@ -983,13 +987,14 @@ fn non_transactional_job_failure(run: &JobRun, index: usize) -> Option<DriverErr
         return None;
     }
     Some(DriverError::DdlCoded {
-        errno: ERR_NON_TRANSACTIONAL_JOB_FAILURE,
+        proto: &tidb_error::catalog::session::ERR_NON_TRANSACTIONAL_JOB_FAILURE,
         message: format!(
-            "non-transactional job failed, job id: {}, total jobs: {total}. job range: [{}, {}], job sql: {}, err: {error}",
+            "non-transactional job failed, job id: {}, total jobs: {total}. job range: [{}, {}], job sql: {}, err: {}",
             job.job_id,
             go_datum_string(&job.start),
             go_datum_string(&job.end),
             job.describe(&run.redact),
+            error.error_string(),
         ),
     })
 }

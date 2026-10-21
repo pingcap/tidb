@@ -1959,10 +1959,7 @@ pub(crate) fn attributes_rows(
     let rules =
         catalog
             .get_all_label_rules()
-            .map_err(|error| tidb_executor::DriverError::DdlCoded {
-                errno: 1105,
-                message: format!("get the label rules failed: {error}"),
-            })?;
+            .map_err(|error| tidb_executor::DriverError::unsupported(format!("get the label rules failed: {error}")))?;
     let mut rows = Vec::with_capacity(rules.len());
     for rule in rules {
         let Ok((db_name, table_name, partition_name)) = check_label_rule(&rule) else {

@@ -696,7 +696,7 @@ pub(crate) fn prepared_parameters(
 
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.to_mysql_error();
-    SqlQueryError::new(mapped.code, mapped.state, mapped.message)
+    SqlQueryError::new(mapped.code, mapped.state, mapped.message).with_identity(mapped.identity)
 }
 
 /// Converts a `(name, FieldType)` output schema with no plan names to

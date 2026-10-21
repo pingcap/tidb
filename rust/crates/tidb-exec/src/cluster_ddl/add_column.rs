@@ -194,7 +194,7 @@ fn check_unsupported_charset_for_tiflash(
         return Ok(());
     }
     Err(coded_refusal(
-        8200,
+        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         format!(
             "unsupported add column '{}' when altering '{}' with TiFlash replicas and {} encoding",
             column.name.original(),

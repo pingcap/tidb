@@ -231,9 +231,9 @@ impl DistSqlRecordSet {
 
 fn map_source_error(error: ResponseChannelError) -> DistSqlRecordSetError {
     match error {
-        ResponseChannelError::SelectResponse { code, message } => {
-            DistSqlRecordSetError::Sql(tidb_executor::MysqlError::new(code as u16, message))
-        }
+        ResponseChannelError::SelectResponse { code, message } => DistSqlRecordSetError::Sql(
+            tidb_executor::MysqlError::from_select_response(code as u16, message),
+        ),
         other => DistSqlRecordSetError::Source(other.to_string()),
     }
 }

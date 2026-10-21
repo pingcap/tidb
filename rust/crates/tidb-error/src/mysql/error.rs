@@ -369,6 +369,15 @@ pub struct SqlError {
     pub message: String,
     /// Five-byte SQLSTATE string.
     pub state: &'static str,
+    /// The Go `*terror.Error` this wire view was derived from, `None` for a
+    /// plain `mysql.NewErr` error and for failures Go raises unclassified.
+    ///
+    /// Go's `terror.ToSQLError` drops the class, which is right for the wire
+    /// but loses what `Error()` prints (`[<class>:<code>]<message>`) --
+    /// `@@tidb_last_query_info`, persisted job errors and every embedded
+    /// `err.Error()` read it. Rust passes this view between layers where Go
+    /// passes the `error` value, so the view keeps the identity.
+    pub identity: Option<crate::terror::TerrorIdentity>,
 }
 
 impl SqlError {
@@ -382,6 +391,7 @@ impl SqlError {
             code,
             message,
             state: mysql_state(code),
+            identity: None,
         }
     }
 
@@ -391,6 +401,7 @@ impl SqlError {
             code,
             message: format_template(format, redact_arg_pos, args),
             state: mysql_state(code),
+            identity: None,
         }
     }
 }

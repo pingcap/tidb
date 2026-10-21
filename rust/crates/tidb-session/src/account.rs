@@ -2360,5 +2360,5 @@ pub(crate) fn max_user_connections_option(
 /// column's `Invalid JSON text` (3140).
 pub(crate) fn invalid_user_attribute_json() -> DriverError {
     let error = tidb_expr::JsonError::InvalidText;
-    DriverError::Mysql(tidb_executor::MysqlError::new(error.code(), error.message()))
+    DriverError::Mysql(tidb_executor::MysqlError::terror(error.proto(), error.message()))
 }

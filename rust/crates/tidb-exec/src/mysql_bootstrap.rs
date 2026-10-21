@@ -592,20 +592,17 @@ fn build_bootstrap_table(
         error,
     };
     let parsed = tidb_parser::parse(table.create_sql).map_err(|error| {
-        admission(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        admission(DdlAdmissionError::plain(
             format!("its CREATE TABLE does not parse: {error:?}"),
         ))
     })?;
     let Stmt::Ddl(ddl) = &parsed else {
-        return Err(admission(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        return Err(admission(DdlAdmissionError::plain(
             "its statement is not a DDL",
         )));
     };
     let DdlStmt::CreateTable(create) = ddl.as_ref() else {
-        return Err(admission(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        return Err(admission(DdlAdmissionError::plain(
             "its statement is not a CREATE TABLE",
         )));
     };

@@ -31,11 +31,14 @@ type Refusal<T> = Result<T, DdlAdmissionError>;
 
 fn refusal(error: DriverError) -> DdlAdmissionError {
     let error = error.to_mysql_error();
-    DdlAdmissionError::with_code(error.code, error.message)
+    DdlAdmissionError::from_mysql_error(error)
 }
 
-fn coded(code: u16, message: impl Into<String>) -> DdlAdmissionError {
-    DdlAdmissionError::with_code(code, message.into())
+fn coded(
+    proto: &'static tidb_error::terror::TerrorError,
+    message: impl Into<String>,
+) -> DdlAdmissionError {
+    DdlAdmissionError::with_proto(proto, message.into())
 }
 
 /// Go `ast.ReferOptionType` ordinal.
@@ -65,7 +68,7 @@ fn part_column(part: &IndexPart) -> Refusal<String> {
     match part {
         IndexPart::Column { name, .. } => Ok(name.clone()),
         IndexPart::Expr { .. } => Err(coded(
-            tidb_error::tidb::errcode::ErrCannotAddForeign,
+            &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
             "Cannot add foreign key constraint",
         )),
     }
@@ -79,7 +82,7 @@ fn check_too_long(identifier: &str) -> Refusal<()> {
 }
 fn cannot_add() -> DdlAdmissionError {
     coded(
-        tidb_error::tidb::errcode::ErrCannotAddForeign,
+        &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
         "Cannot add foreign key constraint",
     )
 }
@@ -126,7 +129,7 @@ pub(crate) fn build_fk_info(
         // and fails to find it among the table's columns (1072).
         if matches!(key, IndexPart::Expr { .. }) {
             return Err(coded(
-                tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                 format!("Key column '_V$_{fk_name}_{position}' doesn't exist in table"),
             ));
         }
@@ -202,7 +205,7 @@ pub fn build_fk_infos(create: &CreateTableStmt, schema: &str, table: &mut TableI
         let fk_name = match definition.name.as_deref() {
             Some("") => {
                 return Err(coded(
-                    tidb_error::tidb::errcode::ErrWrongNameForIndex,
+                    &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX,
                     "Incorrect index name ''",
                 ))
             }
@@ -248,7 +251,7 @@ fn add_index_for_foreign_key(table: &mut TableInfo) -> Refusal<()> {
         }
         if table.find_index_by_name(fk.name.lowercase()).is_some() {
             return Err(coded(
-                tidb_error::tidb::errcode::ErrDupKeyName,
+                &tidb_util::dbterror::ERR_DUP_KEY_NAME,
                 format!("duplicate key name {}", fk.name.original()),
             ));
         }
@@ -374,7 +377,7 @@ pub(crate) fn check_foreign_key_valid(
             None if !fk_check => return Ok(()),
             None if in_owner => {
                 return Err(coded(
-                    tidb_error::tidb::errcode::ErrNoSuchTable,
+                    &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS,
                     format!(
                         "Table '{}.{}' doesn't exist",
                         fk.ref_schema.original(),
@@ -578,7 +581,7 @@ pub(crate) fn check_index_needed_in_foreign_key(
             return Ok(());
         }
         Err(coded(
-            tidb_error::mysql::errcode::ErrDropIndexNeededInForeignKey,
+            &tidb_util::dbterror::ERR_DROP_INDEX_NEEDED_IN_FOREIGN_KEY,
             format!(
                 "Cannot drop index '{}': needed in a foreign key constraint",
                 idx_info.name
@@ -615,7 +618,7 @@ pub(crate) fn check_drop_column_with_foreign_key_constraint(
             .any(|col| col.lowercase() == col_name)
         {
             return Err(coded(
-                tidb_error::tidb::errcode::ErrFkColumnCannotDrop,
+                &tidb_util::dbterror::ERR_FK_COLUMN_CANNOT_DROP,
                 format!(
                     "Cannot drop column '{col_name}': needed in a foreign key constraint '{}'",
                     fk.name
@@ -630,7 +633,7 @@ pub(crate) fn check_drop_column_with_foreign_key_constraint(
             .any(|col| col.lowercase() == col_name)
         {
             return Err(coded(
-                tidb_error::tidb::errcode::ErrFkColumnCannotDropChild,
+                &tidb_util::dbterror::ERR_FK_COLUMN_CANNOT_DROP_CHILD,
                 format!(
                     "Cannot drop column '{col_name}': needed in a foreign key constraint '{}' \
                      of table '{}'",

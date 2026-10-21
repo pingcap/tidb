@@ -60,7 +60,12 @@ impl Parser {
             // resolve is `ErrUnknownCharacterSet` (`[parser:1115]`) naming
             // the token, not a positional syntax error.
             let charset = canonical_charset(&raw)
-                .ok_or_else(|| self.err_coded(1115, &format!("Unknown character set: '{raw}'")))?
+                .ok_or_else(|| {
+                    self.err_coded(
+                        &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                        &format!("Unknown character set: '{raw}'"),
+                    )
+                })?
                 .to_string();
             self.expect_op(")")?;
             return Ok(Expr::ConvertUsing {
@@ -269,14 +274,12 @@ impl Parser {
         }
         self.expect_op(")")?;
         if m > 53 {
-            // Go `FLOAT FloatOpt` (parser.y:10078): `ErrTooBigPrecision`
-            // is `terror.ClassExpression.NewStd(mysql.ErrTooBigPrecision)`
-            // — `[expression:1426]`, the name argument `CAST`.
+            // Go `expr_cast_parser.go:362`: `ErrTooBigPrecision` of package
+            // `parser` is `terror.ClassParser.NewStd(mysql.ErrTooBigPrecision)`
+            // -- `[parser:1426]`, the name argument `CAST`.
             return Err(self.err_coded(
-                1426,
-                &format!(
-                    "[expression:1426]Too-big precision {m} specified for 'CAST'. Maximum is 53."
-                ),
+                &tidb_error::catalog::parser::ERR_TOO_BIG_PRECISION,
+                &format!("Too-big precision {m} specified for 'CAST'. Maximum is 53."),
             ));
         }
         Ok(if m > 24 {

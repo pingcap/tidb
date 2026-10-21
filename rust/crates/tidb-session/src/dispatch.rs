@@ -764,7 +764,7 @@ impl Session {
                     // mysql` and its IF EXISTS form report ErrForbiddenDDL.
                     if name.go_lower_eq("mysql") {
                         return Err(DriverError::DdlCoded {
-                            errno: tidb_error::tidb::errcode::ErrForbiddenDDL,
+                            proto: &tidb_util::dbterror::ERR_FORBIDDEN_DDL,
                             message: "Drop 'mysql' database is forbidden".to_owned(),
                         });
                     }
@@ -809,7 +809,7 @@ impl Session {
                     // database reports elsewhere.
                     if !dropped && !*if_exists {
                         return Err(DriverError::DdlCoded {
-                            errno: 1008,
+                            proto: &tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS,
                             message: format!(
                                 "Can't drop database '{name}'; database doesn't exist"
                             ),
@@ -1289,10 +1289,7 @@ impl Session {
                         ctx.append_warning_parts(1105, warning);
                     }
                     let pd_servers = pd_servers
-                        .map_err(|message| DriverError::DdlCoded {
-                            errno: 1105,
-                            message,
-                        })?
+                        .map_err(|message| DriverError::unsupported(message))?
                         .into_iter()
                         .map(|server| server.status_address)
                         .collect::<Vec<_>>();
@@ -2991,8 +2988,8 @@ impl Session {
         // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
         if scan.names_commit_ts {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                1815,
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+                &tidb_error::plannererrors::ERR_INTERNAL,
                 format!(
                     "Usage of column name '{}' is not supported for now",
                     tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME
@@ -3000,8 +2997,8 @@ impl Session {
             )));
         }
         if let Some(function) = &scan.qualified_function {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                1305,
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+                &tidb_error::catalog::expression::ERR_FUNCTION_NOT_EXISTS,
                 format!("FUNCTION {function} does not exist"),
             )));
         }
@@ -3104,7 +3101,7 @@ impl Session {
                             self.record_statement_retry();
                             self.execute_parsed_statement_inner(sql, stmt, prepared, None, None)
                         }
-                        (Err(error), _) => Err(DriverError::Mysql(tidb_executor::MysqlError::new(
+                        (Err(error), _) => Err(DriverError::Mysql(tidb_executor::MysqlError::sql_error(
                             error.code,
                             error.message,
                         ))),
@@ -3337,7 +3334,9 @@ impl Session {
         // `SET_VAR`, so install that direct-AST overlay before the early
         // dispatch builds the target plan. The ordinary query/DML path below
         // applies its own hints after its early control-statement doors.
-        if matches!(&stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Explain(_)))
+        if matches!(&stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Explain(
+            _,
+        )))
         {
             self.apply_set_var_hints(&stmt)?;
         }
@@ -3834,7 +3833,7 @@ impl Session {
                         // `executor/executor.go`'s `Unsupported type
                         // *ast.CallStmt` (8108), not a generic 1105.
                         Err(DriverError::DdlCoded {
-                            errno: 8108,
+                            proto: &tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE,
                             message: "Unsupported type *ast.CallStmt".to_owned(),
                         })
                     }
@@ -4437,7 +4436,9 @@ impl Session {
                 ));
             }
             let read_only_checked = matches!(&stmt, Stmt::Dml(_) | Stmt::Query(_))
-                || matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::Trace(_)));
+                || matches!(&stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(
+                    _,
+                ) | tidb_ast::AdminStmt::Trace(_)));
             if read_only_checked && !stmt.is_read_only(true) {
                 return Err(DriverError::unsupported(
                     "only support read-only statement during read-only staleness transactions",
@@ -4445,7 +4446,9 @@ impl Session {
             }
         }
         let checked = matches!(stmt, Stmt::Dml(_) | Stmt::Ddl(_) | Stmt::Query(_))
-            || matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(_) | tidb_ast::AdminStmt::Trace(_)));
+            || matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Explain(
+                _,
+            ) | tidb_ast::AdminStmt::Trace(_)));
         if self.vars.snapshot_ts() != 0 && checked && !stmt.is_read_only(true) {
             return Err(DriverError::unsupported(
                 "can not execute write statement when 'tidb_snapshot' is set",

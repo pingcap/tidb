@@ -14,6 +14,8 @@
 
 use std::borrow::Cow;
 
+use tidb_error::terror::TerrorError;
+
 use super::{SchemaErrorKind, TxnErrorKind, VarErrorKind};
 use crate::executor::ExecError;
 
@@ -24,20 +26,20 @@ pub enum DriverError {
     Mysql(super::MysqlError),
     /// The SQL failed to parse.
     Parse(String),
-    /// A grammar-action refusal that carries its own errno, the way Go's
+    /// A grammar-action refusal that carries its own Go error, the way Go's
     /// parser raises `ast.ErrNoParts` as `[ddl:1504]` rather than yacc's
     /// 1064.
     ParseCoded {
-        /// The classed errno the grammar action names.
-        errno: u16,
+        /// The Go definition the grammar action raises (class and code).
+        proto: &'static TerrorError,
         /// Go's message, verbatim.
         message: String,
     },
-    /// A DDL validation error whose Go error number and text were produced by
-    /// a shared metadata builder.
+    /// A DDL validation error whose Go error and text were produced by a
+    /// shared metadata builder.
     DdlCoded {
-        /// MySQL/TiDB error number.
-        errno: u16,
+        /// The Go definition the validation raises (class and code).
+        proto: &'static TerrorError,
         /// Client-visible message.
         message: String,
     },
@@ -1473,5 +1475,14 @@ impl DriverError {
     #[must_use]
     pub fn unsupported(reason: impl Into<Cow<'static, str>>) -> Self {
         DriverError::Unsupported(reason.into())
+    }
+
+    /// Go `err.Error()` for this failure: `[<class>:<code>]<message>` for a
+    /// `*terror.Error`, the bare message for a plain error. What
+    /// `@@tidb_last_query_info`, the logs and every embedded `err.Error()`
+    /// print; [`Self::to_mysql_error`]'s message alone is the wire text.
+    #[must_use]
+    pub fn error_string(&self) -> String {
+        self.clone().to_mysql_error().error_string()
     }
 }

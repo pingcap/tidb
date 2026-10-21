@@ -464,11 +464,14 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::Schema(SchemaErrorKind::UnknownTable(table.clone()))
         }
         tidb_planner::plan_base::PlanErrorKind::BadTable(table) => {
-            DriverError::Mysql(MysqlError::new(1051, format!("Unknown table '{table}'")))
+            DriverError::Mysql(MysqlError::terror(
+                &tidb_error::plannererrors::ERR_BAD_TABLE,
+                format!("Unknown table '{table}'"),
+            ))
         }
         tidb_planner::plan_base::PlanErrorKind::UnknownTableInClause(table, clause) => {
-            DriverError::Mysql(MysqlError::new(
-                1109,
+            DriverError::Mysql(MysqlError::terror(
+                &tidb_error::plannererrors::ERR_UNKNOWN_TABLE,
                 format!("Unknown table '{table}' in {clause}"),
             ))
         }
@@ -482,8 +485,8 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::PartitionClauseOnNonpartitioned
         }
         tidb_planner::plan_base::PlanErrorKind::InvalidTableSample(_) => {
-            DriverError::Mysql(crate::MysqlError::new(
-                tidb_error::tidb::errcode::ErrInvalidTableSample,
+            DriverError::Mysql(crate::MysqlError::terror(
+                &tidb_error::catalog::expression::ERR_INVALID_TABLE_SAMPLE,
                 error.message(),
             ))
         }
@@ -497,13 +500,22 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::unsupported(error.to_string())
         }
         tidb_planner::plan_base::PlanErrorKind::NonUniqTable(alias) => DriverError::Mysql(
-            MysqlError::new(1066, format!("Not unique table/alias: '{alias}'")),
+            MysqlError::terror(
+                &tidb_error::plannererrors::ERR_NON_UNIQ_TABLE,
+                format!("Not unique table/alias: '{alias}'"),
+            ),
         ),
         tidb_planner::plan_base::PlanErrorKind::UnsupportedType { message } => {
-            DriverError::Mysql(MysqlError::new(8108, message.clone()))
+            DriverError::Mysql(MysqlError::terror(
+                &tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE,
+                message.clone(),
+            ))
         }
         tidb_planner::plan_base::PlanErrorKind::InternalCoded { message } => {
-            DriverError::Mysql(MysqlError::new(1815, format!("Internal : {message}")))
+            DriverError::Mysql(MysqlError::terror(
+                &tidb_error::plannererrors::ERR_INTERNAL,
+                format!("Internal : {message}"),
+            ))
         }
         tidb_planner::plan_base::PlanErrorKind::UnknownColumnInClause { column, clause } => {
             DriverError::UnknownColumnInClause {
@@ -525,13 +537,16 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::ViewSelectVariable
         }
         tidb_planner::plan_base::PlanErrorKind::ViewNoExplain => {
-            DriverError::Mysql(crate::MysqlError::new(1345, error.message()))
+            DriverError::Mysql(crate::MysqlError::terror(
+                &tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN,
+                error.message(),
+            ))
         }
         tidb_planner::plan_base::PlanErrorKind::ViewSelectTemporaryTable(table) => {
             DriverError::ViewSelectTemporaryTable(table.clone())
         }
         tidb_planner::plan_base::PlanErrorKind::ViewRecursive => DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrViewRecursive,
+            proto: &tidb_error::plannererrors::ERR_VIEW_RECURSIVE,
             message: error.message().to_owned(),
         },
         tidb_planner::plan_base::PlanErrorKind::InvalidLateralJoin(reason) => {
@@ -567,7 +582,16 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                     _ => unreachable!("unsupported frame error code"),
                 }
             } else {
-                DriverError::Mysql(crate::MysqlError::new(*code, error.to_string()))
+                let proto = match code {
+                    3584 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_START_ILLEGAL,
+                    3585 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_END_ILLEGAL,
+                    3586 => &tidb_error::plannererrors::ERR_WINDOW_FRAME_ILLEGAL,
+                    3587 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_ORDER_TYPE,
+                    3588 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_TEMPORAL_TYPE,
+                    3589 => &tidb_error::plannererrors::ERR_WINDOW_RANGE_FRAME_NUMERIC_TYPE,
+                    _ => unreachable!("unsupported frame error code"),
+                };
+                DriverError::Mysql(crate::MysqlError::terror(proto, error.to_string()))
             }
         }
         tidb_planner::plan_base::PlanErrorKind::WrongArguments(function) => {
@@ -590,7 +614,7 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         }
         tidb_planner::plan_base::PlanErrorKind::CteRecursiveForbidsLeftJoin(_) => {
             DriverError::DdlCoded {
-                errno: 3576,
+                proto: &tidb_error::plannererrors::ERR_CTERECURSIVE_FORBIDDEN_JOIN_ORDER,
                 message: error.message().to_owned(),
             }
         }

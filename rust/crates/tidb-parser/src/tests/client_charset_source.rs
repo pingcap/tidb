@@ -333,7 +333,7 @@ fn ascii_client_replaces_or_refuses_non_ascii_like_go() {
     );
 
     let refused = parse_client("select hex('é')".as_bytes(), STRICT, "ascii", "ascii").unwrap_err();
-    assert_eq!(refused.errno, Some(1300));
+    assert_eq!(refused.errno(), Some(1300));
     assert_eq!(refused.message, "Invalid ascii character string: 'C3A9'");
 
     let warned = parse_client("select hex('é')".as_bytes(), STRICT, "ascii", "utf8mb4").unwrap();
@@ -365,7 +365,7 @@ fn ascii_client_replaces_or_refuses_non_ascii_like_go() {
 fn gbk_client_scans_raw_bytes_like_go() {
     for client in ["gbk", "gb18030"] {
         let refused = parse_client(b"select hex('\xe9')", STRICT, client, client).unwrap_err();
-        assert_eq!(refused.errno, Some(1300), "{client}");
+        assert_eq!(refused.errno(), Some(1300), "{client}");
         assert_eq!(
             refused.message,
             format!("Invalid {client} character string: 'E9'")
@@ -429,7 +429,7 @@ fn gbk_client_scans_raw_bytes_like_go() {
             (b"select 1; select '\xe9'", Some(1300)),
         ] {
             let error = parse_client(sql, STRICT, client, client).unwrap_err();
-            assert_eq!(error.errno, errno, "{client} {sql:?}");
+            assert_eq!(error.errno(), errno, "{client} {sql:?}");
         }
     }
 }

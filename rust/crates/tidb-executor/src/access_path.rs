@@ -7374,7 +7374,10 @@ mod tests {
 
     #[test]
     fn index_join_reader_failures_preserve_sql_errors_without_replaying_probes() {
-        let expected = crate::MysqlError::new(1365, "injected inner-reader division by zero");
+        let expected = crate::MysqlError::terror(
+            &tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO,
+            "injected inner-reader division by zero",
+        );
         let mut failures = Vec::new();
         let drain = |source: &mut IndexJoinLookupExec| -> Result<usize, ExecError> {
             let mut chunk = source.new_chunk();

@@ -239,10 +239,7 @@ impl std::fmt::Debug for StatisticsCache {
 /// A label-manager or meta-history failure, which Go reports as a plain
 /// error (1105). The in-memory stores fail only to encode or decode JSON.
 fn label_manager_error(error: impl std::fmt::Display) -> DriverError {
-    DriverError::DdlCoded {
-        errno: 1105,
-        message: error.to_string(),
-    }
+    DriverError::unsupported(error.to_string())
 }
 
 fn enqueue_sync_load_failures(

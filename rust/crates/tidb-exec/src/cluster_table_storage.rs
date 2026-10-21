@@ -2148,7 +2148,11 @@ fn classify(error: OptimisticCoordinatorError) -> StorageError {
             | OptimisticCoordinatorError::Visibility(_)
     ) {
         let sql = coordinator_sql_error(error);
-        return StorageError::Sql(tidb_executor::MysqlError::new(sql.code, sql.message));
+        return StorageError::Sql(tidb_executor::MysqlError::from_parts(
+            sql.code,
+            sql.state,
+            sql.message,
+        ));
     }
     let message = error.to_string();
     let lowered = message.go_to_lower();

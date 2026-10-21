@@ -133,7 +133,10 @@ impl Parser {
         match decoded.as_bytes() {
             [] => Ok(Some(0)),
             [b] => Ok(Some(*b)),
-            _ => Err(self.err_coded(1210, "Incorrect arguments to ESCAPE")),
+            _ => Err(self.err_coded(
+                &tidb_error::catalog::parser::ERR_WRONG_ARGUMENTS,
+                "Incorrect arguments to ESCAPE",
+            )),
         }
     }
 

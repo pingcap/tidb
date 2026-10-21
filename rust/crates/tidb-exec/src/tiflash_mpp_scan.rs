@@ -330,7 +330,7 @@ impl<S: tikv_client::PdClient> TiFlashMppScanSource<S> {
                         mpp_open_error(&request.statement.memory, error.message)
                     } else {
                         PushdownScannerError::Backend(StorageError::Sql(
-                            tidb_executor::MysqlError::new(error.code, error.message),
+                            tidb_executor::MysqlError::sql_error(error.code, error.message),
                         ))
                     }
                 })?;
@@ -1443,9 +1443,9 @@ impl MppRowStream {
             let batch = iter
                 .next_chunk_with_required_rows(required_rows.max(1))
                 .map_err(|error| match error {
-                    ResponseChannelError::SelectResponse { code, message } => {
-                        StorageError::Sql(tidb_executor::MysqlError::new(code as u16, message))
-                    }
+                    ResponseChannelError::SelectResponse { code, message } => StorageError::Sql(
+                        tidb_executor::MysqlError::from_select_response(code as u16, message),
+                    ),
                     other => StorageError::Backend(format!("tiflash mpp stream: {other}")),
                 })?;
             let Some(batch) = batch else {

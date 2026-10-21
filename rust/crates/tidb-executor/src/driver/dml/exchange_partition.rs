@@ -66,15 +66,13 @@ pub(crate) fn exchange_partition_check(
             _ => None,
         });
     if table.partition().is_none() {
-        let partitioned = other.ok_or_else(|| DriverError::DdlCoded {
-            errno: 1105,
-            message: "exchange partition process table by id failed".to_owned(),
+        let partitioned = other.ok_or_else(|| {
+            DriverError::unsupported("exchange partition process table by id failed".to_owned())
         })?;
         if partitioned.partition().is_none() {
-            return Err(DriverError::DdlCoded {
-                errno: 1105,
-                message: "exchange partition process assert table partition failed".to_owned(),
-            });
+            return Err(DriverError::unsupported(
+                "exchange partition process assert table partition failed".to_owned(),
+            ));
         }
         return Ok(Some(ExchangePartitionCheck::Standalone {
             partitioned,

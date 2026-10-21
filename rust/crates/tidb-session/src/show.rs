@@ -812,7 +812,7 @@ impl Session {
                 .then(right.table_id.cmp(&left.table_id))
         });
         let states = tidb_domain::affinity::get_all_group_states().map_err(|error| {
-            DriverError::Mysql(tidb_executor::MysqlError::new(1105, error.to_string()))
+            DriverError::Mysql(tidb_executor::MysqlError::unknown(error.to_string()))
         })?;
         let rows = infos
             .into_iter()
@@ -1332,8 +1332,8 @@ impl Session {
                     if user != target_row.user
                         && !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Super)
                     {
-                        return Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                            1045,
+                        return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+                            &tidb_error::catalog::privileges::ERR_ACCESS_DENIED,
                             format!(
                                 "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
                             ),
@@ -1494,7 +1494,9 @@ impl Session {
             // Go `TraceExec`: runs the statement, then reports the spans.
             tidb_ast::AdminStmt::Trace(trace) => {
                 crate::trace::check_options(trace)
-                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
+                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                        message,
+                    )))?;
                 let inner_sql = crate::trace::statement_text(&trace.statement);
                 let inner = (*trace.statement).clone();
                 let recorder = crate::trace::StatementTrace::start();
@@ -1529,7 +1531,9 @@ impl Session {
                 recorder.event(&format!("execute done, modify row: {affected}"));
                 let (spans, started) = recorder.finish();
                 let (columns, rows) = crate::trace::render(&trace.format, &spans, started)
-                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)))?;
+                    .map_err(|message| DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                        message,
+                    )))?;
                 Ok(Some(StmtOutput::Rows { columns, rows }))
             }
             // Go `getTiProxyAddrs`: every TRAFFIC statement talks to a
@@ -2892,11 +2896,11 @@ impl Session {
                 // it has no executor for (`Unsupported type *ast.HelpStmt`,
                 // 8108).
                 tidb_ast::ServerControlStmt::Restart => Err(DriverError::DdlCoded {
-                    errno: 8108,
+                    proto: &tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE,
                     message: "Unsupported type *ast.RestartStmt".to_owned(),
                 }),
                 tidb_ast::ServerControlStmt::Help(_) => Err(DriverError::DdlCoded {
-                    errno: 8108,
+                    proto: &tidb_error::plannererrors::ERR_UNSUPPORTED_TYPE,
                     message: "Unsupported type *ast.HelpStmt".to_owned(),
                 }),
             },

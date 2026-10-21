@@ -39,7 +39,11 @@ fn coordinator_catalog_error(error: OptimisticCoordinatorError) -> ClusterCatalo
         | OptimisticCoordinatorError::Storage(_)
         | OptimisticCoordinatorError::Visibility(_) => {
             let sql = crate::cluster_table_storage::coordinator_sql_error(error);
-            ClusterCatalogError::Sql(tidb_executor::MysqlError::new(sql.code, sql.message))
+            ClusterCatalogError::Sql(tidb_executor::MysqlError::from_parts(
+                sql.code,
+                sql.state,
+                sql.message,
+            ))
         }
         other => ClusterCatalogError::Snapshot(other.to_string()),
     }
@@ -403,7 +407,7 @@ mod tests {
         );
         assert_eq!(error.state, *b"HY000");
 
-        let statement_error = tidb_executor::MysqlError::new(9006, expected);
+        let statement_error = tidb_executor::MysqlError::sql_error(9006, expected);
         assert_eq!(
             storage_catalog_error(StorageError::Sql(statement_error.clone())),
             ClusterCatalogError::Sql(statement_error)

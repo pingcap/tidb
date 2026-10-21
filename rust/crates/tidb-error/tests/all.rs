@@ -15,6 +15,7 @@
 //! All topology-independent `tidb-error` integration tests in one process.
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
+mod catalog_source;
 mod errctx_source;
 mod error_catalog_source;
 mod infoschema_source;

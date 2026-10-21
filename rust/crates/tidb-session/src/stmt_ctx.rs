@@ -634,9 +634,9 @@ impl Session {
     ) -> Result<tidb_ast::Stmt, DriverError> {
         let parsed =
             tidb_parser::parse_with_sql_mode_and_config(sql, self.scanner_sql_mode(), config);
-        parsed.map_err(|e| match e.errno {
-            Some(errno) => DriverError::ParseCoded {
-                errno,
+        parsed.map_err(|e| match e.terror {
+            Some(proto) => DriverError::ParseCoded {
+                proto,
                 message: e.message,
             },
             // Go's session layer wraps a positional parser error through

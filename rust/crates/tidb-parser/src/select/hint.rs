@@ -64,7 +64,7 @@ impl Parser {
             message: DROPPED_HINT.to_owned(),
             offset: self.peek().end_offset,
             near_offset: self.peek().offset,
-            errno: None,
+            terror: None,
         }
     }
 

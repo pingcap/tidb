@@ -51,14 +51,14 @@ pub struct ProtocolSessionStates {
 
 /// Go's nonportable-session diagnostic (8146).
 pub fn cannot_migrate(reason: impl std::fmt::Display) -> DriverError {
-    DriverError::Mysql(MysqlError::new(
-        8146,
+    DriverError::Mysql(MysqlError::terror(
+        &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION,
         format!("cannot migrate the current session: {reason}"),
     ))
 }
 
 fn invalid_state(error: impl std::fmt::Display) -> DriverError {
-    DriverError::Mysql(MysqlError::new(1105, error.to_string()))
+    DriverError::Mysql(MysqlError::unknown(error.to_string()))
 }
 
 impl Session {

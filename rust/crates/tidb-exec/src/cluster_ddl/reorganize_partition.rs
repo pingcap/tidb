@@ -162,7 +162,7 @@ pub fn prepare_reorganize_partition_job_submission<S: MetaSnapshot>(
     }
     .map_err(|error| {
         let error = error.to_mysql_error();
-        coded_refusal(error.code, error.message)
+        DdlPlanError::from_mysql_error(error)
     })?;
     let job_action = match action {
         tidb_ast::AlterPartitionAction::Repartition(_) => {
@@ -340,7 +340,7 @@ fn check_reorg_partition_names(
         .collect::<std::collections::HashSet<_>>();
     let same_name = |name: &str| {
         coded_refusal(
-            tidb_error::mysql::errcode::ErrSameNamePartition,
+            &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
             format!("Duplicate partition name {name}"),
         )
     };
@@ -372,13 +372,13 @@ fn get_replaced_partition_ids(
             .position(|definition| definition.name.lowercase() == lower)
         else {
             return Err(coded_refusal(
-                tidb_error::mysql::errcode::ErrWrongPartitionName,
+                &tidb_util::dbterror::ERR_WRONG_PARTITION_NAME,
                 "Incorrect partition name",
             ));
         };
         if !positions.insert(position) {
             return Err(coded_refusal(
-                tidb_error::mysql::errcode::ErrSameNamePartition,
+                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
                 format!("Duplicate partition name {}", definitions[position].name),
             ));
         }
@@ -388,7 +388,7 @@ fn get_replaced_partition_ids(
     match partition.partition_type {
         tidb_ast::PartitionType::RANGE if positions.len() != last - first + 1 => {
             return Err(coded_refusal(
-                8200,
+                &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 "Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions",
             ))
         }
@@ -396,7 +396,7 @@ fn get_replaced_partition_ids(
             if positions.len() != definitions.len() =>
         {
             return Err(coded_refusal(
-                8200,
+                &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 "Unsupported REORGANIZE PARTITION of HASH/RANGE; must reorganize all partitions",
             ))
         }
@@ -554,7 +554,7 @@ pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
                 return Err(cancel_ddl_job(
                     active,
                     coded_refusal(
-                        8200,
+                        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         "Unsupported REORGANIZE PARTITION of a table with AFFINITY option",
                     ),
                 ));
@@ -566,7 +566,7 @@ pub(super) fn plan_persisted_reorganize_partition_job_step<S: MetaSnapshot>(
                     part_info.definitions.len() + current.definitions.len() - part_names.len();
                 (if count > 8192 {
                     Err(coded_refusal(
-                        tidb_error::mysql::errcode::ErrTooManyPartitions,
+                        &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS,
                         "Too many partitions (including subpartitions) were defined",
                     ))
                 } else {
@@ -1127,7 +1127,7 @@ fn do_partition_reorg_work<S: MetaSnapshot>(
             _,
         )) => {
             active.job.row_count = *rows;
-            Ok(PartitionReorgWork::Failed(coded_refusal(
+            Ok(PartitionReorgWork::Failed(checked_refusal(
                 *code,
                 message.clone(),
             )))

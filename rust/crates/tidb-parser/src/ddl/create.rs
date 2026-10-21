@@ -147,7 +147,10 @@ impl Parser {
             path.push(self.parse_create_table_name_segment()?);
         }
         if path.len() > 1 && path[0].trim().is_empty() {
-            return Err(self.err_coded(1102, &format!("Incorrect database name '{}'", path[0])));
+            return Err(self.err_coded(
+                &tidb_error::catalog::parser::ERR_WRONG_DB_NAME,
+                &format!("Incorrect database name '{}'", path[0]),
+            ));
         }
         Ok(path)
     }

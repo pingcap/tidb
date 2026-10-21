@@ -155,7 +155,7 @@ pub(super) fn build(
             })
         {
             return Err(DriverError::DdlCoded {
-                errno: 3109,
+                proto: &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
                 message: format!(
                     "Generated column '{}' cannot refer to auto-increment column.",
                     tidb_hack::go_to_lower(&def.name)
@@ -173,7 +173,7 @@ pub(super) fn build(
         }
         if indexed && (!same_expression || old.field_type != *field_type) {
             return Err(DriverError::DdlCoded {
-                errno: 3106,
+                proto: &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 message: "Unsupported modification for generated columns covered by an index"
                     .to_owned(),
             });

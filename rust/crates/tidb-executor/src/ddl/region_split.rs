@@ -132,7 +132,7 @@ pub fn normalize_split_policy(
     } else {
         let Some(count) = table.index_column_count(&index_name) else {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrWrongNameForIndex,
+                proto: &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX,
                 message: format!("Incorrect index name '{index_name}'"),
             });
         };
@@ -140,7 +140,7 @@ pub fn normalize_split_policy(
     };
     if column_count != upper.len() || column_count != lower.len() {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrInvalidSplitRegionRanges,
+            proto: &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES,
             message:
                 "Failed to split region ranges: length of index columns and split values differ"
                     .to_owned(),
@@ -157,7 +157,7 @@ pub fn normalize_split_policy(
 /// Go `ErrForbiddenDDL` (8267, `%s is forbidden`).
 fn forbidden(what: &str) -> DriverError {
     DriverError::DdlCoded {
-        errno: tidb_error::tidb::errcode::ErrForbiddenDDL,
+        proto: &tidb_util::dbterror::ERR_FORBIDDEN_DDL,
         message: format!("{what} is forbidden"),
     }
 }
@@ -173,10 +173,7 @@ fn restored_bounds(bounds: &[tidb_ast::Expr]) -> Result<Vec<String>, DriverError
                 bound,
                 &tidb_expr::simple_expr::BuildOptions::default(),
             )
-            .map_err(|error| DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrUnknown,
-                message: error.to_string(),
-            })?;
+            .map_err(|error| DriverError::unsupported(error.to_string()))?;
             built
                 .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
                 .map_err(crate::ExecError::Eval)?;

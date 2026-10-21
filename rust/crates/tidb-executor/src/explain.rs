@@ -3882,9 +3882,7 @@ pub fn query_plan_cost(
     let (mut physical, scalar_subqueries) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     if !scalar_subqueries.is_empty() {
-        return Err(DriverError::Mysql(crate::driver::MysqlError::new(
-            1105,
-            "evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817"
+        return Err(DriverError::Mysql(crate::driver::MysqlError::unknown("evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817"
                 .to_owned(),
         )));
     }

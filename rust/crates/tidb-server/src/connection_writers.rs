@@ -325,6 +325,7 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
             code,
             message: message.to_owned(),
             state: "HY000",
+            identity: None,
         };
         tidb_errmsg::extend(Some(&mut error));
         error.message

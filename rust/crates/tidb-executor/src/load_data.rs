@@ -87,20 +87,20 @@ fn wrong_format_config_by_args(detail: &str) -> DriverError {
     // `ErrLoadDataWrongFormatConfig`'s message is empty, so Go's
     // `GenWithStackByArgs` renders its argument as an extra.
     DriverError::DdlCoded {
-        errno: 8162,
+        proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG,
         message: format!("%!(EXTRA string={detail})"),
     }
 }
 
 fn wrong_format_config(detail: String) -> DriverError {
     DriverError::DdlCoded {
-        errno: 8162,
+        proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_WRONG_FORMAT_CONFIG,
         message: detail,
     }
 }
 
 fn plain_error(message: impl Into<String>) -> DriverError {
-    DriverError::Mysql(crate::MysqlError::new(1105, message.into()))
+    DriverError::Mysql(crate::MysqlError::unknown(message.into()))
 }
 
 /// Go `buildLoadData`, `executorBuilder.buildLoadData` and
@@ -174,7 +174,7 @@ pub fn prepare_load_data(
     // Go `LoadDataController.checkFieldParams`.
     if load.path.is_empty() {
         return Err(DriverError::DdlCoded {
-            errno: 8156,
+            proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_EMPTY_PATH,
             message: "The value of INFILE must not be empty when LOAD DATA from LOCAL".to_owned(),
         });
     }
@@ -259,7 +259,7 @@ pub fn prepare_load_data(
         // Go `table.CheckOnce`.
         if seen.iter().any(|earlier| earlier.go_lower_eq(&found)) {
             return Err(DriverError::DdlCoded {
-                errno: 1110,
+                proto: &tidb_error::catalog::table::ERR_DUPLICATE_COLUMN,
                 message: format!("Column '{found}' specified twice"),
             });
         }
@@ -369,7 +369,7 @@ fn decompress(path: &str, data: &[u8]) -> Result<Vec<u8>, DriverError> {
 
 fn read_failure(error: &CsvError) -> DriverError {
     DriverError::DdlCoded {
-        errno: 8160,
+        proto: &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_CANT_READ,
         message: format!(
             "Failed to read source files. Reason: {error}. Only the following formats delimited text file (csv, tsv), parquet, sql are supported. Please provide the valid source file(s)"
         ),
@@ -481,12 +481,12 @@ pub fn run_load_data(
         let row_number = *row_count;
         let mismatch = if parsed.len() < field_count {
             Some((
-                1261,
+                &tidb_util::dbterror::exeerrors::ERR_WARN_TOO_FEW_RECORDS,
                 format!("Row {row_number} doesn't contain data for all columns"),
             ))
         } else if parsed.len() > field_count {
             Some((
-                1262,
+                &tidb_util::dbterror::exeerrors::ERR_WARN_TOO_MANY_RECORDS,
                 format!(
                     "Row {row_number} was truncated; it contained more data than there were input columns"
                 ),
@@ -494,11 +494,11 @@ pub fn run_load_data(
         } else {
             None
         };
-        if let Some((errno, message)) = mismatch {
+        if let Some((proto, message)) = mismatch {
             if restrictive {
-                return Err(DriverError::DdlCoded { errno, message });
+                return Err(DriverError::DdlCoded { proto, message });
             }
-            ctx.append_warning_parts(errno, &message);
+            ctx.append_warning_parts(proto.to_sql_error().code, &message);
         }
         let set_var = |name: &str, value: Option<&Datum>| {
             if let Some(vars) = &user_vars {

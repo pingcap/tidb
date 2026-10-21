@@ -863,8 +863,8 @@ fn throw_err_if_in_mem_or_sys_db(
     }
     let (user, host) = login.map_or(("", ""), |(user, host)| (user.as_str(), host.as_str()));
     // Go passes two of the message's three verbs.
-    Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-        tidb_error::tidb::errcode::ErrAccessDenied,
+    Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+        &tidb_error::catalog::privileges::ERR_ACCESS_DENIED,
         format!("Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"),
     )))
 }

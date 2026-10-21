@@ -193,7 +193,7 @@ fn test_partition_values_arity_coded_parse_errors() {
         ),
     ] {
         let error = parse(sql).expect_err("Go's parser rejects this shape at parse time");
-        assert_eq!(error.errno, Some(errno), "{sql}");
+        assert_eq!(error.errno(), Some(errno), "{sql}");
         assert_eq!(error.message, message, "{sql}");
     }
     // The matching-arity shapes stay parseable.

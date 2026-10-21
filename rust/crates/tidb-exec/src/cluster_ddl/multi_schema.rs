@@ -254,7 +254,7 @@ fn single_statement(schema: &str, table: &str, action: &AlterColumnAction) -> Dd
 /// Go `ErrRunMultiSchemaChanges`.
 fn run_multi_schema_changes(action: ActionType) -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         format!("Unsupported multi schema change for {action}"),
     )
 }
@@ -669,7 +669,7 @@ impl MultiSchemaNames {
         // Go `checkOperateSameColAndIdx`.
         tidb_executor::ddl::check_multi_schema_names(&names).map_err(|error| {
             let error = error.to_mysql_error();
-            coded_refusal(error.code, error.message)
+            DdlPlanError::from_mysql_error(error)
         })?;
         check_visible_column_cnt(stored, self.add_columns.len(), self.drop_columns.len())?;
         check_operate_drop_index_use_by_foreign_key(

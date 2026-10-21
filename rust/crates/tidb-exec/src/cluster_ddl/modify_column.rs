@@ -109,7 +109,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
             tidb_executor::ddl::check_column_qualifier(&column.qualifier, schema, table).map_err(
                 |error| {
                     let error = error.to_mysql_error();
-                    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+                    DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
                 },
             )?;
             let PreparedModifyColumn {
@@ -153,7 +153,7 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                 && has_null(stored, old.id)?
             {
                 return Err(coded_refusal(
-                    tidb_error::mysql::errcode::WarnDataTruncated,
+                    &tidb_error::catalog::types::ERR_TRUNCATED,
                     format!(
                         "Data truncated for column '{}' at row 1",
                         changed.name.lowercase()
@@ -441,7 +441,7 @@ fn column_not_exists(column: &str, table: &str) -> DdlPlanError {
 /// Go `ErrUnsupportedModifyColumn` with its reason.
 fn unsupported_modify_column(reason: &str) -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         format!("Unsupported modify column: {reason}"),
     )
 }
@@ -867,7 +867,7 @@ fn check_modify_types_owner(
     )
     .map_err(|error| {
         let error = error.to_mysql_error();
-        DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+        DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
     })
 }
 
@@ -894,7 +894,7 @@ fn check_indexes_in_modifiable_columns(
             let part = part.read();
             let Some(column) = replaced(part.name.lowercase()) else {
                 return Err(coded_refusal(
-                    tidb_error::mysql::errcode::ErrKeyColumnDoesNotExits,
+                    &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                     format!("column does not exist: {}", part.name.original()),
                 ));
             };
@@ -914,7 +914,7 @@ fn check_indexes_in_modifiable_columns(
             )
             .map_err(|error| {
                 let error = error.to_mysql_error();
-                DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+                DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
             })?;
         }
     }
@@ -1332,7 +1332,7 @@ fn finish_modify_column_without_reorg(
 /// Go `ErrColumnInChange`.
 fn column_in_change(old: &tidb_model::ColumnInfo, new_id: i64) -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrColumnInChange,
+        &tidb_util::dbterror::ERR_COLUMN_IN_CHANGE,
         format!(
             "column {}, id {} still in changing",
             old.name.original(),
@@ -1441,7 +1441,7 @@ fn do_modify_column_with_check<S: MetaSnapshot>(
             // Go: the check found a row that does not fit.
             active.job.state = JobState::ROLLINGBACK;
             active.job.fill_args(Some(GoShared::new(args.clone())));
-            Err(coded_refusal(code, message))
+            Err(checked_refusal(code, message))
         }
         Some(None) => {
             if let Some(step) = revertible_point(catalog, active, target, args, start_ts)? {
@@ -2036,7 +2036,7 @@ fn do_modify_column_index_reorg<S: MetaSnapshot>(
             Some(Some((code, message))) => {
                 active.job.state = JobState::ROLLINGBACK;
                 active.job.fill_args(Some(GoShared::new(args.clone())));
-                Err(coded_refusal(code, message))
+                Err(checked_refusal(code, message))
             }
             Some(None) => {
                 update_object_state(None, &changing_indexes, SchemaState::WRITE_ONLY);
@@ -2291,7 +2291,7 @@ fn do_modify_column_type_with_data<S: MetaSnapshot>(
                     Some(Some((code, message))) => {
                         active.job.state = JobState::ROLLINGBACK;
                         active.job.fill_args(Some(GoShared::new(args.clone())));
-                        return Err(coded_refusal(code, message));
+                        return Err(checked_refusal(code, message));
                     }
                     Some(None) => {}
                 }
@@ -2563,7 +2563,7 @@ fn do_reorg_work_for_modify_column<S: MetaSnapshot>(
             rows,
         }) => {
             active.job.row_count = *rows;
-            ColumnReorgVisit::Failed(coded_refusal(*code, message.clone()))
+            ColumnReorgVisit::Failed(checked_refusal(*code, message.clone()))
         }
         Some(ReorgResult::Checked(_)) => {
             return Err(DdlPlanError::Encode(

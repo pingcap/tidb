@@ -119,9 +119,11 @@ pub(crate) fn inspection_summary_rows(
                     "select avg(value),min(value),max(value),`{cols}` from `metrics_schema`.`{name}` {cond} group by `{cols}` order by `{cols}`"
                 )
             };
-            let rows = query(&sql).map_err(|error| DriverError::DdlCoded {
-                errno: 1105,
-                message: format!("execute '{sql}' failed: {}", error.to_mysql_error().message),
+            let rows = query(&sql).map_err(|error| {
+                DriverError::unsupported(format!(
+                    "execute '{sql}' failed: {}",
+                    error.to_mysql_error().message
+                ))
             })?;
             let non_instance_label_index =
                 usize::from(def.labels.first().is_some_and(|label| *label == "instance"));

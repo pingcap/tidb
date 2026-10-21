@@ -236,10 +236,7 @@ fn run_compact_table(
         )));
     };
     if replica_kind == tidb_ast::CompactReplicaKind::TiKv {
-        return Err(DriverError::DdlCoded {
-            errno: 1105,
-            message: "compact tikv replica is not supported".to_owned(),
-        });
+        return Err(DriverError::unsupported("compact tikv replica is not supported".to_owned()));
     }
     let table = match entry {
         crate::TableEntry::Kv(table) => Some(table),
@@ -248,13 +245,10 @@ fn run_compact_table(
     let table_name = table.map_or(name, |table| table.name.as_str());
     if !partitions.is_empty() {
         let Some(partition) = table.and_then(|table| table.partition()) else {
-            return Err(DriverError::DdlCoded {
-                errno: 1105,
-                message: format!(
+            return Err(DriverError::unsupported(format!(
                     "table:{table_name} is not a partition table, but user specify partition name list:[{}]",
                     partitions.join(" ")
-                ),
-            });
+                )));
         };
         if let Some(unknown) = partitions.iter().find(|written| {
             !partition
@@ -426,7 +420,7 @@ pub fn check_multi_schema_names(info: &tidb_model::MultiSchemaInfo) -> Result<()
             let canonical = name.lowercase().to_owned();
             if seen.contains(&canonical) {
                 return Err(DriverError::DdlCoded {
-                    errno: 8200,
+                    proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                     message: format!("Unsupported operate same {kind} '{canonical}'"),
                 });
             }
@@ -486,7 +480,7 @@ fn check_prepared_column_count(
     check_visible_column_count(table, added, dropped)?;
     if table.columns().len() + added - dropped > catalog.table_column_count_limit() {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            proto: &tidb_util::dbterror::ERR_TOO_MANY_FIELDS,
             message: "Too many columns".to_owned(),
         });
     }
@@ -501,19 +495,19 @@ fn check_visible_column_count(
     if table.visible_column_count() + added > dropped {
         return Ok(());
     }
-    let (errno, message) = if table.visible_column_count() < table.columns().len() {
+    let (proto, message) = if table.visible_column_count() < table.columns().len() {
         (
-            tidb_error::mysql::errcode::ErrTableMustHaveColumns,
+            &*tidb_util::dbterror::ERR_TABLE_MUST_HAVE_COLUMNS,
             tidb_error::mysql::errname::ErrTableMustHaveColumns.raw,
         )
     } else {
         (
-            tidb_error::mysql::errcode::ErrCantRemoveAllFields,
+            &*tidb_util::dbterror::ERR_CANT_REMOVE_ALL_FIELDS,
             tidb_error::mysql::errname::ErrCantRemoveAllFields.raw,
         )
     };
     Err(DriverError::DdlCoded {
-        errno,
+        proto,
         message: message.to_owned(),
     })
 }
@@ -733,7 +727,7 @@ fn run_alter_table_in_inner(
             .find(|job| !multi_schema_job_allowed(job.action))
         {
             return Err(DriverError::DdlCoded {
-                errno: 8200,
+                proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 message: format!("Unsupported multi schema change for {}", job.action),
             });
         }
@@ -951,7 +945,7 @@ fn run_alter_table_in_inner(
                     }
                 };
                 return Err(DriverError::DdlCoded {
-                    errno: 8200,
+                    proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                     message: message.to_owned(),
                 });
             }
@@ -1201,7 +1195,7 @@ fn truncate_partition_action(
 pub(super) fn refuse_affinity(table: &crate::KvTable, operation: &str) -> Result<(), DriverError> {
     if table.has_affinity() {
         return Err(DriverError::DdlCoded {
-            errno: 8200,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message: format!("Unsupported {operation} of a table with AFFINITY option"),
         });
     }
@@ -1554,7 +1548,7 @@ fn add_partition_action(
             matches!(definition.clause, tidb_ast::PartitionDefinitionClause::None)
         }) {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::tidb::errcode::ErrPartitionRequiresValues,
+                proto: &tidb_error::catalog::ast::ERR_PARTITION_REQUIRES_VALUES,
                 message: format!(
                     "Syntax : {method} PARTITIONING requires definition of VALUES {clause} for each partition"
                 ),
@@ -1635,7 +1629,7 @@ fn add_partition_action(
                     // Go `dbterror.ErrGeneralUnsupportedDDL` (8200,
                     // "Unsupported %s"), `pkg/ddl/executor.go:2315`.
                     return Err(DriverError::DdlCoded {
-                        errno: 8200,
+                        proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         message: "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".to_owned(),
                     });
                 }
@@ -1692,7 +1686,7 @@ fn add_partition_action(
                     // Go `dbterror.ErrGeneralUnsupportedDDL` (8200,
                     // "Unsupported %s"), `pkg/ddl/executor.go:2315`.
                     return Err(DriverError::DdlCoded {
-                        errno: 8200,
+                        proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         message: "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".to_owned(),
                     });
                 }
@@ -1966,7 +1960,7 @@ fn first_partition_less_than_action(
             return Err(DriverError::PartitionManagementOnNonpartitioned);
         };
         let unsupported = |message: &str| DriverError::DdlCoded {
-            errno: 8200,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message: format!("Unsupported {message}"),
         };
         let Some(interval) = super::partition_interval::interval_from_table(partition, ctx) else {
@@ -2037,7 +2031,7 @@ fn last_partition_less_than_action(
         };
         refuse_affinity(table, "ADD PARTITION")?;
         let unsupported = |message: &str| DriverError::DdlCoded {
-            errno: 8200,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message: format!("Unsupported {message}"),
         };
         match partition.kind {
@@ -2384,7 +2378,7 @@ fn is_metadata_change(action: &tidb_ast::AlterTableAction) -> bool {
 fn reject_metadata_multi_job(multi_schema: bool, job: &str) -> Result<(), DriverError> {
     if multi_schema {
         return Err(DriverError::DdlCoded {
-            errno: 8200,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message: format!("Unsupported multi schema change for {job}"),
         });
     }
@@ -2517,7 +2511,7 @@ fn prepare_table_options(
     charset_handled: &mut bool,
 ) -> Result<Vec<PreparedMetadataChange>, DriverError> {
     let unsupported = || DriverError::DdlCoded {
-        errno: 8200,
+        proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
         message: "This type of ALTER TABLE is currently unsupported".to_owned(),
     };
     // Go's AlterTableOption arm validates ENGINE_ATTRIBUTE and STORAGE_CLASS
@@ -2599,7 +2593,10 @@ fn prepare_table_options(
                 }
                 if bits >= table.shard_row_id_bits() {
                     table.verify_no_overflow_shard_bits(bits).map_err(|message| {
-                        DriverError::Mysql(crate::driver::MysqlError::new(1467, message))
+                        DriverError::Mysql(crate::driver::MysqlError::terror(
+                            &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED,
+                            message,
+                        ))
                     })?;
                 }
                 changes.push(PreparedMetadataChange::ShardRowId(bits));
@@ -2627,7 +2624,7 @@ fn prepare_table_options(
                         && target.charset != table.charset().charset
                     {
                         return Err(DriverError::DdlCoded {
-                            errno: 8200,
+                            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                             message: "unsupported alter table charset operation".to_owned(),
                         });
                     }
@@ -2726,8 +2723,7 @@ fn prepare_partition_options(
             tidb_ast::TableOption::PlacementPolicy(policy) => placement = Some(policy),
             // Go `errors.New("unknown partition option")`.
             _ => {
-                return Err(DriverError::Mysql(crate::driver::MysqlError::new(
-                    1105,
+                return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
                     "unknown partition option".to_owned(),
                 )))
             }
@@ -2796,14 +2792,14 @@ pub fn get_charset_and_collate_in_table_option(
             tidb_ast::TableOption::CharacterSet(name) => {
                 let info =
                     tidb_datatype::get_charset_info(name).map_err(|_| DriverError::DdlCoded {
-                        errno: tidb_error::tidb::errcode::ErrUnknownCharacterSet,
+                        proto: &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
                         message: format!("Unknown character set: '{name}'"),
                     })?;
                 if chs.is_empty() {
                     chs = info.name.clone();
                 } else if chs != info.name {
                     return Err(DriverError::DdlCoded {
-                        errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                        proto: &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS,
                         message: format!(
                             "Conflicting declarations: 'CHARACTER SET {chs}' and 'CHARACTER SET {}'",
                             info.name
@@ -2823,7 +2819,7 @@ pub fn get_charset_and_collate_in_table_option(
             tidb_ast::TableOption::Collate(name) => {
                 let info = tidb_datatype::get_collation_by_name(name).map_err(|_| {
                     DriverError::DdlCoded {
-                        errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+                        proto: &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION,
                         message: format!("Unknown collation: '{name}'"),
                     }
                 })?;
@@ -2831,7 +2827,7 @@ pub fn get_charset_and_collate_in_table_option(
                     chs = info.charset_name.clone();
                 } else if chs != info.charset_name {
                     return Err(DriverError::DdlCoded {
-                        errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
+                        proto: &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH,
                         message: format!(
                             "Collation '{}' is not valid for CHARACTER SET '{chs}'",
                             info.name
@@ -2856,13 +2852,13 @@ fn alter_table_charset_pair(
         match option {
             tidb_ast::TableOption::CharacterSet(name) => {
                 let value = Charset::from_name(name).ok_or(DriverError::DdlCoded {
-                    errno: tidb_error::tidb::errcode::ErrUnknownCharacterSet,
+                    proto: &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
                     message: format!("Unknown character set: '{name}'"),
                 })?;
                 if let Some(previous) = charset {
                     if previous != value {
                         return Err(DriverError::DdlCoded {
-                            errno: tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                            proto: &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS,
                             message: format!(
                                 "Conflicting declarations: 'CHARACTER SET {}' and 'CHARACTER SET {}'",
                                 previous.name(),
@@ -2876,13 +2872,13 @@ fn alter_table_charset_pair(
             }
             tidb_ast::TableOption::Collate(name) => {
                 let value = Collation::from_name(name).ok_or(DriverError::DdlCoded {
-                    errno: tidb_error::tidb::errcode::ErrUnknownCollation,
+                    proto: &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION,
                     message: format!("Unknown collation: '{name}'"),
                 })?;
                 if let Some(charset) = charset {
                     if value.charset() != charset {
                         return Err(DriverError::DdlCoded {
-                            errno: tidb_error::tidb::errcode::ErrCollationCharsetMismatch,
+                            proto: &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH,
                             message: format!(
                                 "Collation '{}' is not valid for CHARACTER SET '{}'",
                                 value.name(),
@@ -3024,7 +3020,7 @@ impl CharsetChangeRefusal {
             Self::Charset(reason) => format!("Unsupported modify {reason}"),
         };
         DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message,
         }
     }
@@ -3324,7 +3320,7 @@ fn prepare_computed_origin(
                 ) =>
             {
                 DriverError::DdlCoded {
-                    errno: 1265,
+                    proto: &tidb_util::dbterror::ERR_WARN_DATA_TRUNCATED,
                     message: "Data truncated for column '%s' at row %d".to_owned(),
                 }
             }
@@ -4346,7 +4342,7 @@ pub(super) fn prepare_modify_column(
                     _ => "UNIQUE KEY",
                 };
                 return Err(DriverError::DdlCoded {
-                    errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                    proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                     message: format!("can't change column constraint ({constraint})"),
                 });
             }
@@ -4630,10 +4626,7 @@ pub(super) fn prepare_modify_column(
             unreachable!("the table was found above");
         };
         let table = std::sync::Arc::make_mut(table);
-        let scan_error = |error| DriverError::DdlCoded {
-            errno: 1105,
-            message: format!("column NULL precheck failed: {error:?}"),
-        };
+        let scan_error = |error| DriverError::unsupported(format!("column NULL precheck failed: {error:?}"));
         let mut cursor = table
             .row_cursor_projected_with_context(
                 Some(&[offset]),
@@ -4748,8 +4741,8 @@ pub(super) fn prepare_modify_column(
             .iter()
             .any(|column| column.name.go_lower_eq(anchor))
         {
-            return Err(DriverError::Mysql(crate::MysqlError::new(
-                tidb_error::mysql::errcode::ErrBadField,
+            return Err(DriverError::Mysql(crate::MysqlError::terror(
+                &tidb_util::dbterror::ERR_BAD_FIELD,
                 format!("Unknown column '{anchor}' in 'generated column function'"),
             )));
         }
@@ -4867,7 +4860,7 @@ fn check_unsupported_column_constraint(
         // `dbterror.ErrUnsupportedAddColumn.GenWithStack(...)`: 8200 with
         // the formatted text.
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             message: format!(
                 "unsupported add column '{}' constraint {constraint} when altering '{database}.{table_name}'",
                 def.name
@@ -4889,7 +4882,7 @@ pub(super) fn prepare_add_column(
     let table = column_changes::table_of(catalog, database, table_name)?;
     if table.columns().len() >= catalog.table_column_count_limit() {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::mysql::errcode::ErrTooManyFields,
+            proto: &tidb_util::dbterror::ERR_TOO_MANY_FIELDS,
             message: tidb_error::mysql::errname::ErrTooManyFields.raw.to_owned(),
         });
     }
@@ -5106,7 +5099,7 @@ pub(super) fn prepare_add_column(
                         .any(|dependency| dependency.go_lower_eq(&auto_increment.name))
                 }) {
                     return Err(DriverError::DdlCoded {
-                        errno: 3109,
+                        proto: &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
                         message: format!(
                             "Generated column '{}' cannot refer to auto-increment column.",
                             def.name.go_to_lower()
@@ -5266,7 +5259,7 @@ pub(super) fn prepare_drop_column(
             let error =
                 super::check_constraint::column_dependency_error(info.name.original(), column_name);
             return Err(DriverError::DdlCoded {
-                errno: error.code,
+                proto: error.proto,
                 message: error.message,
             });
         }

@@ -18,31 +18,12 @@
 //! compile error until someone gives it a code and a message. TiDB's
 //! executor and the coprocessor (`toPBError`) both answer through it.
 
+use tidb_error::catalog::{charset, collate, expression, types};
 use tidb_error::mysql::SqlError;
+use tidb_error::terror::TerrorError;
 use tidb_hack::GoToLower;
 
 use crate::EvalError;
-
-/// MySQL `ER_DATA_OUT_OF_RANGE`.
-const ER_DATA_OUT_OF_RANGE: u16 = 1690;
-/// Go `collate.ErrIllegalMix2Collation` / `ErrIllegalMix3Collation`.
-const ER_CANT_AGGREGATE_COLLATIONS: u16 = 1267;
-/// Go `collate.ErrIllegalMixCollation`, for any other arity.
-const ER_CANT_AGGREGATE_NCOLLATIONS: u16 = 1271;
-/// Go `charset.ErrCollationCharsetMismatch`.
-const ER_COLLATION_CHARSET_MISMATCH: u16 = 1253;
-/// Go `charset.ErrUnknownCollation`.
-const ER_UNKNOWN_COLLATION: u16 = 1273;
-/// Go `ErrDivisionByZero`.
-const ER_DIVISION_BY_ZERO: u16 = 1365;
-/// Go `types.ErrTruncatedWrongVal`.
-const ER_TRUNCATED_WRONG_VALUE: u16 = 1292;
-/// Go `expression.ErrCutValueGroupConcat`.
-const ER_CUT_VALUE_GROUP_CONCAT: u16 = 1260;
-/// Go `ErrWarnAllowedPacketOverflowed`.
-const ER_WARN_ALLOWED_PACKET_OVERFLOWED: u16 = 1301;
-/// Go `expression.ErrOperandColumns`.
-const ER_OPERAND_COLUMNS: u16 = tidb_error::mysql::errcode::ErrOperandColumns;
 
 impl EvalError {
     /// Go `terror.ToSQLError` for an evaluation failure: the MySQL code and
@@ -65,16 +46,16 @@ impl EvalError {
             // or 1146 (42S02). Deriving it from the code is the only answer that
             // holds for every one.
             EvalError::Unsupported(reason) => sql_error(1105, reason),
-            EvalError::NotImplemented(name) => sql_error(
-                1235,
+            EvalError::NotImplemented(name) => classed(
+                &expression::ERR_NOT_SUPPORTED_YET,
                 format!("This version of TiDB doesn't yet support '{name}'"),
             ),
             EvalError::WrongValueForType {
                 value_class,
                 value,
                 function,
-            } => sql_error(
-                1411,
+            } => classed(
+                &expression::ERR_WRONG_VALUE_FOR_TYPE,
                 // The template is "Incorrect %-.32s value: '%-.128s' for function
                 // %-.32s": each operand is cut to that many characters.
                 format!(
@@ -84,74 +65,100 @@ impl EvalError {
                     function.chars().take(32).collect::<String>()
                 ),
             ),
-            EvalError::Json(json) => sql_error(json.code(), json.message()),
-            EvalError::Sequence(sequence) => sql_error(sequence.code(), sequence.message()),
+            EvalError::Json(json) => classed(json.proto(), json.message()),
+            EvalError::Sequence(sequence) => classed(sequence.proto(), sequence.message()),
             // The collation class is how a user learns a query needs an explicit
             // `COLLATE`. The operand list is formatted where the tie is detected,
             // so for the two mix errors the payload IS the message.
             EvalError::IllegalMixCollation(message) => {
-                sql_error(ER_CANT_AGGREGATE_COLLATIONS, message)
+                classed(&collate::ERR_ILLEGAL_MIX2_COLLATION, message)
             }
             EvalError::IllegalMixCollationGeneric(message) => {
-                sql_error(ER_CANT_AGGREGATE_NCOLLATIONS, message)
+                classed(&collate::ERR_ILLEGAL_MIX_COLLATION, message)
             }
-            EvalError::IllegalMix3Collation(message) => sql_error(1270, message),
-            EvalError::UnknownCollation(name) => {
-                sql_error(ER_UNKNOWN_COLLATION, format!("Unknown collation: '{name}'"))
+            EvalError::IllegalMix3Collation(message) => {
+                classed(&collate::ERR_ILLEGAL_MIX3_COLLATION, message)
             }
-            EvalError::CollationCharsetMismatch { collation, charset } => sql_error(
-                ER_COLLATION_CHARSET_MISMATCH,
+            EvalError::UnknownCollation(name) => classed(
+                &charset::ERR_UNKNOWN_COLLATION,
+                format!("Unknown collation: '{name}'"),
+            ),
+            EvalError::CollationCharsetMismatch { collation, charset } => classed(
+                &charset::ERR_COLLATION_CHARSET_MISMATCH,
                 format!("COLLATION '{collation}' is not valid for CHARACTER SET '{charset}'"),
             ),
-            EvalError::DivisionByZero => sql_error(ER_DIVISION_BY_ZERO, "Division by 0".to_owned()),
-            EvalError::TruncatedWrongValue(message) => sql_error(ER_TRUNCATED_WRONG_VALUE, message),
+            EvalError::DivisionByZero => classed(
+                &expression::ERR_DIVISION_BY_ZERO,
+                "Division by 0".to_owned(),
+            ),
+            EvalError::TruncatedWrongValue(message) => {
+                classed(&types::ERR_TRUNCATED_WRONG_VAL, message)
+            }
             EvalError::Conversion(error) => error.to_sql_error(),
-            EvalError::GroupConcatCut(message) => sql_error(ER_CUT_VALUE_GROUP_CONCAT, message),
+            EvalError::GroupConcatCut(message) => {
+                classed(&expression::ERR_CUT_VALUE_GROUP_CONCAT, message)
+            }
             // Go `errWarnAllowedPacketOverflowed` (1301), the ERROR spelling of
             // the warning a read takes: same code, same text.
             EvalError::AllowedPacketOverflowed(message) => {
-                sql_error(ER_WARN_ALLOWED_PACKET_OVERFLOWED, message)
+                classed(&expression::ERR_WARN_ALLOWED_PACKET_OVERFLOWED, message)
             }
-            EvalError::FunctionNotExists(name) => {
-                sql_error(1305, format!("FUNCTION {name} does not exist"))
-            }
-            EvalError::NoDatabaseSelected => sql_error(1046, "No database selected".to_owned()),
+            EvalError::FunctionNotExists(name) => classed(
+                &expression::ERR_FUNCTION_NOT_EXISTS,
+                format!("FUNCTION {name} does not exist"),
+            ),
+            EvalError::NoDatabaseSelected => classed(
+                &tidb_error::plannererrors::ERR_NO_DB,
+                "No database selected".to_owned(),
+            ),
             // A typed temporal literal raises 1292 (22007) for a parse failure and
             // 1525 (HY000) for its regex gate, so the code travels with the
             // message and the SQLSTATE is derived from it like the JSON class
             // above.
-            EvalError::WrongTemporalLiteral { code, message } => sql_error(code, message),
-            EvalError::InvalidTypeDeclaration { code, message } => sql_error(code, message),
-            EvalError::OperandColumns(columns) => sql_error(
-                ER_OPERAND_COLUMNS,
+            EvalError::WrongTemporalLiteral { code, message } => {
+                classed(types_declaration_proto(code), message)
+            }
+            EvalError::InvalidTypeDeclaration { code, message } => {
+                classed(types_declaration_proto(code), message)
+            }
+            EvalError::OperandColumns(columns) => classed(
+                &expression::ERR_OPERAND_COLUMNS,
                 format!("Operand should contain {columns} column(s)"),
             ),
-            EvalError::WrongParameterCount(function) => sql_error(
-                1582,
+            EvalError::WrongParameterCount(function) => classed(
+                &expression::ERR_INCORRECT_PARAMETER_COUNT,
                 format!("Incorrect parameter count in the call to native function '{function}'"),
             ),
-            EvalError::IncorrectArguments(message) => sql_error(1210, message),
-            EvalError::InvalidGroupFuncUse => {
-                sql_error(1111, "Invalid use of group function".to_owned())
+            EvalError::IncorrectArguments(message) => {
+                classed(&expression::ERR_INCORRECT_ARGS, message)
             }
-            EvalError::TooManyGroupingArguments => sql_error(
-                3601,
+            EvalError::InvalidGroupFuncUse => classed(
+                &tidb_error::plannererrors::ERR_INVALID_GROUP_FUNC_USE,
+                "Invalid use of group function".to_owned(),
+            ),
+            EvalError::TooManyGroupingArguments => classed(
+                &tidb_error::plannererrors::ERR_INVALID_NUMBER_OF_ARGS,
                 "Too many arguments for function GROUPING; maximum allowed is 64".to_owned(),
             ),
-            EvalError::FieldInGroupingNotGroupBy(index) => sql_error(
-                3602,
+            EvalError::FieldInGroupingNotGroupBy(index) => classed(
+                &tidb_error::plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY,
                 format!("Argument #{index} of GROUPING function is not in GROUP BY"),
             ),
             // Go `types.ErrTooBigPrecision` (1426): the clock signatures raise it
             // at evaluation time, not at parse time
             // (`pkg/expression/builtin_time.go:2730` and siblings).
-            EvalError::TooBigFsp { fsp, function } => sql_error(
-                1426,
+            EvalError::TooBigFsp { fsp, function } => classed(
+                &types::ERR_TOO_BIG_PRECISION,
                 format!("Too-big precision {fsp} specified for '{function}'. Maximum is 6."),
             ),
-            EvalError::AdvisoryLock { code, message } => sql_error(code, message),
-            EvalError::DataOutOfRange { value, expression } => sql_error(
-                ER_DATA_OUT_OF_RANGE,
+            EvalError::AdvisoryLock { code, message } => match code {
+                3057 => classed(&expression::ERR_USER_LOCK_WRONG_NAME, message),
+                3058 => classed(&expression::ERR_USER_LOCK_DEADLOCK, message),
+                // A backend (store) failure carries its own code and no Go class.
+                _ => sql_error(code, message),
+            },
+            EvalError::DataOutOfRange { value, expression } => classed(
+                &types::ERR_OVERFLOW,
                 format!("{value} value is out of range in '{expression}'"),
             ),
             // CAPTURED from TiDB: `select 9223372036854775807 + 1` is
@@ -169,15 +176,15 @@ impl EvalError {
             EvalError::UnknownColumn(column) => {
                 // go folds an UNQUOTED identifier to its stored lowercase form
                 // before naming it in ErrBadField.
-                sql_error(
-                    1054,
+                classed(
+                    &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN,
                     format!("Unknown column '{}' in 'expression'", column.go_to_lower()),
                 )
             }
             // Go `ErrBadField` with the clause the name was written in
             // (`clauseMsg`), for example `Unknown column 'j' in 'order clause'`.
-            EvalError::UnknownColumnInClause(column, clause) => sql_error(
-                1054,
+            EvalError::UnknownColumnInClause(column, clause) => classed(
+                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN,
                 format!("Unknown column '{}' in '{clause}'", column.go_to_lower()),
             ),
             EvalError::UnsupportedOperandPair(lhs, rhs) => sql_error(
@@ -195,12 +202,36 @@ impl EvalError {
 }
 
 /// A `SqlError` whose SQLSTATE is the one the code carries (Go `NewErr`'s
-/// `MySQLState` lookup).
+/// `MySQLState` lookup) and that has no Go class: a failure Go raises through
+/// a plain `errors.New` (code 1105) or through a backend's own error code.
 fn sql_error(code: u16, message: impl Into<String>) -> SqlError {
     SqlError {
         code,
         message: message.into(),
         state: tidb_error::mysql::mysql_state(code),
+        identity: None,
+    }
+}
+
+/// Go `proto.GenWithStackByArgs(...)`: the prototype's class and code with the
+/// message this site rendered. The wire code, the SQLSTATE and the identity
+/// `Error()` prints all come from the Go definition.
+fn classed(proto: &TerrorError, message: impl Into<String>) -> SqlError {
+    proto.generate(message).to_sql_error()
+}
+
+/// The `types` prototypes a typed-literal / declared-type refusal raises:
+/// `ErrWrongValue` (1292), `ErrWrongValue2` (1525), `ErrMBiggerThanD` (1427),
+/// `ErrTooBigPrecision` (1426) and `ErrTooBigScale` (1425). The producing
+/// variants name only these.
+fn types_declaration_proto(code: u16) -> &'static TerrorError {
+    match code {
+        1292 => &types::ERR_WRONG_VALUE,
+        1525 => &types::ERR_WRONG_VALUE2,
+        1427 => &types::ERR_M_BIGGER_THAN_D,
+        1426 => &types::ERR_TOO_BIG_PRECISION,
+        1425 => &types::ERR_TOO_BIG_SCALE,
+        other => unreachable!("no types prototype for declaration error {other}"),
     }
 }
 
@@ -212,8 +243,8 @@ fn sql_error(code: u16, message: impl Into<String>) -> SqlError {
 /// the code are as much of the answer as this tier can give. The code is the
 /// part a client branches on, and it is now the one TiDB sends.
 fn out_of_range(class: &str) -> SqlError {
-    sql_error(
-        ER_DATA_OUT_OF_RANGE,
+    classed(
+        &types::ERR_OVERFLOW,
         format!("{class} value is out of range"),
     )
 }

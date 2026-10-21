@@ -1153,8 +1153,8 @@ fn column_origin_default_for_checksum(
         context.expression().append_warning_parts(1364, &message);
         return Ok(crate::bad_null::zero_value(&column.field_type));
     }
-    Err(KvTableError::ColumnCast(crate::MysqlError::new(
-        tidb_error::mysql::errcode::ErrNoDefaultForField,
+    Err(KvTableError::ColumnCast(crate::MysqlError::terror(
+        &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE,
         message,
     )))
 }

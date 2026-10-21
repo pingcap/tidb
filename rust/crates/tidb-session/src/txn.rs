@@ -925,7 +925,9 @@ impl Session {
             && self.statement_txn_mode().is_pessimistic()
             && !self.pessimistic_constraint_check_in_place()
         {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::new(1105, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")));
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
+                "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled",
+            )));
         }
         let local_temporary = self.local_temporary_tables.clone();
         let global_temporary = self.global_temporary_data.clone();
@@ -1148,7 +1150,7 @@ impl Session {
                 tidb_executor::RebaseRefusal::SchemaChanged => {
                     let error = tidb_domain::schema_checker::SchemaCheckError::InfoSchemaChanged;
                     DriverError::DdlCoded {
-                        errno: error.code(),
+                        proto: error.proto(),
                         message: error.message(),
                     }
                 }
@@ -1654,17 +1656,17 @@ impl Session {
             };
             let error = match wait {
                 LockWaitTime::NoWait => (
-                    tidb_error::tidb::errcode::ErrLockAcquireFailAndNoWaitSet,
+                    &*tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET,
                     tidb_error::tidb::errname::ErrLockAcquireFailAndNoWaitSet.raw,
                 ),
                 _ if guard.locks().wait_released(holder, deadline) => continue,
                 _ => (
-                    tidb_error::tidb::errcode::ErrLockWaitTimeout,
+                    &*tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT,
                     tidb_error::tidb::errname::ErrLockWaitTimeout.raw,
                 ),
             };
             return Err(StatementFinish::Done(Err(DriverError::Mysql(
-                tidb_executor::MysqlError::new(error.0, error.1),
+                tidb_executor::MysqlError::terror(error.0, error.1),
             ))));
         }
     }

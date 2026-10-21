@@ -22,6 +22,7 @@
 //! text before, which is a message no MySQL client can read and a leak of the
 //! enum's internal shape.
 
+use tidb_error::terror::{TerrorClass, TerrorCode, TerrorIdentity};
 use tidb_expr::EvalError;
 
 use super::{DriverError, MysqlError};
@@ -31,8 +32,8 @@ use crate::executor::ExecError;
 #[test]
 fn coprocessor_cot_error_matches_go() {
     // pkg/expression/builtin_math_test.go: TestCot.
-    let storage = crate::storage::StorageError::Sql(MysqlError::new(
-        1690,
+    let storage = crate::storage::StorageError::Sql(MysqlError::terror(
+        &tidb_error::catalog::types::ERR_OVERFLOW,
         "DOUBLE value is out of range in 'cot(0)'",
     ));
     let error = to_mysql_error(ExecError::from(crate::kv_table::KvTableError::from(
@@ -67,11 +68,7 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         ExecError::Unsupported(reason) => MysqlError::unknown(reason),
         // Go surfaces a spill failure as the raw error from `Next`, i.e. 1105.
         ExecError::SpillFailed(reason) => MysqlError::unknown(reason),
-        ExecError::Killed(error) => {
-            let mut state = [0; 5];
-            state.copy_from_slice(error.state.as_bytes());
-            MysqlError::with_state(error.code, state, error.message)
-        }
+        ExecError::Killed(error) => MysqlError::from_sql_error(error),
         // `From<ExecError> for DriverError` rewrites each of these into its
         // own driver variant, so they arrive here only from an `ExecError` a
         // caller wrapped by hand. Rendering through the twin keeps ONE
@@ -91,7 +88,7 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
 
 /// The codes `ClassTiKV` registers (`pkg/store/driver/error/error.go`,
 /// `pkg/kv/error.go`): the only ones a coprocessor error keeps.
-const CLASS_TIKV_CODES: &[u16] = {
+pub(super) const CLASS_TIKV_CODES: &[u16] = {
     use tidb_error::tidb::errcode::*;
     &[
         ErrSharedLockLost,
@@ -129,18 +126,16 @@ const CLASS_TIKV_CODES: &[u16] = {
 /// message (`select * from t where a > 0x80` over a utf8mb4 `a`).
 pub(crate) fn coprocessor_evaluation_error(error: EvalError) -> ExecError {
     let mysql = eval_to_mysql_error(error).from_evaluation();
-    if CLASS_TIKV_CODES.contains(&mysql.code) {
-        ExecError::Mysql(mysql)
-    } else {
-        ExecError::Mysql(MysqlError::unknown(mysql.message))
-    }
+    // `ClassTiKV.Synthesize(code, msg)` keeps the TiKV class whatever the code:
+    // a registered one answers under its own number, any other under 1105 --
+    // `Error()` prints `[tikv:<code>]` either way.
+    ExecError::Mysql(MysqlError::synthesize_tikv(mysql.code, mysql.message))
 }
 
 /// The MySQL error an evaluation failure reaches the client as
 /// ([`EvalError::to_sql_error`]).
 fn eval_to_mysql_error(error: EvalError) -> MysqlError {
-    let sql = error.to_sql_error();
-    let mysql = MysqlError::new(sql.code, sql.message);
+    let mysql = MysqlError::from_sql_error(error.to_sql_error());
     match error {
         // Every json-class error is evaluation-origin: go's warning buffer
         // never records a FATAL evaluation error as its own row beside the
@@ -216,18 +211,24 @@ mod tests {
             rendered(ExecError::Eval(EvalError::Sequence(
                 SequenceEvalError::RunOut("test.s1".to_owned())
             ))),
-            MysqlError::new(4135, "Sequence 'test.s1' has run out").from_evaluation()
+            MysqlError::terror(
+                &tidb_error::catalog::table::ERR_SEQUENCE_HAS_RUN_OUT,
+                "Sequence 'test.s1' has run out",
+            ).from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
-            MysqlError::new(1365, "Division by 0").from_evaluation()
+            MysqlError::terror(
+                &tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO,
+                "Division by 0",
+            ).from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::WrongParameterCount(
                 "aes_encrypt"
             ))),
-            MysqlError::new(
-                1582,
+            MysqlError::terror(
+                &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT,
                 "Incorrect parameter count in the call to native function 'aes_encrypt'"
             ).from_evaluation()
         );
@@ -235,8 +236,8 @@ mod tests {
             rendered(ExecError::Eval(EvalError::IncorrectArguments(
                 "The initialization vector supplied to aes_encrypt is too short".to_owned()
             ))),
-            MysqlError::new(
-                1210,
+            MysqlError::terror(
+                &tidb_error::catalog::expression::ERR_INCORRECT_ARGS,
                 "The initialization vector supplied to aes_encrypt is too short"
             ).from_evaluation()
         );
@@ -245,7 +246,10 @@ mod tests {
                 value: "length",
                 expression: "random_bytes".to_string(),
             })),
-            MysqlError::new(1690, "length value is out of range in 'random_bytes'").from_evaluation()
+            MysqlError::terror(
+                &tidb_error::catalog::types::ERR_OVERFLOW,
+                "length value is out of range in 'random_bytes'",
+            ).from_evaluation()
         );
     }
 
@@ -299,13 +303,13 @@ mod tests {
     #[test]
     fn an_internal_executor_error_is_not_reported_as_unsupported() {
         let mysql = rendered(ExecError::internal("chunk invariant failed"));
-        assert_eq!(mysql, MysqlError::new(1105, "chunk invariant failed"));
+        assert_eq!(mysql, MysqlError::unknown("chunk invariant failed"));
     }
 
     #[test]
     fn local_temporary_space_quota_reaches_the_wire_unchanged() {
         let message = tidb_util::spill_storage::LOCAL_TEMPORARY_SPACE_QUOTA_ERROR;
         let mysql = rendered(ExecError::SpillFailed(message.to_owned()));
-        assert_eq!(mysql, MysqlError::new(1105, message));
+        assert_eq!(mysql, MysqlError::unknown(message));
     }
 }

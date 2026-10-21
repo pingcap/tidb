@@ -300,7 +300,10 @@ impl Parser {
                 let raw = self.parse_table_option_word()?;
                 let name = field_type::canonical_field_charset(&raw)
                     .ok_or_else(|| {
-                        self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
+                        self.err_coded(
+                            &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                            &format!("Unknown character set: '{raw}'"),
+                        )
                     })?
                     .to_owned();
                 DatabaseOption::CharacterSet(name)
@@ -312,7 +315,10 @@ impl Parser {
                 let raw = self.parse_table_option_word()?;
                 let name = field_type::canonical_field_charset(&raw)
                     .ok_or_else(|| {
-                        self.err_coded(1115, &format!("Unknown character set: '{raw}'"))
+                        self.err_coded(
+                            &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                            &format!("Unknown character set: '{raw}'"),
+                        )
                     })?
                     .to_owned();
                 DatabaseOption::CharacterSet(name)
@@ -322,8 +328,12 @@ impl Parser {
                     self.bump();
                 }
                 let raw = self.parse_table_option_word()?;
-                let collation = canonical_collation(&raw)
-                    .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?;
+                let collation = canonical_collation(&raw).ok_or_else(|| {
+                    self.err_coded(
+                        &tidb_error::catalog::charset::ERR_UNKNOWN_COLLATION,
+                        &format!("Unknown collation: '{raw}'"),
+                    )
+                })?;
                 DatabaseOption::Collate(collation.to_owned())
             } else if self.is_kw("ENCRYPTION") {
                 self.bump();
@@ -338,7 +348,7 @@ impl Parser {
                 let value = self.decode_string(&token.text);
                 if !matches!(value.as_str(), "Y" | "y" | "N" | "n") {
                     return Err(self.err_coded(
-                        1525,
+                        &tidb_error::catalog::parser::ERR_WRONG_VALUE,
                         &format!("Incorrect argument (should be Y or N) value: '{value}'"),
                     ));
                 }
@@ -1087,9 +1097,10 @@ impl Parser {
                     // (parser.y:3188-3192): `ErrUnknownAlterAlgorithm` is
                     // `terror.ClassParser.NewStd(mysql.ErrUnknownAlterAlgorithm)`
                     // — `[parser:1800]`, the name as written.
-                    return Err(
-                        self.err_coded(1800, &format!("Unknown ALGORITHM '{}'", token.text))
-                    );
+                    return Err(self.err_coded(
+                        &tidb_error::catalog::parser::ERR_UNKNOWN_ALTER_ALGORITHM,
+                        &format!("Unknown ALGORITHM '{}'", token.text),
+                    ));
                 }
             };
             AlterTableAction::Algorithm(algorithm)
@@ -1634,8 +1645,12 @@ impl Parser {
         }
         self.bump();
         let raw = self.parse_table_option_word()?;
-        let collation = canonical_collation(&raw)
-            .ok_or_else(|| self.err_coded(1273, &format!("Unknown collation: '{raw}'")))?;
+        let collation = canonical_collation(&raw).ok_or_else(|| {
+            self.err_coded(
+                &tidb_error::catalog::charset::ERR_UNKNOWN_COLLATION,
+                &format!("Unknown collation: '{raw}'"),
+            )
+        })?;
         Ok(Some(collation.to_ascii_uppercase()))
     }
 
@@ -1748,7 +1763,7 @@ impl Parser {
             // conflict on a generated column is `[ddl:1221]` (ErrWrongUsage),
             // not a 1064 positional error.
             Some(option) => Err(self.err_coded(
-                1221,
+                &tidb_error::catalog::ast::ERR_WRONG_USAGE,
                 &format!("Incorrect usage of {option} and generated column"),
             )),
             None => Ok(()),

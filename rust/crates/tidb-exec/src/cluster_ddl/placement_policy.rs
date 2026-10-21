@@ -26,19 +26,17 @@ use tidb_hack::GoCaseCompare;
 
 /// Go `ErrPlacementPolicyNotExists`.
 fn policy_not_exists(name: &str) -> DdlPlanError {
-    coded_refusal(8239, format!("Unknown placement policy '{name}'"))
+    coded_refusal(
+        &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
+        format!("Unknown placement policy '{name}'"),
+    )
 }
 
 /// Go `checkPolicyValidation`: the settings must build a bundle.
 fn check_policy_validation(settings: &tidb_model::PlacementSettings) -> Result<(), DdlPlanError> {
     tidb_placement::new_bundle_from_options(Some(settings))
         .map(|_| ())
-        .map_err(|error| {
-            coded_refusal(
-                GENERIC_ERROR_CODE,
-                format!("building placement rules: {error}"),
-            )
-        })
+        .map_err(|error| DdlPlanError::plain_refusal(format!("building placement rules: {error}")))
 }
 
 /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: no database, table or
@@ -56,7 +54,7 @@ fn check_policy_not_in_use(
     });
     if named_by_database || policy_referenced(catalog, policy) {
         return Err(coded_refusal(
-            8241,
+            &tidb_util::dbterror::ERR_PLACEMENT_POLICY_IN_USE,
             format!("Placement policy '{}' is still in use", policy.original()),
         ));
     }
@@ -83,7 +81,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
         } => {
             if name.go_lower_eq("default") {
                 return Err(coded_refusal(
-                    tidb_error::mysql::errcode::ErrReservedSyntax,
+                    &tidb_error::catalog::infoschema::ERR_RESERVED_SYNTAX,
                     format!(
                         "The '{name}' syntax is reserved for purposes internal to the MySQL server"
                     ),
@@ -101,7 +99,7 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
                     }));
                 }
                 return Err(coded_refusal(
-                    8238,
+                    &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS,
                     format!("Placement policy '{name}' already exists"),
                 ));
             }
@@ -240,7 +238,7 @@ fn stored_policy<S: MetaSnapshot>(
         cancel_ddl_job(
             active,
             coded_refusal(
-                8239,
+                &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
                 format!("Unknown placement policy '(Policy ID {policy_id})'"),
             ),
         )
@@ -328,7 +326,7 @@ pub(super) fn plan_persisted_create_placement_policy_job_step<S: MetaSnapshot>(
             return Err(cancel_ddl_job(
                 active,
                 coded_refusal(
-                    8238,
+                    &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS,
                     format!(
                         "Placement policy '{}' already exists",
                         existing.name.original()

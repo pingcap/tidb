@@ -168,16 +168,14 @@ impl KvTable {
                 None => match data.convert_to(changing, tidb_datatype::STRICT_FLAGS) {
                     Ok(converted) if converted.event.is_none() => converted.value,
                     _ => {
-                        return Err(KvTableError::ColumnCast(crate::MysqlError::new(
-                            tidb_error::mysql::errcode::ErrUnknown,
+                        return Err(KvTableError::ColumnCast(crate::MysqlError::unknown(
                             "data truncation error during modify column",
                         )))
                     }
                 },
             };
             if changing.code() == FieldTypeCode::String && datum_text(&value) != datum_text(data) {
-                return Err(KvTableError::ColumnCast(crate::MysqlError::new(
-                    tidb_error::mysql::errcode::ErrUnknown,
+                return Err(KvTableError::ColumnCast(crate::MysqlError::unknown(
                     "data truncation error during modify column",
                 )));
             }

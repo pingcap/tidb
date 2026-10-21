@@ -133,7 +133,7 @@ fn check_drop_column_in_owner(
         return Ok(Err((
             if_exists,
             coded_refusal(
-                tidb_error::mysql::errcode::ErrCantDropFieldOrKey,
+                &tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
                 format!("column {} doesn't exist", name.original()),
             ),
         )));

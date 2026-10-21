@@ -95,7 +95,7 @@ pub(super) fn prepare(
     if multi_schema {
         if let Some(job) = check_job {
             return Err(DriverError::DdlCoded {
-                errno: 8200,
+                proto: &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 message: format!("Unsupported multi schema change for {job}"),
             });
         }
@@ -259,10 +259,7 @@ pub(super) fn check_constraint_table_error(error: crate::kv_table::KvTableError)
         crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
             DriverError::CheckConstraintViolated(name)
         }
-        error => DriverError::DdlCoded {
-            errno: 1105,
-            message: format!("{error:?}"),
-        },
+        error => DriverError::unsupported(format!("{error:?}")),
     }
 }
 
@@ -294,7 +291,7 @@ fn prepare_add_check(
         ctx,
     )
     .map_err(|error| DriverError::DdlCoded {
-        errno: error.code,
+        proto: error.proto,
         message: error.message,
     })?;
     let added = built
@@ -307,7 +304,7 @@ fn prepare_add_check(
         added.name.original(),
     ) {
         return Err(DriverError::DdlCoded {
-            errno: tidb_error::tidb::errcode::ErrCheckConstraintDupName,
+            proto: &tidb_util::dbterror::ERR_CHECK_CONSTRAINT_DUP_NAME,
             message: format!(
                 "Duplicate check constraint name '{}'.",
                 added.name.original()
@@ -493,7 +490,7 @@ fn validate_alter_foreign_key_parent(
             .all(|(child, parent)| child.go_lower_eq(parent));
     if self_reference {
         return Err(DriverError::DdlCoded {
-            errno: 1215,
+            proto: &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
             message: "Cannot add foreign key constraint".to_owned(),
         });
     }
@@ -541,7 +538,7 @@ fn validate_alter_foreign_key_parent(
     });
     if !clustered_cover && !index_cover {
         return Err(DriverError::DdlCoded {
-            errno: 1822,
+            proto: &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT,
             message: format!(
                 "Failed to add the foreign key constraint. Missing index for constraint '{}' in the referenced table '{}'",
                 foreign_key.name, foreign_key.ref_table

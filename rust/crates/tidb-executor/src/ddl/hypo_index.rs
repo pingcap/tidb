@@ -82,8 +82,7 @@ impl HypoIndexes {
         let name = index.name.go_to_lower();
         if indexes.contains_key(&name) {
             // Go `errors.Errorf("conflict hypo index name %s", indexName.L)`.
-            return Err(DriverError::Mysql(crate::driver::MysqlError::new(
-                1105,
+            return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
                 format!("conflict hypo index name {name}"),
             )));
         }
@@ -225,8 +224,7 @@ pub fn set_advisor_hypo_index(
             .iter()
             .position(|stored| stored.name.go_to_lower() == wanted)
         else {
-            return Err(DriverError::Mysql(crate::driver::MysqlError::new(
-                1105,
+            return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
                 format!("column {column} not found in table {database}.{table_name}"),
             )));
         };
@@ -317,8 +315,8 @@ fn is_table_tiflash_supported(
     table: Option<&crate::KvTable>,
 ) -> Result<(), DriverError> {
     let unsupported = |what: String| {
-        DriverError::Mysql(crate::driver::MysqlError::new(
-            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        DriverError::Mysql(crate::driver::MysqlError::terror(
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             format!("Unsupported {what}"),
         ))
     };

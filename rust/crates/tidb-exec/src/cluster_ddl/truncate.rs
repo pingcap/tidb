@@ -84,7 +84,7 @@ pub fn prepare_truncate_table_job_submission<S: MetaSnapshot>(
 /// Go `ErrTruncateIllegalForeignKey` with the child named.
 fn truncate_referenced(referred: &tidb_model::table::ReferredFKInfo) -> DdlPlanError {
     coded_refusal(
-        tidb_error::tidb::errcode::ErrTruncateIllegalForeignKey,
+        &tidb_util::dbterror::ERR_TRUNCATE_ILLEGAL_FOREIGN_KEY,
         format!(
             "Cannot truncate a table referenced in a foreign key constraint (`{}`.`{}` CONSTRAINT `{}`)",
             referred.child_schema.original(),

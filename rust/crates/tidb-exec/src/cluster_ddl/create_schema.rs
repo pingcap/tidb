@@ -59,7 +59,7 @@ pub fn prepare_create_schema_job_submission<S: MetaSnapshot>(
     // Go `checkTooLongSchema`.
     tidb_executor::ddl::check_too_long_identifier(&name.go_to_lower()).map_err(|error| {
         let error = error.to_mysql_error();
-        coded_refusal(error.code, error.message)
+        DdlPlanError::from_mysql_error(error)
     })?;
     // Go `handleDatabasePlacement`.
     let placement_policy_ref = match placement_policy {

@@ -118,11 +118,13 @@ pub enum ClusteredIndexDefMode {
 pub struct DdlAdmissionError {
     /// Exact, self-contained explanation naming the offending clause.
     pub reason: String,
-    /// The MySQL error number the client is told. Every raise site names it
-    /// explicitly: Go's own errno where this node refuses exactly what Go
-    /// names, or [`crate::table_info_build::GENERIC_ERROR_CODE`] (1105)
-    /// spelled out at the sites with no Go counterpart yet.
+    /// The MySQL error number the client is told.
     pub code: u16,
+    /// The Go `*terror.Error` identity (class and code) the refusal is raised
+    /// as, `None` for a plain `errors.Errorf` (1105) with no Go counterpart.
+    /// Go's `Error()` prints it as `[class:code]`, and the persisted job
+    /// error carries it.
+    pub identity: Option<tidb_error::terror::TerrorIdentity>,
 }
 
 impl DdlAdmissionError {
@@ -131,19 +133,39 @@ impl DdlAdmissionError {
     /// it. Refusing under Go's own errno is what lets a client tell "this
     /// server does not do that" from an internal failure.
     pub fn unsupported(what: impl Into<String>) -> Self {
+        Self::with_proto(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+            format!("Unsupported {}", what.into()),
+        )
+    }
+
+    /// Builds a refusal that carries one of Go's own errors, for the
+    /// statements TiDB itself rejects rather than the ones this node merely
+    /// declines to serve.
+    pub fn with_proto(proto: &tidb_error::terror::TerrorError, reason: impl Into<String>) -> Self {
         Self {
-            reason: format!("Unsupported {}", what.into()),
-            code: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            reason: reason.into(),
+            code: proto.to_sql_error().code,
+            identity: Some(proto.identity()),
         }
     }
 
-    /// Builds a refusal that carries one of Go's own error numbers, for the
-    /// statements TiDB itself rejects rather than the ones this node merely
-    /// declines to serve.
-    pub fn with_code(code: u16, reason: impl Into<String>) -> Self {
+    /// A refusal Go raises as a plain `errors.Errorf` (1105, no class).
+    pub fn plain(reason: impl Into<String>) -> Self {
         Self {
             reason: reason.into(),
-            code,
+            code: GENERIC_ERROR_CODE,
+            identity: None,
+        }
+    }
+
+    /// A refusal carrying an already classified driver-tier failure.
+    #[must_use]
+    pub fn from_mysql_error(error: tidb_executor::MysqlError) -> Self {
+        Self {
+            reason: error.message,
+            code: error.code,
+            identity: error.identity,
         }
     }
 
@@ -183,29 +205,29 @@ fn prefix_length(
     // `checkIndexColumn` were decided when the catalog was built.
     stored_index_length(field_type, IndexedColumn::Named(column), declared, true).map_err(|error| {
         match error {
-        PrefixError::IncorrectPrefixKey => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrWrongSubKey,
+        PrefixError::IncorrectPrefixKey => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY,
             "Incorrect prefix key; the used key part isn't a string, the used length is longer \
              than the key part, or the storage engine doesn't support unique prefix keys",
         ),
-        PrefixError::BlobKeyWithoutLength(column) => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrBlobKeyWithoutLength,
+        PrefixError::BlobKeyWithoutLength(column) => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH,
             format!("BLOB/TEXT column '{column}' used in key specification without a key length"),
         ),
-        PrefixError::KeyPart0(column) => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrKeyPart0,
+        PrefixError::KeyPart0(column) => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_KEY_PART0,
             format!("Key part '{column}' length cannot be 0"),
         ),
-        PrefixError::WrongKeyColumn(column) => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrWrongKeyColumn,
+        PrefixError::WrongKeyColumn(column) => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_WRONG_KEY_COLUMN,
             format!("The used storage engine can't index column '{column}'"),
         ),
-        PrefixError::JsonUsedAsKey(column) => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrJSONUsedAsKey,
+        PrefixError::JsonUsedAsKey(column) => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_JSON_USED_AS_KEY,
             format!("JSON column '{column}' cannot be used in key specification."),
         ),
-        PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrTooLongKey,
+        PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_TOO_LONG_KEY,
             format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
         ),
         // The hidden-column arms, which `IndexedColumn::Named` above cannot
@@ -230,8 +252,8 @@ fn key_length_sum<'a>(
     check_index_key_length(parts, part_count, unique, true)
         .map(|_| ())
         .map_err(|error| match error {
-            PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrTooLongKey,
+            PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_proto(
+                &tidb_util::dbterror::ERR_TOO_LONG_KEY,
                 format!(
                     "Specified key was too long ({length} bytes); max key length is {max} bytes"
                 ),
@@ -308,10 +330,9 @@ pub fn build_table_info_in_schema(
     context: &tidb_executor::StmtContext,
 ) -> Refusal<TableInfo> {
     let refuse = |what: &str| {
-        Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            format!("CREATE TABLE {what} is not supported by this node"),
-        ))
+        Err(DdlAdmissionError::plain(format!(
+            "CREATE TABLE {what} is not supported by this node"
+        )))
     };
     let temporary = tidb_executor::ddl::validate_temporary_table_create(create)
         .map_err(default_admission_error)?;
@@ -322,15 +343,12 @@ pub fn build_table_info_in_schema(
         return refuse("... AS <query>");
     }
     if create.columns.is_empty() {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            "CREATE TABLE declares no columns",
-        ));
+        return Err(DdlAdmissionError::plain("CREATE TABLE declares no columns"));
     }
 
     if let Err(error) = tidb_executor::ddl::validate_table_options(&create.table_options) {
         let error = error.to_mysql_error();
-        return Err(DdlAdmissionError::with_code(error.code, error.message));
+        return Err(DdlAdmissionError::from_mysql_error(error));
     }
 
     // Go `handleTableOptions` validates ENGINE_ATTRIBUTE and its
@@ -361,8 +379,8 @@ pub fn build_table_info_in_schema(
                 match &declared_charset {
                     None => declared_charset = Some(name),
                     Some(current) if *current != name => {
-                        return Err(DdlAdmissionError::with_code(
-                            tidb_error::tidb::errcode::ErrConflictingDeclarations,
+                        return Err(DdlAdmissionError::with_proto(
+                            &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS,
                             format!(
                                 "Conflicting declarations: 'CHARACTER SET {current}' and 'CHARACTER SET {name}'"
                             ),
@@ -380,8 +398,8 @@ pub fn build_table_info_in_schema(
                 match &declared_charset {
                     None => declared_charset = Some(info_charset),
                     Some(current) if !current.eq_ignore_ascii_case(&info_charset) => {
-                        return Err(DdlAdmissionError::with_code(
-                            1253,
+                        return Err(DdlAdmissionError::with_proto(
+                            &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH,
                             format!(
                                 "COLLATION '{info_collate}' is not valid for CHARACTER SET '{current}'"
                             ),
@@ -396,14 +414,10 @@ pub fn build_table_info_in_schema(
             // anything past int64 is refused with its own message.
             TableOption::AutoIdCache(value) => {
                 let parsed = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        "AUTO_ID_CACHE needs an integer value",
-                    )
+                    DdlAdmissionError::plain("AUTO_ID_CACHE needs an integer value")
                 })?;
                 if parsed > i64::MAX as u64 {
-                    return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
+                    return Err(DdlAdmissionError::plain(
                         "table option auto_id_cache overflows int64",
                     ));
                 }
@@ -415,14 +429,14 @@ pub fn build_table_info_in_schema(
             // `TableOptionAutoIncrement`, and CREATE TABLE reads only its value.
             TableOption::AutoIncrement(value) | TableOption::ForceAutoIncrement(value) => {
                 auto_inc_id = value.parse().map_err(|_| {
-                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
+                    DdlAdmissionError::plain(format!(
                         "CREATE TABLE AUTO_INCREMENT = {value} is not an integer this node can store"
                     ))
                 })?;
             }
             TableOption::AutoRandomBase(value) | TableOption::ForceAutoRandomBase(value) => {
                 auto_rand_id = value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, format!(
+                    DdlAdmissionError::plain(format!(
                         "CREATE TABLE AUTO_RANDOM_BASE = {value} is not an integer this node can store"
                     ))
                 })? as i64;
@@ -447,18 +461,12 @@ pub fn build_table_info_in_schema(
             // Go `handleTableOptions`, applied once the handle is known.
             TableOption::ShardRowIdBits(value) => {
                 shard_row_id_bits = Some(value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        "SHARD_ROW_ID_BITS needs an integer value",
-                    )
+                    DdlAdmissionError::plain("SHARD_ROW_ID_BITS needs an integer value")
                 })?);
             }
             TableOption::PreSplitRegions(value) => {
                 pre_split_regions = Some(value.parse::<u64>().map_err(|_| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        "PRE_SPLIT_REGIONS needs an integer value",
-                    )
+                    DdlAdmissionError::plain("PRE_SPLIT_REGIONS needs an integer value")
                 })?);
             }
             // Go `handleTableOptions`: `NewTableAffinityInfoWithLevel`, the
@@ -481,8 +489,12 @@ pub fn build_table_info_in_schema(
     )?;
     // Check the resolved pair, not the charset alone: an explicit supported
     // collation overrides an unsupported charset default in Go as well.
-    tidb_datatype::get_supported_collation_by_name(&table_collate)
-        .map_err(|error| DdlAdmissionError::with_code(1273, error.to_string()))?;
+    tidb_datatype::get_supported_collation_by_name(&table_collate).map_err(|error| {
+        DdlAdmissionError::with_proto(
+            &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION,
+            error.to_string(),
+        )
+    })?;
 
     // Go `buildColumnsAndConstraints`: the table-level PRIMARY KEY is located
     // first because every column needs to know whether it is one of its keys.
@@ -570,7 +582,7 @@ pub fn build_table_info_in_schema(
         create,
         context.enable_check_constraint(),
     )
-    .map_err(|error| DdlAdmissionError::with_code(error.code, error.message))?;
+    .map_err(|error| DdlAdmissionError::with_proto(error.proto, error.message))?;
     let table_index_names = create
         .table_constraints
         .iter()
@@ -616,8 +628,8 @@ pub fn build_table_info_in_schema(
         if seen.contains(&lowercase) {
             // Go `ErrDupFieldName` (1060): `Duplicate column name '%-.192s'`
             // -- the lowercased collision is reported by its original name.
-            return Err(DdlAdmissionError::with_code(
-                1060,
+            return Err(DdlAdmissionError::with_proto(
+                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS,
                 format!("Duplicate column name '{}'", column.name.original()),
             ));
         }
@@ -856,8 +868,8 @@ pub fn build_table_info_in_schema(
                 .iter_deref()
                 .any(|index| index.read().has_condition())
             {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                     "Unsupported add partial index: partial index is not supported on partitioned \
                      table",
                 ));
@@ -1069,7 +1081,7 @@ pub(crate) fn build_index_condition(
     if index.has_condition() {
         let columns =
             tidb_executor::kv_table::extract_columns_from_index_condition(index, table, true)
-                .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error))?;
+                .map_err(|error| DdlAdmissionError::plain(error))?;
         index.affect_column = tidb_model::GoSharedPointerSlice::from_handles(
             tidb_executor::kv_table::dedup_index_columns(columns)
                 .into_iter()
@@ -1130,7 +1142,7 @@ pub(crate) fn append_check_constraints(
         mode,
         context,
     )
-    .map_err(|error| DdlAdmissionError::with_code(error.code, error.message))?;
+    .map_err(|error| DdlAdmissionError::with_proto(error.proto, error.message))?;
     for info in infos {
         table.constraints.push_go(info);
     }
@@ -1141,7 +1153,7 @@ pub(crate) fn append_check_constraints(
 /// preserving the MySQL error code a client would have seen.
 fn partition_refusal(error: tidb_executor::DriverError) -> DdlAdmissionError {
     let error = error.to_mysql_error();
-    DdlAdmissionError::with_code(error.code, error.message)
+    DdlAdmissionError::from_mysql_error(error)
 }
 
 /// The stored `model.PartitionInfo` for a built clause.
@@ -1239,21 +1251,21 @@ fn check_pk_on_generated_column(table: &TableInfo, constraint: &Constraint) -> R
     for part in &constraint.parts {
         let Some(column) = table.find_public_column_by_name(&tidb_hack::go_to_lower(&part.name))
         else {
-            return Err(DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+            return Err(DdlAdmissionError::with_proto(
+                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                 format!("Key column '{}' doesn't exist in table", part.name),
             ));
         };
         let column = column.read();
         if column.is_virtual_generated() {
             if column.hidden {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrFunctionalIndexPrimaryKey,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
                     "The primary key cannot be an expression index",
                 ));
             }
-            return Err(DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+            return Err(DdlAdmissionError::with_proto(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 "'Defining a virtual generated column as primary key' is not supported for \
                  generated columns.",
             ));
@@ -1264,8 +1276,7 @@ fn check_pk_on_generated_column(table: &TableInfo, constraint: &Constraint) -> R
 
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     let TableConstraint::Index(index) = constraint else {
-        return Err(DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
+        return Err(DdlAdmissionError::plain(
             "CREATE TABLE CHECK constraints are lowered separately",
         ));
     };
@@ -1278,23 +1289,22 @@ fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
         // Go `checkFullTextSupportedInStarter`: a classic deployment refuses
         // a FULLTEXT key outright, with its own wording and the 8200 code.
         IndexConstraintKind::Fulltext => {
-            return Err(DdlAdmissionError::with_code(
-                tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            return Err(DdlAdmissionError::with_proto(
+                &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 "FULLTEXT index is only supported in starter deployment mode",
             ))
         }
         other => {
-            return Err(DdlAdmissionError::with_code(
-                GENERIC_ERROR_CODE,
-                format!("CREATE TABLE {other:?} indexes are not supported by this node"),
-            ))
+            return Err(DdlAdmissionError::plain(format!(
+                "CREATE TABLE {other:?} indexes are not supported by this node"
+            )))
         }
     };
     // Go `BuildTableInfo`: `CLUSTERED` / `NONCLUSTERED` written on anything
     // but the primary key is `ErrUnsupportedClusteredSecondaryKey`.
     if index.options.primary_key_storage.is_some() && kind != ConstraintKind::PrimaryKey {
-        return Err(DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+        return Err(DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
         ));
     }
@@ -1411,8 +1421,8 @@ fn synthesize_expression_index_columns(
             }
             // go `CheckPKOnGeneratedColumn` -> `ErrUnsupportedOnGeneratedColumn`
             // (3756): the primary key cannot be an expression index.
-            return Err(DdlAdmissionError::with_code(
-                3756,
+            return Err(DdlAdmissionError::with_proto(
+                &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_PRIMARY_KEY,
                 "The primary key cannot be an expression index",
             ));
         }
@@ -1599,8 +1609,8 @@ pub fn build_added_column(
             .iter()
             .any(|option| matches!(option, ColumnOption::Generated { stored: true, .. }))
     {
-        return Err(DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+        return Err(DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
             "'Adding generated stored column through ALTER TABLE' is not supported \
                  for generated columns.",
         ));
@@ -1615,8 +1625,8 @@ pub fn build_added_column(
             .find(|existing| existing.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT));
         if let Some(auto_increment) = auto_increment {
             if info.dependences.contains(auto_increment.name.lowercase()) {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrGeneratedColumnRefAutoInc,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
                     format!(
                         "Generated column '{}' cannot refer to auto-increment column.",
                         tidb_hack::go_to_lower(&column.name)
@@ -1698,7 +1708,7 @@ pub(crate) fn stamp_dropped_column_origin_default(info: &mut ColumnInfo) -> Refu
         let mut probe = info.clone_like_go();
         probe
             .set_default_value(tidb_model::GoAny::nil())
-            .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()))?;
+            .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
         probe.default_is_expr = false;
         stamp_origin_default(&mut probe, &context, true)?;
         info.origin_default_value = probe.origin_default_value.clone();
@@ -1728,10 +1738,9 @@ fn expression_default_origin(
     }
     let name = info.name.original();
     let failed = |reason: String| {
-        DdlAdmissionError::with_code(
-            GENERIC_ERROR_CODE,
-            format!("the default of column {name} cannot be evaluated: {reason}"),
-        )
+        DdlAdmissionError::plain(format!(
+            "the default of column {name} cannot be evaluated: {reason}"
+        ))
     };
     let expression = tidb_model::generated_expr::parse_expression(text)
         .map_err(|error| failed(error.message))?;
@@ -1759,8 +1768,8 @@ fn expression_default_origin(
             FieldTypeCode::Enum | FieldTypeCode::Set
         )
     {
-        return Err(DdlAdmissionError::with_code(
-            tidb_error::mysql::errcode::WarnDataTruncated,
+        return Err(DdlAdmissionError::with_proto(
+            &tidb_error::catalog::types::ERR_TRUNCATED,
             "Data truncated for column '%s' at row %d",
         ));
     }
@@ -1879,10 +1888,7 @@ fn stamp_origin_default(
                 .first()
                 .map(|element| element.to_utf8_lossy_go())
                 .ok_or_else(|| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        "an ENUM column with no element has no first value",
-                    )
+                    DdlAdmissionError::plain("an ENUM column with no element has no first value")
                 })?,
             FieldTypeCode::Json => "null".to_owned(),
             FieldTypeCode::VectorFloat32 => "[]".to_owned(),
@@ -1894,7 +1900,7 @@ fn stamp_origin_default(
     };
     if let Some(origin) = origin {
         info.set_origin_default_value(ColumnDefaultValue::str(&origin))
-            .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()))?;
+            .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
     }
     Ok(())
 }
@@ -1948,8 +1954,8 @@ fn build_column(
     // Go `buildColumnAndConstraint`: the hidden handle's name is reserved.
     let lower = tidb_hack::go_to_lower(name);
     if lower == "_tidb_rowid" {
-        return Err(DdlAdmissionError::with_code(
-            tidb_error::mysql::errcode::ErrWrongColumnName,
+        return Err(DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_WRONG_COLUMN_NAME,
             format!("Incorrect column name '{lower}'"),
         ));
     }
@@ -1964,17 +1970,16 @@ fn build_column(
     for option in &column.options {
         if let ColumnOption::Collate(collate) = option {
             let info = get_collation_by_name(collate).map_err(|error| {
-                DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    format!("column `{name}` declares COLLATE {collate}: {error}"),
-                )
+                DdlAdmissionError::plain(format!(
+                    "column `{name}` declares COLLATE {collate}: {error}"
+                ))
             })?;
             // go `collate.GetCollationByName`: the new-collation membership
             // check rides the name lookup itself (1273, oracle-captured for
             // `latin1_swedish_ci`).
             if !tidb_datatype::is_new_collation_supported(&info.name) {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::mysql::errcode::ErrUnknownCollation,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION,
                     format!(
                         "Unsupported collation when new collation is enabled: '{}'",
                         info.name
@@ -1983,13 +1988,10 @@ fn build_column(
             }
             if let Some(charset) = &declared_charset {
                 if !charset.eq_ignore_ascii_case(&info.charset_name) {
-                    return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        format!(
-                            "column `{name}` declares COLLATE {collate}, which is not valid for \
+                    return Err(DdlAdmissionError::plain(format!(
+                        "column `{name}` declares COLLATE {collate}, which is not valid for \
                          CHARACTER SET {charset}"
-                        ),
-                    ));
+                    )));
                 }
             }
             declared_collate = Some(info.name);
@@ -2007,10 +2009,7 @@ fn build_column(
         let code = column_type_code(&column.ty)?;
         if code.is_string() && column.ty.binary {
             collate = get_default_collation(&charset).map_err(|error| {
-                DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    format!("column `{name}` charset {charset}: {error}"),
-                )
+                DdlAdmissionError::plain(format!("column `{name}` charset {charset}: {error}"))
             })?;
         }
     }
@@ -2054,10 +2053,11 @@ fn build_column(
     if let Err(error) =
         tidb_executor::ddl::column_field_type::check_column_attributes(&field_type, true)
     {
-        return Err(DdlAdmissionError::with_code(
-            error.go_code(),
-            error.go_message(name),
-        ));
+        let message = error.go_message(name);
+        return Err(match error.go_proto() {
+            Some(proto) => DdlAdmissionError::with_proto(proto, message),
+            None => DdlAdmissionError::plain(message),
+        });
     }
 
     let mut info = ColumnInfo {
@@ -2176,14 +2176,14 @@ fn build_column(
                     FieldTypeCode::Timestamp | FieldTypeCode::Datetime
                 ) {
                     // Go `ErrInvalidOnUpdate` (1294).
-                    return Err(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrInvalidOnUpdate,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE,
                         format!("Invalid ON UPDATE clause for '{name}' column"),
                     ));
                 }
                 if !tidb_expr::is_valid_current_timestamp_expr(expr, Some(&field_type)) {
-                    return Err(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrInvalidOnUpdate,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_INVALID_ON_UPDATE,
                         format!("Invalid ON UPDATE clause for '{name}' column"),
                     ));
                 }
@@ -2217,10 +2217,9 @@ fn build_column(
                 ) {
                     // Go raises a plain `errors.Errorf` here, not a coded
                     // error, which is why TiDB answers 1105 and not 1063.
-                    return Err(DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        format!("Incorrect column specifier for column '{name}'"),
-                    ));
+                    return Err(DdlAdmissionError::plain(format!(
+                        "Incorrect column specifier for column '{name}'"
+                    )));
                 }
                 field_type.add_flags(FieldTypeFlags::AUTO_INCREMENT | FieldTypeFlags::NOT_NULL);
             }
@@ -2340,13 +2339,10 @@ fn build_column(
             // spelling is honored.
             ColumnOption::Reference(_) => {}
             other => {
-                return Err(DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    format!(
-                        "column `{name}` carries {}, which this node does not support",
-                        describe_column_option(other)
-                    ),
-                ))
+                return Err(DdlAdmissionError::plain(format!(
+                    "column `{name}` carries {}, which this node does not support",
+                    describe_column_option(other)
+                )))
             }
         }
     }
@@ -2413,33 +2409,33 @@ fn generated_column_admission_error(
     match error {
         // Go `checkDependedColExist` reports a key of `findDependedColumnNames`'s
         // map, which is the name's lowercase form.
-        GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::with_code(
-            1054,
+        GeneratedDdlError::UnknownDependency(name) => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_BAD_FIELD,
             format!(
                 "Unknown column '{}' in 'generated column function'",
                 tidb_hack::go_to_lower(&name)
             ),
         ),
-        GeneratedDdlError::NonPrior => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrGeneratedColumnNonPrior,
+        GeneratedDdlError::NonPrior => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_GENERATED_COLUMN_NON_PRIOR,
             "Generated column can refer only to generated columns defined prior to it.",
         ),
         GeneratedDdlError::IllegalFunction(error) => {
             let error = error.to_mysql_error();
-            DdlAdmissionError::with_code(error.code, error.message)
+            DdlAdmissionError::from_mysql_error(error)
         }
-        GeneratedDdlError::RefAutoInc(column) => DdlAdmissionError::with_code(
-            3109,
+        GeneratedDdlError::RefAutoInc(column) => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_GENERATED_COLUMN_REF_AUTO_INC,
             format!("Generated column '{column}' cannot refer to auto-increment column."),
         ),
-        GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::with_code(
-            tidb_error::tidb::errcode::ErrUnsupportedOnGeneratedColumn,
+        GeneratedDdlError::Unsupported(reason) => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
             format!("'{reason}' is not supported for generated columns."),
         ),
         GeneratedDdlError::Unbuildable(reason) => DdlAdmissionError::unsupported(reason),
         GeneratedDdlError::Eval(error) => {
             let error = tidb_executor::DriverError::Exec(error.into()).to_mysql_error();
-            DdlAdmissionError::with_code(error.code, error.message)
+            DdlAdmissionError::from_mysql_error(error)
         }
     }
 }
@@ -2463,7 +2459,7 @@ pub(crate) fn set_column_default(
     info.default_is_expr = false;
     let Some(expr) = default_value else {
         info.set_default_value(GoAny::nil())
-            .map_err(|error| DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string()))?;
+            .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
         info.field_type.add_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
         return Ok(());
     };
@@ -2589,9 +2585,11 @@ fn build_table(
     clustered_mode: ClusteredIndexDefMode,
     context: &tidb_executor::StmtContext,
 ) -> Refusal<TableInfo> {
-    let table_name = create.name.last().cloned().ok_or_else(|| {
-        DdlAdmissionError::with_code(GENERIC_ERROR_CODE, "CREATE TABLE names no table")
-    })?;
+    let table_name = create
+        .name
+        .last()
+        .cloned()
+        .ok_or_else(|| DdlAdmissionError::plain("CREATE TABLE names no table"))?;
     let mut table = TableInfo {
         name: CiString::new(table_name),
         charset,
@@ -2613,8 +2611,8 @@ fn build_table(
         > 1
     {
         // Go `ErrMultiplePriKey` (1068).
-        return Err(DdlAdmissionError::with_code(
-            1068,
+        return Err(DdlAdmissionError::with_proto(
+            &tidb_error::catalog::infoschema::ERR_MULTIPLE_PRI_KEY,
             "Multiple primary key defined",
         ));
     }
@@ -2624,8 +2622,8 @@ fn build_table(
             check_pk_on_generated_column(&table, constraint)?;
             // Go `buildTableInfo` blocks every partial primary key.
             if constraint.condition.is_some() {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                     "Unsupported add partial index: create an primary key with partial index is \
                      not supported",
                 ));
@@ -2641,14 +2639,14 @@ fn build_table(
                 // Go `buildTableInfo`: a clustered primary key can be neither
                 // invisible nor global.
                 if constraint.invisible {
-                    return Err(DdlAdmissionError::with_code(
-                        tidb_error::tidb::errcode::ErrPKIndexCantBeInvisible,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_PK_INDEX_CANT_BE_INVISIBLE,
                         "A primary key index cannot be invisible",
                     ));
                 }
                 if constraint.global {
-                    return Err(DdlAdmissionError::with_code(
-                        8200,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         "Unsupported create an index that is both a global index and a clustered index",
                     ));
                 }
@@ -2682,8 +2680,8 @@ fn build_table(
                 .find(|column| column.read().name.lowercase().go_lower_eq(&part.name))
             else {
                 // Go `buildIndexColumns`: `ErrKeyColumnDoesNotExits` (1072).
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrKeyColumnDoesNotExits,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS,
                     format!("column does not exist: {}", part.name),
                 ));
             };
@@ -2701,8 +2699,8 @@ fn build_table(
                 &column.field_type,
             )
             .map_err(|feature| {
-                DdlAdmissionError::with_code(
-                    tidb_error::tidb::errcode::ErrNotSupportedYet,
+                DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_NOT_SUPPORTED_YET,
                     format!("This version of TiDB doesn't yet support '{feature}'"),
                 )
             })?;
@@ -2800,19 +2798,15 @@ pub(crate) fn resolve_charset_collation(
         (Some(fallback_charset), Some(fallback_collate)),
     ] {
         if let Some(collate) = collate.filter(|collate| !collate.is_empty()) {
-            let info = get_collation_by_name(collate).map_err(|error| {
-                DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    format!("COLLATE {collate}: {error}"),
-                )
-            })?;
+            let info = get_collation_by_name(collate)
+                .map_err(|error| DdlAdmissionError::plain(format!("COLLATE {collate}: {error}")))?;
             // go `collate.GetCollationByName` (the wrapped lookup every DDL
             // route takes): with the new collation framework enabled, a
             // collation without its own implementation answers 1273 instead
             // of resolving (`latin1_swedish_ci` -- oracle-captured).
             if !tidb_datatype::is_new_collation_supported(&info.name) {
-                return Err(DdlAdmissionError::with_code(
-                    tidb_error::mysql::errcode::ErrUnknownCollation,
+                return Err(DdlAdmissionError::with_proto(
+                    &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION,
                     format!(
                         "Unsupported collation when new collation is enabled: '{}'",
                         info.name
@@ -2824,8 +2818,8 @@ pub(crate) fn resolve_charset_collation(
                     // Go `ErrCollationCharsetMismatch` (1253), not the
                     // generic refusal: a client that offers a charset menu
                     // switches on this code.
-                    return Err(DdlAdmissionError::with_code(
-                        1253,
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH,
                         format!("COLLATION '{collate}' is not valid for CHARACTER SET '{charset}'"),
                     ));
                 }
@@ -2843,15 +2837,12 @@ pub(crate) fn resolve_charset_collation(
                 if let tidb_datatype::CharsetError::UnknownCharset(name)
                 | tidb_datatype::CharsetError::UnsupportedCharset(name) = &error
                 {
-                    return DdlAdmissionError::with_code(
-                        tidb_error::mysql::errcode::ErrUnknownCharacterSet,
+                    return DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
                         format!("Unknown character set: '{name}'"),
                     );
                 }
-                DdlAdmissionError::with_code(
-                    GENERIC_ERROR_CODE,
-                    format!("CHARACTER SET {charset}: {error}"),
-                )
+                DdlAdmissionError::plain(format!("CHARACTER SET {charset}: {error}"))
             })?;
             return Ok((charset.to_ascii_lowercase(), collate));
         }
@@ -2862,7 +2853,7 @@ pub(crate) fn resolve_charset_collation(
 
 impl From<ColumnTypeError> for DdlAdmissionError {
     fn from(error: ColumnTypeError) -> Self {
-        Self::with_code(GENERIC_ERROR_CODE, error.reason)
+        Self::plain(error.reason)
     }
 }
 
@@ -2914,7 +2905,7 @@ impl StagedColumnDefault {
 
 fn default_admission_error(error: tidb_executor::DriverError) -> DdlAdmissionError {
     let error = error.to_mysql_error();
-    DdlAdmissionError::with_code(error.code, error.message)
+    DdlAdmissionError::from_mysql_error(error)
 }
 
 /// Go `SetDefaultValue` -> `getDefaultValue` -> `checkColumnDefaultValue`,
@@ -3014,9 +3005,7 @@ fn persist_column_default(
         StagedColumnDefault::TemporalMarker(text) => {
             info.default_is_expr = false;
             info.set_default_value(ColumnDefaultValue::str(&text))
-                .map_err(|error| {
-                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
-                })?;
+                .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
         }
         StagedColumnDefault::Computed(text) => {
             // Go `checkDefaultValue`: an AUTO_INCREMENT column takes no
@@ -3030,9 +3019,7 @@ fn persist_column_default(
             // per-row evaluation re-runs it for every omitted column.
             info.default_is_expr = true;
             info.set_default_value(ColumnDefaultValue::str(&text))
-                .map_err(|error| {
-                    DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
-                })?;
+                .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
         }
         StagedColumnDefault::Settled(settled) => {
             // Any inline-key NULL default returned at the earlier precheck,
@@ -3061,16 +3048,14 @@ fn persist_column_default(
                 GoAny::nil()
             } else {
                 ColumnDefaultValue::string_bytes(settled.stored.sql_bytes().map_err(|_| {
-                    DdlAdmissionError::with_code(
-                        GENERIC_ERROR_CODE,
-                        format!("column `{name}` has an invalid default value"),
-                    )
+                    DdlAdmissionError::plain(format!(
+                        "column `{name}` has an invalid default value"
+                    ))
                 })?)
                 .into()
             };
-            info.set_default_value(stored).map_err(|error| {
-                DdlAdmissionError::with_code(GENERIC_ERROR_CODE, error.to_string())
-            })?;
+            info.set_default_value(stored)
+                .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
         }
     }
     Ok(())

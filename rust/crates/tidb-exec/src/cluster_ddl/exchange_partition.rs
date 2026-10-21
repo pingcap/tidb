@@ -63,7 +63,7 @@ pub fn prepare_exchange_partition_job_submission<S: MetaSnapshot>(
         })
         .ok_or_else(|| {
             exchange_refusal(
-                1735,
+                &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION,
                 format!(
                     "Unknown partition '{partition_name}' in table '{}'",
                     partitioned.name.original()
@@ -165,7 +165,12 @@ fn check_exchange_partition_placement_policy<S: MetaSnapshot>(
     partitioned: Option<&GoShared<tidb_model::PolicyRefInfo>>,
     partition: Option<&GoShared<tidb_model::PolicyRefInfo>>,
 ) -> Result<(), DdlPlanError> {
-    let different = || exchange_refusal(1736, "Tables have different definitions");
+    let different = || {
+        exchange_refusal(
+            &tidb_util::dbterror::ERR_TABLES_DIFFERENT_METADATA,
+            "Tables have different definitions",
+        )
+    };
     let partition = partition.or(partitioned);
     let (standalone, partition) = match (standalone, partition) {
         (None, None) => return Ok(()),
@@ -324,7 +329,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
             .find(|definition| definition.name.lowercase() == args.partition_name)
     }) else {
         return Err(exchange_refusal(
-            1735,
+            &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION,
             format!(
                 "Unknown partition '{}' in table '{}'",
                 args.partition_name,
@@ -446,7 +451,7 @@ pub(super) fn plan_persisted_exchange_partition_job_step<S: MetaSnapshot>(
                 return Ok(PersistedDdlActionStep {
                     write: job_only_write(active.job.id, Vec::new()),
                     update_raw_args: false,
-                    run_error: Some(coded_refusal(*code, message.clone())),
+                    run_error: Some(checked_refusal(*code, message.clone())),
                     reorg: None,
                 });
             }

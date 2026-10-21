@@ -716,7 +716,7 @@ impl Session {
         let error = result
             .as_ref()
             .err()
-            .map(|error| error.clone().to_mysql_error().message);
+            .map(|error| error.error_string());
         self.publish_statement_observation(result.is_ok(), affected_rows, result_rows, error);
     }
 

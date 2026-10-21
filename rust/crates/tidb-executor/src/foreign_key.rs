@@ -1197,7 +1197,7 @@ pub(crate) fn check_drop_column(
     for foreign_key in &declared_keys {
         if foreign_key.cols.iter().any(|col| col.go_lower_eq(&column)) {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::mysql::errcode::ErrFkColumnCannotDrop,
+                proto: &tidb_util::dbterror::ERR_FK_COLUMN_CANNOT_DROP,
                 message: format!(
                     "Cannot drop column '{column}': needed in a foreign key constraint '{}'",
                     foreign_key.name
@@ -1212,7 +1212,7 @@ pub(crate) fn check_drop_column(
             .any(|col| col.go_lower_eq(&column))
         {
             return Err(DriverError::DdlCoded {
-                errno: tidb_error::mysql::errcode::ErrFkColumnCannotDropChild,
+                proto: &tidb_util::dbterror::ERR_FK_COLUMN_CANNOT_DROP_CHILD,
                 message: format!(
                     "Cannot drop column '{column}': needed in a foreign key constraint '{}' of table '{child_table}'",
                     foreign_key.name

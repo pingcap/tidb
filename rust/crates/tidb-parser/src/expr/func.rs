@@ -356,8 +356,12 @@ impl Parser {
         if self.is_kw("USING") {
             self.bump();
             let raw = self.parse_using_charset_name()?;
-            let charset = canonical_charset(&raw)
-                .ok_or_else(|| self.err_coded(1115, &format!("Unknown character set: '{raw}'")))?;
+            let charset = canonical_charset(&raw).ok_or_else(|| {
+                self.err_coded(
+                    &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                    &format!("Unknown character set: '{raw}'"),
+                )
+            })?;
             args.push(Expr::RawString(charset.to_string()));
         } else {
             args.push(Expr::Null);

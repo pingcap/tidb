@@ -3983,16 +3983,17 @@ impl KvTable {
                     Err(error) => {
                         let reported = error.to_mysql_error();
                         failure = Some(KvTableError::ColumnCast(reformat_reorg_error(
-                            reported.code,
-                            reported.message,
-                            &old_name,
-                            &value,
+                            reported, &old_name, &value,
                         )));
                         break;
                     }
                 }
                 if let Some((_, code, message)) = ctx.take_warnings().into_iter().next() {
-                    let warning = reformat_reorg_error(code, message, &old_name, &value);
+                    let warning = reformat_reorg_error(
+                        crate::MysqlError::sql_error(code, message),
+                        &old_name,
+                        &value,
+                    );
                     reorg_warnings.record(warning.code, warning.message);
                 }
             }
@@ -4913,8 +4914,8 @@ impl KvTable {
             if i64::try_from(self.store.size_bytes()).unwrap_or(i64::MAX)
                 > statement.tmp_table_max_size()
             {
-                return Err(KvTableError::ColumnCast(crate::MysqlError::new(
-                    tidb_error::mysql::errcode::ErrRecordFileFull,
+                return Err(KvTableError::ColumnCast(crate::MysqlError::terror(
+                    &tidb_error::catalog::table::ERR_TEMP_TABLE_FULL,
                     format!("The table '{}' is full", self.name),
                 )));
             }
@@ -5698,8 +5699,7 @@ fn convert_failure(column: &str, target: &FieldType, value: &Datum) -> KvTableEr
 /// names the OLD column and the old value, as does an out-of-range one; other
 /// errors keep their own text.
 fn reformat_reorg_error(
-    code: u16,
-    message: String,
+    error: crate::MysqlError,
     old_column: &str,
     old_value: &Datum,
 ) -> crate::MysqlError {
@@ -5708,23 +5708,23 @@ fn reformat_reorg_error(
             .sql_string()
             .unwrap_or_else(|_| format!("{old_value:?}"))
     };
-    match code {
+    match error.code {
         tidb_error::tidb::errcode::WarnDataTruncated
-        | tidb_error::tidb::errcode::ErrDataTooLong => crate::MysqlError::new(
-            tidb_error::tidb::errcode::WarnDataTruncated,
+        | tidb_error::tidb::errcode::ErrDataTooLong => crate::MysqlError::terror(
+            &tidb_error::catalog::types::ERR_TRUNCATED,
             format!(
                 "Data truncated for column '{old_column}', value is '{}'",
                 value()
             ),
         ),
-        tidb_error::tidb::errcode::ErrWarnDataOutOfRange => crate::MysqlError::new(
-            code,
+        tidb_error::tidb::errcode::ErrWarnDataOutOfRange => crate::MysqlError::terror(
+            &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE,
             format!(
                 "Out of range value for column '{old_column}', the value is '{}'",
                 value()
             ),
         ),
-        _ => crate::MysqlError::new(code, message),
+        _ => error,
     }
 }
 

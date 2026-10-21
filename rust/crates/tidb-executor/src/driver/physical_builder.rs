@@ -1362,7 +1362,7 @@ fn build_table_sample(
         ranges.extend(
             catalog
                 .region_ranges_in(&start, end.as_bytes())
-                .map_err(|error| DriverError::Mysql(crate::MysqlError::new(1105, error)))?
+                .map_err(|error| DriverError::Mysql(crate::MysqlError::unknown(error)))?
                 .into_iter()
                 .map(|(start, end)| crate::table_sample::SampleRange {
                     table: position,
@@ -1398,8 +1398,7 @@ fn build_mem_table(
         // go's metrics tables query the metric storage (Prometheus/PD),
         // which is absent -- the queries fail `query metric error: pd
         // unavailable` (oracle g-is: metrics_schema scans answer 1105).
-        return Err(DriverError::Mysql(crate::driver::MysqlError::new(
-            1105,
+        return Err(DriverError::Mysql(crate::driver::MysqlError::unknown(
             "query metric error: pd unavailable".to_owned(),
         )));
     }

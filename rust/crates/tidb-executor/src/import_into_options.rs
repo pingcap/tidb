@@ -83,17 +83,20 @@ enum OptionValue {
     Other,
 }
 
-fn code(errno: u16, message: String) -> DriverError {
-    DriverError::DdlCoded { errno, message }
+fn code(proto: &'static tidb_error::terror::TerrorError, message: String) -> DriverError {
+    DriverError::DdlCoded { proto, message }
 }
 
 fn invalid(name: &str) -> DriverError {
-    code(ERR_INVALID_OPTION_VAL, format!("Invalid option value for {name}"))
+    code(
+        &tidb_util::dbterror::exeerrors::ERR_INVALID_OPTION_VAL,
+        format!("Invalid option value for {name}"),
+    )
 }
 
 fn unsupported_option(name: &str, reason: &str) -> DriverError {
     code(
-        ERR_LOAD_DATA_UNSUPPORTED_OPTION,
+        &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_UNSUPPORTED_OPTION,
         format!("Unsupported option {name} for {reason}"),
     )
 }
@@ -244,7 +247,7 @@ pub fn validate_import_into_options(stmt: &ImportIntoStmt) -> Result<(), DriverE
             .find(|(name, _)| *name == option.name)
         else {
             return Err(code(
-                ERR_UNKNOWN_OPTION,
+                &tidb_util::dbterror::exeerrors::ERR_UNKNOWN_OPTION,
                 format!("Unknown option {}", option.name),
             ));
         };
@@ -253,7 +256,7 @@ pub fn validate_import_into_options(stmt: &ImportIntoStmt) -> Result<(), DriverE
         }
         if specified.iter().any(|seen| seen.name == option.name) {
             return Err(code(
-                ERR_DUPLICATE_OPTION,
+                &tidb_util::dbterror::exeerrors::ERR_DUPLICATE_OPTION,
                 format!("Option {} specified more than once", option.name),
             ));
         }
@@ -391,13 +394,13 @@ pub fn validate_import_into_options(stmt: &ImportIntoStmt) -> Result<(), DriverE
     // Go `checkFieldParams`.
     if let Some("") = path {
         return Err(code(
-            ERR_LOAD_DATA_EMPTY_PATH,
+            &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_EMPTY_PATH,
             "The value of INFILE must not be empty when LOAD DATA from LOCAL".to_owned(),
         ));
     }
     if !matches!(format.as_str(), "csv" | "parquet" | "sql" | "auto") {
         return Err(code(
-            ERR_LOAD_DATA_UNSUPPORTED_FORMAT,
+            &tidb_util::dbterror::exeerrors::ERR_LOAD_DATA_UNSUPPORTED_FORMAT,
             format!("The FORMAT '{format}' is not supported"),
         ));
     }

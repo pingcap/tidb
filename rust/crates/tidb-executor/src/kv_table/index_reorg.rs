@@ -627,16 +627,17 @@ impl KvTable {
                 Err(error) => {
                     let reported = error.to_mysql_error();
                     failure = Some(KvTableError::ColumnCast(super::reformat_reorg_error(
-                        reported.code,
-                        reported.message,
-                        &old_name,
-                        &old_value,
+                        reported, &old_name, &old_value,
                     )));
                     break;
                 }
             };
             if let Some((_, code, message)) = cast_context.take_warnings().into_iter().next() {
-                let warning = super::reformat_reorg_error(code, message, &old_name, &old_value);
+                let warning = super::reformat_reorg_error(
+                    crate::MysqlError::sql_error(code, message),
+                    &old_name,
+                    &old_value,
+                );
                 match warnings
                     .iter_mut()
                     .find(|(seen, _, _)| *seen == warning.code)

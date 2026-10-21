@@ -372,6 +372,7 @@ fn handle_raw_cast_error(
             code: reported.code,
             state: tidb_error::mysql::mysql_state(reported.code),
             message: reported.message,
+            identity: reported.identity,
         }),
         |warning| ctx.append_warning_parts(warning.code, &warning.message),
     );
@@ -722,7 +723,7 @@ fn complete_typed_cast(
             column: column.to_owned(),
             row: row + 1,
         },
-        _ => DriverError::Mysql(crate::MysqlError::new(error.code, error.message)),
+        _ => DriverError::Mysql(crate::MysqlError::from_sql_error(error)),
     }
 }
 

@@ -37,7 +37,7 @@ const PARTITION_COUNT_LIMIT: usize = 8192;
 /// A refusal the shared partition implementation raised.
 fn admission(error: tidb_executor::DriverError) -> DdlPlanError {
     let error = error.to_mysql_error();
-    DdlPlanError::Admission(DdlAdmissionError::with_code(error.code, error.message))
+    DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error))
 }
 
 /// The notes the shared partition implementation left on `context`.
@@ -375,10 +375,9 @@ fn invalid_partition_state(state: SchemaState) -> DdlPlanError {
 
 /// The placement policies a bundle reads.
 fn bundle_error(error: tidb_placement::PlacementError) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::with_code(
-        GENERIC_ERROR_CODE,
-        format!("building placement rules: {error}"),
-    ))
+    DdlPlanError::Admission(DdlAdmissionError::plain(format!(
+        "building placement rules: {error}"
+    )))
 }
 
 /// Go `alterTablePartitionBundles`: the table's bundle over its partitions
@@ -564,7 +563,7 @@ fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
         }
         // The job retries with the error counted.
         Some(ReorgResult::Failed { code, message, .. }) => {
-            Err(coded_refusal(*code, message.clone()))
+            Err(checked_refusal(*code, message.clone()))
         }
         Some(ReorgResult::Checked(_)) => Err(DdlPlanError::Encode(
             "a global-index cleanup got a check's outcome".to_owned(),
@@ -576,7 +575,7 @@ fn clean_global_index_entries_from_dropped_partitions<S: MetaSnapshot>(
 fn check_add_partition_too_many_partitions(count: usize) -> Result<(), DdlPlanError> {
     if count > PARTITION_COUNT_LIMIT {
         return Err(coded_refusal(
-            tidb_error::mysql::errcode::ErrTooManyPartitions,
+            &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS,
             "Too many partitions (including subpartitions) were defined",
         ));
     }
@@ -616,7 +615,7 @@ fn check_add_partition_value(
             let range_value = last.less_than.get(0);
             if range_value.eq_ignore_ascii_case("MAXVALUE") {
                 return Err(coded_refusal(
-                    tidb_error::mysql::errcode::ErrPartitionMaxvalue,
+                    &tidb_util::dbterror::ERR_PARTITION_MAXVALUE,
                     "MAXVALUE can only be used in last partition definition",
                 ));
             }
@@ -630,14 +629,14 @@ fn check_add_partition_value(
                 }
                 if max_value {
                     return Err(coded_refusal(
-                        tidb_error::mysql::errcode::ErrPartitionMaxvalue,
+                        &tidb_util::dbterror::ERR_PARTITION_MAXVALUE,
                         "MAXVALUE can only be used in last partition definition",
                     ));
                 }
                 let next = atoi(&bound)?;
                 if next <= current {
                     return Err(coded_refusal(
-                        tidb_error::mysql::errcode::ErrRangeNotIncreasing,
+                        &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING,
                         "VALUES LESS THAN value must be strictly increasing for each partition",
                     ));
                 }
@@ -647,7 +646,7 @@ fn check_add_partition_value(
         }
         tidb_ast::PartitionType::LIST if partition.get_default_list_partition() != -1 => {
             Err(coded_refusal(
-                8200,
+                &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                 "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead",
             ))
         }
@@ -670,7 +669,7 @@ fn check_add_partition_name_unique(
     for definition in part_info.definitions.snapshot() {
         if !names.insert(definition.name.lowercase().to_owned()) {
             return Err(coded_refusal(
-                tidb_error::mysql::errcode::ErrSameNamePartition,
+                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
                 format!("Duplicate partition name {}", definition.name.original()),
             ));
         }
@@ -705,7 +704,7 @@ pub(super) fn plan_persisted_add_table_partition_job_step<S: MetaSnapshot>(
                 return Err(cancel_ddl_job(
                     active,
                     coded_refusal(
-                        8200,
+                        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
                         "Unsupported ADD PARTITION of a table with AFFINITY option",
                     ),
                 ));
@@ -963,7 +962,7 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
     }
     if info.affinity.is_some() {
         return Err(coded_refusal(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "Unsupported DROP PARTITION of a table with AFFINITY option",
         ));
     }

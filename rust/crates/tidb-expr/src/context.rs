@@ -260,6 +260,18 @@ pub enum SequenceEvalError {
 }
 
 impl SequenceEvalError {
+    /// The Go definition this error is raised as.
+    #[must_use]
+    pub fn proto(&self) -> &'static tidb_error::terror::TerrorError {
+        use tidb_error::catalog::{expression, infoschema, table};
+        match self {
+            SequenceEvalError::RunOut(_) => &table::ERR_SEQUENCE_HAS_RUN_OUT,
+            SequenceEvalError::NotASequence(_) => &infoschema::ERR_TABLE_NOT_EXISTS,
+            SequenceEvalError::WrongObject(_) => &infoschema::ERR_WRONG_OBJECT,
+            SequenceEvalError::AccessDenied { .. } => &expression::ERR_SEQUENCE_ACCESS_DENIED,
+        }
+    }
+
     /// The MySQL error number.
     #[must_use]
     pub fn code(&self) -> u16 {
@@ -377,6 +389,31 @@ pub enum JsonError {
 }
 
 impl JsonError {
+    /// The Go definition this error is raised as: the `json` class for the
+    /// document / path errors, `types` and `expression` for the few the JSON
+    /// builtins raise through those packages.
+    #[must_use]
+    pub fn proto(&self) -> &'static tidb_error::terror::TerrorError {
+        use tidb_error::catalog::{expression, types};
+        match self {
+            JsonError::InvalidText | JsonError::EmptyText => &types::ERR_INVALID_JSON_TEXT,
+            JsonError::InvalidTextInParam { .. } => &types::ERR_INVALID_JSON_TEXT_IN_PARAM,
+            JsonError::InvalidCharset => &types::ERR_INVALID_JSON_CHARSET,
+            JsonError::InvalidPath(_) => &types::ERR_INVALID_JSON_PATH,
+            JsonError::InvalidPathMultipleSelection => {
+                &types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION
+            }
+            JsonError::InvalidTypeForJson { .. } => &expression::ERR_INVALID_TYPE_FOR_JSON,
+            JsonError::InvalidJsonType { .. } => &types::ERR_INVALID_JSON_TYPE,
+            JsonError::IncorrectType { .. } => &expression::ERR_INCORRECT_TYPE,
+            JsonError::NullMemberName => &types::ERR_JSON_DOCUMENT_NULL_KEY,
+            JsonError::VacuousPath => &types::ERR_JSON_VACUOUS_PATH,
+            JsonError::InvalidPathArrayCell => &types::ERR_INVALID_JSON_PATH_ARRAY_CELL,
+            JsonError::BadOneOrAllArg { .. } => &types::ERR_JSON_BAD_ONE_OR_ALL_ARG,
+            JsonError::DocumentTooDeep => &types::ERR_JSON_DOCUMENT_TOO_DEEP,
+        }
+    }
+
     /// The `pkg/errno` code TiDB reports for this error.
     #[must_use]
     pub const fn code(&self) -> u16 {

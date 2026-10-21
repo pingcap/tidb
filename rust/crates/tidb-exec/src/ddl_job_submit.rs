@@ -420,6 +420,21 @@ impl JobSubmitError {
     }
 }
 
+impl JobSubmitError {
+    /// The Go definition this refusal is raised as, `None` for the plain
+    /// errors `jobsubmit` builds with `errors.Errorf`.
+    #[must_use]
+    pub fn proto(&self) -> Option<&'static tidb_error::terror::TerrorError> {
+        match self {
+            Self::InvalidTableModeSet { .. } => {
+                Some(&tidb_error::catalog::infoschema::ERR_INVALID_TABLE_MODE_SET)
+            }
+            Self::BdrRestricted(_) => Some(&tidb_util::dbterror::ERR_BDR_RESTRICTED_DDL),
+            Self::InvalidInvolvingSchemaInfo(_) | Self::FlashbackClusterJob => None,
+        }
+    }
+}
+
 impl fmt::Display for JobSubmitError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -548,10 +563,12 @@ pub fn prepare_spec_for_submit(
 }
 
 pub(crate) fn submit_error(error: JobSubmitError) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::with_code(
-        error.code(),
-        error.to_string(),
-    ))
+    match error.proto() {
+        Some(proto) => {
+            DdlPlanError::Admission(DdlAdmissionError::with_proto(proto, error.to_string()))
+        }
+        None => DdlPlanError::plain_refusal(error.to_string()),
+    }
 }
 
 fn string_for_ids(ids: impl IntoIterator<Item = i64>) -> String {

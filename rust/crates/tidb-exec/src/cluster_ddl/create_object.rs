@@ -72,7 +72,7 @@ pub fn prepare_create_object_job_submission<S: MetaSnapshot>(
                 },
                 error => {
                     let error = error.to_mysql_error();
-                    coded_refusal(error.code, error.message)
+                    DdlPlanError::from_mysql_error(error)
                 }
             })?;
             let on_exist = if *or_replace {
@@ -188,7 +188,7 @@ pub(super) fn build_create_table_with_info_job(
             OnExist::Replace if info.view.is_some() => {
                 if existing.view.is_none() {
                     return Err(coded_refusal(
-                        tidb_error::tidb::errcode::ErrWrongObject,
+                        &tidb_util::dbterror::ERR_WRONG_OBJECT,
                         format!("'{schema}.{}' is not VIEW", info.name.original()),
                     ));
                 }
@@ -273,7 +273,7 @@ fn build_create_table_like_info(
     };
     if source.temp_table_type != tidb_model::TempTableType::NONE {
         return Err(coded_refusal(
-            8006,
+            &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
             "`create table like` is unsupported on temporary tables.",
         ));
     }
@@ -281,7 +281,7 @@ fn build_create_table_like_info(
         // Go `checkReferInfoForTemporaryTable`, in observable order.
         let temporary_option = |operation: &str| {
             coded_refusal(
-                8006,
+                &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
                 format!("`{operation}` is unsupported on temporary tables."),
             )
         };
@@ -293,7 +293,7 @@ fn build_create_table_like_info(
         }
         if source.partition.is_some() {
             return Err(coded_refusal(
-                1562,
+                &tidb_util::dbterror::ERR_PARTITION_NO_TEMPORARY,
                 "Cannot create temporary table with partitions",
             ));
         }
@@ -317,7 +317,7 @@ fn build_create_table_like_info(
     // Go reaches `setTemporaryType` only after the source checks.
     if *temporary == tidb_ast::CreateTableTemporary::Global && !*on_commit_delete {
         return Err(coded_refusal(
-            8200,
+            &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
             "TiDB doesn't support ON COMMIT PRESERVE ROWS for now",
         ));
     }
@@ -653,7 +653,7 @@ fn build_alter_sequence_job(
     };
     let Some(old) = stored.sequence.as_ref().map(|shared| shared.read().clone()) else {
         return Err(coded_refusal(
-            tidb_error::tidb::errcode::ErrWrongObject,
+            &tidb_util::dbterror::ERR_WRONG_OBJECT,
             format!("'{schema}.{name}' is not SEQUENCE"),
         ));
     };
@@ -661,7 +661,7 @@ fn build_alter_sequence_job(
     tidb_executor::alter_sequence_options(sequence_options_of(&old), options, schema, name)
         .map_err(|error| {
             let error = error.to_mysql_error();
-            coded_refusal(error.code, error.message)
+            DdlPlanError::from_mysql_error(error)
         })?;
     let mut job = session_job(job_context, ActionType::ACTION_ALTER_SEQUENCE);
     job.schema_id = database.info.id;
@@ -717,7 +717,7 @@ pub(super) fn plan_persisted_alter_sequence_job_step(
         return Err(cancel_ddl_job(
             active,
             coded_refusal(
-                tidb_error::tidb::errcode::ErrWrongObject,
+                &tidb_util::dbterror::ERR_WRONG_OBJECT,
                 format!(
                     "'{}.{}' is not SEQUENCE",
                     ident.schema.original(),
@@ -734,7 +734,7 @@ pub(super) fn plan_persisted_alter_sequence_job_step(
     )
     .map_err(|error| {
         let error = error.to_mysql_error();
-        cancel_ddl_job(active, coded_refusal(error.code, error.message))
+        cancel_ddl_job(active, DdlPlanError::from_mysql_error(error))
     })?;
     let altered = stored_sequence_info(altered, old.comment.clone());
     // Go: nothing changes and nothing restarts -- done, nothing published.

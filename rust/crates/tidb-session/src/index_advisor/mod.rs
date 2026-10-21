@@ -626,8 +626,8 @@ impl SessionOptimizer<'_> {
                         tidb_ast::DmlStmt::Update(_) => ("UPDATE", first_table_name(statement)),
                         _ => ("DELETE", first_table_name(statement)),
                     };
-                    Err(DriverError::Mysql(tidb_executor::MysqlError::new(
-                        1288,
+                    Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+                        &tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE,
                         format!("The target table {table} of the {verb} is not updatable"),
                     )))
                 }

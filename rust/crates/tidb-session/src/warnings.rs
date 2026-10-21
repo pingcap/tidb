@@ -318,9 +318,9 @@ impl Session {
                 // The parse-failure door maps the error; the diagnostics
                 // a failed parse carried are dropped (go's failed parse
                 // never reaches the warning copy either).
-                let mapped = match error.errno {
-                    Some(errno) => DriverError::ParseCoded {
-                        errno,
+                let mapped = match error.terror {
+                    Some(proto) => DriverError::ParseCoded {
+                        proto,
                         message: error.message,
                     },
                     None => DriverError::Parse(error.compatibility_message(sql)),

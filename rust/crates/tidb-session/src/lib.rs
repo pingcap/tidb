@@ -2762,7 +2762,7 @@ impl Session {
             match self.vars().multi_statement_mode() {
                 0 => {
                     return Err(DriverError::ParseCoded {
-                        errno: 8130,
+                        proto: &tidb_error::catalog::servererr::ERR_MULTI_STATEMENT_DISABLED,
                         message: DISABLED.to_owned(),
                     })
                 }
@@ -3333,6 +3333,8 @@ mod session_source_tests {
 pub mod metrics;
 #[cfg(test)]
 mod tests_admin_check;
+#[cfg(test)]
+mod tests_error_class;
 #[cfg(test)]
 mod tests_affinity_storage_class;
 #[cfg(test)]

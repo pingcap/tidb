@@ -3961,6 +3961,7 @@ dependencies = [
  "subtle",
  "tidb-ast",
  "tidb-datatype",
+ "tidb-error",
  "tidb-hack",
  "tidb-lexer",
  "tidb-mysql",

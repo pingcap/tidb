@@ -311,6 +311,10 @@ pub struct SqlQueryError {
     /// A commit write conflict's `newWriteConflictError` arguments, which the
     /// session rewrites with table names (Go `tryReplaceWriteConflictError`).
     pub write_conflict: Option<Box<WriteConflictArgs>>,
+    /// The Go `*terror.Error` identity the failure was raised as, `None` for a
+    /// plain error. Go's `err.Error()` -- `@@tidb_last_query_info`, logs --
+    /// prints it as `[class:code]message`; the wire carries only the message.
+    pub identity: Option<tidb_error::terror::TerrorIdentity>,
 }
 
 impl SqlQueryError {
@@ -322,6 +326,27 @@ impl SqlQueryError {
             state,
             message: message.into(),
             write_conflict: None,
+            identity: None,
+        }
+    }
+
+    /// Labels the failure with the Go identity it was raised as.
+    #[must_use]
+    pub fn with_identity(mut self, identity: Option<tidb_error::terror::TerrorIdentity>) -> Self {
+        self.identity = identity;
+        self
+    }
+
+    /// Go `err.Error()`: `[<class>:<code>]<message>` for a `*terror.Error`,
+    /// the bare message for a plain error.
+    #[must_use]
+    pub fn error_string(&self) -> String {
+        match self.identity {
+            Some(identity) if identity.class().description().is_empty() => {
+                format!("[{}]{}", identity.code().value(), self.message)
+            }
+            Some(identity) => format!("[{}]{}", identity.rfc_code(), self.message),
+            None => self.message.clone(),
         }
     }
 
