@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,6 +51,38 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
 	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
+}
+
+func TestPreprocessRefreshMaterializedViewTargetResolution(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().CurrentDB = "test"
+
+	tests := []struct {
+		sql       string
+		expectErr bool
+	}{
+		{"refresh materialized view mv complete out of place", false},
+		{"refresh materialized view mv complete in place", true},
+		{"refresh materialized view mv complete delta apply", true},
+		{"refresh materialized view mv fast", true},
+	}
+	for _, tt := range tests {
+		stmts, err := session.Parse(sctx, tt.sql)
+		require.NoError(t, err, tt.sql)
+		require.Len(t, stmts, 1, tt.sql)
+
+		err = core.Preprocess(
+			context.Background(),
+			sctx,
+			resolve.NewNodeW(stmts[0]),
+			core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: infoschema.MockInfoSchema(nil)}),
+		)
+		if tt.expectErr {
+			require.ErrorContains(t, err, "Table 'test.mv' doesn't exist", tt.sql)
+		} else {
+			require.NoError(t, err, tt.sql)
+		}
+	}
 }
 
 func TestValidator(t *testing.T) {

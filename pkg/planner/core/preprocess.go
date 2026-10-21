@@ -168,7 +168,8 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, and BR restore.
+	// rename table, complete out-of-place materialized view refresh, alter table add
+	// foreign key, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -335,8 +336,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.PurgeMaterializedViewLogStmt:
 		p.stmtTp = TypeAlter
 	case *ast.RefreshMaterializedViewStmt:
-		// The view name is not an existing table. Avoid resolving it as a normal table name.
-		p.flag |= inCreateOrDropTable
+		if node.Type == ast.RefreshMaterializedViewTypeComplete &&
+			node.CompleteType == ast.RefreshMaterializedViewCompleteTypeOutOfPlace {
+			// Complete out-of-place refresh validates its target in the refresh
+			// executor and manages cutover separately. Do not register the target as
+			// a normal table dependency in the refresh session's MDL-related table set.
+			p.flag |= inCreateOrDropTable
+		}
 	case *ast.CompareMaterializedViewStmt:
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
