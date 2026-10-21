@@ -841,6 +841,37 @@ func TestScanLimitConcurrencyWithRowCountUpperBound(t *testing.T) {
 	require.Equal(t, 1, actual.Concurrency)
 }
 
+func TestScanLimitWithMinimalConcurrency(t *testing.T) {
+	indexLookUpIndex := uint32(3)
+	scan := &tipb.Executor{Tp: tipb.ExecType_TypeIndexScan, IdxScan: &tipb.IndexScan{}}
+	limitOf := func(n uint64) *tipb.Executor {
+		return &tipb.Executor{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: n}}
+	}
+	for _, tt := range []struct {
+		name      string
+		executors []*tipb.Executor
+		limit     uint64
+		ok        bool
+	}{
+		{"ScanLimit", []*tipb.Executor{scan, limitOf(100)}, 100, true},
+		{"LargeLimit", []*tipb.Executor{scan, limitOf(estimatedRegionRowCount)}, 0, false},
+		{"ScanOnly", []*tipb.Executor{scan}, 0, false},
+		{"ScanSelection", []*tipb.Executor{scan, {Tp: tipb.ExecType_TypeSelection, Selection: &tipb.Selection{}}}, 0, false},
+		{"IndexLookUp", []*tipb.Executor{
+			scan,
+			{Tp: tipb.ExecType_TypeLimit, Limit: &tipb.Limit{Limit: 100}, ParentIdx: &indexLookUpIndex},
+			{Tp: tipb.ExecType_TypeTableScan, TblScan: &tipb.TableScan{}},
+			{Tp: tipb.ExecType_TypeIndexLookUp, IndexLookup: &tipb.IndexLookUp{}},
+		}, 0, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			limit, ok := ScanLimitWithMinimalConcurrency(&tipb.DAGRequest{Executors: tt.executors})
+			require.Equal(t, tt.ok, ok)
+			require.Equal(t, tt.limit, limit)
+		})
+	}
+}
+
 func TestIndexLookUpPushDownScanConcurrency(t *testing.T) {
 	dctx := NewDistSQLContextForTest()
 	for _, tt := range []struct {

@@ -186,6 +186,19 @@ func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle) *Req
 
 const estimatedRegionRowCount = 100000
 
+// ScanLimitWithMinimalConcurrency returns the limit of a Scan -> Limit DAG that SetDAGRequest sends with
+// minimal concurrency. Only for such a DAG can SetDAGRequestWithRowCountUpperBound change the concurrency.
+func ScanLimitWithMinimalConcurrency(dag *tipb.DAGRequest) (uint64, bool) {
+	if dag == nil || len(dag.Executors) != 2 {
+		return 0, false
+	}
+	limit := dag.Executors[1].GetLimit()
+	if limit == nil || limit.Limit >= estimatedRegionRowCount {
+		return 0, false
+	}
+	return limit.Limit, true
+}
+
 // SetDAGRequest sets the request type to "ReqTypeDAG" and construct request data.
 func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuilder {
 	return builder.setDAGRequest(dag, 0, false)
