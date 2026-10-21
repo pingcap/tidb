@@ -835,6 +835,39 @@ func TestMaterializedViewRefreshCompleteOutOfPlacePreservesPreviousCommitTSOSnap
 	)
 }
 
+func TestMaterializedViewRefreshDryRunUsesInternalTxnInfoSchema(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_mv_dry_run (a int not null, b int not null)")
+	tk.MustExec("insert into t_mv_dry_run values (1, 10), (2, 20)")
+	tk.MustExec("create materialized view log on t_mv_dry_run (a, b) purge next date_add(now(), interval 1 hour)")
+	tk.MustExec("create materialized view mv_dry_run (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t_mv_dry_run group by a")
+	lastSuccessReadTSO := tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Rows()
+	tk.MustExec("insert into t_mv_dry_run values (1, 5)")
+
+	for _, tc := range []struct {
+		mode     string
+		operator string
+	}{
+		{"complete delta apply", "MViewCompleteDeltaApply"},
+		{"fast", "MViewDeltaMerge"},
+	} {
+		// Each statement registers the outer session's MV dependency before planning
+		// in an internal session, which must use its own transaction's MDL table set.
+		for range 2 {
+			rows := tk.MustQuery("refresh materialized view mv_dry_run " + tc.mode + " dry run").Rows()
+			requireRowsContainPrefix(t, rows, "  "+tc.operator)
+			tk.MustQuery("select * from mv_dry_run order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
+			tk.MustQuery("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info").Check(lastSuccessReadTSO)
+			tk.MustQuery("select count(*) from mysql.tidb_mview_refresh_hist").Check(testkit.Rows("0"))
+		}
+	}
+
+	tk.MustExec("refresh materialized view mv_dry_run complete delta apply")
+	tk.MustQuery("select * from mv_dry_run order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
+}
+
 func TestProfileMaterializedViewRefreshStepRuntime(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
