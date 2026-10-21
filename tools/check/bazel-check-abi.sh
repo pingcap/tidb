@@ -40,6 +40,7 @@ case "${GOVERSION}" in
 		;;
 	*)
 		echo "Unsupported Go version for ABI check: ${GOVERSION}. Expected go1.25.x, go1.26.x, or go1.27.2."
+		echo "For another Go 1.27 patch release, verify the runtime map ABI layout and add its reviewed source MD5 checksums to this script before upgrading."
 		exit 1
 		;;
 esac
