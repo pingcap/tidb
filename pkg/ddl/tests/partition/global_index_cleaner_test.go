@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,49 +120,6 @@ func TestCleanupLeftoverIndexes(t *testing.T) {
 	indexIDs, _, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 	require.Empty(t, indexIDs)
-}
-
-func TestCleanupLeftoverIndexesSkipsPendingJob(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	dbInfo, tblInfo, leftoverIDs, addingID := createLeftoverGlobalIndexes(t, store, dom, tk)
-
-	blocked := make(chan struct{})
-	release := make(chan struct{})
-	var once, releaseOnce sync.Once
-	releaseJob := func() { releaseOnce.Do(func() { close(release) }) }
-	// Release the job even if the test fails, or closing the domain waits for it forever.
-	t.Cleanup(releaseJob)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.Type == model.ActionAddColumn && job.SchemaState == model.StateDeleteOnly {
-			once.Do(func() {
-				close(blocked)
-				<-release
-			})
-		}
-	})
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	alterErr := make(chan error, 1)
-	go func() {
-		alterErr <- tk2.ExecToErr("alter table t add column c2 int")
-	}()
-	<-blocked
-
-	ctx := context.Background()
-	indexIDs, _, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
-	require.NoError(t, err)
-	require.Empty(t, indexIDs)
-	require.NoError(t, dom.Reload())
-	require.Len(t, external.GetTableByName(t, tk, "test", "t").Meta().Indices, 5)
-
-	releaseJob()
-	require.NoError(t, <-alterErr)
-	indexIDs, _, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
-	require.NoError(t, err)
-	require.ElementsMatch(t, leftoverIDs, indexIDs)
-	require.NoError(t, dom.Reload())
-	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID)
 }
 
 func TestCleanupLeftoverIndexesAfterReorganizePartition(t *testing.T) {
