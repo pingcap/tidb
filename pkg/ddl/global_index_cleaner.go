@@ -87,7 +87,9 @@ const historyJobBatchSize = 32
 func gcJobForLeftoverIndexes(ctx context.Context, se *sess.Session, m *meta.Mutator, tableID int64) (*model.Job, error) {
 	lastJobID := int64(math.MaxInt64)
 	for {
-		rows, err := se.Execute(ctx, "select job_id from mysql.tidb_ddl_history where job_id < %? and table_ids = %? order by job_id desc limit %?",
+		// Without the hint, the planner sorts a full scan by TopN instead of scanning job_id backwards.
+		rows, err := se.Execute(ctx, "select /*+ order_index(mysql.tidb_ddl_history, primary) */ job_id from mysql.tidb_ddl_history "+
+			"where job_id < %? and table_ids = %? order by job_id desc limit %?",
 			"get_table_history_jobs", lastJobID, strconv.FormatInt(tableID, 10), historyJobBatchSize)
 		if err != nil {
 			return nil, errors.Trace(err)
