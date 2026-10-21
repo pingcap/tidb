@@ -29,10 +29,10 @@ import (
 )
 
 // leftoverGlobalIndexes returns the non-public global indexes of a table that is not being
-// reorganized and that have a public index with the same name and columns. Such an index is a
-// copy left behind by a cancelled partition reorganization, while an index being added never
-// shares its name with a public one. DDLChangedIndex is not checked, since a successful
-// REORGANIZE PARTITION keeps it.
+// reorganized and that have a public index with the same name and columns, i.e. the copies left
+// behind by a cancelled partition reorganization. Requiring the public twin keeps an index being
+// added by ADD INDEX ... GLOBAL, which has a new name, from being treated as a leftover.
+// DDLChangedIndex is not checked, since a successful REORGANIZE PARTITION keeps it.
 func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || pi.DDLState != model.StateNone || len(pi.AddingDefinitions) > 0 || len(pi.DroppingDefinitions) > 0 {
