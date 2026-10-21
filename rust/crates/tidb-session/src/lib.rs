@@ -293,18 +293,6 @@ pub trait AnalyzeStatusProvider: Send + Sync {
     ) -> i64;
 }
 
-/// Go `TableSizeStats` values consumed by one logical table's
-/// `information_schema.TABLES` and `information_schema.PARTITIONS` rows.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct TableStorageStatistics {
-    /// Logical table ID.
-    pub table_id: i64,
-    /// Logical/aggregate `(rows, average row length, data length, index length)`.
-    pub table: (u64, u64, u64, u64),
-    /// The same tuple for each physical partition ID.
-    pub partitions: Vec<(i64, (u64, u64, u64, u64))>,
-}
-
 /// The cluster's DDL jobs, Go's `mysql.tidb_ddl_job` and meta
 /// `DDLJobHistory`, where a front end keeps them in a shared store rather
 /// than in its own catalog.
@@ -326,16 +314,19 @@ pub trait BdrRoleStore: Send + Sync {
 }
 
 /// Fresh restricted-storage boundary used by Go's information-schema
-/// `TableSizeStats` reader.
+/// `TableSizeStats` reader: the node's `cache.TableRowStatsCache`.
 pub trait TableStorageStatsProvider: Send + Sync {
-    /// Runs the pinned restricted reads and returns estimates for the current
-    /// schema image. The histogram-size read is skipped when only
-    /// `TABLE_ROWS` is requested. A read failure is warning-only at the caller.
-    fn load_table_storage_statistics(
+    /// Go `updateStatsCacheIfNeed` + the cache read after it: refreshes the
+    /// size cache for `physical_ids` -- the statement's own tables and
+    /// partitions -- and answers what the cache then holds. The
+    /// histogram-size read is skipped when only `TABLE_ROWS` is requested. A
+    /// read failure is warning-only at the caller.
+    fn load_table_row_stats(
         &self,
         resource_group: &str,
         need_column_lengths: bool,
-    ) -> Result<Vec<TableStorageStatistics>, String>;
+        physical_ids: &[i64],
+    ) -> Result<tidb_executor::table_size_stats::TableRowStatsSnapshot, String>;
 }
 
 /// The statement-owned policy a server needs to retain an eager result set.
@@ -656,6 +647,10 @@ pub struct Session {
     /// `LOCK TABLES` lock on, by table ID ([`crate::table_lock`]).
     locked_tables: std::collections::BTreeMap<i64, tidb_model::TableLockTpInfo>,
     selected_lock_keys: Option<tidb_executor::select_lock::SelectedLockKeys>,
+    /// Go `TxnCtx.IsPessimistic` for an autocommit statement whose implicit
+    /// transaction `decideTxnMode` made pessimistic, set by the storage owner
+    /// for the statement attempt it runs.
+    autocommit_pessimistic_statement: bool,
     /// The running statement's read view and lock step inside an in-process
     /// transaction ([`Session::begin_transaction_statement`]).
     transaction_statement: Option<txn::TransactionStatement>,
@@ -668,6 +663,10 @@ pub struct Session {
     /// Go's `StatementContext.LastMessage`, retained until the next statement
     /// so the MySQL OK/EOF writer can publish UPDATE's summary text.
     statement_message: String,
+    /// Go `StmtCtx.AffectedRows()` for a statement that answers rows -- the
+    /// write under `EXPLAIN ANALYZE` -- which the result set's terminal OK
+    /// packet carries. A write's own OK packet takes its count directly.
+    statement_affected_rows: u64,
     /// The client file a `LOAD DATA LOCAL` statement was answered with (Go's
     /// `LoadDataReaderBuilder`), taken by the statement that runs next.
     local_infile_data: Option<Vec<u8>>,
@@ -833,6 +832,13 @@ pub struct Session {
     /// Where this session reports the tables its statements bind, for the
     /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
     mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
+    /// Whether the running statement locks the tables it binds (Go's
+    /// `IsAutoCommitTxn && StmtCtx.IsReadOnly` exemption does not apply), so
+    /// the planner records them on [`Self::mdl_related_tables`].
+    mdl_statement_locks: bool,
+    /// The tables the running statement has already locked: Go's
+    /// `GetRelatedTableForMDL().Load(id)` check, so each is recorded once.
+    mdl_statement_tables: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<i64>>>,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
@@ -1079,10 +1085,12 @@ impl Session {
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             locked_tables: std::collections::BTreeMap::new(),
             selected_lock_keys: None,
+            autocommit_pessimistic_statement: false,
             transaction_statement: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             statement_message: String::new(),
+            statement_affected_rows: 0,
             local_infile_data: None,
             local_infile_accepted: false,
             set_var_hint_restore: Vec::new(),
@@ -1135,6 +1143,8 @@ impl Session {
                 tidb_stats_handle_usage::TableDeltaMap::new(),
             ),
             mdl_related_tables: None,
+            mdl_statement_locks: false,
+            mdl_statement_tables: std::sync::Arc::default(),
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
@@ -1481,6 +1491,21 @@ impl Session {
 
     /// Enters or leaves Go's `TxnLockAcquiring` state around one synchronous
     /// pessimistic `LockKeys` call.
+    /// [`Self::publish_transaction_lock_waiting`] as an observer a statement's
+    /// executors can hold (Go `LazyTxn.LockKeys`'s state updates).
+    pub fn transaction_lock_state_observer(
+        &self,
+    ) -> Option<tidb_executor::select_lock::LockStateObserver> {
+        let process = self.process.as_ref()?;
+        let registry = process.registry().clone();
+        let id = process.id();
+        Some(tidb_executor::select_lock::LockStateObserver::new(
+            move |waiting| {
+                registry.transaction_state(id, if waiting { "LockWaiting" } else { "Running" });
+            },
+        ))
+    }
+
     pub fn publish_transaction_lock_waiting(&self, waiting: bool) {
         let Some(process) = self.process.as_ref() else {
             return;
@@ -1583,6 +1608,32 @@ impl Session {
     /// Go's `domainSchemaVer` in `preprocess.go:2264` (the LATEST domain
     /// version, not the transaction's pinned one), which is the version the
     /// metadata-lock recording stamps a table's first use with.
+    /// Go `GetRelatedTableForMDL().Store(id, domainSchemaVer)` as the planner
+    /// reaches it from `buildDataSource`: each stored table it binds -- a
+    /// view's body included -- joins the transaction's map at the node's
+    /// schema version then. `None` when this statement locks nothing.
+    pub(crate) fn mdl_related_table_recorder(&self) -> Option<tidb_executor::MdlRelatedTableRecorder> {
+        if !self.mdl_statement_locks {
+            return None;
+        }
+        let sink = self.mdl_related_tables.clone()?;
+        let locked = self.mdl_statement_tables.clone();
+        let version = self.cluster_schema_version.clone();
+        let process = self
+            .process
+            .as_ref()
+            .map(|process| (process.registry().clone(), process.id()));
+        Some(std::sync::Arc::new(move |table_id: i64| {
+            if !locked.lock().is_ok_and(|mut locked| locked.insert(table_id)) {
+                return;
+            }
+            sink.record_table(table_id, version.as_ref().map_or(0, |source| source()));
+            if let Some((registry, id)) = &process {
+                registry.transaction_related_table(*id, table_id);
+            }
+        }))
+    }
+
     pub(crate) fn cluster_schema_version_now(&self) -> i64 {
         self.cluster_schema_version
             .as_ref()
@@ -2262,6 +2313,13 @@ impl Session {
         &self.statement_message
     }
 
+    /// The affected rows a result-set statement's terminal OK packet reports
+    /// (Go `cc.ctx.AffectedRows()` in `writeEOF`).
+    #[must_use]
+    pub fn statement_affected_rows(&self) -> u64 {
+        self.statement_affected_rows
+    }
+
     /// Clears the statement info for command paths that do not enter the
     /// normal executor lifecycle (for example `SET` and routed DDL).
     pub fn clear_statement_message(&mut self) {
@@ -2910,6 +2968,7 @@ impl Session {
         self.statement_kind = StatementKind::Other;
         self.in_set_session_states = false;
         self.statement_message.clear();
+        self.statement_affected_rows = 0;
         *self
             .published_last_insert_id
             .lock()

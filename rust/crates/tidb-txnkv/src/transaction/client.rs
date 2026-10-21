@@ -178,7 +178,31 @@ impl<S: PdClient> ClientTransaction<S> {
             .block_on(store.store().begin_with_options(options))
             .map_err(Self::client_read_error)?;
         transaction.add_rpc_interceptor(calls.interceptor());
+        // Go `newTiKVTxn` -> `txn.SetKVFilter(TiDBKVFilter{})`.
+        transaction.set_kv_filter(Arc::new(TidbKvFilter));
         Ok(transaction)
+    }
+}
+
+/// Go `pkg/store/driver/txn.TiDBKVFilter`: an untouched index key/value --
+/// an UPDATE inside a transaction rewrites unchanged index entries into its
+/// memory buffer with the untouched flag -- is never committed.
+struct TidbKvFilter;
+
+impl tikv_client::KvFilter for TidbKvFilter {
+    fn is_unnecessary_key_value(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        flags: tikv_client::MutationFlags,
+    ) -> tikv_client::Result<bool> {
+        let untouched = tidb_codec::table_key::is_untouched_index_kv(key, value);
+        if untouched && flags.presumes_key_not_exists() {
+            return Err(tikv_client::Error::StringError(
+                "unexpected path the untouched key value with PresumeKeyNotExists flag".to_owned(),
+            ));
+        }
+        Ok(untouched)
     }
 }
 impl<S: PdClient> ClientTransaction<S> {
@@ -911,7 +935,7 @@ impl<S: PdClient> ClientTransaction<S> {
         wait: super::LockWaitTime,
         call: &UnaryCallContext,
     ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
-        self.acquire(keys, presume_not_exists, wait, call, false)
+        self.acquire(keys, presume_not_exists, wait, call, false, false)
     }
     /// Locks keys and returns values from the statement lock context.
     pub fn acquire_locks_returning_values(
@@ -921,7 +945,25 @@ impl<S: PdClient> ClientTransaction<S> {
         wait: super::LockWaitTime,
         call: &UnaryCallContext,
     ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
-        self.acquire(keys, presume_not_exists, wait, call, true)
+        self.acquire(keys, presume_not_exists, wait, call, true, false)
+    }
+    /// Go `LockCtx.LockOnlyIfExists` with `InitReturnValues`: locks only the
+    /// keys that exist, returning every key's value (read committed's
+    /// `lockKeyIfExists`).
+    pub fn acquire_locks_returning_values_if_exist(
+        &mut self,
+        keys: &[Vec<u8>],
+        wait: super::LockWaitTime,
+        call: &UnaryCallContext,
+    ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
+        self.acquire(
+            keys,
+            &std::collections::BTreeSet::new(),
+            wait,
+            call,
+            true,
+            true,
+        )
     }
     fn acquire(
         &mut self,
@@ -930,6 +972,7 @@ impl<S: PdClient> ClientTransaction<S> {
         wait: super::LockWaitTime,
         call: &UnaryCallContext,
         return_values: bool,
+        lock_only_if_exists: bool,
     ) -> Result<super::AcquiredLocks, super::PessimisticLockFailure> {
         self.calls.set(call);
         self.apply_statement_kv_context();
@@ -973,6 +1016,7 @@ impl<S: PdClient> ClientTransaction<S> {
         if return_values {
             context.init_return_values(keys.len());
         }
+        context.lock_only_if_exists = lock_only_if_exists;
         if self.for_update_ts > 0 && self.check_existence {
             context.init_check_existence(keys.len());
         }

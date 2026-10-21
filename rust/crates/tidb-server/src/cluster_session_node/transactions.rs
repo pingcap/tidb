@@ -547,6 +547,16 @@ pub trait OpenClusterTransaction: Send {
         Err("only a pessimistic transaction locks statement keys".to_owned())
     }
 
+    /// [`Self::lock_staged_keys_with_values`] locking only the keys that exist
+    /// (Go `LockCtx.LockOnlyIfExists`, read committed's `lockKeyIfExists`).
+    fn lock_staged_keys_with_values_if_exist(
+        &self,
+        _keys: Vec<Vec<u8>>,
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
+        Err("only a pessimistic transaction locks statement keys".to_owned())
+    }
+
     /// Releases the locks a FAILED statement accumulated across its retry
     /// rounds -- Go `OnPessimisticStmtEnd(isSuccessful=false)` ->
     /// `CancelFairLocking`. The optimistic default holds no locks and
@@ -698,11 +708,6 @@ struct DeferredSnapshot {
     /// seam intentionally exposes only `ClusterSnapshot` to the executor.
     write_handoff: Option<WriteTransactionSlot>,
     mutation_buffer: Option<MutationBuffer>,
-    /// Record keys a point DML locks before its first source read. Autocommit
-    /// writes use the same pessimistic lock+return-value fold as an explicit
-    /// transaction, so the source can consume the row returned by TiKV.
-    prelock_keys: Vec<Vec<u8>>,
-    prelock_wait: tidb_txnkv::transaction::LockWaitTime,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
     /// the declaration below must be settled against the open atomically.
@@ -763,8 +768,6 @@ impl DeferredSnapshot {
             read_ts,
             write_handoff: None,
             mutation_buffer: None,
-            prelock_keys: Vec::new(),
-            prelock_wait: tidb_txnkv::transaction::LockWaitTime::default(),
             state: Mutex::new(DeferredState::default()),
         }
     }
@@ -774,8 +777,6 @@ impl DeferredSnapshot {
         read_ts: StatementReadTs,
         write_handoff: WriteTransactionSlot,
         mutation_buffer: MutationBuffer,
-        prelock_keys: Vec<Vec<u8>>,
-        prelock_wait: tidb_txnkv::transaction::LockWaitTime,
         resource_group: Arc<str>,
         pessimistic: bool,
         fair_locking: bool,
@@ -797,8 +798,6 @@ impl DeferredSnapshot {
             read_ts,
             write_handoff: Some(write_handoff),
             mutation_buffer: Some(mutation_buffer),
-            prelock_keys,
-            prelock_wait,
             state: Mutex::new(DeferredState {
                 prefetched_write,
                 ..DeferredState::default()
@@ -837,6 +836,20 @@ impl DeferredSnapshot {
         use_snapshot: impl FnOnce(&mut dyn ClusterSnapshot) -> Result<T, StorageError>,
     ) -> Result<T, StorageError> {
         let mut guard = self.state();
+        self.open_in(&mut guard, None)?;
+        use_snapshot(guard.opened.as_mut().expect("just opened").as_mut())
+    }
+
+    /// Opens the statement's read transaction when this is its first act.
+    /// `lock` is a locking point read's keys when that read is the first act:
+    /// a pessimistic implicit transaction then locks them with returned
+    /// values before any read (Go `PointGetExecutor.getAndLock`), and the
+    /// statement reads from the lock responses.
+    fn open_in(
+        &self,
+        guard: &mut DeferredState,
+        lock: Option<(Vec<Vec<u8>>, tidb_txnkv::transaction::LockWaitTime, bool)>,
+    ) -> Result<(), StorageError> {
         if guard.opened.is_none() {
             // Go `LazyTxn.Wait` times turning the pending transaction valid:
             // waiting for its timestamp future and creating the transaction.
@@ -854,13 +867,15 @@ impl DeferredSnapshot {
                     transaction.bind_mutation_buffer(buffer);
                 }
                 // Go enables point-write locking only for pessimistic
-                // transactions; a bound point key alone does not imply it.
-                let snapshot = if self.prelock_keys.is_empty() || !transaction.is_pessimistic() {
-                    transaction.snapshot()
-                } else {
-                    let outcome = transaction
-                        .lock_staged_keys_with_values(self.prelock_keys.clone(), self.prelock_wait)
-                        .map_err(StorageError::Backend)?;
+                // transactions; a locking plan alone does not imply it.
+                let lock = lock.filter(|_| transaction.is_pessimistic());
+                let snapshot = if let Some((keys, wait, only_if_exists)) = lock {
+                    let outcome = if only_if_exists {
+                        transaction.lock_staged_keys_with_values_if_exist(keys, wait)
+                    } else {
+                        transaction.lock_staged_keys_with_values(keys, wait)
+                    }
+                    .map_err(StorageError::Backend)?;
                     match outcome {
                         LockKeysOutcome::Locked { .. } => transaction.snapshot_for(true),
                         LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
@@ -871,9 +886,11 @@ impl DeferredSnapshot {
                             // The lock ran in this transaction: the failed
                             // statement's `TxnCtx.StartTS` is its start.
                             self.read_ts.record(transaction.start_ts());
-                            return Err(StorageError::Backend(error.message));
+                            return Err(lock_storage_error(error));
                         }
                     }
+                } else {
+                    transaction.snapshot()
                 }
                 .map_err(StorageError::Backend)?;
                 guard.write_transaction = Some(transaction);
@@ -907,8 +924,18 @@ impl DeferredSnapshot {
             self.read_ts.record(opened.start_ts());
             guard.opened = Some(opened);
         }
-        use_snapshot(guard.opened.as_mut().expect("just opened").as_mut())
+        Ok(())
     }
+}
+
+/// A pessimistic lock's SQL error as the storage seam reports it, keeping
+/// Go's code and SQLSTATE (1205, 1213, 3572, ...).
+fn lock_storage_error(error: tidb_exec::pessimistic_lock_error::LockSqlError) -> StorageError {
+    StorageError::Sql(tidb_executor::MysqlError::from_parts(
+        error.code,
+        error.state,
+        error.message,
+    ))
 }
 
 /// The transaction owner a write statement transfers after its snapshot handle
@@ -967,6 +994,46 @@ impl ClusterSnapshot for DeferredSnapshot {
 
     fn prepare(&mut self) -> Result<(), StorageError> {
         self.prepare_open()
+    }
+
+    /// Go `PointGetExecutor.getAndLock` in a pessimistic implicit
+    /// transaction: as the statement's first act the lock opens the write
+    /// transaction and the statement reads from the lock responses; after a
+    /// read it locks through the open transaction.
+    fn lock_keys_for_read(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        only_if_exists: bool,
+    ) -> Result<(), StorageError> {
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        let mut guard = self.state();
+        if guard.opened.is_none() {
+            return self.open_in(&mut guard, Some((keys, wait, only_if_exists)));
+        }
+        let Some(transaction) = guard
+            .write_transaction
+            .as_ref()
+            .filter(|transaction| transaction.is_pessimistic())
+        else {
+            return Ok(());
+        };
+        let outcome = if only_if_exists {
+            transaction.lock_staged_keys_with_values_if_exist(keys, wait)
+        } else {
+            transaction.lock_staged_keys_with_values(keys, wait)
+        };
+        match outcome.map_err(StorageError::Backend)? {
+            LockKeysOutcome::Locked { .. } => Ok(()),
+            // The statement already read at its start timestamp, so a newer
+            // committed version is a write conflict for the whole statement.
+            LockKeysOutcome::RetryStatement { .. } => Err(StorageError::Backend(
+                "pessimistic lock conflict after the statement read".to_owned(),
+            )),
+            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
+                Err(lock_storage_error(error))
+            }
+        }
     }
 
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
@@ -1047,8 +1114,6 @@ pub(crate) fn prefetched_write_snapshot(
     read_ts: StatementReadTs,
     write_handoff: WriteTransactionSlot,
     mutation_buffer: MutationBuffer,
-    prelock_keys: Vec<Vec<u8>>,
-    prelock_wait: tidb_txnkv::transaction::LockWaitTime,
     resource_group: Arc<str>,
     pessimistic: bool,
     fair_locking: bool,
@@ -1059,8 +1124,6 @@ pub(crate) fn prefetched_write_snapshot(
         read_ts,
         write_handoff,
         mutation_buffer,
-        prelock_keys,
-        prelock_wait,
         resource_group,
         pessimistic,
         fair_locking,
@@ -1654,6 +1717,15 @@ where
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<LockKeysOutcome, String> {
         SessionTransaction::lock_keys_with_values(self, keys, true, wait)
+            .map_err(|error| error.to_string())
+    }
+
+    fn lock_staged_keys_with_values_if_exist(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
+        SessionTransaction::lock_keys_with_values_if_exist(self, keys, wait)
             .map_err(|error| error.to_string())
     }
 

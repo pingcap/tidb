@@ -588,15 +588,17 @@ mod tests {
             calls: Arc<std::sync::atomic::AtomicUsize>,
             column_length_requests: Arc<std::sync::Mutex<Vec<bool>>>,
             fail: Arc<std::sync::atomic::AtomicBool>,
-            values: tidb_session::TableStorageStatistics,
+            values: tidb_executor::table_size_stats::TableRowStatsSnapshot,
         }
 
         impl tidb_session::TableStorageStatsProvider for FixedStorageStatistics {
-            fn load_table_storage_statistics(
+            fn load_table_row_stats(
                 &self,
                 _resource_group: &str,
                 need_column_lengths: bool,
-            ) -> Result<Vec<tidb_session::TableStorageStatistics>, String> {
+                _physical_ids: &[i64],
+            ) -> Result<tidb_executor::table_size_stats::TableRowStatsSnapshot, String>
+            {
                 self.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
                 self.column_length_requests
                     .lock()
@@ -605,7 +607,7 @@ mod tests {
                 if self.fail.load(std::sync::atomic::Ordering::Acquire) {
                     return Err("stats read failed".to_owned());
                 }
-                Ok(vec![self.values.clone()])
+                Ok(self.values.clone())
             }
         }
 
@@ -680,10 +682,11 @@ mod tests {
             calls: Arc::clone(&storage_stats_reads),
             column_length_requests: Arc::clone(&column_length_requests),
             fail: Arc::clone(&fail_storage_stats),
-            values: tidb_session::TableStorageStatistics {
-                table_id,
-                table: (3_000_065, 24, 72_001_560, 0),
-                partitions: Vec::new(),
+            // Three fixed-width BIGINT columns: 3,000,065 rows of 24 bytes
+            // estimate a DATA_LENGTH of 72,001,560.
+            values: tidb_executor::table_size_stats::TableRowStatsSnapshot {
+                table_rows: [(table_id, 3_000_065)].into_iter().collect(),
+                column_lengths: Default::default(),
             },
         }));
         assert!(skipped.is_empty(), "{skipped:?}");

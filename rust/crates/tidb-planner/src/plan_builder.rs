@@ -811,6 +811,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `SessionVars.StmtCtx.ViewDepth`: how many views this statement has
     /// expanded so far, nested or not; never decremented.
     pub view_depth: usize,
+    /// Go `SessionVars.BuildParserConfig()`, which `BuildDataSourceFromView`
+    /// sets on the parser of a stored view body.
+    pub parser_config: tidb_parser::ParserConfig,
     /// Whether `SessionVars.IsolationReadEngines` contains TiKV.
     pub tikv_in_isolation_read: bool,
     /// Whether `SessionVars.IsolationReadEngines` contains TiFlash.
@@ -1566,6 +1569,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             expanded_correlated_aggs: BTreeMap::new(),
             in_explain_stmt: false,
             view_depth: 0,
+            parser_config: tidb_parser::ParserConfig::default(),
             tikv_in_isolation_read: true,
             tiflash_in_isolation_read: true,
             tidb_in_isolation_read: true,
@@ -1956,7 +1960,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         self.rewrite_scalar_with_scope(expr, schema, names, None, None, markers)
     }
 
-    /// `rewrite_scalar` with the current plan's optional `FullSchema` pair.
+    /// `rewrite_scalar` with the current plan's optional `FullSchema` pair,
+    /// as a whole clause expression: Go `rewriteExprNode` refuses a row there.
     /// A coalesced `USING`/`NATURAL` join keeps its redundant columns only in
     /// that pair, so qualified references such as `t2.a` must be resolved
     /// against it while `*` and unqualified names continue to use `schema`.
@@ -1971,7 +1976,16 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         let (full_schema, full_names) = full
             .map(|(schema, names)| (Some(schema), Some(names)))
             .unwrap_or((None, None));
-        self.rewrite_scalar_with_scope(expr, &schema, &names, full_schema, full_names, markers)
+        let rewritten = self.rewrite_scalar_with_scope(
+            expr,
+            &schema,
+            &names,
+            full_schema,
+            full_names,
+            markers,
+        )?;
+        check_not_multi_column_row(&rewritten)?;
+        Ok(rewritten)
     }
 
     fn rewrite_scalar_with_scope(
@@ -2491,6 +2505,36 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         ))
     }
 
+    /// Go `getInsertColExpr`'s default arm (`planbuilder.go:4307`): an
+    /// INSERT value rewritten over Go's `mockTablePlan`, a dual carrying the
+    /// target table's `schema` and `names` -- or over a fresh, column-less
+    /// dual when the value IS a subquery ("subquery in insert values should
+    /// not reference upper scope").
+    ///
+    /// The rewrite evaluates every uncorrelated scalar subquery here, while
+    /// the INSERT is planned (`handleScalarSubquery`'s
+    /// `EvalSubqueryFirstRow`), and leaves a `#const#N` marker over
+    /// [`Self::subquery_constants`] in its place. Answers `false` when the
+    /// rewrite built an Apply instead -- a correlated subquery, or an
+    /// IN/ANY/EXISTS lowered to a semi join -- which is Go's
+    /// `np.(*LogicalTableDual)` check failing.
+    pub fn lower_insert_value_subqueries(
+        &mut self,
+        expr: &mut Expr,
+        mock: Option<(Schema, Vec<FieldName>)>,
+    ) -> Result<bool, PlanError> {
+        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+        let (schema, names) = mock.unwrap_or_default();
+        dual.base.base.set_schema(Some(schema));
+        dual.base.base.set_output_names(names);
+        let saved_clause = self.cur_clause;
+        self.cur_clause = ClauseCode::FieldList;
+        let lowered = self.lower_scalar_subqueries(LogicalPlan::TableDual(dual), expr);
+        self.cur_clause = saved_clause;
+        let (plan, _) = lowered?;
+        Ok(matches!(plan, LogicalPlan::TableDual(_)))
+    }
+
     /// Go `buildSelection`'s "If there is condition which is always false,
     /// return dual plan directly." The dual carries the plan's own schema,
     /// except over a plain `LogicalJoin`, whose `FullSchema` and `FullNames`
@@ -2865,6 +2909,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             self.source.find_view(&db_name, &table_name)
         };
         if let Some(view) = found_view.cloned() {
+            // Go `tryLockMDLAndUpdateSchemaIfNecessary` locks the view's own
+            // id before it looks at what kind of object the name is.
+            if view.table_id != 0 {
+                self.source.record_related_table_for_mdl(view.table_id);
+            }
             // Go `buildDataSource` appends the SELECT visit before it looks at
             // what kind of object the name is.
             self.append_select_visit(&db_name, &view.view_name);
@@ -2906,6 +2955,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             return Err(PlanError::unknown_table(format!("{db_name}.{table_name}")));
         };
+        // `:4957` `tryLockMDLAndUpdateSchemaIfNecessary`: a stored table joins
+        // the transaction's metadata-lock map. A temporary table is never
+        // locked (a LOCAL one is not attached, a GLOBAL one skips the lock),
+        // and a virtual table has no schema version to hold.
+        if !table.is_temporary && !table.is_memory_table {
+            self.source.record_related_table_for_mdl(table.table_id);
+        }
         // `:4967` a view definition is shared by every session, while a LOCAL
         // temporary table belongs to one connection and dies with it.
         if self.is_create_view && table.is_local_temporary {
@@ -5061,9 +5117,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     let (schema, names) = snapshot_schema_and_names(&plan);
                     let mut markers = BTreeMap::new();
                     markers.insert(MarkerKind::Column, schema.columns.clone());
-                    expressions.push(Some(
-                        builder.rewrite_scalar(&scratch, &schema, &names, &markers)?,
-                    ));
+                    let rewritten = builder.rewrite_scalar(&scratch, &schema, &names, &markers)?;
+                    check_not_multi_column_row(&rewritten)?;
+                    expressions.push(Some(rewritten));
                 }
                 Ok((plan, expressions, builder.get_opt_flag()))
             })
@@ -5662,4 +5718,12 @@ fn compare_op_from_binary(op: tidb_ast::BinaryOp) -> Option<CompareOp> {
         tidb_ast::BinaryOp::Ne => Some(CompareOp::Ne),
         _ => None,
     }
+}
+
+/// Go `rewriteExprNode`'s last step, `expression.CheckArgsNotMultiColumnRow`:
+/// a whole clause expression is one column, so a row (`(1, 2)`, or a scalar
+/// subquery selecting several columns) is `ErrOperandColumns` (1241).
+fn check_not_multi_column_row(expr: &Expression) -> Result<(), PlanError> {
+    tidb_expr::expr_util::check_args_not_multi_column_row(std::slice::from_ref(expr))
+        .map_err(|_| PlanError::from(EvalError::OperandColumns(1)))
 }

@@ -621,6 +621,7 @@ impl MockInfoSchema {
                     db_name: "test".to_owned(),
                     view_name: info.name.original().to_owned(),
                     select_sql: view.select_stmt.clone(),
+                    table_id: info.id,
                     view_cols: view
                         .cols
                         .iter()

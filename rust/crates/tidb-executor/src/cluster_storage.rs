@@ -100,6 +100,7 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
         &mut self,
         _keys: &[Key],
         _wait: tidb_txnkv::transaction::LockWaitTime,
+        _only_if_exists: bool,
     ) -> Result<(), StorageError> {
         Ok(())
     }
@@ -888,8 +889,10 @@ impl ClusterSnapshot for SwappableSnapshot {
         &mut self,
         keys: &[Key],
         wait: tidb_txnkv::transaction::LockWaitTime,
+        only_if_exists: bool,
     ) -> Result<(), StorageError> {
-        self.snapshot()?.lock_keys_for_read(keys, wait)
+        self.snapshot()?
+            .lock_keys_for_read(keys, wait, only_if_exists)
     }
 
     fn prepare(&mut self) -> Result<(), StorageError> {
@@ -1036,16 +1039,22 @@ impl TableStorage for ClusterTableStorage {
             .point_rpc_counts()
     }
 
+    /// The native transaction's commit runs Go's `TiDBKVFilter`.
+    fn filters_untouched_index_values(&self) -> bool {
+        true
+    }
+
     fn lock_keys_for_read(
         &mut self,
         keys: &[Key],
         wait: tidb_txnkv::transaction::LockWaitTime,
+        only_if_exists: bool,
     ) -> Result<(), StorageError> {
         self.check_usable()?;
         self.snapshot
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .lock_keys_for_read(keys, wait)
+            .lock_keys_for_read(keys, wait, only_if_exists)
     }
 
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {

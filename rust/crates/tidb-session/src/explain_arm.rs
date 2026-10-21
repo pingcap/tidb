@@ -114,11 +114,25 @@ impl Session {
         // switch for the same reason: a query warns on truncation while a
         // strict write rejects it. Plain EXPLAIN still only builds the
         // pipeline, so no row is produced and no write runs.
+        // ... and the statement's own IGNORE (`ResetContextOfStmt` reads
+        // `stmt.IgnoreErr` off the unwrapped INSERT/UPDATE/DELETE).
+        let ignore_err = match target {
+            Stmt::Dml(dml) => match &**dml {
+                tidb_ast::DmlStmt::Insert(insert) => insert.ignore,
+                tidb_ast::DmlStmt::Update(update) => update.ignore,
+                tidb_ast::DmlStmt::Delete(delete) => delete.ignore,
+                _ => false,
+            },
+            _ => false,
+        };
         let ctx = self
-            .statement_context(matches!(
-                crate::classify::statement_kind_of(target),
-                crate::classify::StatementKind::Dml
-            ))
+            .statement_context_ignoring(
+                matches!(
+                    crate::classify::statement_kind_of(target),
+                    crate::classify::StatementKind::Dml
+                ),
+                ignore_err,
+            )
             .with_in_explain_stmt(true)
             .with_explain_format(format)
             .with_explain_table_hints({
@@ -216,6 +230,10 @@ impl Session {
                 }
             };
             self.drain_eval_warnings(&ctx);
+            // The analyzed write ran its executor's `Close` (Go `setMessage`)
+            // and `AddAffectedRows`; the result set's OK packet reports both.
+            self.statement_message = ctx.message();
+            self.statement_affected_rows = ctx.affected_rows();
             return Ok(Some(StmtOutput::Rows { columns, rows }));
         }
         if format == tidb_executor::ExplainFormat::PlanCache {

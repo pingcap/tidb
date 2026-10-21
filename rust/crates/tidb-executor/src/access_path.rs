@@ -129,235 +129,6 @@ pub enum StatementReadShape {
     AutocommitWrite,
 }
 
-/// Borrow the candidate predicate for Go's single-table point-write fold
-/// (`tryUpdatePointPlan`/`tryDeletePointPlan`). Key binding separately proves
-/// that the predicate pins the complete clustered handle.
-///
-/// The `bool` says whether the batch arm may be tried too: Go's
-/// `tryWhereIn2BatchPointGet` (`point_get_plan.go:410`) refuses a statement
-/// with `ORDER BY` or `LIMIT`, which may leave a named row unread and so
-/// unlocked. A hinted statement is refused as the locking-read arm refuses
-/// one.
-fn pessimistic_write_predicate(
-    stmt: &tidb_ast::Stmt,
-) -> Option<(&tidb_ast::TableRef, &tidb_ast::Expr, bool)> {
-    let tidb_ast::Stmt::Dml(dml) = stmt else {
-        return None;
-    };
-    let (table_ref, where_clause, batch_lookup) = match dml.as_ref() {
-        tidb_ast::DmlStmt::Update(update) => match (&update.kind, update.where_clause.as_ref()) {
-            (tidb_ast::UpdateKind::Single(table_ref), Some(where_clause)) => (
-                table_ref,
-                where_clause,
-                update.order_by.is_empty() && update.limit.is_none() && update.hints.is_empty(),
-            ),
-            _ => return None,
-        },
-        tidb_ast::DmlStmt::Delete(delete) => match (&delete.kind, delete.where_clause.as_ref()) {
-            (tidb_ast::DeleteKind::Single(table_ref), Some(where_clause)) => (
-                table_ref,
-                where_clause,
-                delete.order_by.is_empty() && delete.limit.is_none() && delete.hints.is_empty(),
-            ),
-            _ => return None,
-        },
-        _ => return None,
-    };
-    // An unqualified target that names one of the statement's CTEs is that
-    // CTE (Go `buildDataSource` tries CTEs first), not a stored table whose
-    // keys could be locked; Go refuses the write as non-updatable.
-    let with = match dml.as_ref() {
-        tidb_ast::DmlStmt::Update(update) => update.with.as_ref(),
-        tidb_ast::DmlStmt::Delete(delete) => delete.with.as_ref(),
-        _ => None,
-    };
-    if let ([name], Some(with)) = (table_ref.name.as_slice(), with) {
-        if with
-            .ctes
-            .iter()
-            .any(|cte| cte.name.to_lowercase() == name.to_lowercase())
-        {
-            return None;
-        }
-    }
-    Some((table_ref, where_clause, batch_lookup))
-}
-
-/// Borrow a single-table FOR UPDATE predicate eligible for point/batch locks.
-/// Other plan shapes retain selected-row locking. Non-default wait policies
-/// cannot use the session-timeout pre-lock path; FOR SHARE has a different
-/// lock strength. The session separately excludes read-committed reads.
-fn pessimistic_read_predicate(
-    stmt: &tidb_ast::Stmt,
-) -> Option<(&tidb_ast::TableRef, &tidb_ast::Expr)> {
-    let tidb_ast::Stmt::Query(query) = stmt else {
-        return None;
-    };
-    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
-        return None;
-    };
-    // Go's TryFastPlan refuses every query whose root plan is not a bare
-    // point get; these syntactic guards refuse the same shapes before any
-    // planning exists. An ORDER BY over the source needs a Sort this fold
-    // must not presume away.
-    if select.kind != tidb_ast::SelectStatementKind::Select
-        || select.with.is_some()
-        || !select.hints.is_empty()
-        || select.distinct
-        || !select.group_by.is_empty()
-        || select.rollup
-        || select.having.is_some()
-        || !select.windows.is_empty()
-        || !select.order_by.is_empty()
-        || select.limit.is_some()
-        || select.lock.is_none()
-    {
-        return None;
-    }
-    let lock = select.lock.as_ref().expect("checked above");
-    if lock.kind != tidb_ast::LockKind::Update || lock.wait != tidb_ast::LockWait::Default {
-        return None;
-    }
-    // One table, no join: `FROM t` parses as the single-table wrapper.
-    let Some(from) = &select.from else {
-        return None;
-    };
-    if from.right.is_some() || from.on.is_some() || !from.using.is_empty() || from.natural {
-        return None;
-    }
-    let tidb_ast::JoinNode::Table(table_ref) = &from.left else {
-        return None;
-    };
-    let Some(where_clause) = &select.where_clause else {
-        return None;
-    };
-    Some((table_ref, where_clause))
-}
-
-/// The borrowed part of a statement that can determine its pre-lock keys.
-/// Shape classification needs neither catalog access nor parameter binding;
-/// projections and assignment values are never copied for this decision.
-pub struct PessimisticPrelock<'a> {
-    table: &'a tidb_ast::TableRef,
-    predicate: &'a tidb_ast::Expr,
-    locking_read: bool,
-    /// Whether a clustered-handle `IN` list may bind its batch keys: Go's
-    /// `BatchPointGetPlan.Lock`, set for a locking read by `getLockWaitTime`
-    /// and for a pessimistic write by `tryUpdatePointPlan`/`tryDeletePointPlan`
-    /// (`point_get_plan.go:1196-1198`, `:1342-1344`).
-    batch_lookup: bool,
-}
-
-impl<'a> PessimisticPrelock<'a> {
-    /// Borrow an eligible predicate, or reject the statement without binding it.
-    #[must_use]
-    pub fn from_statement(stmt: &'a tidb_ast::Stmt) -> Option<Self> {
-        let locking_read = matches!(stmt, tidb_ast::Stmt::Query(_));
-        let (table, predicate, batch_lookup) = if locking_read {
-            let (table, predicate) = pessimistic_read_predicate(stmt)?;
-            (table, predicate, true)
-        } else {
-            pessimistic_write_predicate(stmt)?
-        };
-        Some(Self {
-            table,
-            predicate,
-            locking_read,
-            batch_lookup,
-        })
-    }
-
-    #[must_use]
-    /// Whether repeatable-read admission is required before speculative locks.
-    pub fn is_locking_read(&self) -> bool {
-        self.locking_read
-    }
-
-    /// Drops the batch arm, keeping only the single-row point key.
-    ///
-    /// Go's read-committed `BatchPointGetExec` (`batch_point_get.go:434-492`)
-    /// reads first and then locks only the rows it found, so under RC an `IN`
-    /// list keeps the read-then-lock order instead of locking every named
-    /// key up front.
-    #[must_use]
-    pub fn without_batch_lookup(mut self) -> Self {
-        self.batch_lookup = false;
-        self
-    }
-
-    /// Resolve only the key predicate after the session refreshed its catalog
-    /// and captured transaction isolation. A refusal keeps normal execution.
-    ///
-    /// `statement` carries the statement's class and type flags, under which
-    /// Go's fast plan converts the key constants (`getNameValuePairs`,
-    /// `newBatchPointGetPlan`); a constant that conversion refuses has no
-    /// point plan and so no pre-lock. Its warnings are not the statement's:
-    /// the statement's own planning reports them.
-    #[must_use]
-    pub fn bind_keys(
-        &self,
-        params: &[Datum],
-        catalog: &crate::driver::Catalog,
-        current_db: &str,
-        statement: &crate::StmtContext,
-    ) -> Vec<Vec<u8>> {
-        let Some(table) = single_table_entry(self.table, catalog, current_db) else {
-            return Vec::new();
-        };
-        if self.batch_lookup {
-            // The batch lookup reads literals only, so a parameterized
-            // predicate is bound for it; the point arm below resolves `?`
-            // markers straight from `params` and needs no bound copy.
-            let bound;
-            let predicate = if params.is_empty() {
-                self.predicate
-            } else {
-                let Ok(value) =
-                    crate::driver::params::bind_prelock_predicate(self.predicate, params)
-                else {
-                    return Vec::new();
-                };
-                bound = value;
-                &bound
-            };
-            if let Ok(Some(batch)) = crate::driver::access::primary_batch_point_lookup(
-                predicate, self.table, table, statement,
-            ) {
-                return batch
-                    .into_iter()
-                    .map(|handle| {
-                        tidb_codec::table_key::encode_row_key_with_handle(
-                            table.table_id,
-                            &handle.record_handle(),
-                        )
-                    })
-                    .collect();
-            }
-        }
-        crate::driver::access::point_write_prelock_keys(table, self.predicate, params, statement)
-    }
-}
-
-/// Resolves one single-table reference to its KV table, refusing partitioned
-/// tables: which record key one handle names then depends on pruning this
-/// predicate does not do. A refusal costs one extra round trip, never a wrong
-/// lock.
-fn single_table_entry<'a>(
-    table_ref: &tidb_ast::TableRef,
-    catalog: &'a crate::driver::Catalog,
-    current_db: &str,
-) -> Option<&'a crate::kv_table::KvTable> {
-    let (database, table_name) = match table_ref.name.as_slice() {
-        [name] if !current_db.is_empty() => (current_db, name.as_str()),
-        [database, name] => (database.as_str(), name.as_str()),
-        _ => return None,
-    };
-    match catalog.get_in(database, table_name) {
-        Some(crate::driver::TableEntry::Kv(table)) if table.partition().is_none() => Some(table),
-        _ => None,
-    }
-}
-
 /// Whether `stmt` is a statement whose WHOLE read is one point get on the
 /// clustered handle -- the plan-shape half of Go's
 /// `IsPointGetWithPKOrUniqueKeyByAutoCommit`
@@ -578,212 +349,6 @@ mod common_handle_shape_tests {
             ),
             StatementReadShape::AutocommitPointGet
         );
-    }
-
-    #[test]
-    fn prepared_locking_read_resolves_its_handle_parameter_without_ast_binding() {
-        let mut catalog = crate::driver::Catalog::default();
-        catalog.create_database("test");
-        let mut table = crate::kv_table::KvTable::new(
-            1,
-            vec![
-                crate::kv_table::KvColumn {
-                    name: "k".to_owned(),
-                    id: 1,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
-                    default_value: None,
-                    origin_default: None,
-                    generated: None,
-                },
-                crate::kv_table::KvColumn {
-                    name: "v".to_owned(),
-                    id: 2,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
-                    default_value: None,
-                    origin_default: None,
-                    generated: None,
-                },
-            ],
-        );
-        table.set_name("t");
-        table.set_common_handle_offsets(vec![0]);
-        catalog.register_kv_in("test", "t", table).unwrap();
-        let marker = tidb_parser::parse("SELECT v FROM t WHERE k = ? FOR UPDATE").unwrap();
-        let literal = tidb_parser::parse("SELECT v FROM t WHERE k = 'x' FOR UPDATE").unwrap();
-        let statement = crate::StmtContext::for_query();
-
-        let marker_keys = PessimisticPrelock::from_statement(&marker)
-            .unwrap()
-            .bind_keys(&[Datum::Bytes(b"x".to_vec())], &catalog, "test", &statement);
-        let literal_keys = PessimisticPrelock::from_statement(&literal)
-            .unwrap()
-            .bind_keys(&[], &catalog, "test", &statement);
-
-        assert!(!marker_keys.is_empty());
-        assert_eq!(marker_keys, literal_keys);
-    }
-
-    /// A point write's `WHERE` marker is resolved by its ORDER in the whole
-    /// statement, straight from the execute parameters: `SET v = ?` takes the
-    /// first parameter, so the key comes from the second. No bound copy of
-    /// the predicate is needed for it (the batch locking read above still
-    /// binds one, because its lookup reads literals).
-    #[test]
-    fn a_prepared_point_write_resolves_its_where_marker_by_order() {
-        let mut catalog = crate::driver::Catalog::default();
-        catalog.create_database("test");
-        let mut table = crate::kv_table::KvTable::new(
-            1,
-            vec![
-                crate::kv_table::KvColumn {
-                    name: "k".to_owned(),
-                    id: 1,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::VarString),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
-                    default_value: None,
-                    origin_default: None,
-                    generated: None,
-                },
-                crate::kv_table::KvColumn {
-                    name: "v".to_owned(),
-                    id: 2,
-                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    comment: String::new(),
-                    default_value: None,
-                    origin_default: None,
-                    generated: None,
-                },
-            ],
-        );
-        table.set_name("t");
-        table.set_common_handle_offsets(vec![0]);
-        catalog.register_kv_in("test", "t", table).unwrap();
-        let marker = tidb_parser::parse("UPDATE t SET v = ? WHERE k = ?").unwrap();
-        let literal = tidb_parser::parse("UPDATE t SET v = 5 WHERE k = 'x'").unwrap();
-        let statement = crate::StmtContext::for_dml(true, true, false)
-            .with_statement_class(crate::StatementClass::Update);
-
-        let marker_keys = PessimisticPrelock::from_statement(&marker)
-            .unwrap()
-            .bind_keys(
-                &[Datum::Int(5), Datum::Bytes(b"x".to_vec())],
-                &catalog,
-                "test",
-                &statement,
-            );
-        let literal_keys = PessimisticPrelock::from_statement(&literal)
-            .unwrap()
-            .bind_keys(&[], &catalog, "test", &statement);
-
-        assert!(!marker_keys.is_empty());
-        assert_eq!(marker_keys, literal_keys);
-    }
-
-    /// Go's pessimistic `UPDATE`/`DELETE ... WHERE pk IN (...)` is a locking
-    /// `Batch_Point_Get` (`tryUpdatePointPlan`/`tryDeletePointPlan`), so every
-    /// named key is a pre-lock key -- unless `ORDER BY`/`LIMIT` makes Go's
-    /// `tryWhereIn2BatchPointGet` refuse the plan, or read committed defers
-    /// the batch lock until after the read.
-    #[test]
-    fn a_batch_point_write_binds_every_named_key() {
-        let mut catalog = crate::driver::Catalog::default();
-        crate::run_create_table_on(
-            "CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)",
-            &mut catalog,
-        )
-        .unwrap();
-        let statement = crate::StmtContext::for_dml(true, true, false)
-            .with_statement_class(crate::StatementClass::Update);
-        let keys = |sql: &str, params: &[Datum], batch: bool| {
-            let stmt = tidb_parser::parse(sql).unwrap();
-            let prelock = PessimisticPrelock::from_statement(&stmt).unwrap();
-            let prelock = if batch {
-                prelock
-            } else {
-                prelock.without_batch_lookup()
-            };
-            prelock.bind_keys(
-                params,
-                &catalog,
-                crate::driver::DEFAULT_DATABASE,
-                &statement,
-            )
-        };
-
-        assert_eq!(
-            keys("UPDATE t SET v = 1 WHERE id IN (1, 2, 3)", &[], true).len(),
-            3
-        );
-        assert_eq!(keys("DELETE FROM t WHERE id IN (1, 2)", &[], true).len(), 2);
-        assert_eq!(
-            keys(
-                "UPDATE t SET v = ? WHERE id IN (?, ?)",
-                &[Datum::Int(9), Datum::Int(1), Datum::Int(2)],
-                true,
-            ),
-            keys("UPDATE t SET v = 9 WHERE id IN (1, 2)", &[], true)
-        );
-        assert!(keys("UPDATE t SET v = 1 WHERE id IN (1, 2) LIMIT 1", &[], true).is_empty());
-        assert!(keys("DELETE FROM t WHERE id IN (1, 2) ORDER BY id", &[], true).is_empty());
-        assert!(keys("UPDATE t SET v = 1 WHERE id IN (1, 2)", &[], false).is_empty());
-        // The single-row point arm does not depend on the batch arm.
-        assert_eq!(keys("UPDATE t SET v = 1 WHERE id = 1", &[], false).len(), 1);
-    }
-
-    /// Go converts a point write's key constants under the statement's type
-    /// context (`getNameValuePairs`, `newBatchPointGetPlan`). A strict
-    /// `UPDATE`/`DELETE` whose `id = 'abc'` fails that conversion has no
-    /// point plan: its scan reports `Truncated incorrect INTEGER value: 'abc'`
-    /// at once (captured live against the Go server on TiKV, with another
-    /// transaction holding key 0) and nothing is locked first. With
-    /// truncation as a warning (`UPDATE IGNORE`, or a non-strict mode) the
-    /// constant converts to 0 and Go's point plan locks key 0.
-    #[test]
-    fn a_strict_point_write_whose_key_conversion_fails_binds_no_key() {
-        let mut catalog = crate::driver::Catalog::default();
-        crate::run_create_table_on(
-            "CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)",
-            &mut catalog,
-        )
-        .unwrap();
-        let keys = |sql: &str, statement: &crate::StmtContext| {
-            let stmt = tidb_parser::parse(sql).unwrap();
-            PessimisticPrelock::from_statement(&stmt)
-                .unwrap()
-                .bind_keys(&[], &catalog, crate::driver::DEFAULT_DATABASE, statement)
-        };
-        let strict_update = crate::StmtContext::for_dml(true, true, false)
-            .with_statement_class(crate::StatementClass::Update);
-        let strict_delete = crate::StmtContext::for_dml(true, true, false)
-            .with_statement_class(crate::StatementClass::Delete);
-        assert!(keys("UPDATE t SET v = 9 WHERE id = 'abc'", &strict_update).is_empty());
-        assert!(keys("UPDATE t SET v = 9 WHERE id IN ('a', 'b')", &strict_update).is_empty());
-        assert!(keys("DELETE FROM t WHERE id = 'abc'", &strict_delete).is_empty());
-        assert!(keys("DELETE FROM t WHERE id IN ('a', 'b')", &strict_delete).is_empty());
-        assert!(keys("UPDATE t SET v = 9 WHERE id = '1x'", &strict_update).is_empty());
-        // A constant that converts cleanly still pins its row.
-        assert_eq!(
-            keys("UPDATE t SET v = 9 WHERE id = '1'", &strict_update).len(),
-            1
-        );
-
-        let ignore_update = crate::StmtContext::for_dml(true, true, true)
-            .with_statement_class(crate::StatementClass::Update);
-        assert_eq!(
-            keys("UPDATE IGNORE t SET v = 9 WHERE id = 'abc'", &ignore_update),
-            keys("UPDATE t SET v = 9 WHERE id = 0", &strict_update)
-        );
-        assert!(!keys(
-            "UPDATE IGNORE t SET v = 9 WHERE id IN ('a', 'b')",
-            &ignore_update
-        )
-        .is_empty());
     }
 
     #[test]
@@ -1010,7 +575,15 @@ pub struct HandleSourceExec {
     /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock` in a
     /// repeatable-read pessimistic transaction: the record keys are locked
     /// with this wait before the first read, inside `Next`.
-    lock_wait: Option<tidb_txnkv::transaction::LockWaitTime>,
+    lock: Option<crate::select_lock::PointLock>,
+    /// The unique-index key each handle was found under, aligned with
+    /// `handles`, which a batch read locks together with its record keys
+    /// (Go `BatchPointGetExec.initialize`'s `indexKeys`).
+    lock_index_keys: Vec<Option<tidb_txnkv::Key>>,
+    /// Index keys that named no row, which repeatable read locks with the
+    /// rest before reading (Go `BatchPointGetExec`: "lock all keys in
+    /// repeatable read isolation").
+    lock_missing_index_keys: Vec<tidb_txnkv::Key>,
 }
 
 impl HandleSourceExec {
@@ -1038,18 +611,50 @@ impl HandleSourceExec {
             extra_handle_slot: None,
             single_point_get: false,
             partition_ids: None,
-            lock_wait: None,
+            lock: None,
+            lock_index_keys: Vec::new(),
+            lock_missing_index_keys: Vec::new(),
         }
     }
 
     /// Locks the record keys before reading them (see
-    /// [`HandleSourceExec::lock_wait`]).
+    /// [`HandleSourceExec::lock`]).
     pub(crate) fn with_lock_before_read(
         mut self,
-        wait: Option<tidb_txnkv::transaction::LockWaitTime>,
+        lock: Option<crate::select_lock::PointLock>,
     ) -> Self {
-        self.lock_wait = wait;
+        self.lock = lock;
         self
+    }
+
+    /// The unique-index keys the handles were found under (see
+    /// [`HandleSourceExec::lock_index_keys`]).
+    pub(crate) fn with_lock_index_keys(
+        mut self,
+        keys: Vec<Option<tidb_txnkv::Key>>,
+        missing: Vec<tidb_txnkv::Key>,
+    ) -> Self {
+        self.lock_index_keys = keys;
+        self.lock_missing_index_keys = missing;
+        self
+    }
+
+    /// The record and index keys of the handles at `positions`.
+    fn lock_keys_at(
+        &self,
+        record_keys: &[tidb_txnkv::Key],
+        positions: &[usize],
+    ) -> Vec<tidb_txnkv::Key> {
+        let mut keys = positions
+            .iter()
+            .filter_map(|position| record_keys.get(*position).cloned())
+            .collect::<Vec<_>>();
+        keys.extend(
+            positions
+                .iter()
+                .filter_map(|position| self.lock_index_keys.get(*position).cloned().flatten()),
+        );
+        keys
     }
 
     /// Builds the final table reader for a retained physical plan whose
@@ -1108,11 +713,24 @@ impl HandleSourceExec {
     fn initialize(&mut self) -> Result<(), ExecError> {
         // Go `PointGetExecutor.getAndLock` / `BatchPointGetExec.initialize`:
         // "Lock the key before get in RR isolation, then get will get the
-        // value from the cache."
-        if let Some(wait) = self.lock_wait {
+        // value from the cache"; read committed's single point get locks the
+        // key only if it exists (`lockKeyIfExists`) and reads the answer.
+        let record_keys = self.lock.as_ref().and_then(|_| {
             self.table
-                .lock_records_for_read(&self.handles, wait)
-                .map_err(ExecError::from)?;
+                .record_lock_keys(&self.handles, self.partition_ids.as_deref())
+        });
+        let mut locked_before_read = false;
+        if let (Some(lock), Some(record_keys)) = (self.lock.clone(), record_keys.as_ref()) {
+            if !lock.read_committed {
+                let positions = (0..self.handles.len()).collect::<Vec<_>>();
+                let mut keys = self.lock_keys_at(record_keys, &positions);
+                keys.extend(self.lock_missing_index_keys.iter().cloned());
+                lock.lock(&mut self.table, &keys, false)?;
+                locked_before_read = true;
+            } else if self.single_point_get {
+                lock.lock(&mut self.table, record_keys, true)?;
+                locked_before_read = true;
+            }
         }
         if let Some(statement) = &self.table_statement {
             let keep = self.output_columns.as_ref().map_or_else(
@@ -1192,6 +810,34 @@ impl HandleSourceExec {
         self.table
             .note_keys_read(found as u64)
             .map_err(ExecError::from)?;
+        // Go `BatchPointGetExec.initialize` under read committed: "Lock
+        // exists keys only", the found rows and their index keys. A
+        // partitioned read whose handles were not routed to one partition
+        // could name no key before reading and locks what it found.
+        if let Some(lock) = self.lock.clone().filter(|_| !locked_before_read) {
+            let (record_keys, positions): (Vec<tidb_txnkv::Key>, Vec<usize>) = match &rows {
+                crate::kv_table::PointReadValues::Single(Some(_)) => {
+                    match record_keys.as_ref().and_then(|keys| keys.first()) {
+                        Some(key) => (vec![key.clone()], vec![0]),
+                        None => (Vec::new(), Vec::new()),
+                    }
+                }
+                crate::kv_table::PointReadValues::Single(None) => (Vec::new(), Vec::new()),
+                crate::kv_table::PointReadValues::Batch { keys, .. } => {
+                    let mut found_keys = vec![tidb_txnkv::Key::default(); keys.len()];
+                    let mut positions = Vec::new();
+                    for (position, key) in keys.iter().enumerate() {
+                        if let Some(key) = key {
+                            found_keys[position] = key.clone();
+                            positions.push(position);
+                        }
+                    }
+                    (found_keys, positions)
+                }
+            };
+            let keys = self.lock_keys_at(&record_keys, &positions);
+            lock.lock(&mut self.table, &keys, false)?;
+        }
         self.preloaded = Some(rows);
         self.decoder = Some(crate::kv_table::PointRowDecoder::new(&self.table));
         Ok(())
@@ -1420,6 +1066,8 @@ pub(crate) struct UniqueIndexPointSourceExec {
     /// Go `PartitionNames` resolved to physical ids: a global index entry
     /// whose row lives elsewhere answers nothing. `None` restricts nothing.
     allowed_partitions: Option<Vec<i64>>,
+    /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock`.
+    lock: Option<crate::select_lock::PointLock>,
     source: Option<HandleSourceExec>,
     initialized: bool,
 }
@@ -1429,6 +1077,13 @@ impl UniqueIndexPointSourceExec {
     #[must_use]
     pub(crate) fn with_allowed_partitions(mut self, ids: Option<Vec<i64>>) -> Self {
         self.allowed_partitions = ids;
+        self
+    }
+
+    /// Locks the index and record keys this read names inside `Next`.
+    #[must_use]
+    pub(crate) fn with_lock(mut self, lock: Option<crate::select_lock::PointLock>) -> Self {
+        self.lock = lock;
         self
     }
 
@@ -1451,6 +1106,7 @@ impl UniqueIndexPointSourceExec {
             decode_context,
             single_point,
             allowed_partitions: None,
+            lock: None,
             source: None,
             initialized: false,
         }
@@ -1476,6 +1132,8 @@ impl UniqueIndexPointSourceExec {
                 .plan_indexes()
                 .any(|index| index.id == self.index_id && index.clustered_primary);
         let mut routed_partitions: Option<Vec<i64>> = None;
+        let mut index_keys: Vec<Option<tidb_txnkv::Key>> = Vec::new();
+        let mut missing_index_keys: Vec<tidb_txnkv::Key> = Vec::new();
         let mut handles: Vec<TableHandle> = if common_primary {
             self.index_values
                 .iter()
@@ -1496,6 +1154,21 @@ impl UniqueIndexPointSourceExec {
                     "a unique-index PointGet does not retain exactly one key",
                 ));
             };
+            // Go `PointGetExecutor.Next`: repeatable read locks the index
+            // key whether or not it exists, then reads it from the lock
+            // cache; read committed locks it only if it exists
+            // (`lockKeyIfExists`).
+            if let Some(lock) = self.lock.clone() {
+                let keys = self
+                    .table
+                    .unique_point_lock_keys(self.index_id, values, self.decode_context.zone())
+                    .map_err(|error| {
+                        ExecError::unsupported(format!(
+                            "unique index key encoding failed: {error:?}"
+                        ))
+                    })?;
+                lock.lock(&mut self.table, &keys, lock.read_committed)?;
+            }
             self.table
                 .lookup_unique_with_partition(self.index_id, values, self.decode_context.zone())
                 .map_err(|error| {
@@ -1506,9 +1179,9 @@ impl UniqueIndexPointSourceExec {
                 .map(|(handle, _)| handle)
                 .collect()
         } else {
-            let found = self
+            let keys = self
                 .table
-                .lookup_unique_batched_routed(
+                .unique_batch_index_keys(
                     self.index_id,
                     &self.index_values,
                     self.decode_context.zone(),
@@ -1516,11 +1189,24 @@ impl UniqueIndexPointSourceExec {
                 )
                 .map_err(|error| {
                     ExecError::unsupported(format!("unique index batch lookup failed: {error:?}"))
-                })?
-                .into_iter()
-                .flatten()
-                .filter(|(_, partition)| self.partition_allowed(*partition))
-                .collect::<Vec<_>>();
+                })?;
+            let looked_up = self
+                .table
+                .lookup_unique_index_keys(&keys)
+                .map_err(|error| {
+                    ExecError::unsupported(format!("unique index batch lookup failed: {error:?}"))
+                })?;
+            let mut found = Vec::new();
+            for (key, entry) in keys.into_iter().zip(looked_up) {
+                let key = key.map(|(key, _)| key);
+                match entry {
+                    Some((handle, partition)) if self.partition_allowed(partition) => {
+                        found.push((handle, partition));
+                        index_keys.push(key);
+                    }
+                    _ => missing_index_keys.extend(key),
+                }
+            }
             // Each row reads from the partition its key routed to (or its
             // global entry recorded), as Go's second BatchGet does.
             if self.table.partition().is_some()
@@ -1531,6 +1217,11 @@ impl UniqueIndexPointSourceExec {
             found.into_iter().map(|(handle, _)| handle).collect()
         };
         let Some(first) = handles.first().cloned() else {
+            // Go `BatchPointGetExec.initialize` with no row found still
+            // locks every named index key under repeatable read.
+            if let Some(lock) = self.lock.clone().filter(|lock| !lock.read_committed) {
+                lock.lock(&mut self.table, &missing_index_keys, false)?;
+            }
             return Ok(());
         };
         let meta = ExecutorMeta::new(
@@ -1547,6 +1238,7 @@ impl UniqueIndexPointSourceExec {
                 self.output_columns.clone(),
                 self.decode_context.clone(),
             )
+            .with_lock_before_read(self.lock.clone())
         } else {
             HandleSourceExec::new_mapped_with_context(
                 meta,
@@ -1556,6 +1248,8 @@ impl UniqueIndexPointSourceExec {
                 self.decode_context.clone(),
             )
             .with_partition_ids(routed_partitions)
+            .with_lock_before_read(self.lock.clone())
+            .with_lock_index_keys(index_keys, missing_index_keys)
         };
         source.open()?;
         self.source = Some(source);

@@ -2442,6 +2442,37 @@ impl SysVarDef {
         }
     }
 
+    /// Go `SysVar.SkipInit`: whether a new session leaves the variable out
+    /// of its own copy (`loadCommonGlobalVariablesIfNeeded` copies only the
+    /// sysvar cache's session view). True for Go's `skipInit` variables, for
+    /// noop variables, and for anything without session scope; a session
+    /// reads such a variable through to its GLOBAL value until it holds one
+    /// (`GetSessionOrGlobalSystemVar`).
+    #[must_use]
+    pub fn skip_init(&self) -> bool {
+        let skip_init = matches!(
+            self.name,
+            "tidb_snapshot"
+                | "tx_isolation_one_shot"
+                | "tidb_ddl_reorg_priority"
+                | "tidb_slow_query_file"
+                | "tidb_wait_split_region_finish"
+                | "tidb_wait_split_region_timeout"
+                | "tidb_metric_query_step"
+                | "tidb_metric_query_range_duration"
+                | "rand_seed1"
+                | "rand_seed2"
+                | "collation_database"
+                | "collation_connection"
+                | "character_set_database"
+                | "character_set_connection"
+                | "character_set_server"
+                | "tidb_opt_tiflash_concurrency_factor"
+                | "tidb_opt_seek_factor"
+        );
+        skip_init || self.is_noop() || !self.has_session_scope()
+    }
+
     /// Go `SysVar.SkipSysvarCache`: the GC variables and the external
     /// timestamp live in TiKV-backed tables, so peers must not re-execute
     /// them through the sysvar cache.

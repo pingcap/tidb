@@ -345,6 +345,7 @@ pub use constant_fold::{
 };
 mod context;
 pub mod convert_charset;
+mod eval_error_sql;
 pub mod evaluator;
 pub mod expr_collation;
 pub mod expr_util;

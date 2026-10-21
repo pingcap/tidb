@@ -337,11 +337,13 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// reads them, and the read is answered from the lock responses
     /// (`TxnCtx.SetPessimisticLockCache`). A backend whose statement takes no
     /// pessimistic locks (the in-process store, an optimistic transaction)
-    /// answers `Ok(())` and the read proceeds unlocked.
+    /// answers `Ok(())` and the read proceeds unlocked. `only_if_exists` is
+    /// read committed's `lockKeyIfExists` (`LockCtx.LockOnlyIfExists`).
     fn lock_keys_for_read(
         &mut self,
         _keys: &[Key],
         _wait: tidb_txnkv::transaction::LockWaitTime,
+        _only_if_exists: bool,
     ) -> Result<(), StorageError> {
         Ok(())
     }
@@ -380,6 +382,14 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// In-process stores have no such outer owner and therefore rely on the
     /// catalog image itself.
     fn has_external_statement_rollback(&self) -> bool {
+        false
+    }
+
+    /// Whether this backend's commit drops untouched index entries (Go
+    /// `TiDBKVFilter.IsUnnecessaryKeyValue`), so an UPDATE may stage them as
+    /// Go's `index.create(untouched = true)` does. A backend that would
+    /// persist them answers `false` and the UPDATE leaves the entry alone.
+    fn filters_untouched_index_values(&self) -> bool {
         false
     }
 

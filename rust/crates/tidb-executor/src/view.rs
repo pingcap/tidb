@@ -335,6 +335,9 @@ fn build_view_info_select(
 /// underneath a view shows through on the next read. A column the build does
 /// not name keeps its stored type.
 ///
+/// Go builds it in a system session (`runWithSystemSession`), see
+/// [`crate::StmtContext::for_system_session`].
+///
 /// A body that no longer resolves is that build's error -- `ErrViewInvalid`
 /// for most -- which the caller shapes: `DESCRIBE` reports it and
 /// `information_schema.columns` omits the view.
@@ -345,7 +348,9 @@ pub fn view_column_list(
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, FieldType)>, DriverError> {
     let names: Vec<String> = view.columns.iter().map(|(name, _)| name.clone()).collect();
-    let types = crate::driver::view_column_types(database, &view.name, &names, catalog, ctx)?;
+    let system_session = ctx.for_system_session();
+    let types =
+        crate::driver::view_column_types(database, &view.name, &names, catalog, &system_session)?;
     Ok(view
         .columns
         .iter()

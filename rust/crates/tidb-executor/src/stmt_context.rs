@@ -550,6 +550,11 @@ pub struct StmtContextSessionState {
     /// the session's own account while it expands a view under EXPLAIN;
     /// `None` is a session that enforces no privileges.
     pub session_privilege: Option<SessionPrivilegeCheck>,
+    /// Go `SessionVars.GetRelatedTableForMDL()` as the planner fills it for
+    /// this statement (`tryLockMDLAndUpdateSchemaIfNecessary`); `None` when the
+    /// statement locks nothing (no metadata-lock gate, or Go's autocommit
+    /// read-only exemption).
+    pub mdl_related_table: Option<MdlRelatedTableRecorder>,
     /// Go `RequestVerification("", "", "", mysql.ProcessPriv)` as
     /// `TIDB_DECODE_SQL_DIGESTS` asks it: whether the session holds PROCESS.
     pub process_privilege: bool,
@@ -590,6 +595,7 @@ impl Default for StmtContextSessionState {
             sequence_privilege: None,
             view_definer_privilege: None,
             session_privilege: None,
+            mdl_related_table: None,
             process_privilege: true,
             sql_digest_text_retriever: None,
             fk_cascade_table_lock: None,
@@ -614,6 +620,9 @@ pub type ViewDefinerPrivilegeCheck =
 /// table, column, privilege)` for its own account with its active roles.
 pub type SessionPrivilegeCheck =
     Arc<dyn Fn(&str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
+
+/// Records one stored table id on the statement's metadata-lock map.
+pub type MdlRelatedTableRecorder = Arc<dyn Fn(i64) + Send + Sync>;
 
 /// Go `SQLDigestTextRetriever.RetrieveGlobal` as `TIDB_DECODE_SQL_DIGESTS`
 /// runs it while evaluating in `StmtContext`: each requested digest's
@@ -800,6 +809,8 @@ pub struct StmtContextData {
     view_definer_privilege: Option<ViewDefinerPrivilegeCheck>,
     /// See [`StmtContextSessionState::session_privilege`].
     session_privilege: Option<SessionPrivilegeCheck>,
+    /// See [`StmtContextSessionState::mdl_related_table`].
+    mdl_related_table: Option<MdlRelatedTableRecorder>,
     /// See [`StmtContextSessionState::process_privilege`].
     process_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
@@ -942,6 +953,16 @@ pub struct StmtContextData {
     pessimistic_lazy_dup_check: bool,
     /// Go TxnCtx.IsPessimistic for the active or implicit statement transaction.
     pessimistic_transaction: bool,
+    /// Go `SessionVars.InTxn()`: an explicit or `autocommit = 0` transaction,
+    /// as opposed to an autocommit statement's implicit one.
+    in_transaction: bool,
+    /// Go `StmtCtx.ForeignKeyTriggerCtx.HasFKCascades` /
+    /// `InHandleForeignKeyTrigger`: the statement cascades foreign keys.
+    fk_cascades: Arc<std::sync::atomic::AtomicBool>,
+    /// Go `StmtCtx.AddAffectedRows` for a write whose statement answers rows
+    /// (`EXPLAIN ANALYZE` of an INSERT/UPDATE/DELETE), which the result
+    /// set's terminal OK packet reports.
+    affected_rows: Arc<std::sync::atomic::AtomicU64>,
     /// The statement continues (or lazily opens) an optimistic transaction,
     /// whose membuffer outlives it: the in-process store keeps its staged
     /// keys in [`Self::staged_writes`] (see
@@ -2147,6 +2168,13 @@ context_configuration! {
         self
     }
 
+    /// Records Go `SessionVars.InTxn()` for the statement.
+    #[must_use]
+    pub fn with_in_transaction(mut self, in_transaction: bool) -> Self {
+        self.in_transaction = in_transaction;
+        self
+    }
+
     /// Marks the statement as part of an optimistic transaction.
     #[must_use]
     pub fn with_optimistic_transaction(mut self, enabled: bool) -> Self {
@@ -2547,6 +2575,7 @@ impl StmtContext {
             sequence_privilege: session.sequence_privilege,
             view_definer_privilege: session.view_definer_privilege,
             session_privilege: session.session_privilege,
+            mdl_related_table: session.mdl_related_table,
             process_privilege: session.process_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
             fk_cascade_table_lock: session.fk_cascade_table_lock,
@@ -2583,6 +2612,9 @@ impl StmtContext {
             query_cop_store_limiter: None,
             pessimistic_lazy_dup_check: false,
             pessimistic_transaction: false,
+            in_transaction: false,
+            fk_cascades: Arc::default(),
+            affected_rows: Arc::default(),
             optimistic_transaction: false,
             pessimistic_check_in_prewrite: false,
             constraint_check_in_place: false,
@@ -3041,6 +3073,24 @@ impl StmtContext {
     pub fn with_ddl_sql_mode(mut self, sql_mode: i64) -> Self {
         self.ddl_sql_mode = sql_mode;
         self
+    }
+
+    /// Go `runWithSystemSession`'s context as `tryFillViewColumnType` builds a
+    /// view in it: a pooled system session, whose `SessionVars.SQLMode` is the
+    /// zero `mysql.ModeNone` whatever the statement's own `sql_mode` -- no
+    /// strictness, no ONLY_FULL_GROUP_BY, no scanner flags, and the parser
+    /// switches of a fresh session (`tidb_enable_window_function` on,
+    /// utf8mb4). Captured: the Go oracle describes a view whose body is 1055
+    /// or 8123 in the session, or whose window call the session's
+    /// `tidb_enable_window_function = 0` refuses.
+    #[must_use]
+    pub fn for_system_session(&self) -> Self {
+        self.clone()
+            .with_ddl_sql_mode(0)
+            .with_sql_mode(tidb_parser::SqlMode::default())
+            .with_strict(false)
+            .with_only_full_group_by(false)
+            .with_parser_config(tidb_parser::ParserConfig::default())
     }
 
     /// Captures the original DDL text that Go stores in `model.Job.Query`.
@@ -3621,6 +3671,11 @@ impl StmtContext {
     /// The privilege answer the planner asks for the session's own account.
     pub(crate) fn session_privilege(&self) -> Option<&SessionPrivilegeCheck> {
         self.session_privilege.as_ref()
+    }
+
+    /// Where the planner records the tables this statement locks.
+    pub(crate) fn mdl_related_table(&self) -> Option<&MdlRelatedTableRecorder> {
+        self.mdl_related_table.as_ref()
     }
 
     fn check_sequence_privilege(
@@ -4240,6 +4295,22 @@ impl StmtContext {
     #[must_use]
     pub fn pessimistic_transaction(&self) -> bool {
         self.pessimistic_transaction
+    }
+
+    /// Records that the statement cascades foreign keys (Go
+    /// `ForeignKeyTriggerCtx.HasFKCascades`).
+    pub fn mark_fk_cascades(&self) {
+        self.fk_cascades
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Go `updateRecord`'s choice against `table.SkipWriteUntouchedIndices`:
+    /// an UPDATE rewrites untouched index entries inside a transaction or
+    /// when foreign-key cascades follow ("the later foreign cascade executor
+    /// may see data-index inconsistency in txn-mem-buffer").
+    #[must_use]
+    pub fn writes_untouched_indices(&self) -> bool {
+        self.in_transaction || self.fk_cascades.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Whether this statement is part of an optimistic transaction.
@@ -5120,6 +5191,20 @@ impl StmtContext {
             .message
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = message.into();
+    }
+
+    /// Go `StmtCtx.AddAffectedRows`.
+    pub fn add_affected_rows(&self, rows: u64) {
+        self.affected_rows
+            .fetch_add(rows, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Go `StmtCtx.AffectedRows`: the rows [`Self::add_affected_rows`]
+    /// recorded.
+    #[must_use]
+    pub fn affected_rows(&self) -> u64 {
+        self.affected_rows
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Returns the statement info string that Go exposes as `LastMessage`.

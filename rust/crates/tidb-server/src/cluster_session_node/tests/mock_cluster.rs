@@ -621,6 +621,14 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.lock_staged_keys_with_assertions(keys, Default::default(), Default::default(), wait)
     }
 
+    fn lock_staged_keys_with_values_if_exist(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<LockKeysOutcome, String> {
+        self.lock_staged_keys_with_values(keys, wait)
+    }
+
     /// A pessimistic locking read is a current read, at a fresh timestamp.
     fn fresh_locking_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         if !self.pessimistic {

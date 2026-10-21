@@ -829,14 +829,12 @@ fn truncate_char_trailing_spaces(value: Datum, field_type: &FieldType) -> Datum 
 /// update m set i=(select 1e30)[types:1264] Out of range value for column 'i' at row 1
 /// ```
 ///
-/// DIVERGENCE, measured and left standing: Go answers a DIFFERENT error for
-/// the same statement when the planner turns it into a `Point_Get`
-/// (`update m set i='abc' where id=1` is `Truncated incorrect INTEGER value`,
-/// and the varchar case is the RAW 1406). That is not a second rule about
-/// writes -- `buildOrderedList` wraps a point update's assignment in a CAST
-/// FUNCTION, and `getValidIntPrefix`'s `isFuncCast` arm names `INTEGER` where
-/// the table-cast arm names `DOUBLE`. This tier plans no such specialization,
-/// so it answers the general-plan form for both spellings.
+/// A point UPDATE (`update m set i='abc' where id=1`) answers `Truncated
+/// incorrect INTEGER value` and the RAW 1406 instead: that is not a second
+/// rule about writes -- Go's `buildOrderedList` wraps the assignment in a CAST
+/// FUNCTION before this conversion runs (`point_update_assignment`), and
+/// `getValidIntPrefix`'s `isFuncCast` arm names `INTEGER` where the
+/// table-cast arm names `DOUBLE`.
 pub(crate) fn cast_value_for_update_assignment(
     value: Datum,
     field_type: &FieldType,

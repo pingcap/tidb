@@ -25,6 +25,66 @@ use tidb_txnkv::transaction::LockWaitTime;
 
 use crate::{ExecError, Executor};
 
+/// Go `LazyTxn.LockKeys`'s `updateState(TxnLockAcquiring)` / back to
+/// `TxnRunning`: told `true` before a lock request and `false` after it, so
+/// `information_schema.TIDB_TRX` shows the transaction waiting on a lock.
+#[derive(Clone)]
+pub struct LockStateObserver(Arc<dyn Fn(bool) + Send + Sync>);
+
+impl LockStateObserver {
+    /// Wraps the session's transaction-state publisher.
+    pub fn new(observe: impl Fn(bool) + Send + Sync + 'static) -> Self {
+        Self(Arc::new(observe))
+    }
+
+    /// Publishes whether a lock request is in flight.
+    pub fn set(&self, acquiring: bool) {
+        (self.0)(acquiring);
+    }
+}
+
+impl std::fmt::Debug for LockStateObserver {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LockStateObserver")
+    }
+}
+
+/// A locking point read's lock (Go `PointGetExecutor.lock` with its
+/// `LockWaitTime`), taken inside `Next`.
+#[derive(Clone, Debug)]
+pub struct PointLock {
+    /// How long the lock request waits on a held key.
+    pub wait: LockWaitTime,
+    /// Go `IsPessimisticReadConsistency`: lock only existing keys, after
+    /// (batch) or while (`lockKeyIfExists`) reading them; repeatable read
+    /// locks every named key before reading it.
+    pub read_committed: bool,
+    /// The transaction-state publisher, when the session has one.
+    pub lock_state: Option<LockStateObserver>,
+}
+
+impl PointLock {
+    /// Go `doLockKeys` for a point read, publishing the lock wait around it.
+    pub(crate) fn lock(
+        &self,
+        table: &mut crate::kv_table::KvTable,
+        keys: &[tidb_txnkv::Key],
+        only_if_exists: bool,
+    ) -> Result<(), ExecError> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        if let Some(state) = &self.lock_state {
+            state.set(true);
+        }
+        let locked = table.lock_keys_for_read(keys, self.wait, only_if_exists);
+        if let Some(state) = &self.lock_state {
+            state.set(false);
+        }
+        locked.map_err(ExecError::from)
+    }
+}
+
 /// Keys selected by all locking operators in one statement attempt.
 /// The owner must drain this set at every attempt boundary, including errors.
 #[derive(Clone, Debug)]
@@ -36,6 +96,8 @@ pub struct SelectedLockKeys {
     /// locking point reads read first and lock only the rows they found,
     /// which this statement's lock step does after execution.
     read_committed: bool,
+    /// See [`LockStateObserver`].
+    lock_state: Option<LockStateObserver>,
 }
 
 #[derive(Debug, Default)]
@@ -58,7 +120,15 @@ impl SelectedLockKeys {
             default_wait,
             shared_lock_promotion,
             read_committed: false,
+            lock_state: None,
         }
+    }
+
+    /// Publishes lock acquisition to the session's transaction state.
+    #[must_use]
+    pub fn with_lock_state_observer(mut self, observer: Option<LockStateObserver>) -> Self {
+        self.lock_state = observer;
+        self
     }
 
     /// Records the transaction's read-committed isolation.
@@ -68,12 +138,15 @@ impl SelectedLockKeys {
         self
     }
 
-    /// The wait a repeatable-read locking point read locks its keys with
-    /// before reading them (Go `PointGetExecutor.getAndLock`), or `None`
-    /// under read committed, whose point reads lock after reading.
+    /// The lock a locking point read takes inside `Next` (Go
+    /// `PointGetExecutor.getAndLock`, `BatchPointGetExec.initialize`).
     #[must_use]
-    pub fn point_lock_wait(&self, select_wait: Option<LockWaitTime>) -> Option<LockWaitTime> {
-        (!self.read_committed).then(|| select_wait.unwrap_or(self.default_wait))
+    pub fn point_lock(&self, select_wait: Option<LockWaitTime>) -> PointLock {
+        PointLock {
+            wait: select_wait.unwrap_or(self.default_wait),
+            read_committed: self.read_committed,
+            lock_state: self.lock_state.clone(),
+        }
     }
 
     /// Whether FOR SHARE is promoted to a real lock instead of Go's no-op.

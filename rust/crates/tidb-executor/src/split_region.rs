@@ -103,6 +103,7 @@ pub fn split_region(
             div_precision_increment: ctx.div_precision_increment(),
             // Go's builder rewrites outside any clause (`unknowClause`).
             clause_message: "",
+            subquery_constants: &[],
         },
         ctx,
     };

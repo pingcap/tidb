@@ -14,13 +14,15 @@
 
 //! Go `cache.TableRowStatsCache`'s storage estimates
 //! (`pkg/statistics/handle/cache/stats_table_row_cache.go`) over the
-//! in-process catalog: what `information_schema.TABLES` and `PARTITIONS`
+//! statement's catalog: what `information_schema.TABLES` and `PARTITIONS`
 //! report as `TABLE_ROWS`, `AVG_ROW_LENGTH`, `DATA_LENGTH` and
 //! `INDEX_LENGTH`.
 //!
 //! Go reads `mysql.stats_meta.count` and the column histograms'
 //! `tot_col_size`. The in-process store keeps both in the catalog's table
-//! statistics, the same source `SHOW STATS_META` reads.
+//! statistics, the same source `SHOW STATS_META` reads; a cluster node hands
+//! in its size cache as a [`TableRowStatsSnapshot`]. Either way the tables
+//! walked are the statement's own schema.
 
 use crate::kv_table::KvTable;
 use crate::Catalog;
@@ -40,10 +42,58 @@ pub struct TableStorageEstimate {
     pub partitions: Vec<(i64, StorageEstimate)>,
 }
 
-/// The estimates of every stored table in `catalog`.
+/// The estimates of every stored table in `catalog`, from the catalog's own
+/// table statistics (the in-process store's statistics handle).
 #[must_use]
 pub fn table_storage_estimates(catalog: &Catalog) -> Vec<TableStorageEstimate> {
-    let stats = CatalogSizeStats { catalog };
+    estimates_from(catalog, &CatalogTableStatistics(catalog))
+}
+
+/// The estimates of every stored table in `catalog` -- the statement's own
+/// schema -- from a node's size cache. Go's `TABLES` and `PARTITIONS`
+/// readers walk the statement's InfoSchema and ask
+/// `cache.TableRowStatsCache` for each physical ID.
+#[must_use]
+pub fn table_storage_estimates_from_row_stats(
+    catalog: &Catalog,
+    row_stats: &TableRowStatsSnapshot,
+) -> Vec<TableStorageEstimate> {
+    estimates_from(catalog, row_stats)
+}
+
+/// Every physical table ID in `catalog`: each stored table and each of its
+/// partitions, the IDs Go's readers refresh the size cache for
+/// (`updateStatsCacheIfNeed`).
+#[must_use]
+pub fn physical_table_ids(catalog: &Catalog) -> Vec<i64> {
+    let mut ids = Vec::new();
+    for database in catalog.database_names() {
+        for name in catalog.table_names(&database).unwrap_or_default() {
+            let Some(crate::TableEntry::Kv(table)) = catalog.table_in(&database, &name) else {
+                continue;
+            };
+            ids.push(table.table_id);
+            if let Some(partition) = table.partition() {
+                ids.extend(partition.definitions.iter().map(|definition| definition.id));
+            }
+        }
+    }
+    ids
+}
+
+/// Go `cache.TableRowStatsCache`'s two maps as one refresh left them:
+/// `stats_meta.count` per physical ID and `tot_col_size` per (physical ID,
+/// column ID).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TableRowStatsSnapshot {
+    /// Go `tableRows`.
+    pub table_rows: std::collections::HashMap<i64, u64>,
+    /// Go `colLength`.
+    pub column_lengths: std::collections::HashMap<(i64, i64), u64>,
+}
+
+fn estimates_from(catalog: &Catalog, source: &dyn TableSizeSource) -> Vec<TableStorageEstimate> {
+    let stats = SizeStats { source };
     let mut estimates = Vec::new();
     for database in catalog.database_names() {
         for name in catalog.table_names(&database).unwrap_or_default() {
@@ -83,22 +133,26 @@ fn average(data_length: u64, rows: u64) -> u64 {
     }
 }
 
-/// Go `TableSizeStats` reading the catalog's statistics.
-struct CatalogSizeStats<'a> {
-    catalog: &'a Catalog,
+/// Where Go's `GetTableRows` and `GetColLength` read from.
+trait TableSizeSource {
+    /// Go `GetTableRows`: `stats_meta.count`, zero without a row.
+    fn table_rows(&self, physical_id: i64) -> u64;
+    /// Go `GetColLength`: the column histogram's `tot_col_size`.
+    fn column_length(&self, physical_id: i64, column_id: i64) -> u64;
 }
 
-impl CatalogSizeStats<'_> {
-    /// Go `GetTableRows`: `stats_meta.count`, zero without a row.
+/// The in-process catalog's table statistics.
+struct CatalogTableStatistics<'a>(&'a Catalog);
+
+impl TableSizeSource for CatalogTableStatistics<'_> {
     fn table_rows(&self, physical_id: i64) -> u64 {
-        self.catalog
+        self.0
             .table_statistics(physical_id)
             .map_or(0, |statistics| statistics.row_count.max(0) as u64)
     }
 
-    /// Go `GetColLength`: the column histogram's `tot_col_size`.
     fn column_length(&self, physical_id: i64, column_id: i64) -> u64 {
-        self.catalog
+        self.0
             .table_statistics(physical_id)
             .and_then(|statistics| {
                 statistics
@@ -107,6 +161,34 @@ impl CatalogSizeStats<'_> {
                     .map(|column| column.histogram.tot_col_size.max(0) as u64)
             })
             .unwrap_or(0)
+    }
+}
+
+impl TableSizeSource for TableRowStatsSnapshot {
+    fn table_rows(&self, physical_id: i64) -> u64 {
+        self.table_rows.get(&physical_id).copied().unwrap_or(0)
+    }
+
+    fn column_length(&self, physical_id: i64, column_id: i64) -> u64 {
+        self.column_lengths
+            .get(&(physical_id, column_id))
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+/// Go `TableSizeStats` over one size source.
+struct SizeStats<'a> {
+    source: &'a dyn TableSizeSource,
+}
+
+impl SizeStats<'_> {
+    fn table_rows(&self, physical_id: i64) -> u64 {
+        self.source.table_rows(physical_id)
+    }
+
+    fn column_length(&self, physical_id: i64, column_id: i64) -> u64 {
+        self.source.column_length(physical_id, column_id)
     }
 
     /// Go `EstimateDataLength`: a partitioned table sums its partitions'

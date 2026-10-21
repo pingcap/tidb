@@ -59,3 +59,32 @@ fn autocommit_locking_read_records_mdl_but_plain_read_does_not() {
         .unwrap();
     assert_eq!(sink.tables.lock().unwrap().len(), 1);
 }
+
+/// Go locks a view's tables as `buildDataSource` resolves them, so a name in
+/// the body that is a CTE locks nothing -- not the stored table that happens
+/// to share its name -- while the table the CTE reads is locked.
+#[test]
+fn view_body_tables_are_locked_as_the_planner_resolves_them() {
+    let sink = Arc::new(RecordingMdlSink::default());
+    let mut session = Session::new();
+    session.set_mdl_related_table_sink(sink.clone());
+    session.run("CREATE TABLE c (id INT PRIMARY KEY)").unwrap();
+    session
+        .run("CREATE TABLE base_for_cte (id INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("CREATE VIEW cte_view AS WITH c AS (SELECT id FROM base_for_cte) SELECT * FROM c")
+        .unwrap();
+    let rows = crate::tests_support::row_text(session.run(
+        "SELECT tidb_table_id FROM information_schema.tables \
+         WHERE table_schema = 'test' AND table_name = 'base_for_cte'",
+    ));
+    let base: i64 = rows[0][0].parse().unwrap();
+    sink.tables.lock().unwrap().clear();
+    session.run("BEGIN").unwrap();
+    session.run("SELECT * FROM cte_view").unwrap();
+    let mut locked: Vec<i64> = sink.tables.lock().unwrap().iter().map(|(id, _)| *id).collect();
+    locked.dedup();
+    assert_eq!(locked, [base]);
+    assert_eq!(*sink.unresolved.lock().unwrap(), 0);
+}

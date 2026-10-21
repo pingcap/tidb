@@ -18,9 +18,7 @@ DDL exists twice. Every cluster schema change Go runs as a job is a persisted jo
 
 Transactions exist twice. Production runs two transaction objects at once (the session's `Transaction` and the node's explicit store transaction, kept in step by call order); there is no isolation-provider seam; `handlePessimisticDML`, the retry loop, savepoints, implicit commit and the `autocommit=0` lazy opener are each implemented twice; `tidb_disable_txn_auto_retry=OFF` retries are refused on the cluster. Target: one TxnManager in `tidb-session` over a store-transaction trait, the in-process catalog one backend of it.
 
-The client stack exists twice. `ngaut/client-rust` (vendored at `third_party/tikv-client-rs`) is the Rust client-go (owner direction, 2026-10-19), but `tidb-txnkv` carries a second client-go-like stack (region routing, transport, lock resolution, coprocessor dispatch) that production and the embedded node run on; production's transactions already run client-rust's engine through `tidb-txnkv`'s `client_bridge`. In Go, client-go drives both TiKV and the embedded unistore. The embedded store is now behind client-rust's seams (`tidb-unistore`'s `PdClient` and RPC client, `client-rust-unistore-execplan.md` Steps 1-5); what remains is moving TiDB's paths from `tidb-txnkv` onto client-rust (that plan's Step 6).
-
-Caches. `tidb_domain::sysvar_cache` is a complete port with no caller, and the in-process tier never reloads `mysql.global_variables`. Some `information_schema` providers read the latest catalog instead of the statement's pinned one.
+Caches (done; what remains is listed here). `tidb_session::GlobalSysvars` is Go's `GlobalVarAccessor` over `tidb_domain::sysvar_cache::SysVarCache`: its GLOBAL tier is the cache rebuilt from `mysql.global_variables` (`rebuildSysVarCache`, every GLOBAL SetGlobal hook run with its value), `@@global.x` reads its global view, and a new session copies its session view (`loadCommonGlobalVariablesIfNeeded`), a `SkipInit` variable being read through at first use and kept. Both tiers share Go's cache lifecycle: a rebuild after every `SET GLOBAL` (`NotifyUpdateSysVarCache(true)`) and `LoadSysVarCacheLoop`'s 30-second tick (the in-process tier over its committed catalog, the cluster tier also on the `/tidb/sysvars` etcd notify). Still different from Go: in-process restricted SQL runs in the issuing session's transaction (the transactions item). `information_schema` providers read the statement's pinned schema; TABLES/PARTITIONS sizes are estimated over that schema from the node's `TableRowStatsCache`, and DDL_JOBS resolves names through it while reading the latest jobs. The cluster node pins a transaction's schema at BEGIN to the version it has loaded, where Go loads the schema at the transaction's start ts.
 
 Execution and storage. `system_row_write.rs` is a third row writer. Cop selection is lowered through a second, bounded predicate IR that silently drops conjuncts it cannot express. `real_tikv_dml.rs` is a non-deployed DML path tests still exercise. EXPLAIN ANALYZE runtime counters, EXPLAIN FOR CONNECTION's runtime columns and commit details are missing (commit details wait on the native committer).
 
@@ -42,7 +40,7 @@ Milestone 4: execution details (DML reads through the coprocessor, EXPLAIN ANALY
 
 Milestone 5: planner statistics set-up. Move InitStats, index-path statistics and row estimates from `planner_bridge.rs` / `access_cost.rs` into the planner as Go's functions, starting with a prototype on one access path.
 
-The transactions, caches and bootstrap mismatches are fixed in their own batches as they are reached; the GC worker follows its own plan.
+The transactions and bootstrap mismatches are fixed in their own batches as they are reached; the GC worker follows its own plan.
 
 ## Validation and acceptance
 
@@ -64,7 +62,9 @@ Each batch lands as its own commit through the pre-commit hook, so any one can b
 - [ ] Milestone 3b to 3e.
 - [ ] Milestone 4.
 - [ ] Milestone 5.
-- [ ] Transactions, caches, execution, duplicates, bootstrap layout, and the DDL details above.
+- [x] Caches: the sysvar cache is the GLOBAL tier on both tiers, and `information_schema` reads the statement's pinned schema.
+- [ ] Transactions, execution, duplicates, bootstrap layout, and the DDL details above.
+- [x] The client stack exists once. TiDB's transactions, point reads and scans, coprocessor, ANALYZE, MPP and peer RPCs, timestamps and GC run on the node's `ngaut/client-rust` store (the Rust client-go, vendored at `third_party/tikv-client-rs`), which also backs the embedded unistore; `tidb-txnkv`'s duplicate region routing, transport, lock resolution and `client_bridge` are deleted (`client-rust-unistore-execplan.md` Step 6, 2026-10-20). TRACE spans, the statement's `ExecDetails`/RU details and the client's log lines come from client-rust itself.
 - [x] The GC worker runs on the TiKV node (`gcworker-execplan.md`); its store-backed tests run on the embedded store through client-rust (`client-rust-unistore-execplan.md`).
 
 ## Surprises and discoveries

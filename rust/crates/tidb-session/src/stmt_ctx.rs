@@ -1497,6 +1497,7 @@ impl Session {
             sequence_privilege: self.sequence_privilege_check(),
             view_definer_privilege: self.view_definer_privilege_check(),
             session_privilege: self.session_privilege_check(),
+            mdl_related_table: self.mdl_related_table_recorder(),
             process_privilege: self.has_process_privilege(),
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
             fk_cascade_table_lock: self.fk_cascade_table_lock_check(),
@@ -1581,10 +1582,8 @@ impl Session {
                     )
                     .with_connection_id(self.connection_id)
                     .with_selected_lock_keys(self.selected_lock_keys.clone())
-                    .with_pessimistic_transaction(
-                        (!self.is_autocommit() || self.in_transaction())
-                            && self.statement_txn_mode().is_pessimistic(),
-                    )
+                    .with_pessimistic_transaction(self.statement_is_pessimistic())
+                    .with_in_transaction(!self.is_autocommit() || self.in_transaction())
                     .with_optimistic_transaction(
                         (!self.is_autocommit() || self.in_transaction())
                             && !self.statement_txn_mode().is_pessimistic(),
@@ -1607,6 +1606,7 @@ impl Session {
                     .with_block_encryption_mode(block_encryption_mode)
                     .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
                     .with_sql_mode(snapshot.scanner_sql_mode)
+                    .with_parser_config(self.vars.build_parser_switches())
                     .with_ddl_job_context(
                         snapshot.ddl_cdc_write_source,
                         snapshot.ddl_reorg_priority,
@@ -1720,10 +1720,8 @@ impl Session {
                 )
                 .with_connection_id(self.connection_id)
                 .with_selected_lock_keys(self.selected_lock_keys.clone())
-                .with_pessimistic_transaction(
-                    (!self.is_autocommit() || self.in_transaction())
-                        && self.statement_txn_mode().is_pessimistic(),
-                )
+                .with_pessimistic_transaction(self.statement_is_pessimistic())
+                .with_in_transaction(!self.is_autocommit() || self.in_transaction())
                 .with_optimistic_transaction(
                     (!self.is_autocommit() || self.in_transaction())
                         && !self.statement_txn_mode().is_pessimistic(),
@@ -1748,6 +1746,7 @@ impl Session {
                 .with_coprocessor_read_policy(snapshot.coprocessor_read_policy.clone())
                 .with_lazy_clock(snapshot.timestamp, zone)
                 .with_sql_mode(snapshot.scanner_sql_mode)
+                .with_parser_config(self.vars.build_parser_switches())
                 .with_ddl_job_context(
                     snapshot.ddl_cdc_write_source,
                     snapshot.ddl_reorg_priority,
@@ -1959,6 +1958,11 @@ impl Session {
             StatementKind::Dml => match result {
                 Ok(crate::record_set::StatementCompletion::Affected(rows)) => {
                     i64::try_from(*rows).unwrap_or(i64::MAX)
+                }
+                // `EXPLAIN ANALYZE` of a write answers rows; the write added
+                // its affected rows to the statement context.
+                Ok(crate::record_set::StatementCompletion::Rows(_)) => {
+                    i64::try_from(self.statement_affected_rows).unwrap_or(i64::MAX)
                 }
                 _ => 0,
             },

@@ -227,6 +227,13 @@ fn collect_references(expr: &tidb_ast::Expr, references: &mut References) {
                     }
                     true
                 }
+                // A subquery the planning already folded is its constant.
+                tidb_ast::Expr::Column(_)
+                    if tidb_planner::plan_builder::marker::PlanMarker::from_expr(expr)
+                        .is_some() =>
+                {
+                    true
+                }
                 tidb_ast::Expr::Column(path) => {
                     self.references.columns.push(path.clone());
                     true
@@ -573,6 +580,14 @@ impl ColumnResolver for OnDuplicateResolver<'_> {
 
     fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
         self.base.user_vars()
+    }
+
+    fn resolve_constant(&self, path: &[String]) -> Option<tidb_expr::expression::Expression> {
+        self.base.resolve_constant(path)
+    }
+
+    fn has_resolved_constants(&self) -> bool {
+        self.base.has_resolved_constants()
     }
 
     fn clause_message(&self) -> &'static str {

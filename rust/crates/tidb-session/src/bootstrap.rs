@@ -62,9 +62,6 @@ impl Session {
         // `mysql.global_variables`, calling each GLOBAL sysvar's SetGlobal
         // hook.
         self.load_global_variables_table();
-        self.vars
-            .global_sysvars()
-            .rebuild_sys_var_cache_set_globals();
     }
 
     /// Go `Domain.rebuildSysVarCache`'s read of `mysql.global_variables`:
@@ -74,29 +71,31 @@ impl Session {
     /// store's first session, which Go opens only after the cache is loaded
     /// -- copies them as `loadCommonGlobalVariablesIfNeeded` does.
     fn load_global_variables_table(&mut self) {
-        let ctx = self.statement_context(false);
-        let loaded = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_select_meta_in(
-                "SELECT variable_name, variable_value FROM mysql.global_variables",
-                catalog,
-                "mysql",
-                &ctx,
-            )
-        });
-        drop(ctx);
+        let loaded = self.fetch_global_variables_table();
         self.finish_bootstrap_statement();
-        let Ok((_columns, rows)) = loaded else {
+        let Ok(rows) = loaded else {
             return;
         };
         let globals = self.vars.global_sysvars();
-        globals.load_from_cluster(rows.iter().filter_map(|row| match row.as_slice() {
-            [name, value] => Some((
-                crate::datum_text(name)?,
-                crate::datum_text(value).unwrap_or_default(),
-            )),
-            _ => None,
-        }));
+        globals.load_from_cluster(rows);
         globals.mark_catalog_backed();
+        // Go `BootstrapSession` -> `Domain.LoadSysVarCacheLoop`, here over the
+        // store's committed catalog (Go reads it on a system session).
+        let catalog = std::sync::Arc::downgrade(&self.shared_catalog());
+        globals.start_load_sys_var_cache_loop(Box::new(move || {
+            let catalog = catalog.upgrade()?;
+            let catalog = catalog.lock().unwrap_or_else(|poison| poison.into_inner());
+            Some(
+                tidb_executor::run_select_meta_in(
+                    tidb_domain::sysvar_cache::SYSVAR_TABLE_QUERY,
+                    &catalog,
+                    "mysql",
+                    &tidb_executor::StmtContext::default(),
+                )
+                .map(|(_columns, rows)| crate::variables::global_variables_rows(&rows))
+                .map_err(|error| error.to_mysql_error().message),
+            )
+        }));
         self.vars
             .seed_from_globals(globals)
             .expect("bootstrap: the seeded global variables must load into a session");

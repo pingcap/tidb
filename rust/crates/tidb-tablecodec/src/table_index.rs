@@ -24,6 +24,10 @@ use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
 use crate::table_row::{decode_column_value, TableRowError};
 use tidb_codec::table_key::encode_index_seek_key;
+pub use tidb_codec::table_key::{
+    is_index_key, is_temp_index_key, is_untouched_index_kv, MAX_OLD_ENCODE_VALUE_LEN,
+    TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
+};
 use tidb_codec::{
     cut_one, decode_int, decode_one, decode_row_to_old_bytes, encode_bytes, encode_int, encode_row,
     encode_value, CodecError, ColumnInfo, Encoder, RowPackageError, BYTES_FLAG, INT_FLAG,
@@ -79,8 +83,6 @@ fn encoded_handle_columns(handle: &Handle) -> Result<Vec<Vec<u8>>, TableIndexErr
 /// Column-ID keyed cut values and the unconsumed index-key suffix.
 pub type CutIndexValues<'a> = (BTreeMap<i64, Vec<u8>>, &'a [u8]);
 
-/// Maximum byte length of legacy index values.
-pub const MAX_OLD_ENCODE_VALUE_LEN: usize = 9;
 /// Marker for a common handle in an extensible index value.
 pub const COMMON_HANDLE_FLAG: u8 = 127;
 /// Marker for a global-index partition ID.
@@ -89,10 +91,6 @@ pub const PARTITION_ID_FLAG: u8 = 126;
 pub const INDEX_VERSION_FLAG: u8 = 125;
 /// Marker for rowcodec restored data.
 pub const RESTORE_DATA_FLAG: u8 = ROW_CODEC_VERSION;
-/// Marker appended to an untouched index value.
-pub const UNCOMMITTED_INDEX_KV_FLAG: u8 = b'1';
-/// High bits used for temporary index IDs.
-pub const TEMP_INDEX_PREFIX: i64 = 0x7fff_0000_0000_0000;
 /// Low bits retaining the original index ID.
 pub const INDEX_ID_MASK: i64 = 0x0000_ffff_ffff_ffff;
 
@@ -416,48 +414,14 @@ fn rewrite_index_id(
     Ok(())
 }
 
-/// Reports whether the key contains a temporary index ID.
-pub fn is_temp_index_key(key: &[u8]) -> bool {
-    let bytes: [u8; 8] = key[PREFIX_LEN..PREFIX_LEN + ID_LEN].try_into().unwrap();
-    let index_id = tidb_codec::decode_cmp_uint_to_int(u64::from_be_bytes(bytes));
-    TEMP_INDEX_PREFIX | index_id == index_id
-}
-
 /// Reports whether a key has the complete record-key prefix shape.
 pub fn is_record_key(key: &[u8]) -> bool {
     key.len() > PREFIX_LEN && key.first() == Some(&b't') && key.get(10) == Some(&b'r')
 }
 
-/// Reports whether a key has the complete index-key prefix shape.
-pub fn is_index_key(key: &[u8]) -> bool {
-    key.len() > PREFIX_LEN && key.first() == Some(&b't') && key.get(10) == Some(&b'i')
-}
-
 /// Reports whether a key is exactly `t{table_id}`.
 pub fn is_table_key(key: &[u8]) -> bool {
     key.len() == 9 && key.first() == Some(&b't')
-}
-
-/// Reports whether an index key/value pair represents an untouched write.
-pub fn is_untouched_index_kv(key: &[u8], value: &[u8]) -> bool {
-    if !is_index_key(key) {
-        return false;
-    }
-    let Some(last) = value.last() else {
-        return false;
-    };
-    if is_temp_index_key(key) {
-        return *last == UNCOMMITTED_INDEX_KV_FLAG;
-    }
-    if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
-        return matches!(value.len(), 1 | 4 | 9) && *last == UNCOMMITTED_INDEX_KV_FLAG;
-    }
-    let tail_len = usize::from(value[0]);
-    if tail_len < 8 {
-        tail_len >= 1 && *last == UNCOMMITTED_INDEX_KV_FLAG
-    } else {
-        tail_len == 9
-    }
 }
 
 /// Encodes an integer or common handle in a unique-index value.

@@ -46,6 +46,47 @@ pub const RECORD_ROW_KEY_LEN: usize = PREFIX_LEN + ID_LEN;
 pub const TABLE_SPLIT_KEY_LEN: usize = 1 + ID_LEN;
 const HASH_DATA_FLAG: u64 = b'h' as u64;
 
+/// Maximum byte length of legacy index values.
+pub const MAX_OLD_ENCODE_VALUE_LEN: usize = 9;
+/// Marker appended to an untouched index value.
+pub const UNCOMMITTED_INDEX_KV_FLAG: u8 = b'1';
+/// High bits used for temporary index IDs.
+pub const TEMP_INDEX_PREFIX: i64 = 0x7fff_0000_0000_0000;
+
+/// Reports whether the key contains a temporary index ID.
+pub fn is_temp_index_key(key: &[u8]) -> bool {
+    let bytes: [u8; 8] = key[PREFIX_LEN..PREFIX_LEN + ID_LEN].try_into().unwrap();
+    let index_id = crate::decode_cmp_uint_to_int(u64::from_be_bytes(bytes));
+    TEMP_INDEX_PREFIX | index_id == index_id
+}
+
+/// Reports whether a key has the complete index-key prefix shape.
+pub fn is_index_key(key: &[u8]) -> bool {
+    key.len() > PREFIX_LEN && key.first() == Some(&b't') && key.get(10) == Some(&b'i')
+}
+
+/// Reports whether an index key/value pair represents an untouched write.
+pub fn is_untouched_index_kv(key: &[u8], value: &[u8]) -> bool {
+    if !is_index_key(key) {
+        return false;
+    }
+    let Some(last) = value.last() else {
+        return false;
+    };
+    if is_temp_index_key(key) {
+        return *last == UNCOMMITTED_INDEX_KV_FLAG;
+    }
+    if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
+        return matches!(value.len(), 1 | 4 | 9) && *last == UNCOMMITTED_INDEX_KV_FLAG;
+    }
+    let tail_len = usize::from(value[0]);
+    if tail_len < 8 {
+        tail_len >= 1 && *last == UNCOMMITTED_INDEX_KV_FLAG
+    } else {
+        tail_len == 9
+    }
+}
+
 /// Structural failure while decoding a TiDB table or metadata key.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TableKeyError {

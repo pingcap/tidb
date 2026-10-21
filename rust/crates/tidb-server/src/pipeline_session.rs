@@ -321,7 +321,7 @@ impl PipelineServerSession {
                     WireStatus::of_session(&self.session),
                 )
                 .with_statement_output(
-                    0,
+                    self.session.statement_affected_rows(),
                     self.session.statement_insert_id(),
                     self.session.statement_message().as_bytes().to_vec(),
                 );
@@ -625,7 +625,7 @@ impl QuerySession for PipelineServerSession {
                 WireStatus::of_session(&self.session),
             )
             .with_statement_output(
-                0,
+                self.session.statement_affected_rows(),
                 self.session.statement_insert_id(),
                 self.session.statement_message().as_bytes().to_vec(),
             );
@@ -792,7 +792,7 @@ impl ResultSetSource for PreparedRecordSet<'_> {
         Some(StatementStatus {
             warnings: session.wire_warning_count(),
             status: WireStatus::of_session(session),
-            affected_rows: 0,
+            affected_rows: session.statement_affected_rows(),
             last_insert_id: session.statement_insert_id(),
             info: session.statement_message().as_bytes(),
         })

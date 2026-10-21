@@ -292,7 +292,7 @@ pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
-    DdlReorgVars, SessionPrivilegeCheck,
+    DdlReorgVars, MdlRelatedTableRecorder, SessionPrivilegeCheck,
     ForeignKeyCascadeLockCheck, GlobalSysvarAccessor, KeysReadBudget, ProcessPlanInfo, StoredPlan,
     RetryAutoIds, RowIdShardGenerator, SequencePrivilegeCheck, SequenceSnapshot, ViewDefinerPrivilegeCheck,
     SqlDigestTextRetrieval, StatementClass, StatementPhase, StmtContext, StmtContextSessionState,

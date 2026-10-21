@@ -2053,3 +2053,69 @@ fn trace_reports_go_spans() {
         "trace format should be one of 'row', 'log' or 'json'"
     );
 }
+
+/// Go's `TABLES` reader walks the statement's InfoSchema
+/// (`GetSnapshotInfoSchema(TxnCtx.StartTS)`) and refreshes
+/// `TableRowStatsCache` for exactly those physical IDs, so inside a
+/// transaction a table a peer dropped after the transaction began is still
+/// listed and still sized. Captured from Go (`probe_is_txn.py`): `('t', 100,
+/// 1600)` both before and after the peer's `DROP TABLE`, for two BIGINT
+/// columns.
+#[test]
+fn table_sizes_are_estimated_over_the_statements_pinned_schema() {
+    struct RecordingProvider {
+        rows: std::collections::HashMap<i64, u64>,
+        requested: std::sync::Mutex<Vec<Vec<i64>>>,
+    }
+
+    impl TableStorageStatsProvider for RecordingProvider {
+        fn load_table_row_stats(
+            &self,
+            _resource_group: &str,
+            _need_column_lengths: bool,
+            physical_ids: &[i64],
+        ) -> Result<tidb_executor::table_size_stats::TableRowStatsSnapshot, String> {
+            self.requested.lock().unwrap().push(physical_ids.to_vec());
+            Ok(tidb_executor::table_size_stats::TableRowStatsSnapshot {
+                table_rows: self.rows.clone(),
+                column_lengths: Default::default(),
+            })
+        }
+    }
+
+    let mut session = Session::new();
+    session.run("CREATE DATABASE cache_sv").unwrap();
+    session
+        .run("CREATE TABLE cache_sv.t (a BIGINT PRIMARY KEY, b BIGINT)")
+        .unwrap();
+    let table_id: i64 = scalar_text(
+        &mut session,
+        "SELECT tidb_table_id FROM information_schema.tables \
+         WHERE table_schema = 'cache_sv' AND table_name = 't'",
+    )
+    .unwrap()
+    .parse()
+    .unwrap();
+    let provider = std::sync::Arc::new(RecordingProvider {
+        rows: [(table_id, 100)].into_iter().collect(),
+        requested: std::sync::Mutex::new(Vec::new()),
+    });
+    session.set_table_storage_stats_provider(provider.clone());
+    let mut peer = Session::with_catalog(session.shared_catalog());
+
+    let tables = "SELECT table_name, table_rows, data_length FROM information_schema.tables \
+                  WHERE table_schema = 'cache_sv' ORDER BY table_name";
+    session.run("BEGIN").unwrap();
+    let pinned = vec![vec!["t".to_owned(), "100".to_owned(), "1600".to_owned()]];
+    assert_eq!(row_text(session.run(tables)), pinned);
+    peer.run("DROP TABLE cache_sv.t").unwrap();
+    assert_eq!(row_text(session.run(tables)), pinned);
+    assert!(provider
+        .requested
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|ids| ids.contains(&table_id)));
+    session.run("COMMIT").unwrap();
+    assert!(row_text(session.run(tables)).is_empty());
+}

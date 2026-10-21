@@ -4655,13 +4655,13 @@ fn with_select_lock(
 /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock`: the wait a locking
 /// point plan locks its record keys with inside `Next`, before reading them.
 /// `None` outside a pessimistic transaction's statement (which has no
-/// selected-lock owner), under read committed, and for a plan that does not
-/// lock. A locking SELECT's own `NOWAIT` / `WAIT n` choose the wait.
-fn point_lock_wait(
+/// selected-lock owner) and for a plan that does not lock. A locking
+/// SELECT's own `NOWAIT` / `WAIT n` choose the wait.
+fn point_lock(
     lock: bool,
     select_lock: Option<(tidb_planner::logical::SelectLockType, u64)>,
     ctx: &crate::StmtContext,
-) -> Option<tidb_txnkv::transaction::LockWaitTime> {
+) -> Option<crate::select_lock::PointLock> {
     use tidb_planner::logical::SelectLockType;
     use tidb_txnkv::transaction::LockWaitTime;
     if !lock {
@@ -4678,7 +4678,7 @@ fn point_lock_wait(
         // Shared locks are taken by the statement's lock step, when at all.
         Some(_) => return None,
     };
-    selected.point_lock_wait(select_wait)
+    Some(selected.point_lock(select_wait))
 }
 
 fn build_point_get(
@@ -4724,7 +4724,8 @@ fn build_point_get(
                 RowDecodeContext::for_query(ctx),
                 true,
             )
-            .with_allowed_partitions(allowed),
+            .with_allowed_partitions(allowed)
+            .with_lock(point_lock(point.lock, point.select_lock, ctx)),
         );
         return Ok(wrap_point_index_usage(
             child,
@@ -4750,7 +4751,7 @@ fn build_point_get(
             output_columns,
             RowDecodeContext::for_query(ctx),
         )
-        .with_lock_before_read(point_lock_wait(point.lock, point.select_lock, ctx)),
+        .with_lock_before_read(point_lock(point.lock, point.select_lock, ctx)),
     );
     Ok(wrap_point_index_usage(
         child,
@@ -4802,7 +4803,8 @@ fn build_batch_point_get(
                 RowDecodeContext::for_query(ctx),
                 false,
             )
-            .with_allowed_partitions(allowed),
+            .with_allowed_partitions(allowed)
+            .with_lock(point_lock(batch.lock, batch.select_lock, ctx)),
         );
         return Ok(wrap_point_index_usage(
             child,
@@ -4850,7 +4852,7 @@ fn build_batch_point_get(
             RowDecodeContext::for_query(ctx),
         )
         .with_partition_ids(partition_ids)
-        .with_lock_before_read(point_lock_wait(batch.lock, batch.select_lock, ctx)),
+        .with_lock_before_read(point_lock(batch.lock, batch.select_lock, ctx)),
     );
     Ok(wrap_point_index_usage(
         child,

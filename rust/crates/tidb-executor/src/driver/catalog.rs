@@ -522,6 +522,8 @@ pub(crate) struct PlannerCatalog {
     dirty_tables: Vec<i64>,
     /// Go's privilege manager as the planner sees it (`pm.RequestVerificationWithUser`).
     privilege_verifier: Option<DefinerVerifier>,
+    /// The statement's metadata-lock map, which `buildDataSource` fills.
+    mdl_related_table: Option<crate::MdlRelatedTableRecorder>,
 }
 
 /// [`tidb_planner::plan_builder::visit_info::PrivilegeVerifier`] over the
@@ -579,6 +581,13 @@ impl PlannerCatalog {
             definer: check.clone(),
             session: ctx.session_privilege().cloned(),
         });
+        self
+    }
+
+    /// The statement's `GetRelatedTableForMDL()`, which the planner fills as it
+    /// resolves each stored table, a view's body included.
+    pub(crate) fn with_related_tables_for_mdl(mut self, ctx: &crate::StmtContext) -> Self {
+        self.mdl_related_table = ctx.mdl_related_table().cloned();
         self
     }
 
@@ -791,6 +800,12 @@ impl tidb_planner::plan_builder::catalog::TableSource for PlannerCatalog {
         self.privilege_verifier
             .as_ref()
             .map(|verifier| verifier as &dyn tidb_planner::plan_builder::visit_info::PrivilegeVerifier)
+    }
+
+    fn record_related_table_for_mdl(&self, table_id: i64) {
+        if let Some(record) = &self.mdl_related_table {
+            record(table_id);
+        }
     }
 
     fn find_sequence(&self, db_name: &str, table_name: &str) -> Option<&str> {
@@ -2013,90 +2028,17 @@ impl Catalog {
         }
     }
 
-    /// Resolves the concrete storage table IDs a statement reads when its
-    /// name is a view. Go's planner records the base tables of a view in the
-    /// transaction's MDL map, rather than the view name itself. Resolve the
-    /// canonical view SQL on demand so drop/recreate and nested-view changes
-    /// use the IDs visible to this statement's catalog snapshot.
-    pub fn mdl_table_ids(&self, database: &str, name: &str) -> Option<Vec<i64>> {
-        let mut ids = Vec::new();
-        let mut visiting = HashSet::new();
-        self.collect_mdl_table_ids(database, name, &mut visiting, &mut ids)
-            .then_some(ids)
-    }
-
-    fn collect_mdl_table_ids(
-        &self,
-        database: &str,
-        name: &str,
-        visiting: &mut HashSet<CatalogTableKey>,
-        ids: &mut Vec<i64>,
-    ) -> bool {
-        let key = CatalogTableKey::new(database, name);
-        let Some(entry) = self.get_by_key(&key) else {
-            return false;
-        };
-        match entry {
-            TableEntry::Kv(table) => {
-                if !ids.contains(&table.table_id) {
-                    ids.push(table.table_id);
-                }
-                true
-            }
-            TableEntry::View(view) => {
-                if !visiting.insert(key) {
-                    return false;
-                }
-                let mut statement = match tidb_parser::parse(&view.select_sql) {
-                    Ok(statement) => statement,
-                    Err(_) => {
-                        visiting.remove(&CatalogTableKey::new(database, name));
-                        return false;
-                    }
-                };
-                let mut paths = Vec::new();
-                struct TablePathCollector<'a> {
-                    paths: &'a mut Vec<Vec<String>>,
-                }
-                impl tidb_ast::Visitor for TablePathCollector<'_> {
-                    fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-                        if let Some(table) = node.downcast_ref::<tidb_ast::TableRef>() {
-                            self.paths.push(table.name.clone());
-                        }
-                        false
-                    }
-
-                    fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-                        true
-                    }
-                }
-                tidb_ast::Visitable::accept(
-                    &mut statement,
-                    &mut TablePathCollector { paths: &mut paths },
-                );
-                let mut resolved = true;
-                for path in paths {
-                    let Ok((path_database, path_name)) = split_table_path(&path, database) else {
-                        resolved = false;
-                        continue;
-                    };
-                    if !self.collect_mdl_table_ids(path_database, path_name, visiting, ids) {
-                        // CTE names and virtual tables are not storage table
-                        // dependencies. They are intentionally ignored; a
-                        // real missing object still makes the view read fail
-                        // before it can hold an MDL pin.
-                        if self.get_in(path_database, path_name).is_none() {
-                            continue;
-                        }
-                        resolved = false;
-                    }
-                }
-                visiting.remove(&CatalogTableKey::new(database, name));
-                resolved
-            }
-            // Memory and sequence entries do not carry a TiKV table ID and
-            // therefore cannot participate in Go's table-ID MDL map.
-            TableEntry::Mem(_) | TableEntry::Sequence(_) => true,
+    /// Go `preprocessor.tableByName` then `tryLockMDLAndUpdateSchemaIfNecessary`
+    /// for one name the statement writes: the id it locks, `Some(None)` for
+    /// an object with no TiKV table id (a memory table, a sequence, a view
+    /// with no stored id), and `None` when the name resolves to nothing. The
+    /// tables a view reads are locked by the planner as it builds the view
+    /// (`buildDataSource`).
+    pub fn related_table_id_for_mdl(&self, database: &str, name: &str) -> Option<Option<i64>> {
+        match self.get_in(database, name)? {
+            TableEntry::Kv(table) => Some(Some(table.table_id)),
+            TableEntry::View(view) => Some((view.id != 0).then_some(view.id)),
+            TableEntry::Mem(_) | TableEntry::Sequence(_) => Some(None),
         }
     }
 
@@ -2257,6 +2199,7 @@ impl Catalog {
             hypo_tiflash_replicas: None,
             dirty_tables: Vec::new(),
             privilege_verifier: None,
+            mdl_related_table: None,
         }
     }
 
@@ -2559,6 +2502,7 @@ impl Catalog {
                                 db_name: database.name.clone(),
                                 view_name: view.name.clone(),
                                 select_sql: view.select_sql.clone(),
+                                table_id: view.id,
                                 columns: view
                                     .columns
                                     .iter()
@@ -4596,11 +4540,29 @@ pub(crate) struct TableResolver<'a> {
     /// `field list`, while a site whose unresolved columns a DIFFERENT clause
     /// names keeps the generic `expression` spelling.
     pub(crate) clause_message: &'static str,
+    /// The constants the INSERT's planning folded its uncorrelated scalar
+    /// subqueries to, which the values reach as `#const#N` markers (Go's
+    /// rewriter pushes the `Constant` itself).
+    pub(crate) subquery_constants: &'a [Expression],
 }
 
 impl ColumnResolver for TableResolver<'_> {
     fn user_vars(&self) -> Option<&tidb_expr::user_vars::UserVars> {
         self.constant_context.user_vars()
+    }
+
+    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
+        let [name] = path else {
+            return None;
+        };
+        let marker = tidb_planner::plan_builder::marker::PlanMarker::decode(name)?;
+        (marker.kind == tidb_planner::plan_builder::marker::MarkerKind::Constant)
+            .then(|| self.subquery_constants.get(marker.index).cloned())
+            .flatten()
+    }
+
+    fn has_resolved_constants(&self) -> bool {
+        !self.subquery_constants.is_empty()
     }
 
     fn clause_message(&self) -> &'static str {

@@ -426,6 +426,7 @@ pub fn run_load_data(
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
         clause_message: "expression",
+        subquery_constants: &[],
     };
     let mut assignment_exprs = Vec::with_capacity(prepared.assignments.len());
     for assignment in &prepared.assignments {

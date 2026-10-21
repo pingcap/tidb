@@ -708,10 +708,16 @@ fn update_ignore_downgrades_a_value_error_to_a_warning() {
         row_text(session.run("SELECT v FROM update_ignore WHERE id = 1")),
         [["ab"]]
     );
-    assert!(matches!(
-        session.run("UPDATE update_ignore SET v = 'abcdef' WHERE id = 1"),
-        Err(DriverError::DataTooLong { .. })
-    ));
+    // The strict point UPDATE fails in its assignment's CAST FUNCTION (Go
+    // `buildOrderedList`), which reports the raw conversion text.
+    let error = session
+        .run("UPDATE update_ignore SET v = 'abcdef' WHERE id = 1")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1406, "Data Too Long, field len 2, data len 6")
+    );
 }
 
 /// A duplicate reached by `UPDATE IGNORE` is a warning and skips only that
@@ -1272,6 +1278,215 @@ fn an_assignment_cast_reports_cast_values_own_error() {
         error.message,
         "Incorrect int value: 'abc' for column 'i' at row 1"
     );
+}
+
+/// Go's point UPDATE (`tryUpdatePointPlan` -> `buildOrderedList`) wraps each
+/// assignment in a CAST FUNCTION to the target column, folded once at plan
+/// time; an unsigned numeric target keeps `table.CastValue` alone. Captured
+/// live against the Go server (strict mode unless noted):
+///
+/// ```text
+/// update pu set v='abc' where id=1             1292 Truncated incorrect INTEGER value: 'abc'
+/// update pu set d='abc' where id=1             1292 Truncated incorrect DECIMAL value: 'abc'
+/// update pu set f='abc' where id=1             1292 Truncated incorrect DOUBLE value: 'abc'
+/// update pu set u=-1 where id=1                1264 Out of range value for column 'u' at row 1
+/// update pu set dt='abc' where id=1            1292 Incorrect datetime value: 'abc'
+/// update pu set s='abcdefg' where id=1         1406 Data Too Long, field len 4, data len 7
+/// update pu set v='abc' where id in (1,2)      1292 Truncated incorrect INTEGER value: 'abc'
+/// insert into pu(id, dt) values (9, cast('abc' as datetime))
+///                                              1292 Incorrect datetime value: 'abc'
+/// sql_mode='': update pu set v='abc' where id in (1,2,3)
+///                                              one warning, INTEGER
+/// sql_mode='': update pu set v='abc' where id > 0
+///                                              three warnings, DOUBLE
+/// ```
+#[test]
+fn a_point_update_casts_its_assignment_like_gos_fast_plan() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='STRICT_TRANS_TABLES'").unwrap();
+    session
+        .run(
+            "CREATE TABLE pu (id INT PRIMARY KEY, v INT, u INT UNSIGNED, d DECIMAL(5,2), \
+             s VARCHAR(4), dt DATETIME, f DOUBLE)",
+        )
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO pu VALUES (1,1,1,1,'x','2020-01-01',1), (2,2,2,2,'y','2020-01-01',2), \
+             (3,3,3,3,'z','2020-01-01',3)",
+        )
+        .unwrap();
+    for (sql, code, message) in [
+        (
+            "UPDATE pu SET v='abc' WHERE id=1",
+            1292,
+            "Truncated incorrect INTEGER value: 'abc'",
+        ),
+        (
+            "UPDATE pu SET d='abc' WHERE id=1",
+            1292,
+            "Truncated incorrect DECIMAL value: 'abc'",
+        ),
+        (
+            "UPDATE pu SET f='abc' WHERE id=1",
+            1292,
+            "Truncated incorrect DOUBLE value: 'abc'",
+        ),
+        (
+            "UPDATE pu SET u=-1 WHERE id=1",
+            1264,
+            "Out of range value for column 'u' at row 1",
+        ),
+        (
+            "UPDATE pu SET dt='abc' WHERE id=1",
+            1292,
+            "Incorrect datetime value: 'abc'",
+        ),
+        (
+            "UPDATE pu SET s='abcdefg' WHERE id=1",
+            1406,
+            "Data Too Long, field len 4, data len 7",
+        ),
+        (
+            "UPDATE pu SET v='abc' WHERE id IN (1,2)",
+            1292,
+            "Truncated incorrect INTEGER value: 'abc'",
+        ),
+        // The time cast's own failure is `handleInvalidTimeError`'s
+        // truncate-group error in any strict write.
+        (
+            "INSERT INTO pu (id, dt) VALUES (9, CAST('abc' AS DATETIME))",
+            1292,
+            "Incorrect datetime value: 'abc'",
+        ),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
+
+    let warnings = |session: &Session| {
+        session
+            .warnings()
+            .iter()
+            .map(|w| (w.code, w.message.clone()))
+            .collect::<Vec<_>>()
+    };
+    session.run("SET sql_mode=''").unwrap();
+    session
+        .run("UPDATE pu SET v='abc' WHERE id IN (1,2,3)")
+        .unwrap();
+    assert_eq!(
+        warnings(&session),
+        [(1292, "Truncated incorrect INTEGER value: 'abc'".to_owned())]
+    );
+    session.run("UPDATE pu SET v='abc' WHERE id > 0").unwrap();
+    assert_eq!(
+        warnings(&session),
+        vec![(1292, "Truncated incorrect DOUBLE value: 'abc'".to_owned()); 3]
+    );
+}
+
+/// Go `rewriteExprNode` ends with `CheckArgsNotMultiColumnRow`, and the
+/// operator steps (`binaryOpToExpression`, `unaryOpToExpression`, ...) check
+/// their operands, so a row -- a scalar subquery selecting several columns,
+/// with or without a row, or a row constructor -- where one value belongs is
+/// 1241 "Operand should contain 1 column(s)". Captured live against the Go
+/// server for every statement below; a row comparison still compares.
+#[test]
+fn a_row_where_one_value_belongs_is_operand_columns() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE rc (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO rc VALUES (1,1), (2,2)").unwrap();
+    for sql in [
+        "UPDATE rc SET v=(SELECT 1,2) WHERE id=1",
+        "UPDATE rc SET v=(SELECT 1,2) WHERE v>0",
+        "UPDATE rc SET v=(SELECT 1,2 FROM dual WHERE 1=0) WHERE id=1",
+        "UPDATE rc SET v=(SELECT 1,2)+1 WHERE id=1",
+        "UPDATE rc SET v=(1,2) WHERE id=1",
+        "INSERT INTO rc VALUES (3,(SELECT 1,2))",
+        "INSERT INTO rc VALUES (4,4) ON DUPLICATE KEY UPDATE v=(SELECT 1,2)",
+        "SELECT -(SELECT 1,2)",
+        "SELECT (SELECT 1,2) IS NULL",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1241, "Operand should contain 1 column(s)"),
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        row_text(session.run("SELECT (SELECT 1,2) = (1,2), (1,2) = (SELECT 1,3)")),
+        [["1", "0"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT v FROM rc ORDER BY id")),
+        [["1"], ["2"]]
+    );
+}
+
+/// `EXPLAIN ANALYZE` of a write runs the write's executor through `Close`
+/// (`UpdateExec.setMessage`) and `AddAffectedRows`, so the result set's
+/// terminal OK packet carries the UPDATE's "Rows matched" text and the
+/// affected rows, and `ROW_COUNT()` reads them; the statement's IGNORE
+/// applies (`ResetContextOfStmt` unwraps the EXPLAIN). Captured live against
+/// the Go server (OK packet read with CLIENT_DEPRECATE_EOF).
+#[test]
+fn explain_analyze_of_a_write_reports_its_message_and_affected_rows() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='STRICT_TRANS_TABLES'").unwrap();
+    session
+        .run("CREATE TABLE ea (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO ea VALUES (1,1), (2,2), (3,3)")
+        .unwrap();
+    let row_count = |session: &mut Session| row_text(session.run("SELECT ROW_COUNT()"));
+
+    session
+        .run("EXPLAIN ANALYZE UPDATE ea SET v=v+1 WHERE v>0")
+        .unwrap();
+    assert_eq!(
+        session.statement_message(),
+        "Rows matched: 3  Changed: 3  Warnings: 0"
+    );
+    assert_eq!(session.statement_affected_rows(), 3);
+    assert_eq!(row_count(&mut session), [["3"]]);
+
+    session
+        .run("EXPLAIN ANALYZE UPDATE ea SET v=v WHERE id IN (1,2)")
+        .unwrap();
+    assert_eq!(
+        session.statement_message(),
+        "Rows matched: 2  Changed: 0  Warnings: 0"
+    );
+    assert_eq!(session.statement_affected_rows(), 0);
+
+    session
+        .run("EXPLAIN ANALYZE UPDATE IGNORE ea SET v='abc' WHERE id=3")
+        .unwrap();
+    assert_eq!(
+        session.statement_message(),
+        "Rows matched: 1  Changed: 1  Warnings: 1"
+    );
+    assert_eq!(session.statement_affected_rows(), 1);
+
+    session
+        .run("EXPLAIN ANALYZE DELETE FROM ea WHERE id=3")
+        .unwrap();
+    assert_eq!(session.statement_message(), "");
+    assert_eq!(session.statement_affected_rows(), 1);
+    assert_eq!(row_count(&mut session), [["1"]]);
+
+    session.run("EXPLAIN ANALYZE SELECT * FROM ea").unwrap();
+    assert_eq!(session.statement_affected_rows(), 0);
+    assert_eq!(row_count(&mut session), [["-1"]]);
 }
 
 /// Containment until the complete Go import controller and task owner exist.

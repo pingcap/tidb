@@ -2106,3 +2106,112 @@ fn describe_builds_the_view_as_a_data_source() {
         );
     }
 }
+
+/// Go fills a view's column types in a system session (`runWithSystemSession`
+/// in `tryFillViewColumnType`), whose SQL mode is `ModeNone`: DESCRIBE and
+/// `information_schema.columns` answer a view whose body the session's
+/// ONLY_FULL_GROUP_BY refuses to read. Captured from the Go oracle.
+#[test]
+fn view_columns_are_filled_in_a_system_session() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b varchar(10), c int)").unwrap();
+    session
+        .run("create view v21 as select a from t having sum(a) > 0")
+        .unwrap();
+    session
+        .run("create view w37 as select a, b from t group by a")
+        .unwrap();
+    let error = session.run("select * from w37").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1055, "{error:?}");
+    let error = session.run("select * from v21").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 8123, "{error:?}");
+    let desc = |session: &mut Session, view: &str| {
+        row_text(session.run(&format!("desc {view}")))
+            .into_iter()
+            .map(|row| format!("{} {}", row[0], row[1]))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(desc(&mut session, "v21"), ["a int"]);
+    assert_eq!(desc(&mut session, "w37"), ["a int", "b varchar(10)"]);
+    let (_, rows) = query_text(
+        &mut session,
+        "select table_name, column_name from information_schema.columns \
+         where table_schema = 'test' and table_name in ('v21', 'w37') \
+         order by table_name, ordinal_position",
+    );
+    assert_eq!(rows, [["v21", "a"], ["w37", "a"], ["w37", "b"]]);
+}
+
+/// Go parses a stored view body with the reading session's parser switches
+/// (`BuildParserConfig`): with `tidb_enable_window_function` off a window
+/// call in the body is a syntax error on read, reported as the parser's own
+/// error, while DESCRIBE's system session parses it. Captured from the Go
+/// oracle.
+///
+/// Known divergence, not asserted here: Go reports the error at the token
+/// AFTER `OVER ()` (`line 1 column 41 near "AS `rn` FROM `test`.`t`"`), because
+/// its generated parser still shifts the implicit alias `OVER` and the
+/// following `()` before it detects the error; this port's parser fails at the
+/// `(` (column 37). The same shift of positions shows for the plain statement.
+#[test]
+fn a_view_body_is_parsed_with_the_session_parser_config() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b varchar(10), c int)").unwrap();
+    session
+        .run("create view u8 as select a, row_number() over () as rn from t")
+        .unwrap();
+    session.run("set tidb_enable_window_function = 0").unwrap();
+    let error = session.run("select * from u8").unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1105, "{error:?}");
+    assert!(
+        error.message.starts_with("line 1 column "),
+        "the parser's own error: {error:?}"
+    );
+    // DESCRIBE builds the view in a system session whose parser accepts it.
+    session.run("desc u8").unwrap();
+}
+
+/// Go's `resolveWindowFunction` writes the AST under `canExpandAST` too: a
+/// column inside an aggregate of a window function, of its window
+/// specification, of a named window or of a window ORDER BY item becomes the
+/// select field it resolves to, here the fully qualified column. Captured
+/// from the Go oracle.
+#[test]
+fn a_view_body_records_the_window_resolution() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b varchar(10), c int)").unwrap();
+    for sql in [
+        "create view u1 as select a, sum(sum(c)) over () from t group by a",
+        "create view u3 as select a, sum(c) from t group by a \
+         order by rank() over (order by max(c))",
+        "create view u4 as select a, sum(max(c)) over w from t group by a \
+         window w as (order by sum(c))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let body = |session: &mut Session, view: &str| {
+        let (_, rows) = query_text(
+            session,
+            &format!(
+                "select view_definition from information_schema.views \
+                 where table_schema = 'test' and table_name = '{view}'"
+            ),
+        );
+        rows[0][0].clone()
+    };
+    assert_eq!(
+        body(&mut session, "u1"),
+        "SELECT `a` AS `a`,SUM(SUM(`test`.`t`.`c`)) OVER () AS `sum(sum(c)) over ()` \
+         FROM `test`.`t` GROUP BY `a`"
+    );
+    assert_eq!(
+        body(&mut session, "u3"),
+        "SELECT `a` AS `a`,SUM(`c`) AS `sum(c)` FROM `test`.`t` GROUP BY `a` \
+         ORDER BY RANK() OVER (ORDER BY MAX(`test`.`t`.`c`))"
+    );
+    assert_eq!(
+        body(&mut session, "u4"),
+        "SELECT `a` AS `a`,SUM(MAX(`test`.`t`.`c`)) OVER `w` AS `sum(max(c)) over w` \
+         FROM `test`.`t` GROUP BY `a` WINDOW `w` AS (ORDER BY SUM(`test`.`t`.`c`))"
+    );
+}

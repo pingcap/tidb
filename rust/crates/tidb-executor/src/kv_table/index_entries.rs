@@ -611,6 +611,32 @@ impl KvTable {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<Vec<u8>, KvTableError> {
+        self.index_entry_value_marked(
+            index,
+            values,
+            row,
+            handle,
+            distinct,
+            false,
+            physical_id,
+            zone,
+        )
+    }
+
+    /// [`Self::index_entry_value`] with Go's `untouched` flag
+    /// (`UncommittedIndexKVFlag`), which marks an entry an UPDATE rewrote
+    /// without changing and which the commit then drops.
+    fn index_entry_value_marked(
+        &self,
+        index: &KvIndex,
+        values: &[Datum],
+        row: &[Datum],
+        handle: &TableHandle,
+        distinct: bool,
+        untouched: bool,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<u8>, KvTableError> {
         let handle = match handle {
             TableHandle::Int(value) => tidb_txnkv::IntHandle::new(*value).into(),
             TableHandle::Common(bytes) => tidb_txnkv::CommonHandle::new(bytes.clone())
@@ -624,10 +650,7 @@ impl KvTable {
             &self.codec_index_info(index),
             self.index_needs_restored_data(index),
             distinct,
-            // Go's `untouched` marks an entry a pessimistic transaction
-            // touched without changing; this tier writes only committed
-            // entries.
-            false,
+            untouched,
             values,
             &handle,
             if index.global { physical_id } else { 0 },
@@ -751,6 +774,41 @@ impl KvTable {
         Ok(())
     }
 
+    /// Go `index.create(.., untouched = true, ..)` for an index the UPDATE did
+    /// not touch: each entry is staged with the untouched flag, without a
+    /// duplicate check or assertion, unless the transaction's buffer already
+    /// holds a live value for the key ("should not overwrite the key with
+    /// un-commit flag").
+    fn write_untouched_index_entries(
+        &mut self,
+        index: &KvIndex,
+        row: &[Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<(), KvTableError> {
+        for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
+            let key = Key::from_bytes(entry.key);
+            match self.store.get_local(&key) {
+                Ok(staged) if !staged.is_empty() => continue,
+                Ok(_) | Err(StorageError::NotFound) => {}
+                Err(error) => return Err(KvTableError::from(error)),
+            }
+            let value = self.index_entry_value_marked(
+                index,
+                &entry.values,
+                row,
+                handle,
+                entry.distinct,
+                true,
+                physical_id,
+                zone,
+            )?;
+            self.store.set(key, value).map_err(KvTableError::from)?;
+        }
+        Ok(())
+    }
+
     /// Go `index.Delete` for one index over `row`: removes every entry key it
     /// filed.
     fn remove_index_entries(
@@ -828,8 +886,11 @@ impl KvTable {
         lazy_dup_check: bool,
         pessimistic: bool,
         check_in_prewrite: bool,
+        write_untouched: bool,
     ) -> Result<(), KvTableError> {
         debug_assert!(!lazy_dup_check || pessimistic);
+        // Go's untouched rewrite exists only where the commit drops it.
+        let write_untouched = write_untouched && self.store.filters_untouched_index_values();
         let (indexes, nonpublic) = self.partition_index_sets(physical_id);
         self.rewrite_nonpublic_index_entries(
             &nonpublic,
@@ -881,6 +942,12 @@ impl KvTable {
                 .iter()
                 .all(|offset| old_row.get(*offset) == new_row.get(*offset))
             {
+                // Inside a transaction Go writes the untouched entry
+                // (`rebuildUpdateRecordIndices` without
+                // `SkipWriteUntouchedIndices`).
+                if write_untouched {
+                    self.write_untouched_index_entries(index, new_row, handle, physical_id, zone)?;
+                }
                 continue;
             }
             // A multi-valued row files a SET of keys, which the old and new
@@ -1042,6 +1109,31 @@ impl KvTable {
         }))
     }
 
+    /// Go `EncodeUniqueIndexKey` for a unique-index point read's values: the
+    /// index keys the read gets, which a locking read locks
+    /// (`PointGetExecutor.Next`). Empty when the read has no unique key.
+    pub(crate) fn unique_point_lock_keys(
+        &self,
+        index_id: i64,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<Key>, KvTableError> {
+        Ok(self
+            .unique_point_read(index_id, values, zone)?
+            .map_or_else(Vec::new, |read| {
+                read.physical_ids
+                    .iter()
+                    .map(|physical_id| {
+                        Key::from_bytes(encode_index_seek_key(
+                            *physical_id,
+                            read.index_id,
+                            &read.encoded,
+                        ))
+                    })
+                    .collect()
+            }))
+    }
+
     /// Resolves several distinct unique-index keys through one storage
     /// `BatchGet`, preserving the requested key order and returning `None`
     /// for a missing entry. This is Go `BatchPointGetExec.initialize`'s first
@@ -1082,6 +1174,20 @@ impl KvTable {
         zone: &SessionTimeZone,
         route_ctx: Option<&impl tidb_expr::Columns>,
     ) -> Result<Vec<Option<(TableHandle, Option<i64>)>>, KvTableError> {
+        let keys = self.unique_batch_index_keys(index_id, values, zone, route_ctx)?;
+        self.lookup_unique_index_keys(&keys)
+    }
+
+    /// Go `BatchPointGetExec.initialize`'s `EncodeUniqueIndexKey` per retained
+    /// value list: the index key, and the partition a routed local key reads
+    /// its row from; `None` for a list that names no key.
+    pub(crate) fn unique_batch_index_keys(
+        &self,
+        index_id: i64,
+        values: &[Vec<Datum>],
+        zone: &SessionTimeZone,
+        route_ctx: Option<&impl tidb_expr::Columns>,
+    ) -> Result<Vec<Option<(Key, Option<i64>)>>, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
@@ -1146,20 +1252,36 @@ impl KvTable {
             ))));
             routes.push(routed.map(|_| physical_id));
         }
-        let request = keys.iter().flatten().cloned().collect::<Vec<_>>();
+        Ok(keys
+            .into_iter()
+            .zip(routes)
+            .map(|(key, route)| key.map(|key| (key, route)))
+            .collect())
+    }
+
+    /// Resolves [`Self::unique_batch_index_keys`] through one `BatchGet`.
+    pub(crate) fn lookup_unique_index_keys(
+        &mut self,
+        keys: &[Option<(Key, Option<i64>)>],
+    ) -> Result<Vec<Option<(TableHandle, Option<i64>)>>, KvTableError> {
+        let request = keys
+            .iter()
+            .flatten()
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
         let entries = if request.is_empty() {
             std::collections::HashMap::new()
         } else {
             self.store.batch_get(&request).map_err(KvTableError::from)?
         };
-        keys.into_iter()
-            .zip(routes)
-            .map(|(key, route)| {
-                let Some(key) = key else {
+        keys.iter()
+            .map(|key| {
+                let Some((key, route)) = key else {
                     return Ok(None);
                 };
+                let route = *route;
                 entries
-                    .get(&key)
+                    .get(key)
                     .map(|entry| {
                         let handle = decode_handle_in_index_value(entry)
                             .map_err(|error| KvTableError::Decode(format!("{error:?}")))?

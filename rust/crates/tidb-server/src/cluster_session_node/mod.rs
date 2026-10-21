@@ -186,9 +186,7 @@ use tidb_exec::cluster_ddl::DdlStatement;
 use tidb_exec::cluster_load_stats::{
     prepare_cluster_load_stats, prepare_cluster_load_stats_parsed,
 };
-use tidb_exec::cluster_stats_load::{
-    ClusterStatsLoader, ColumnLength, TableRowCount, TableSizeStats,
-};
+use tidb_exec::cluster_stats_load::ClusterStatsLoader;
 use tidb_exec::cluster_stats_lock::prepare_cluster_stats_lock_parsed;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockStatement;
 use tidb_exec::real_tikv_analyze::prepare_cluster_analyze_parsed;
@@ -209,7 +207,7 @@ use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{
     GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
-    TableStorageStatistics, TableStorageStatsProvider,
+    TableStorageStatsProvider,
 };
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 
@@ -615,32 +613,22 @@ impl StatsTableRowSizeSource for ProviderSizeReads<'_> {
 }
 
 impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
-    fn load_table_storage_statistics(
+    fn load_table_row_stats(
         &self,
         resource_group: &str,
         need_column_lengths: bool,
-    ) -> Result<Vec<TableStorageStatistics>, String> {
+        physical_ids: &[i64],
+    ) -> Result<tidb_executor::table_size_stats::TableRowStatsSnapshot, String> {
+        // The latest catalog only locates `mysql.stats_meta` and
+        // `mysql.stats_histograms`, as Go's restricted SQL resolves them; the
+        // tables sized are the statement's own (`physical_ids`).
         let catalog = self.catalog.load();
-        let physical_ids = catalog
-            .databases
-            .iter()
-            .flat_map(|database| &database.tables)
-            .flat_map(|table| {
-                std::iter::once(table.id).chain(
-                    table
-                        .get_partition_info()
-                        .into_iter()
-                        .flat_map(|partition| partition.read().definitions.snapshot())
-                        .map(|definition| definition.id),
-                )
-            })
-            .collect::<Vec<_>>();
 
         // Go `updateStatsCacheIfNeed` + `TableRowStatsCache.UpdateByID`
         // (`executor/infoschema_reader.go:671`): refresh the node's size cache
-        // for every visible table and partition ID first. A failed restricted
-        // read only warns — the reader then serves the cache's previous
-        // values, not zeros.
+        // for every physical ID the statement's schema holds first. A failed
+        // restricted read only warns — the reader then serves the cache's
+        // previous values, not zeros.
         let source = ProviderSizeReads {
             provider: self,
             catalog: &catalog,
@@ -648,7 +636,7 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
             need_column_lengths,
             reads: RefCell::new(None),
         };
-        if let Err(error) = self.row_stats_cache.update_by_id(&source, &physical_ids) {
+        if let Err(error) = self.row_stats_cache.update_by_id(&source, physical_ids) {
             // Go `updateStatsCacheIfNeed`.
             tidb_util::logutil::bg_logger().warn(
                 "cannot update stats cache for tables",
@@ -660,51 +648,10 @@ impl TableStorageStatsProvider for ClusterTableStorageStatsProvider {
         // refresh attempt, so the returned values are the cache's, whatever
         // the fresh reads did.
         let (rows, lengths) = self.row_stats_cache.snapshot();
-        let stats = TableSizeStats::from_rows(
-            rows.into_iter()
-                .map(|(table_id, count)| TableRowCount { table_id, count })
-                .collect(),
-            lengths
-                .into_iter()
-                .map(|((table_id, histogram_id), total_size)| ColumnLength {
-                    table_id,
-                    histogram_id,
-                    total_size: total_size as i64,
-                })
-                .collect(),
-        );
-
-        Ok(catalog
-            .databases
-            .iter()
-            .flat_map(|database| &database.tables)
-            .map(|table| {
-                let partitions = table
-                    .get_partition_info()
-                    .into_iter()
-                    .flat_map(|partition| partition.read().definitions.snapshot())
-                    .map(|definition| {
-                        let row_count = stats.get_table_rows(definition.id);
-                        let (data_length, index_length) =
-                            stats.get_data_and_index_length(table, definition.id, row_count);
-                        let average_row_length = if row_count == 0 {
-                            0
-                        } else {
-                            data_length / row_count
-                        };
-                        (
-                            definition.id,
-                            (row_count, average_row_length, data_length, index_length),
-                        )
-                    })
-                    .collect();
-                TableStorageStatistics {
-                    table_id: table.id,
-                    table: stats.estimate_data_length(table),
-                    partitions,
-                }
-            })
-            .collect())
+        Ok(tidb_executor::table_size_stats::TableRowStatsSnapshot {
+            table_rows: rows.into_iter().collect(),
+            column_lengths: lengths.into_iter().collect(),
+        })
     }
 }
 
@@ -4939,7 +4886,6 @@ impl tidb_session::binding::GlobalBindingWriter for InternalBindingWriter {
             let resource_group = internal.session.current_resource_group().to_owned();
             let changed = internal.with_prelocked_statement(
                 StatementReadShape::LockingRead,
-                |_| Vec::new(),
                 &resource_group,
                 true,
                 |session| operation(session).map_err(map_error),
@@ -5354,7 +5300,6 @@ impl ClusterServerSession {
         self.activate_statement_txn = self.activates_txn_at_build(stmt);
         let attempt = self.with_prelocked_statement(
             StatementReadShape::Unknown,
-            |_session| Vec::new(),
             &resource_group,
             true,
             move |session| match session
@@ -5526,15 +5471,14 @@ impl ClusterServerSession {
         &self.skipped
     }
 
-    /// Bind finite primary keys after refreshing the catalog and opening any
-    /// implicit transaction, then lock them with returned row values before
-    /// execution. The statement reads from those lock responses, including
-    /// absent-key results (Go's `InitReturnValues`/`SetPessimisticLockCache`).
-    /// An empty key set keeps the ordinary lifecycle.
+    /// Runs one client statement after refreshing the catalog and opening any
+    /// implicit transaction. A pessimistic statement's locking point reads
+    /// lock inside execution with returned row values (Go
+    /// `PointGetExecutor.getAndLock`, `InitReturnValues` /
+    /// `SetPessimisticLockCache`), through `TableStorage::lock_keys_for_read`.
     fn with_prelocked_statement<T>(
         &mut self,
         shape: StatementReadShape,
-        bind_prelock_keys: impl FnOnce(&Session) -> Vec<Vec<u8>>,
         resource_group: &str,
         is_dml: bool,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
@@ -5543,8 +5487,7 @@ impl ClusterServerSession {
             resource_group,
             shape != StatementReadShape::AutocommitWrite,
         )?;
-        let prelock_keys = self.bind_statement_prelocks(shape, bind_prelock_keys);
-        self.with_bound_statement(shape, &prelock_keys, resource_group, true, is_dml, run)
+        self.with_bound_statement(shape, resource_group, true, is_dml, run)
     }
 
     fn prepare_statement_context(
@@ -5564,23 +5507,6 @@ impl ClusterServerSession {
             }
         }
         self.begin_if_autocommit_off(resource_group)
-    }
-
-    fn bind_statement_prelocks(
-        &self,
-        shape: StatementReadShape,
-        bind_prelock_keys: impl FnOnce(&Session) -> Vec<Vec<u8>>,
-    ) -> Vec<Vec<u8>> {
-        // An explicit pessimistic transaction's locking point reads lock
-        // inside execution, as Go's `PointGetExecutor.getAndLock` does (see
-        // `TableStorage::lock_keys_for_read`). Only an autocommit write still
-        // hands its point keys to the write transaction it opens at its first
-        // read.
-        if self.explicit.is_none() && shape == StatementReadShape::AutocommitWrite {
-            bind_prelock_keys(&self.session)
-        } else {
-            Vec::new()
-        }
     }
 
     /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
@@ -5609,14 +5535,13 @@ impl ClusterServerSession {
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
         self.rebuild_catalog_if_stale();
-        self.with_bound_statement(shape, &[], resource_group, false, false, run)
+        self.with_bound_statement(shape, resource_group, false, false, run)
     }
 
     /// The statement lifecycle proper: savepoint, attempt, replay budget.
     fn with_bound_statement<T>(
         &mut self,
         shape: StatementReadShape,
-        prelock_keys: &[Vec<u8>],
         resource_group: &str,
         notify_executor_breakpoint: bool,
         is_dml: bool,
@@ -5641,6 +5566,7 @@ impl ClusterServerSession {
                         self.session.vars().shared_lock_promotion_enabled(),
                     )
                     .with_read_committed(self.session.is_read_committed())
+                    .with_lock_state_observer(self.session.transaction_lock_state_observer())
                 }),
         );
         let delta_savepoint = self.session.table_delta_savepoint();
@@ -5650,7 +5576,6 @@ impl ClusterServerSession {
             match self.attempt_statement(
                 shape,
                 savepoint.clone(),
-                &prelock_keys,
                 resource_group,
                 notify_executor_breakpoint,
                 retried > 0,
@@ -5745,7 +5670,6 @@ impl ClusterServerSession {
         &mut self,
         shape: StatementReadShape,
         savepoint: BufferCheckpoint,
-        prelock_keys: &[Vec<u8>],
         resource_group: &str,
         notify_executor_breakpoint: bool,
         retrying: bool,
@@ -5767,7 +5691,6 @@ impl ClusterServerSession {
         let result = self.attempt_statement_inner(
             shape,
             &savepoint,
-            prelock_keys,
             resource_group,
             retrying,
             is_dml,
@@ -5800,7 +5723,6 @@ impl ClusterServerSession {
         &mut self,
         shape: StatementReadShape,
         savepoint: &BufferCheckpoint,
-        prelock_keys: &[Vec<u8>],
         resource_group: &str,
         retrying: bool,
         is_dml: bool,
@@ -5838,65 +5760,51 @@ impl ClusterServerSession {
             if let Some(transaction) = self.explicit.as_ref() {
                 let _ = transaction.take_statement_lock_failure();
             }
-            let snapshot =
-                if self.explicit.is_none() && shape == StatementReadShape::AutocommitWrite {
-                    // Go `decideTxnMode`: under the default `pessimistic-auto-
-                    // commit = false` an autocommit DML runs optimistically --
-                    // a read at its start timestamp and a one-phase prewrite
-                    // -- and only the retry of a write conflict locks first.
-                    // `shouldUsePessimisticAutoCommit` (`session.go:4947`)
-                    // reads the config and declines under bulk DML
-                    // (`tidb_dml_type = 'bulk'`); this arm only serves DML.
-                    let vars = self.session.vars();
-                    let pessimistic = tidb_planner::txn_mode::txn_mode_for_statement(
-                        tidb_planner::txn_mode::StatementTxnModeInputs {
-                            txn_mode_var: &vars.get_system("tidb_txn_mode").unwrap_or_default(),
-                            retrying,
-                            autocommit: true,
-                            pessimistic_auto_commit:
-                                tidb_config::config_tree::config::get_global_config()
-                                    .pessimistic_txn
-                                    .pessimistic_auto_commit
-                                    .load(),
-                            is_dml: !vars.bulk_dml_enabled(),
-                        },
-                    )
-                    .is_pessimistic();
-                    // Go `OnPessimisticStmtStart` (`isolation/base.go:711`):
-                    // fair locking follows the session variable; a client
-                    // connection is neither internal nor restricted SQL.
-                    let fair_locking = vars.pessimistic_transaction_fair_locking();
-                    transactions::prefetched_write_snapshot(
-                        Arc::clone(&self.transactions),
-                        read_ts.clone(),
-                        Arc::clone(
-                            write_transaction
-                                .as_ref()
-                                .expect("autocommit write created its transaction handoff"),
-                        ),
-                        self.buffer.clone(),
-                        prelock_keys.to_vec(),
-                        tidb_txnkv::transaction::LockWaitTime::Timeout(
-                            self.session.lock_wait_timeout(),
-                        ),
-                        Arc::<str>::from(resource_group),
-                        pessimistic,
-                        fair_locking,
-                        crate::session_transaction::transaction_options(vars)
-                            .with_statement_kv_context(self.session.statement_kv_context_cell()),
-                    )
-                } else {
-                    match self.open_read_snapshot(
-                        shape,
-                        retry_read_ts,
-                        read_ts,
-                        resource_group,
-                        is_dml,
-                    ) {
-                        Ok(snapshot) => snapshot,
-                        Err(error) => break Err(error),
-                    }
-                };
+            // Go `decideTxnMode`: under the default `pessimistic-auto-commit =
+            // false` an autocommit DML runs optimistically -- a read at its
+            // start timestamp and a one-phase prewrite -- and only the retry
+            // of a write conflict locks first. `shouldUsePessimisticAutoCommit`
+            // (`session.go:4947`) reads the config and declines under bulk DML
+            // (`tidb_dml_type = 'bulk'`); this arm only serves DML. The answer
+            // is the implicit transaction's `TxnCtx.IsPessimistic`, so the
+            // statement plans its point source with `Lock`
+            // (`tryUpdatePointPlan`) and locks it inside execution with the
+            // session's `LockWaitTimeout` (`getLockWaitTime`).
+            let autocommit_write =
+                self.explicit.is_none() && shape == StatementReadShape::AutocommitWrite;
+            let autocommit_pessimistic =
+                autocommit_write && self.autocommit_write_is_pessimistic(retrying);
+            if autocommit_write {
+                self.begin_autocommit_statement_locks(autocommit_pessimistic);
+            }
+            let snapshot = if autocommit_write {
+                let vars = self.session.vars();
+                // Go `OnPessimisticStmtStart` (`isolation/base.go:711`):
+                // fair locking follows the session variable; a client
+                // connection is neither internal nor restricted SQL.
+                let fair_locking = vars.pessimistic_transaction_fair_locking();
+                transactions::prefetched_write_snapshot(
+                    Arc::clone(&self.transactions),
+                    read_ts.clone(),
+                    Arc::clone(
+                        write_transaction
+                            .as_ref()
+                            .expect("autocommit write created its transaction handoff"),
+                    ),
+                    self.buffer.clone(),
+                    Arc::<str>::from(resource_group),
+                    autocommit_pessimistic,
+                    fair_locking,
+                    crate::session_transaction::transaction_options(vars)
+                        .with_statement_kv_context(self.session.statement_kv_context_cell()),
+                )
+            } else {
+                match self.open_read_snapshot(shape, retry_read_ts, read_ts, resource_group, is_dml)
+                {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => break Err(error),
+                }
+            };
             if let Some(stale) = self.bind(snapshot) {
                 // A previous statement that did not unbind would otherwise
                 // leave its read transaction open for the rest of the
@@ -5927,6 +5835,17 @@ impl ClusterServerSession {
                     .start_ts();
             }
             let outcome = run(&mut self.session);
+            // Go `TxnCtx.GetForUpdateTS` as the statement left it: a deferred
+            // handle advances the for-update timestamp at its first read,
+            // after the open published the transaction's earlier one.
+            if let Some(transaction) = self.explicit.as_ref() {
+                self.session
+                    .current_for_update_ts()
+                    .publish(transaction.for_update_ts());
+            }
+            if autocommit_write {
+                self.begin_autocommit_statement_locks(false);
+            }
             let finished = self.finish_snapshot();
             match outcome {
                 Ok(value) => {
@@ -6044,6 +5963,41 @@ impl ClusterServerSession {
             }
         }
         result
+    }
+
+    /// Go `decideTxnMode` for an autocommit DML's implicit transaction.
+    fn autocommit_write_is_pessimistic(&self, retrying: bool) -> bool {
+        let vars = self.session.vars();
+        tidb_planner::txn_mode::txn_mode_for_statement(
+            tidb_planner::txn_mode::StatementTxnModeInputs {
+                txn_mode_var: &vars.get_system("tidb_txn_mode").unwrap_or_default(),
+                retrying,
+                autocommit: true,
+                pessimistic_auto_commit: tidb_config::config_tree::config::get_global_config()
+                    .pessimistic_txn
+                    .pessimistic_auto_commit
+                    .load(),
+                is_dml: !vars.bulk_dml_enabled(),
+            },
+        )
+        .is_pessimistic()
+    }
+
+    /// Installs (or, with `false`, clears) an autocommit statement's
+    /// pessimistic mode: Go `TxnCtx.IsPessimistic`, and the session lock wait
+    /// its locking point reads take (`getLockWaitTime`).
+    fn begin_autocommit_statement_locks(&mut self, pessimistic: bool) {
+        self.session
+            .set_autocommit_pessimistic_statement(pessimistic);
+        let selected = pessimistic.then(|| {
+            tidb_executor::select_lock::SelectedLockKeys::new(
+                tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout()),
+                self.session.vars().shared_lock_promotion_enabled(),
+            )
+            .with_read_committed(self.session.is_read_committed())
+            .with_lock_state_observer(self.session.transaction_lock_state_observer())
+        });
+        self.session.set_selected_lock_keys(selected);
     }
 
     /// Go `handlePessimisticDML`'s lock step for the statement that just ran:
@@ -8611,24 +8565,6 @@ impl QuerySession for ClusterServerSession {
                 |bound| self.session.statement_read_shape_bound(bound),
             )
         };
-        // Go's pessimistic point write folds its row read INTO its lock
-        // (`PointGetExecutor.getAndLock` asks TiKV to answer the row with the
-        // lock, `pkg/executor/point_get.go:612-624`, and caches it in
-        // `TxnCtx.SetPessimisticLockCache`). Inside an explicit transaction
-        // the executor takes that lock itself; only an autocommit write hands
-        // its point keys, classified from whichever tree the fast paths left
-        // (a bound one carries constants, an unbound template resolves its `?`
-        // markers against the execute parameters), to the write transaction
-        // its first read opens.
-        let bind_prelock_keys = |session: &Session| {
-            if let Some(bound) = bound_template.as_ref() {
-                session.statement_prelock_keys(bound, &[])
-            } else if let Some(template) = effective {
-                session.statement_prelock_keys(template, &params)
-            } else {
-                Vec::new()
-            }
-        };
         let is_write = match effective {
             Some(template) => self.session.statement_kind_parsed(template) == StmtKind::Write,
             None => self.session.statement_kind(&sql).map_err(map_error)? == StmtKind::Write,
@@ -8636,48 +8572,47 @@ impl QuerySession for ClusterServerSession {
         if effective.is_some_and(|stmt| matches!(stmt, Stmt::Query(_))) {
             // Go `executePlanCacheStmt`'s `ContextWithInitializedExecDetails`.
             self.session.initialize_statement_exec_details(&sql);
-            let result =
-                self.open_statement_result(shape, bind_prelock_keys, &resource_group, |session| {
-                    session.set_binary_prepared_execution(true);
-                    let opened = (|| {
-                        if let Some(point) = &cached_point_get {
-                            if let Some(opened) = session.open_prepared_point_get(
-                                point.clone(),
-                                effective.expect("point plan retains its statement"),
-                                &sql,
-                            )? {
-                                return Ok(opened);
-                            }
+            let result = self.open_statement_result(shape, &resource_group, |session| {
+                session.set_binary_prepared_execution(true);
+                let opened = (|| {
+                    if let Some(point) = &cached_point_get {
+                        if let Some(opened) = session.open_prepared_point_get(
+                            point.clone(),
+                            effective.expect("point plan retains its statement"),
+                            &sql,
+                        )? {
+                            return Ok(opened);
                         }
-                        if let Some(cached) = &cached_select {
-                            session.open_prepared_record_set_for(
-                                cached,
-                                prepared_ast
-                                    .as_ref()
-                                    .expect("cached SELECT retains its definition"),
-                            )
-                        } else {
-                            // A point-plan identity miss rebuilds the ordinary bound plan.
-                            let bound = match &bound_template {
-                                Some(bound) => bound.clone(),
-                                None => tidb_executor::bind_statement(
-                                    effective
-                                        .expect("prepared query retains its template")
-                                        .clone(),
-                                    &params,
-                                )?,
-                            };
-                            session.open_bound_record_set_for(
-                                bound,
-                                prepared_ast
-                                    .as_ref()
-                                    .expect("prepared query retains its definition"),
-                            )
-                        }
-                    })();
-                    session.set_binary_prepared_execution(false);
-                    opened.map_err(map_error)
-                })?;
+                    }
+                    if let Some(cached) = &cached_select {
+                        session.open_prepared_record_set_for(
+                            cached,
+                            prepared_ast
+                                .as_ref()
+                                .expect("cached SELECT retains its definition"),
+                        )
+                    } else {
+                        // A point-plan identity miss rebuilds the ordinary bound plan.
+                        let bound = match &bound_template {
+                            Some(bound) => bound.clone(),
+                            None => tidb_executor::bind_statement(
+                                effective
+                                    .expect("prepared query retains its template")
+                                    .clone(),
+                                &params,
+                            )?,
+                        };
+                        session.open_bound_record_set_for(
+                            bound,
+                            prepared_ast
+                                .as_ref()
+                                .expect("prepared query retains its definition"),
+                        )
+                    }
+                })();
+                session.set_binary_prepared_execution(false);
+                opened.map_err(map_error)
+            })?;
             return Ok(GeneralExecuteOutcome::Rows(match process_statement {
                 Some(statement) => result.with_process_statement(statement),
                 None => result,
@@ -8693,40 +8628,34 @@ impl QuerySession for ClusterServerSession {
         self.session.set_binary_prepared_execution(true);
         self.activate_statement_txn =
             is_write && effective.is_some_and(|stmt| self.activates_txn_at_build(stmt));
-        let attempt = self.with_prelocked_statement(
-            shape,
-            bind_prelock_keys,
-            &resource_group,
-            is_write,
-            |session| {
-                if direct_dml {
-                    let cached = cached_dml
-                        .as_ref()
-                        .expect("direct prepared DML carries its bound statement");
-                    let output = session
-                        .execute_cached_prepared_dml_for(
-                            cached,
-                            prepared_ast
-                                .as_ref()
-                                .expect("direct prepared DML has its retained definition"),
-                        )
-                        .map_err(map_error)?;
-                    return Ok(output);
-                }
-                if let Some(bound) = bound_template.as_ref().cloned() {
-                    session
-                        .run_parsed_bound_owned_for(
-                            bound,
-                            prepared_ast
-                                .as_ref()
-                                .expect("a retained template has its prepared definition"),
-                        )
-                        .map_err(map_error)
-                } else {
-                    session.run_with_params(&sql, &params).map_err(map_error)
-                }
-            },
-        );
+        let attempt = self.with_prelocked_statement(shape, &resource_group, is_write, |session| {
+            if direct_dml {
+                let cached = cached_dml
+                    .as_ref()
+                    .expect("direct prepared DML carries its bound statement");
+                let output = session
+                    .execute_cached_prepared_dml_for(
+                        cached,
+                        prepared_ast
+                            .as_ref()
+                            .expect("direct prepared DML has its retained definition"),
+                    )
+                    .map_err(map_error)?;
+                return Ok(output);
+            }
+            if let Some(bound) = bound_template.as_ref().cloned() {
+                session
+                    .run_parsed_bound_owned_for(
+                        bound,
+                        prepared_ast
+                            .as_ref()
+                            .expect("a retained template has its prepared definition"),
+                    )
+                    .map_err(map_error)
+            } else {
+                session.run_with_params(&sql, &params).map_err(map_error)
+            }
+        });
         self.activate_statement_txn = false;
         self.session.set_binary_prepared_execution(false);
         if observed_write {
@@ -8766,7 +8695,7 @@ impl QuerySession for ClusterServerSession {
                     WireStatus::of_session(&self.session),
                 )
                 .with_statement_output(
-                    0,
+                    self.session.statement_affected_rows(),
                     self.session.statement_insert_id(),
                     self.session.statement_message().as_bytes().to_vec(),
                 );
@@ -8916,18 +8845,13 @@ impl QuerySession for ClusterServerSession {
         let resource_group = self.session.statement_resource_group(stmt).into_owned();
         let shape = self.session.statement_read_shape_bound(stmt);
         // Go `handleStmt`'s `ContextWithInitializedExecDetails`, before the
-        // pessimistic prelock below can reach storage.
+        // statement below can reach storage.
         self.session.initialize_statement_exec_details(sql);
-        let result = self.open_statement_result(
-            shape,
-            |session| session.statement_prelock_keys(stmt, &[]),
-            &resource_group,
-            |session| {
-                session
-                    .open_record_set_parsed(stmt.clone(), sql)
-                    .map_err(map_error)
-            },
-        )?;
+        let result = self.open_statement_result(shape, &resource_group, |session| {
+            session
+                .open_record_set_parsed(stmt.clone(), sql)
+                .map_err(map_error)
+        })?;
         Ok(match process_statement {
             Some(statement) => result.with_process_statement(statement),
             None => result,

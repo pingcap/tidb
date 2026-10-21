@@ -156,6 +156,17 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
     })
 }
 
+/// Go `fetchTableValues`' row reads: `row.GetString(0)`, `row.GetString(1)`
+/// over `SELECT variable_name, variable_value FROM mysql.global_variables`.
+pub(crate) fn global_variables_rows(rows: &[Vec<Datum>]) -> Vec<(String, String)> {
+    rows.iter()
+        .filter_map(|row| match row.as_slice() {
+            [name, value] => Some((datum_text(name)?, datum_text(value).unwrap_or_default())),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The text form a system variable stores for a datum (Go keeps every system
 /// variable as a string).
 pub(crate) fn datum_text(value: &Datum) -> Option<String> {
@@ -236,9 +247,10 @@ impl Session {
     /// front end also persists it: the convergence node's
     /// `crate::cluster_sysvar_seam` (in `tidb-server`) is what makes that
     /// table itself a scratch read of `mysql.global_variables`, validates
-    /// this call against it, and persists the result. A front end with no
-    /// such seam (an in-process session, or a node that serves no cluster)
-    /// keeps the in-memory-only behavior this always had.
+    /// this call against it, and persists the result. An in-process store
+    /// whose bootstrap loaded the table writes the row into its own
+    /// `mysql.global_variables` and rebuilds the sysvar cache from it; a
+    /// storeless table keeps its rows in memory.
     ///
     /// Non-variable `SET` forms outside the resource-group selector remain
     /// unsupported.
@@ -535,6 +547,41 @@ impl Session {
         Ok(())
     }
 
+    /// Go `Domain.NotifyUpdateSysVarCache(true)` for an in-process store,
+    /// which has no etcd to notify: the local `rebuildSysVarCache` re-reads
+    /// this store's `mysql.global_variables` and rebuilds the sysvar cache
+    /// from what the table holds -- a row another statement wrote directly
+    /// included. Go logs a failed rebuild and keeps the old cache.
+    pub(crate) fn notify_update_sys_var_cache(&mut self) {
+        match self.fetch_global_variables_table() {
+            Ok(rows) => self.vars.global_sysvars().load_from_cluster(rows),
+            Err(error) => tidb_util::logutil::bg_logger().error(
+                "rebuilding sysvar cache failed",
+                &[tidb_log::Field::new(
+                    "error",
+                    tidb_log::Value::Str(error.to_mysql_error().message),
+                )],
+            ),
+        }
+    }
+
+    /// Go `Domain.fetchTableValues` over this session's own catalog: `SELECT
+    /// variable_name, variable_value FROM mysql.global_variables`.
+    pub(crate) fn fetch_global_variables_table(
+        &mut self,
+    ) -> Result<Vec<(String, String)>, DriverError> {
+        let ctx = self.statement_context(false);
+        let (_columns, rows) = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_select_meta_in(
+                tidb_domain::sysvar_cache::SYSVAR_TABLE_QUERY,
+                catalog,
+                "mysql",
+                &ctx,
+            )
+        })?;
+        Ok(global_variables_rows(&rows))
+    }
+
     fn resource_group_hint_rejection(&self) -> Option<ResourceGroupHintRejection> {
         let resource_control_enabled = self.vars.resource_control_enabled();
         if !resource_control_enabled {
@@ -793,6 +840,7 @@ impl Session {
             }
             if let Some(stored_before) = stored_before {
                 self.replace_global_variables_table_value(&stored_before)?;
+                self.notify_update_sys_var_cache();
             }
             return Ok(());
         }

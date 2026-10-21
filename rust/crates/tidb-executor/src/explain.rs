@@ -4023,7 +4023,7 @@ pub fn explain_analyze_insert_stmt(
     )?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
-    run_insert_stmt_with_physical_and_stats(
+    let (affected, _) = run_insert_stmt_with_physical_and_stats(
         insert,
         catalog,
         current_db,
@@ -4031,6 +4031,7 @@ pub fn explain_analyze_insert_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
+    ctx.add_affected_rows(affected);
     runtime.insert(root_key, crate::executor::RowCount::default().into());
     render_physical_plan(
         ctx,
@@ -4152,7 +4153,7 @@ pub fn explain_analyze_update_stmt(
     };
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
-    run_update_stmt_with_physical_and_stats(
+    let affected = run_update_stmt_with_physical_and_stats(
         update,
         catalog,
         current_db,
@@ -4160,6 +4161,7 @@ pub fn explain_analyze_update_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
+    ctx.add_affected_rows(affected);
     runtime.insert(root_key, crate::executor::RowCount::default().into());
     render_physical_plan(
         ctx,
@@ -4206,7 +4208,7 @@ pub fn explain_analyze_delete_stmt(
     };
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
-    run_delete_stmt_with_physical_and_stats(
+    let affected = run_delete_stmt_with_physical_and_stats(
         delete,
         catalog,
         current_db,
@@ -4214,6 +4216,7 @@ pub fn explain_analyze_delete_stmt(
         Some(&mut physical),
         Some(&mut runtime),
     )?;
+    ctx.add_affected_rows(affected);
     runtime.insert(root_key, crate::executor::RowCount::default().into());
     render_physical_plan(
         ctx,

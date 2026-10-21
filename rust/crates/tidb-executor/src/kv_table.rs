@@ -2234,30 +2234,54 @@ impl KvTable {
         read_stored_record(self.store.as_mut(), physical_ids, handle)
     }
 
-    /// Go `PointGetExecutor.lockKeyIfNeeded` / `BatchPointGetExec`'s
-    /// `LockKeys`: lock the record keys of `handles` before reading them
-    /// (see [`TableStorage::lock_keys_for_read`]). A partitioned table's
-    /// handle names no single record key before pruning; its rows are locked
-    /// by the statement's lock step after execution instead.
-    pub(crate) fn lock_records_for_read(
-        &mut self,
+    /// The record key each of `handles` names, Go `EncodeRowKeyWithHandle(tID,
+    /// handle)` with `tID` the routed partition (`planPhysIDs`) or the table.
+    /// `None` when a partitioned table's handle is not routed to one
+    /// partition, so no single key can be named before reading.
+    pub(crate) fn record_lock_keys(
+        &self,
         handles: &[TableHandle],
+        physical_ids: Option<&[i64]>,
+    ) -> Option<Vec<Key>> {
+        match physical_ids {
+            Some(ids) if ids.len() == handles.len() => Some(
+                handles
+                    .iter()
+                    .zip(ids)
+                    .map(|(handle, id)| {
+                        Key::from_bytes(encode_row_key_with_handle(*id, &handle.record_handle()))
+                    })
+                    .collect(),
+            ),
+            Some(_) => None,
+            None if self.read_partitions.is_none() && self.partition.is_none() => Some(
+                handles
+                    .iter()
+                    .map(|handle| {
+                        Key::from_bytes(encode_row_key_with_handle(
+                            self.table_id,
+                            &handle.record_handle(),
+                        ))
+                    })
+                    .collect(),
+            ),
+            None => None,
+        }
+    }
+
+    /// Go `PointGetExecutor.lockKeyBase` / `LockKeys` over this table's
+    /// storage (see [`TableStorage::lock_keys_for_read`]).
+    pub(crate) fn lock_keys_for_read(
+        &mut self,
+        keys: &[Key],
         wait: tidb_txnkv::transaction::LockWaitTime,
+        only_if_exists: bool,
     ) -> Result<(), KvTableError> {
-        if self.read_partitions.is_some() || self.partition.is_some() {
+        if keys.is_empty() {
             return Ok(());
         }
-        let keys = handles
-            .iter()
-            .map(|handle| {
-                Key::from_bytes(encode_row_key_with_handle(
-                    self.table_id,
-                    &handle.record_handle(),
-                ))
-            })
-            .collect::<Vec<_>>();
         self.store
-            .lock_keys_for_read(&keys, wait)
+            .lock_keys_for_read(keys, wait, only_if_exists)
             .map_err(KvTableError::from)
     }
 
@@ -5320,6 +5344,7 @@ impl KvTable {
                         lazy_dup_check,
                         pessimistic,
                         check_in_prewrite,
+                        ctx.writes_untouched_indices(),
                     ) {
                         // Cluster sessions restore their native statement
                         // checkpoint; only the in-process backend needs repair.

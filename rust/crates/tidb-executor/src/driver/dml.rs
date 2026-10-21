@@ -132,7 +132,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     // query: `INSERT INTO h1 (a, b) SELECT a, b FROM no_such` over a missing
     // h1 errors `Table 'fdq.h1' doesn't exist`, not the source query's own
     // 1146 (oracle m13).
-    resolve_insert_target(insert, catalog, current_db, ctx)?;
+    let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
     let extended_source = insert_plan_source(insert, catalog, current_db);
     // Go `planner.Optimize`.
     let optimize = super::start_optimize_region();
@@ -150,6 +150,10 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
             )
         })
         .transpose()?;
+    // Go `buildInsert` evaluates the values' uncorrelated subqueries while
+    // it plans: the VALUES lists, then (after an INSERT ... SELECT's source
+    // was optimized) the ON DUPLICATE assignments.
+    let planned = plan_insert_subqueries(insert, &target_layout, catalog, current_db, ctx)?;
     optimize.end();
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
@@ -165,6 +169,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     let (physical_source, fk_triggers) = dml_execution_parts(physical_plan, "Insert")?;
     run_insert_with_physical(
         insert,
+        planned.as_ref(),
         catalog,
         current_db,
         ctx,
@@ -700,69 +705,136 @@ pub(crate) fn validate_insert_for_explain(
     Ok(())
 }
 
-/// Go evaluates an uncorrelated subquery in a VALUES list or an ON
+/// The INSERT a statement executes once its planning folded the subqueries
+/// of its values: each uncorrelated scalar subquery is a `#const#N` marker
+/// over `constants`.
+pub(crate) struct PlannedInsertSubqueries {
+    insert: tidb_ast::InsertStmt,
+    constants: Vec<Expression>,
+    /// One slot per ON DUPLICATE KEY UPDATE assignment; see
+    /// [`plan_insert_subqueries`].
+    lazy_errors: Vec<Option<DriverError>>,
+}
+
+/// Go evaluates an uncorrelated scalar subquery in a VALUES list or an ON
 /// DUPLICATE KEY UPDATE assignment while it plans the INSERT
-/// (`handleScalarSubquery`'s `EvalSubqueryFirstRow`): before any row is
-/// written, and whether or not a row conflicts. One that reads the target's
-/// columns stays in the statement, for the rewriter to refuse.
+/// (`getInsertColExpr` / `rewriteInsertOnDuplicateUpdate` ->
+/// `handleScalarSubquery`'s `EvalSubqueryFirstRow`, under
+/// `executor.EvalSubQuery`): before any executor is built, and whether or not
+/// a row conflicts. A value whose rewrite builds an Apply -- a correlated
+/// subquery, or an IN/ANY/EXISTS over the dual -- is Go's "complex
+/// subqueries" refusal (issue 30626).
 ///
 /// An ON DUPLICATE assignment's `ErrSubqueryMoreThan1Row` is not raised here:
 /// Go `Insert.ResolveOnDuplicate` keeps it on the assignment (`LazyErr`) for
 /// the row that meets a duplicate (issue 29260), so it comes back beside the
 /// folded statement, one slot per assignment.
-fn fold_insert_subqueries(
+fn plan_insert_subqueries(
     insert: &tidb_ast::InsertStmt,
     layout: &InsertTargetLayout,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<(tidb_ast::InsertStmt, Vec<Option<DriverError>>)>, DriverError> {
-    use super::subquery::{expr_has_subquery, fold_subqueries};
-    let values = insert
+) -> Result<Option<PlannedInsertSubqueries>, DriverError> {
+    use super::planner_bridge::InsertValueRewrite;
+    use super::subquery::expr_has_subquery;
+    let has_subquery = insert
         .rows
         .iter()
         .flatten()
-        .chain(insert.on_duplicate.iter().map(|assignment| &assignment.value));
-    if !values.clone().any(expr_has_subquery) {
+        .chain(
+            insert
+                .on_duplicate
+                .iter()
+                .map(|assignment| &assignment.value),
+        )
+        .any(expr_has_subquery);
+    if !has_subquery {
         return Ok(None);
     }
-    // Go rewrites each value against a dual; a subquery whose built plan
-    // carries a correlated column anywhere stays an Apply, and the value
-    // list refuses it (`buildValuesListOfInsert`, issue 30626).
-    for value in values.clone() {
-        for query in outermost_subqueries(value) {
-            // The subquery is built against a dual: a column that does not
-            // resolve there is Go's own build error (1054), not a reason to
-            // fold it with the target table in scope.
-            if super::planner_bridge::query_builds_correlated_columns(
-                &query, catalog, current_db, ctx,
-            )
-            .map_err(super::planner_error_to_driver)?
-            {
-                return Err(DriverError::unsupported(
-                    "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now",
-                ));
+    let complex = || {
+        DriverError::unsupported(
+            "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now",
+        )
+    };
+    let mut folded = insert.clone();
+    let mut constants = Vec::new();
+    // Go `buildValuesListOfInsert` checks each list's width before it
+    // builds that list's values (row 1 against the columns, every later
+    // row against the one before), so a list of the wrong width fails
+    // before its own subqueries run but after the earlier lists' did.
+    let names_a_column = insert.set_syntax || insert.columns_specified;
+    let mut previous_width = layout.target_offsets.len();
+    for (index, row) in folded.rows.iter_mut().enumerate() {
+        let width = row.len();
+        if (index > 0 || names_a_column || width > 0) && width != previous_width {
+            return Err(DriverError::WrongValueCountOnRow { row: index + 1 });
+        }
+        previous_width = width;
+        let mut values = Vec::new();
+        for value in row.iter_mut() {
+            if expr_has_subquery(value) {
+                let is_subquery = matches!(value, tidb_ast::Expr::Subquery(_));
+                values.push(InsertValueRewrite { value, is_subquery });
             }
         }
-    }
-    let scope = insert_table_scope(
-        &layout.database,
-        &layout.table_name,
-        layout.column_list.clone(),
-        ctx,
-    );
-    let mut folded = insert.clone();
-    for value in folded.rows.iter_mut().flatten() {
-        if expr_has_subquery(value) {
-            *value = fold_subqueries(value, &scope, catalog, current_db, ctx)?;
+        if values.is_empty() {
+            continue;
         }
+        let (dual_only, more) = super::planner_bridge::lower_insert_value_subqueries(
+            values,
+            &layout.database,
+            &layout.table_name,
+            &layout.column_list,
+            catalog,
+            current_db,
+            ctx,
+        )
+        .map_err(super::planner_error_to_driver)?;
+        if dual_only.contains(&false) {
+            return Err(complex());
+        }
+        for value in row.iter_mut() {
+            shift_constant_markers(value, constants.len());
+        }
+        constants.extend(more);
     }
+    // Go resolves ON DUPLICATE after every VALUES list, each assignment
+    // over the same `mockTablePlan`.
+    let assignments = folded
+        .on_duplicate
+        .iter()
+        .map(|assignment| expr_has_subquery(&assignment.value))
+        .collect::<Vec<_>>();
     let mut lazy_errors = Vec::with_capacity(folded.on_duplicate.len());
-    for assignment in &mut folded.on_duplicate {
+    for (assignment, has_subquery) in folded.on_duplicate.iter_mut().zip(assignments) {
         let mut lazy_error = None;
-        if expr_has_subquery(&assignment.value) {
-            match fold_subqueries(&assignment.value, &scope, catalog, current_db, ctx) {
-                Ok(value) => assignment.value = value,
+        if has_subquery {
+            let mut value = assignment.value.clone();
+            let lowered = super::planner_bridge::lower_insert_value_subqueries(
+                vec![InsertValueRewrite {
+                    value: &mut value,
+                    is_subquery: false,
+                }],
+                &layout.database,
+                &layout.table_name,
+                &layout.column_list,
+                catalog,
+                current_db,
+                ctx,
+            )
+            .map_err(super::planner_error_to_driver);
+            match lowered {
+                Ok((dual_only, more)) => {
+                    if dual_only.contains(&false) {
+                        return Err(complex());
+                    }
+                    // This assignment's markers index its own build's
+                    // constants; move them past the ones already kept.
+                    shift_constant_markers(&mut value, constants.len());
+                    constants.extend(more);
+                    assignment.value = value;
+                }
                 Err(error) => {
                     if error.clone().to_mysql_error().code != 1242 {
                         return Err(error);
@@ -774,7 +846,37 @@ fn fold_insert_subqueries(
         }
         lazy_errors.push(lazy_error);
     }
-    Ok(Some((folded, lazy_errors)))
+    Ok(Some(PlannedInsertSubqueries {
+        insert: folded,
+        constants,
+        lazy_errors,
+    }))
+}
+
+/// Renumbers every `#const#N` marker in `expr` to `#const#(N + by)`.
+fn shift_constant_markers(expr: &mut tidb_ast::Expr, by: usize) {
+    use tidb_planner::plan_builder::marker::{MarkerKind, PlanMarker};
+    struct Shifter(usize);
+    impl tidb_ast::Visitor for Shifter {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            if let Some(marker) = PlanMarker::from_expr(expr) {
+                if marker.kind == MarkerKind::Constant {
+                    *expr = PlanMarker::new(MarkerKind::Constant, marker.index + self.0).as_expr();
+                }
+                return true;
+            }
+            false
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    if by > 0 {
+        tidb_ast::Visitable::accept(expr, &mut Shifter(by));
+    }
 }
 
 /// The subqueries `expr` contains, outermost only.
@@ -810,8 +912,10 @@ pub(crate) fn outermost_subqueries(expr: &tidb_ast::Expr) -> Vec<tidb_ast::Query
     collector.0
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_insert_with_physical(
     insert: &tidb_ast::InsertStmt,
+    planned: Option<&PlannedInsertSubqueries>,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -821,6 +925,7 @@ fn run_insert_with_physical(
 ) -> Result<(u64, Option<u64>), DriverError> {
     run_insert_rows(
         insert,
+        planned,
         catalog,
         current_db,
         ctx,
@@ -877,6 +982,7 @@ pub fn run_load_data_insert(
     // Go's LOAD DATA `InsertValues` carries no foreign-key checks.
     let (_, first_allocated) = run_insert_rows(
         insert,
+        None,
         catalog,
         current_db,
         ctx,
@@ -891,6 +997,7 @@ pub fn run_load_data_insert(
 #[allow(clippy::too_many_arguments)]
 fn run_insert_rows(
     insert: &tidb_ast::InsertStmt,
+    planned: Option<&PlannedInsertSubqueries>,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -913,10 +1020,16 @@ fn run_insert_rows(
     }
 
     let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
-    let folded_insert = fold_insert_subqueries(insert, &target_layout, catalog, current_db, ctx)?;
-    let (insert, lazy_errors) = match &folded_insert {
-        Some((folded, lazy_errors)) => (folded, lazy_errors.as_slice()),
-        None => (insert, &[][..]),
+    // Go `checkRefColumn` sees the values as written: a subquery's own
+    // columns never count, so the reference test reads the unfolded values.
+    let written_insert = insert;
+    let (insert, lazy_errors, subquery_constants) = match planned {
+        Some(planned) => (
+            &planned.insert,
+            planned.lazy_errors.as_slice(),
+            planned.constants.as_slice(),
+        ),
+        None => (insert, &[][..], &[][..]),
     };
     let eval_chunk = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
@@ -960,6 +1073,7 @@ fn run_insert_rows(
         Some(prepare_on_duplicate_assignments(
             &insert.on_duplicate,
             lazy_errors,
+            subquery_constants,
             &target_layout.column_list,
             &target_layout.column_meta,
             target_layout.extra_handle_offset,
@@ -1141,6 +1255,7 @@ fn run_insert_rows(
             no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
             div_precision_increment: ctx.div_precision_increment(),
             clause_message: "field list",
+            subquery_constants,
         };
         for (index, values) in insert.rows.iter().enumerate() {
             let width = values.len();
@@ -1288,6 +1403,7 @@ fn run_insert_rows(
         None => prepare_on_duplicate_assignments(
             &insert.on_duplicate,
             lazy_errors,
+            subquery_constants,
             &column_list,
             &column_meta,
             extra_handle_offset,
@@ -1329,7 +1445,7 @@ fn run_insert_rows(
     // `setValueForRefColumn` and evaluates into that buffer, so `SET a = 1,
     // b = a + 1` reads the `a` just written and `VALUES (a)` the default.
     let has_ref_cols = source_rows.is_none()
-        && insert
+        && written_insert
             .rows
             .iter()
             .flatten()
@@ -2319,6 +2435,7 @@ struct PreparedOnDuplicate {
 fn prepare_on_duplicate_assignments(
     assignments: &[tidb_ast::Assignment],
     lazy_errors: &[Option<DriverError>],
+    subquery_constants: &[Expression],
     column_list: &[(String, FieldType)],
     column_meta: &[ColumnDefaultMeta],
     extra_handle_offset: Option<usize>,
@@ -2338,6 +2455,7 @@ fn prepare_on_duplicate_assignments(
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
         clause_message: "field list",
+        subquery_constants,
     };
     let value_resolver = super::on_duplicate_scope::OnDuplicateResolver {
         base: TableResolver {
@@ -2349,6 +2467,7 @@ fn prepare_on_duplicate_assignments(
             no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
             div_precision_increment: ctx.div_precision_increment(),
             clause_message: "field list",
+            subquery_constants,
         },
         scope,
         extra_types,
@@ -3370,6 +3489,48 @@ fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPl
     }
 }
 
+/// Go `buildOrderedList`: a point UPDATE wraps its assignment in
+/// `BuildCastFunction` to the target column's type (so `SET v = 'abc'` into
+/// an INT column truncates as an INTEGER cast, where the general UPDATE's
+/// `table.CastValue` reports a DOUBLE one), except for an unsigned numeric
+/// target: `CAST(-1 AS UNSIGNED)` would wrap where the assignment's
+/// `table.CastValue` must decide under the statement's sql_mode. An ENUM or
+/// SET target of an integer value casts by member index
+/// (`EnumSetAsIntFlag`). The cast folds as Go's `BuildCastFunctionWithCheck`
+/// does (not for a JSON target), so a constant assignment converts, and
+/// warns, once for the statement.
+fn point_update_assignment(
+    expression: Expression,
+    target: &FieldType,
+    ctx: &crate::StmtContext,
+) -> Result<Expression, DriverError> {
+    let mut cast_to = target.clone();
+    let unsigned_numeric = cast_to.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
+        && matches!(
+            cast_to.eval_type(),
+            tidb_datatype::EvalType::Int
+                | tidb_datatype::EvalType::Decimal
+                | tidb_datatype::EvalType::Real
+        );
+    if unsigned_numeric {
+        return Ok(expression);
+    }
+    if matches!(cast_to.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
+        && expression
+            .static_type()
+            .is_some_and(|source| source.eval_type() == tidb_datatype::EvalType::Int)
+    {
+        cast_to.add_flags(tidb_datatype::FieldTypeFlags::ENUM_SET_AS_INT);
+    }
+    let json = cast_to.eval_type() == tidb_datatype::EvalType::Json;
+    let mut cast = tidb_expr::simple_expr::build_cast_function(expression, cast_to, false)
+        .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+    if !json {
+        tidb_expr::fold_constant_in_mode(&mut cast, ctx, tidb_expr::ConstantFoldMode::Normal);
+    }
+    Ok(cast)
+}
+
 fn physical_plan_contains_point_get(plan: &tidb_planner::physical::PhysicalPlan) -> bool {
     use tidb_planner::physical::PhysicalPlan;
 
@@ -3531,6 +3692,7 @@ fn run_update_with_physical(
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
         clause_message: "field list",
+        subquery_constants: &[],
     };
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for (assignment_index, assignment) in update.assignments.iter().enumerate() {
@@ -3699,6 +3861,24 @@ fn run_update_with_physical(
         })
     });
     let mut physical_source = fast_point_source.as_mut().or(physical_source);
+    // Go's fast plan (`tryUpdatePointPlan`) reads through a bare point plan,
+    // and its `buildOrderedList` casts every assignment to the target column.
+    if update_allows_fast_plan(update)
+        && physical_source.as_deref().is_some_and(|plan| {
+            matches!(
+                plan,
+                tidb_planner::physical::PhysicalPlan::PointGet(_)
+                    | tidb_planner::physical::PhysicalPlan::BatchPointGet(_)
+            )
+        })
+    {
+        for (offset, expression) in &mut set_exprs {
+            if let UpdateExpression::Scalar(scalar) = expression {
+                let assigned = scalar.clone();
+                *scalar = point_update_assignment(assigned, &column_list[*offset].1, ctx)?;
+            }
+        }
+    }
     let partition_ids = match catalog.get_in(&database, &name) {
         Some(TableEntry::Kv(kv)) if table_ref.partitions.is_empty() => None,
         Some(TableEntry::Kv(kv)) => {

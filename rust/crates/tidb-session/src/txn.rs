@@ -480,6 +480,23 @@ impl Session {
     /// `@@tidb_txn_mode` default before that implicit transaction is materialized.
     /// Explicit `BEGIN <mode>` continues to win over the variable.
     #[must_use]
+    /// Go `TxnCtx.IsPessimistic` for the running statement: an explicit or
+    /// `autocommit = 0` pessimistic transaction, or the autocommit
+    /// statement's implicit transaction when `decideTxnMode` chose
+    /// pessimistic (see [`Self::set_autocommit_pessimistic_statement`]).
+    pub(crate) fn statement_is_pessimistic(&self) -> bool {
+        ((!self.is_autocommit() || self.in_transaction())
+            && self.statement_txn_mode().is_pessimistic())
+            || self.autocommit_pessimistic_statement
+    }
+
+    /// Records that the storage owner runs this autocommit statement in a
+    /// pessimistic implicit transaction (Go `decideTxnMode`), so its point
+    /// plans carry `Lock` as Go's `tryUpdatePointPlan` sets it.
+    pub fn set_autocommit_pessimistic_statement(&mut self, pessimistic: bool) {
+        self.autocommit_pessimistic_statement = pessimistic;
+    }
+
     pub fn statement_txn_mode(&self) -> SessionTxnMode {
         self.txn_mode()
             .unwrap_or_else(|| self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default))
@@ -1509,7 +1526,8 @@ impl Session {
                 tidb_txnkv::transaction::LockWaitTime::Timeout(self.lock_wait_timeout()),
                 self.vars().shared_lock_promotion_enabled(),
             )
-            .with_read_committed(self.read_committed_locking()),
+            .with_read_committed(self.read_committed_locking())
+            .with_lock_state_observer(self.transaction_lock_state_observer()),
         );
         self.transaction_statement = Some(statement);
         Ok(())

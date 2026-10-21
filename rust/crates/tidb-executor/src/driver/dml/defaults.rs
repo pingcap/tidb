@@ -359,6 +359,14 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
         self.base.resolve_values(path)
     }
 
+    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
+        self.base.resolve_constant(path)
+    }
+
+    fn has_resolved_constants(&self) -> bool {
+        self.base.has_resolved_constants()
+    }
+
     fn resolve_default(&self, path: &[String]) -> Option<Expression> {
         let mut defaults = self.defaults.borrow_mut();
         if !defaults
@@ -508,6 +516,9 @@ pub(crate) fn rewrite_with_prepared_defaults(
             "prepared DEFAULT leaves did not match the expression",
         ));
     }
+    // Go `rewriteExprNode`'s last check: a write-list value is one column.
+    tidb_expr::expr_util::check_args_not_multi_column_row(std::slice::from_ref(&rewritten))
+        .map_err(|_| DriverError::Exec(ExecError::Eval(tidb_expr::EvalError::OperandColumns(1))))?;
     Ok(rewritten)
 }
 

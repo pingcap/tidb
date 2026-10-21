@@ -89,6 +89,11 @@ impl Session {
     /// then the meta history newest first (`GetLastHistoryDDLJobsIterator`),
     /// from the cluster's store when one is installed, else this catalog's
     /// own history (which has no running job: its DDL runs to completion).
+    ///
+    /// Both readers run on a fresh system-session transaction
+    /// (`GetSysSession` + `sessiontxn.NewTxn`), so the jobs are the latest
+    /// ones whatever the statement reads at: the shared catalog, not this
+    /// statement's transaction or `tidb_snapshot` image.
     pub(crate) fn all_ddl_jobs(&mut self) -> Result<(Vec<Job>, Vec<Job>), DriverError> {
         if let Some(store) = self.ddl_job_history_store.clone() {
             return store
@@ -98,8 +103,7 @@ impl Session {
                     message,
                 });
         }
-        let history =
-            self.with_persistent_catalog_mut(|catalog| catalog.last_history_ddl_jobs())?;
+        let history = self.lock_catalog()?.last_history_ddl_jobs()?;
         Ok((Vec::new(), history))
     }
 }

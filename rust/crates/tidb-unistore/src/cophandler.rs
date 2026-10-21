@@ -141,6 +141,85 @@ fn other_error(message: &str) -> coprocessor::Response {
     }
 }
 
+/// A coprocessor executor's `error` as Go's `toPBError` reads it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CopExecError {
+    /// A TiDB terror, which keeps its MySQL code and message
+    /// (`terror.ToSQLError`).
+    Sql {
+        /// The MySQL error number.
+        code: u16,
+        /// The rendered message.
+        message: String,
+    },
+    /// Any other error: code 1 and the error's text.
+    Other(String),
+}
+
+impl CopExecError {
+    /// Go `toPBError`.
+    fn to_pb_error(&self) -> tipb::Error {
+        let (code, message) = match self {
+            CopExecError::Sql { code, message } => (i32::from(*code), message.clone()),
+            CopExecError::Other(message) => (1, message.clone()),
+        };
+        tipb::Error {
+            code: Some(code),
+            msg: Some(message),
+        }
+    }
+
+    fn message(&self) -> &str {
+        match self {
+            CopExecError::Sql { message, .. } | CopExecError::Other(message) => message,
+        }
+    }
+}
+
+impl From<tidb_expr::EvalError> for CopExecError {
+    fn from(error: tidb_expr::EvalError) -> Self {
+        let error = error.to_sql_error();
+        CopExecError::Sql {
+            code: error.code,
+            message: error.message,
+        }
+    }
+}
+
+impl From<String> for CopExecError {
+    fn from(message: String) -> Self {
+        CopExecError::Other(message)
+    }
+}
+
+impl From<CopExecError> for String {
+    fn from(error: CopExecError) -> Self {
+        match error {
+            CopExecError::Sql { message, .. } | CopExecError::Other(message) => message,
+        }
+    }
+}
+
+/// Go `genRespWithMPPExec` for a failed executor: no chunks, the error in
+/// `SelectResponse.error` (`toPBError`) beside the warnings so far.
+fn executor_error_response(
+    error: &CopExecError,
+    warnings: Vec<tipb::Error>,
+) -> coprocessor::Response {
+    let warning_count = warnings.len() as i64;
+    let select = tipb::SelectResponse {
+        error: Some(error.to_pb_error()),
+        warnings,
+        warning_count: Some(warning_count),
+        encode_type: Some(tipb::EncodeType::TypeDefault as i32),
+        ..tipb::SelectResponse::default()
+    };
+    coprocessor::Response {
+        data: select.encode_to_vec().into(),
+        ..coprocessor::Response::default()
+    }
+}
+
 /// Go's `%v` rendering of a `[]byte`: space-separated decimals in brackets.
 fn go_byte_slice(bytes: &[u8]) -> String {
     let rendered = bytes
@@ -475,15 +554,15 @@ fn exec_index_scan(
             ) {
                 Ok(true) => {}
                 Ok(false) => continue,
-                Err(message) => {
+                Err(error) => {
                     if context.flags & 2 != 0 {
                         eval_warnings.push(tipb::Error {
                             code: Some(1265),
-                            msg: Some(message),
+                            msg: Some(error.message().to_owned()),
                         });
                         continue;
                     }
-                    return other_error(&message);
+                    return executor_error_response(&error, eval_warnings);
                 }
             }
             if let Some(aggregator) = aggregator.as_mut() {
@@ -820,7 +899,7 @@ fn exec_table_scan(
             ) {
                 Ok(true) => {}
                 Ok(false) => continue,
-                Err(message) => return other_error(&message),
+                Err(error) => return executor_error_response(&error, Vec::new()),
             }
             // A partial aggregation consumes the surviving row instead of
             // emitting it; the grouped rows leave after the scan.
@@ -1177,7 +1256,7 @@ fn eval_datum(
         SimpleExpr::Time(value) => Ok(Datum::Time(*value)),
         SimpleExpr::Null => Ok(Datum::Null),
         SimpleExpr::Func(..) => Err("a computed aggregate argument is a later course".to_owned()),
-        SimpleExpr::Shared(shared) => eval_shared(shared, row),
+        SimpleExpr::Shared(shared) => eval_shared(shared, row).map_err(String::from),
     }
 }
 
@@ -2045,11 +2124,11 @@ fn convert_shared(
 fn eval_shared(
     expr: &SharedExpression,
     row: &[tidb_datatype::Datum],
-) -> Result<tidb_datatype::Datum, String> {
+) -> Result<tidb_datatype::Datum, CopExecError> {
     let row = tidb_chunk::mutrow::MutRow::from_datums(row);
     expr.expression
         .eval(expr.context.as_ref(), row.to_row())
-        .map_err(|err| format!("{err:?}"))
+        .map_err(CopExecError::from)
 }
 
 /// Decode without a DAG for standalone callers. Request execution uses
@@ -3830,11 +3909,20 @@ fn conditions_hold(
     row: &[tidb_datatype::Datum],
     div_precision_increment: i64,
     time_zone: &tidb_datatype::SessionTimeZone,
-) -> Result<bool, String> {
+) -> Result<bool, CopExecError> {
     for condition in conditions {
-        if !eval_expr(condition, row, div_precision_increment, time_zone)?
-            .is_some_and(|value| value != 0)
-        {
+        // A builtin condition's evaluation error keeps its terror code for
+        // `SelectResponse.error`.
+        let value = match condition {
+            SimpleExpr::Shared(shared) => match eval_shared(shared, row)? {
+                tidb_datatype::Datum::Int(value) => Some(i128::from(value)),
+                tidb_datatype::Datum::UInt(value) => Some(i128::from(value)),
+                tidb_datatype::Datum::Null => None,
+                other => Some(shared.context.condition_value(&other)?),
+            },
+            other => eval_expr(other, row, div_precision_increment, time_zone)?,
+        };
+        if !value.is_some_and(|value| value != 0) {
             return Ok(false);
         }
     }

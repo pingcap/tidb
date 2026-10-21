@@ -52,7 +52,6 @@ pub struct SelectionExec<C: Columns> {
     memory: StatementMemory,
     input_row: usize,
     selected: Vec<bool>,
-    done: bool,
 }
 
 /// Context-independent row predicates: null tests, string-column `IN` with
@@ -101,7 +100,6 @@ impl<C: Columns> SelectionExec<C> {
             memory,
             input_row: 0,
             selected: Vec::new(),
-            done: false,
         }
     }
 
@@ -264,15 +262,13 @@ impl<C: Columns + Send> Executor for SelectionExec<C> {
         self.child_chunk = Some(child_chunk);
         self.input_row = 0;
         self.selected.clear();
-        self.done = false;
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.grow_and_reset(self.max_chunk_size());
-        if self.done {
-            return Ok(());
-        }
+        // Go keeps no end-of-input state: a call after the child ran dry
+        // asks the child again, which answers empty again.
         self.memory.check()?;
         if self.batched {
             loop {
@@ -301,8 +297,8 @@ impl<C: Columns + Send> Executor for SelectionExec<C> {
                 result?;
                 self.memory.check()?;
                 if child_chunk.num_rows() == 0 {
-                    self.done = true;
                     self.selected.clear();
+                    self.input_row = 0;
                     return Ok(());
                 }
                 self.evaluate_selection_mask()?;
@@ -341,7 +337,6 @@ impl<C: Columns + Send> Executor for SelectionExec<C> {
             self.memory.check()?;
             self.input_row = 0;
             if child_chunk.num_rows() == 0 {
-                self.done = true;
                 return Ok(());
             }
         }
@@ -523,6 +518,82 @@ mod tests {
         let mut c = Column::new(1, long());
         c.index = 0;
         Schema::new(vec![c])
+    }
+
+    /// Go `SelectionExec.Next` keeps no end-of-input state: every call that
+    /// has no buffered rows left asks its child again, also after the child
+    /// answered empty -- which is the extra `MaxOneRowExec.Next` Go's TRACE
+    /// shows under an Apply's second `SelectionExec.Next` per outer row.
+    #[test]
+    fn next_after_exhaustion_asks_the_child_again() {
+        struct Counting {
+            inner: OneChunkSource,
+            nexts: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        }
+        impl Executor for Counting {
+            fn open(&mut self) -> Result<(), ExecError> {
+                self.inner.open()
+            }
+            fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+                self.nexts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.inner.next(req)
+            }
+            fn close(&mut self) -> Result<(), ExecError> {
+                self.inner.close()
+            }
+            fn schema(&self) -> &Schema {
+                self.inner.schema()
+            }
+            fn ret_field_types(&self) -> &[FieldType] {
+                self.inner.ret_field_types()
+            }
+            fn init_cap(&self) -> usize {
+                self.inner.init_cap()
+            }
+            fn max_chunk_size(&self) -> usize {
+                self.inner.max_chunk_size()
+            }
+            fn new_chunk(&self) -> Chunk {
+                self.inner.new_chunk()
+            }
+        }
+        let not_null = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("not"),
+            long(),
+            vec![Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("isnull"),
+                long(),
+                vec![Expression::Column(one_long_col_schema().columns[0].clone())],
+            ))],
+        ));
+        let mut data = Chunk::new_with_capacity(&[long()], 1);
+        data.append_int64(0, 1);
+        let nexts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = || nexts.load(std::sync::atomic::Ordering::SeqCst);
+        let source = Counting {
+            inner: OneChunkSource {
+                meta: ExecutorMeta::new(one_long_col_schema(), 0, 1, 8),
+                data: Some(data),
+            },
+            nexts: std::sync::Arc::clone(&nexts),
+        };
+        let mut selection = SelectionExec::new(
+            ExecutorMeta::new(one_long_col_schema(), 1, 1, 8),
+            vec![not_null],
+            Box::new(source),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        selection.open().unwrap();
+        let mut result = selection.new_chunk();
+        // The batched filter drains the child: its row, then the empty chunk.
+        selection.next(&mut result).unwrap();
+        assert_eq!((result.num_rows(), count()), (1, 2));
+        selection.next(&mut result).unwrap();
+        assert_eq!((result.num_rows(), count()), (0, 3));
+        selection.next(&mut result).unwrap();
+        assert_eq!((result.num_rows(), count()), (0, 4));
+        selection.close().unwrap();
     }
 
     #[test]

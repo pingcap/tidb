@@ -397,64 +397,6 @@ impl Session {
         }
     }
 
-    /// The record keys a text-protocol statement locks BEFORE it runs: both
-    /// pre-lock arms ([`tidb_executor::access_path::PessimisticPrelock`])
-    /// over one parse of the statement. A statement that is not a pessimistic
-    /// point write or a pessimistic point locking read classifies as an empty
-    /// key set and keeps today's read-then-lock order.
-    #[must_use]
-    pub fn text_statement_prelock_keys(&self, sql: &str) -> Vec<Vec<u8>> {
-        let Ok(stmt) = self.parse(sql) else {
-            return Vec::new();
-        };
-        self.statement_prelock_keys(&stmt, &[])
-    }
-
-    /// [`Self::text_statement_prelock_keys`] over an already-parsed statement
-    /// or prepared template. `params` resolves the latter's marker values;
-    /// an already-bound or text tree passes an empty slice.
-    #[must_use]
-    pub fn statement_prelock_keys(&self, stmt: &Stmt, params: &[Datum]) -> Vec<Vec<u8>> {
-        let Some(mut prelock) =
-            tidb_executor::access_path::PessimisticPrelock::from_statement(stmt)
-        else {
-            return Vec::new();
-        };
-        // Go BatchPointGet locks all named keys before reading under RR,
-        // but only existing rows after reading under RC. The latter uses
-        // the executor's selected-row collector (a write: its staged keys),
-        // not a speculative key set.
-        if self.read_committed_locking() {
-            if prelock.is_locking_read() {
-                return Vec::new();
-            }
-            prelock = prelock.without_batch_lookup();
-        }
-        // Go converts the key constants under the statement's own type
-        // context while it builds the fast plan (`ResetUpdateStmtCtx`,
-        // `ResetDeleteStmtCtx`, or a SELECT's), so the same class and
-        // `IGNORE` decide which constants pin a key here.
-        let statement = match stmt {
-            Stmt::Dml(dml) => match dml.as_ref() {
-                DmlStmt::Update(update) => self
-                    .statement_context_for_update_read(update.ignore)
-                    .with_statement_class(tidb_executor::StatementClass::Update),
-                DmlStmt::Delete(delete) => self
-                    .statement_context_for_update_read(delete.ignore)
-                    .with_statement_class(tidb_executor::StatementClass::Delete),
-                _ => return Vec::new(),
-            },
-            _ => self
-                .statement_context(false)
-                .with_statement_class(tidb_executor::StatementClass::Select),
-        };
-        let catalog = self
-            .catalog
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        prelock.bind_keys(params, &catalog, self.current_database(), &statement)
-    }
-
     /// Classifies a statement by parsing alone (no execution), so a caller can
     /// choose the protocol answer shape before running it.
     ///

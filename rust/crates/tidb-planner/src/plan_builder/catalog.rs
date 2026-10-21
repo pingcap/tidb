@@ -426,6 +426,12 @@ pub trait TableSource {
         None
     }
 
+    /// Go `tryLockMDLAndUpdateSchemaIfNecessary` as `buildDataSource` calls
+    /// it: the table `table_id` joins the statement's metadata-lock map
+    /// (`GetRelatedTableForMDL`). The default records nothing, a source with
+    /// no transaction to lock for.
+    fn record_related_table_for_mdl(&self, _table_id: i64) {}
+
     /// [`Self::find_view`] over the same detached schema.
     fn find_view_ignoring_local_temporary(
         &self,
@@ -450,6 +456,8 @@ pub struct SourceView {
     pub view_name: String,
     /// Go `TableInfo.View.SelectStmt`.
     pub select_sql: String,
+    /// Go `TableInfo.ID`; zero for a view with no stored id.
+    pub table_id: i64,
     /// Go `TableInfo.View.Cols`: the ORIGIN column names of the underlying
     /// `SELECT` as they stood at `CREATE VIEW`. Empty when the view stores
     /// none, which is the modern shape.

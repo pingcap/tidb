@@ -87,6 +87,14 @@ impl<'a> UpdateRecords<'a> {
         ctx: &crate::StmtContext,
     ) -> Result<UpdateOutcome, DriverError> {
         let _region = tidb_util::tracing::start_thread_region_ex("executor.updateRecord");
+        if self.triggers.iter().any(|trigger| {
+            matches!(
+                trigger.kind,
+                tidb_planner::physical::FkTriggerKind::Cascade { .. }
+            )
+        }) {
+            ctx.mark_fk_cascades();
+        }
         let entry = catalog.get_in(database, name).ok_or_else(|| {
             DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
                 "{database}.{name}"

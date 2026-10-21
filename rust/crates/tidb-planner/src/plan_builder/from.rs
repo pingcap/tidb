@@ -1857,8 +1857,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         view: &SourceView,
         inherited_hints: tidb_hint::ViewHintContext,
     ) -> Result<LogicalPlan, PlanError> {
-        let mut statement = tidb_parser::parse(&view.select_sql)
-            .map_err(|error| PlanError::internal(format!("{error:?}")))?;
+        // Go parses the body with the session's charset and parser switches
+        // (`GetCharsetInfo`, `BuildParserConfig`) on a fresh parser.
+        let (charset, collation) = self.ctx.connection_charset_info();
+        let mut statement = tidb_parser::parse_with_config_and_connection(
+            &view.select_sql,
+            self.parser_config,
+            charset,
+            collation,
+        )
+        .map_err(|error| PlanError::internal(error.compatibility_message(&view.select_sql)))?;
         let (view_hint_handler, view_hint_state) =
             tidb_hint::QBHintHandler::for_view_body(&mut statement, inherited_hints);
         let tidb_ast::Stmt::Query(query) = statement else {

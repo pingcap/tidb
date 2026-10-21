@@ -43,6 +43,8 @@ use crate::sql_node::QuerySession;
 use crate::unistore_node::{unistore_cluster_session_stack, UnistoreClusterStack};
 use crate::QuerySessionFactory;
 
+mod go_executor_protocol;
+
 fn cop_backed_stack() -> (UnistoreClusterStack, Arc<ConfiguredUserStore>) {
     cop_backed_stack_with_stats_lease(None)
 }
@@ -872,6 +874,58 @@ fn a_read_never_finds_the_shared_cop_client_in_use() {
         displayed(rows(&mut session, "SELECT COUNT(*) FROM test.t1")),
         [["32768"]]
     );
+}
+
+/// A store answers a split with `EpochNotMatch` carrying the new regions'
+/// memcomparable-encoded bounds, and client-go's V1 codec decodes them in
+/// place before they reach the region cache. A Cop read's error went in
+/// encoded, and a raw key just past a split (`t<id2>_r`, whose ninth byte is
+/// below the encoded bound's 0xFF group marker) then sorted inside the
+/// encoded left region: the new table's reads went to a region that does not
+/// hold them, so `COUNT(*)` answered 0 and snapshot reads failed with
+/// `InvalidReqRange` until the node restarted.
+#[test]
+fn a_split_seen_by_a_cop_read_keeps_routing_new_tables_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(141)).unwrap();
+    rows(&mut session, "CREATE TABLE test.t1 (a INT, b INT)");
+    rows(&mut session, "INSERT INTO test.t1 VALUES (1, 1), (2, NULL), (3, 3)");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT COUNT(*) FROM test.t1")),
+        [["3"]]
+    );
+    for table in ["t2", "t3"] {
+        // CREATE TABLE splits the region the cop read above cached, so the
+        // next cop read of `t1` meets the split as an `EpochNotMatch`.
+        rows(
+            &mut session,
+            &format!("CREATE TABLE test.{table} (a INT, b INT, KEY ia (a))"),
+        );
+        assert_eq!(
+            displayed(rows(&mut session, "SELECT COUNT(*) FROM test.t1")),
+            [["3"]]
+        );
+        rows(
+            &mut session,
+            &format!("INSERT INTO test.{table} VALUES (1, 1), (2, NULL)"),
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!(
+                    "SELECT COUNT(*), COUNT(b), COUNT(1) FROM test.{table} IGNORE INDEX (ia)"
+                ),
+            )),
+            [["2", "1", "2"]]
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT COUNT(*) FROM test.{table} USE INDEX (ia)"),
+            )),
+            [["2"]]
+        );
+    }
 }
 
 /// Go's foreign-key guards on the production node, answers from the Go
@@ -10167,6 +10221,333 @@ fn prepared_update_replans_after_another_session_adds_a_column() {
 /// assertions here are behavioral, not counters: the pre-lock must REALLY
 /// hold the row (a contender blocks mid-transaction), the second update of
 /// the same row must compute from its own staged write, and COMMIT persists.
+/// Go `decideTxnMode` with `pessimistic-auto-commit = true` makes an
+/// autocommit UPDATE's implicit transaction pessimistic, so
+/// `tryUpdatePointPlan` plans its point source with `Lock` and
+/// `PointGetExecutor.getAndLock` locks the row with the session's
+/// `LockWaitTimeout` (`getLockWaitTime`): a row another transaction holds
+/// makes the statement wait the lock out. Under the default (optimistic)
+/// mode the same statement takes no lock and reads the committed row.
+#[test]
+fn a_pessimistic_autocommit_point_update_locks_from_its_plan() {
+    use tidb_protocol::PreparedValue;
+
+    struct ConfigGuard;
+    impl Drop for ConfigGuard {
+        fn drop(&mut self) {
+            tidb_config::config_tree::config::update_global(|config| {
+                config.pessimistic_txn.pessimistic_auto_commit =
+                    tidb_config::config_tree::AtomicBool::new(false);
+            });
+        }
+    }
+
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory
+        .open_session(session_context(103))
+        .expect("session opens");
+    rows(
+        &mut holder,
+        "CREATE TABLE test.acpess (id int primary key, v int)",
+    );
+    rows(&mut holder, "INSERT INTO test.acpess VALUES (1, 10)");
+    let mut writer = factory
+        .open_session(session_context(104))
+        .expect("session opens");
+    writer
+        .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
+        .expect("set lock wait");
+    let statement = writer
+        .prepare_general("UPDATE test.acpess SET v = v + 1 WHERE id = ?")
+        .expect("prepare");
+
+    holder
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin holder");
+    rows(
+        &mut holder,
+        "SELECT * FROM test.acpess WHERE id = 1 FOR UPDATE",
+    );
+    let _guard = ConfigGuard;
+    tidb_config::config_tree::config::update_global(|config| {
+        config.pessimistic_txn.pessimistic_auto_commit =
+            tidb_config::config_tree::AtomicBool::new(true);
+    });
+    let error = match writer.execute_general(&statement, &[PreparedValue::SignedLongLong(1)]) {
+        Err(error) => error,
+        Ok(_) => panic!("the held row makes the pessimistic autocommit UPDATE wait"),
+    };
+    assert_eq!(error.code, 1205, "{}", error.message);
+    holder
+        .control_transaction("ROLLBACK")
+        .expect("rollback holder");
+    assert_eq!(
+        displayed(rows(&mut holder, "SELECT v FROM test.acpess WHERE id = 1")),
+        [["10"]]
+    );
+}
+
+/// Go `LazyTxn.LockKeys` marks the transaction `LockWaiting` while its lock
+/// request waits (`updateState(TxnLockAcquiring)`), including the lock a
+/// point read takes inside `PointGetExecutor.Next`: `TIDB_TRX` shows it.
+#[test]
+fn a_point_lock_inside_execution_shows_the_transaction_lock_waiting() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory
+        .open_session(session_context(105))
+        .expect("session opens");
+    rows(
+        &mut holder,
+        "CREATE TABLE test.lockstate (id int primary key, v int)",
+    );
+    rows(&mut holder, "INSERT INTO test.lockstate VALUES (1, 1)");
+    holder
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin holder");
+    rows(
+        &mut holder,
+        "SELECT * FROM test.lockstate WHERE id = 1 FOR UPDATE",
+    );
+    let (started_tx, started_rx) = std::sync::mpsc::channel();
+    let state = std::thread::scope(|scope| {
+        let waiter = scope.spawn(|| {
+            let mut writer = factory
+                .open_session(session_context(106))
+                .expect("session opens");
+            writer
+                .execute_write("SET SESSION innodb_lock_wait_timeout = 3")
+                .expect("set lock wait");
+            writer
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin writer");
+            started_tx.send(()).expect("writer started");
+            let result = writer.execute_write("UPDATE test.lockstate SET v = 2 WHERE id = 1");
+            let _ = writer.control_transaction("ROLLBACK");
+            result.map(|_| ())
+        });
+        started_rx.recv().expect("writer starts");
+        let mut observer = factory
+            .open_session(session_context(107))
+            .expect("session opens");
+        let mut state = Vec::new();
+        for _ in 0..40 {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            state = displayed(rows(
+                &mut observer,
+                "SELECT STATE FROM information_schema.TIDB_TRX WHERE SESSION_ID = 106",
+            ));
+            if state == [["LockWaiting"]] {
+                break;
+            }
+        }
+        holder
+            .control_transaction("ROLLBACK")
+            .expect("release holder");
+        waiter
+            .join()
+            .expect("writer thread")
+            .expect("the writer's lock is granted once the holder leaves");
+        state
+    });
+    assert_eq!(state, [["LockWaiting"]]);
+}
+
+/// Go `tidb_last_query_info.for_update_ts` is `TxnCtx.GetForUpdateTS` as the
+/// statement left it: a non-point pessimistic UPDATE fetches a fresh
+/// for-update timestamp (`GetStmtForUpdateTS`) above the transaction's start.
+#[test]
+fn a_pessimistic_range_update_reports_its_advanced_for_update_ts() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(108))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.futs (id int primary key, v int)",
+    );
+    rows(&mut session, "INSERT INTO test.futs VALUES (1, 1), (2, 2)");
+    session
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin");
+    session
+        .execute_write("UPDATE test.futs SET v = v + 1 WHERE v > 0")
+        .expect("update");
+    let info = rows(&mut session, "SELECT @@tidb_last_query_info");
+    let tidb_datatype::Datum::String(info) = &info[0][0] else {
+        panic!("tidb_last_query_info is a string: {info:?}");
+    };
+    let info: serde_json::Value =
+        serde_json::from_slice(info.bytes()).expect("tidb_last_query_info is JSON");
+    let start_ts = info["start_ts"].as_u64().expect("start_ts");
+    let for_update_ts = info["for_update_ts"].as_u64().expect("for_update_ts");
+    assert!(
+        for_update_ts > start_ts,
+        "for_update_ts {for_update_ts} must be the statement's fresh timestamp above {start_ts}"
+    );
+    session.control_transaction("ROLLBACK").expect("rollback");
+}
+
+/// Go's locking point reads lock inside `Next` exactly the keys their
+/// isolation names (`PointGetExecutor.Next` / `getAndLock`,
+/// `BatchPointGetExec.initialize`): repeatable read locks a unique index key
+/// and the row it names, and every named key even when it is absent; read
+/// committed locks only what exists. Each outcome was captured live against
+/// the Go server on TiKV with a contender probing the keys.
+#[test]
+fn locking_point_reads_hold_the_keys_their_isolation_names() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut setup = factory
+        .open_session(session_context(109))
+        .expect("session opens");
+    for sql in [
+        "CREATE TABLE test.lku (id int primary key, k int, v int, unique key uk(k))",
+        "CREATE TABLE test.lkt (id int primary key, v int)",
+        "INSERT INTO test.lku VALUES (1, 10, 1), (2, 20, 2)",
+        "INSERT INTO test.lkt VALUES (1, 1)",
+    ] {
+        rows(&mut setup, sql);
+    }
+    let cases: [(&str, &str, &str, bool); 5] = [
+        (
+            "REPEATABLE-READ",
+            "UPDATE test.lku SET v = v + 1 WHERE k = 10",
+            "SELECT * FROM test.lku WHERE k = 10 FOR UPDATE NOWAIT",
+            true,
+        ),
+        (
+            "REPEATABLE-READ",
+            "UPDATE test.lku SET v = v + 1 WHERE k = 90",
+            "INSERT INTO test.lku VALUES (9, 90, 9)",
+            true,
+        ),
+        (
+            "REPEATABLE-READ",
+            "UPDATE test.lku SET v = v + 1 WHERE k IN (10, 90)",
+            "INSERT INTO test.lku VALUES (9, 90, 9)",
+            true,
+        ),
+        (
+            "READ-COMMITTED",
+            "UPDATE test.lku SET v = v + 1 WHERE k IN (10, 90)",
+            "INSERT INTO test.lku VALUES (9, 90, 9)",
+            false,
+        ),
+        (
+            "READ-COMMITTED",
+            "UPDATE test.lkt SET v = v + 1 WHERE id = 9",
+            "INSERT INTO test.lkt VALUES (9, 9)",
+            false,
+        ),
+    ];
+    let mut writer = factory
+        .open_session(session_context(110))
+        .expect("session opens");
+    let mut contender = factory
+        .open_session(session_context(111))
+        .expect("session opens");
+    contender
+        .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
+        .expect("set lock wait");
+    for (isolation, statement, probe, held) in cases {
+        writer
+            .execute_write(&format!(
+                "SET SESSION transaction_isolation = '{isolation}'"
+            ))
+            .expect("set isolation");
+        writer
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin writer");
+        writer.execute_write(statement).expect("statement runs");
+        contender
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin contender");
+        let result = if probe.starts_with("SELECT") {
+            contender.execute(probe).map(|_| ())
+        } else {
+            contender.execute_write(probe).map(|_| ())
+        };
+        let probed = match result {
+            Ok(()) => false,
+            Err(error) => {
+                assert!(
+                    matches!(error.code, 1205 | 3572),
+                    "{probe}: {}",
+                    error.message
+                );
+                true
+            }
+        };
+        contender.control_transaction("ROLLBACK").expect("rollback");
+        writer.control_transaction("ROLLBACK").expect("rollback");
+        assert_eq!(probed, held, "{isolation}: {statement} / {probe}");
+    }
+}
+
+/// Go `updateRecord` inside a transaction (no `SkipWriteUntouchedIndices`)
+/// rewrites every untouched index entry into the memory buffer with the
+/// untouched flag (`index.create(untouched = true)`), and `TiDBKVFilter`
+/// keeps those entries out of the commit. Captured live against the Go
+/// server on TiKV: `TIDB_TRX.MEM_BUFFER_KEYS` is 3 after a one-row UPDATE of
+/// a non-indexed column of a table with two secondary indexes, 6 after the
+/// second row, and the committed table still checks clean.
+#[test]
+fn an_update_in_a_transaction_stages_untouched_index_entries_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(112))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.untouched (id int primary key, k int, c int, v int, \
+         unique key uk(k), key kc(c))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.untouched VALUES (1, 10, 100, 1), (2, 20, 200, 2)",
+    );
+    let keys = |session: &mut crate::cluster_session_node::ClusterServerSession| {
+        displayed(rows(
+            session,
+            "SELECT MEM_BUFFER_KEYS FROM information_schema.TIDB_TRX \
+             WHERE SESSION_ID = 112",
+        ))
+    };
+    session
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin");
+    session
+        .execute_write("UPDATE test.untouched SET v = v + 1 WHERE id = 1")
+        .expect("update");
+    assert_eq!(keys(&mut session), [["3"]]);
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT v FROM test.untouched USE INDEX(uk) WHERE k = 10",
+        )),
+        [["2"]]
+    );
+    session
+        .execute_write("UPDATE test.untouched SET v = v + 1 WHERE v > 1")
+        .expect("update");
+    assert_eq!(keys(&mut session), [["6"]]);
+    session.control_transaction("COMMIT").expect("commit");
+    session
+        .execute_write("ADMIN CHECK TABLE test.untouched")
+        .expect("the untouched entries were not committed");
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id, v FROM test.untouched USE INDEX(kc) WHERE c > 0 ORDER BY id",
+        )),
+        [["1", "3"], ["2", "3"]]
+    );
+}
+
 #[test]
 fn a_prepared_point_update_locks_its_row_before_reading_it() {
     use tidb_protocol::PreparedValue;
@@ -10301,10 +10682,12 @@ fn a_text_point_update_locks_its_row_before_reading_it() {
 /// another transaction holding key 0, `UPDATE t SET v = 9 WHERE id = 'abc'`
 /// fails at once with 1292 instead of waiting out the lock (1205).
 ///
-/// The truncation is raised by the store evaluating the pushed Selection.
-/// This in-process store still answers an evaluation error as a request
-/// error (1105) where Go's unistore and TiKV put it in
-/// `SelectResponse.error` (1292), so only the lock half is asserted here.
+/// The truncation is raised by the store evaluating the pushed Selection,
+/// which answers it in `SelectResponse.error` under its own code (Go
+/// unistore's `toPBError`, TiKV alike). The text is the evaluating engine's:
+/// TiKV's cast names INTEGER (captured), while Go's unistore -- like this
+/// store -- evaluates TiDB's `eq` over two doubles, whose string cast names
+/// DOUBLE.
 #[test]
 fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
     let (stack, _users) = cop_backed_stack();
@@ -10334,11 +10717,11 @@ fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
     writer
         .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
         .expect("set lock wait");
-    for sql in [
-        "UPDATE test.noprelock SET v = 9 WHERE id = 'abc'",
-        "UPDATE test.noprelock SET v = 9 WHERE id IN ('a', 'b')",
-        "DELETE FROM test.noprelock WHERE id = 'abc'",
-        "DELETE FROM test.noprelock WHERE id IN ('a', 'b')",
+    for (sql, value) in [
+        ("UPDATE test.noprelock SET v = 9 WHERE id = 'abc'", "abc"),
+        ("UPDATE test.noprelock SET v = 9 WHERE id IN ('a', 'b')", "a"),
+        ("DELETE FROM test.noprelock WHERE id = 'abc'", "abc"),
+        ("DELETE FROM test.noprelock WHERE id IN ('a', 'b')", "a"),
     ] {
         writer
             .control_transaction("BEGIN PESSIMISTIC")
@@ -10346,13 +10729,13 @@ fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
         let error = writer
             .execute_write(sql)
             .expect_err("the conversion fails the statement");
-        assert_ne!(error.code, 1205, "{sql} waited on the held key 0");
-        assert!(
-            error
-                .message
-                .contains("Truncated incorrect DOUBLE value: 'a"),
-            "{sql}: {}",
-            error.message
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                1292,
+                format!("Truncated incorrect DOUBLE value: '{value}'").as_str()
+            ),
+            "{sql} (1205 would be a wait on the held key 0)"
         );
         writer.control_transaction("ROLLBACK").expect("rollback");
     }

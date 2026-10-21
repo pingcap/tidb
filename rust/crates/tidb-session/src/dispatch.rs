@@ -1352,7 +1352,10 @@ impl Session {
                 let (running, history) = self.all_ddl_jobs()?;
                 let jobs = running.into_iter().chain(history).collect::<Vec<_>>();
                 let visibility = self.schema_visibility();
-                self.with_planning_catalog(|catalog| {
+                // Go `DDLJobsReaderExec.Open`: `DDLJobRetriever.is = e.is`,
+                // the statement's own InfoSchema -- the snapshot schema
+                // under `tidb_snapshot`, the transaction's otherwise.
+                self.with_catalog_mut(|catalog| {
                     Ok(infoschema::ddl_jobs_rows(&jobs, &visibility, catalog))
                 })?
             } else if table_name.go_lower_eq("PROFILING") {
@@ -1926,52 +1929,58 @@ impl Session {
     }
 
     /// The catalog `information_schema.TABLES` / `PARTITIONS` read their size
-    /// columns from: Go `TableRowStatsCache` (and `TableStorageStatsCache`
+    /// columns from: the statement's own schema image, with each table's
+    /// sizes estimated from Go `TableRowStatsCache` (and its column lengths
     /// with `needs_column_lengths`) through the node's provider, which serves
     /// its cache when a refresh fails; the in-process store answers from its
     /// own table statistics.
+    ///
+    /// Go's `setDataFromTables` / `setDataFromPartitions` walk the
+    /// statement's InfoSchema and refresh the cache for exactly those
+    /// physical IDs (`updateStatsCacheIfNeed(sctx, tbls)`), so a table the
+    /// statement's snapshot holds is sized even when a later DDL dropped it.
     pub(crate) fn table_storage_statistics_catalog(
         &mut self,
         needs_column_lengths: bool,
     ) -> Result<tidb_executor::Catalog, DriverError> {
-        let mut storage_statistics = None;
-        let mut storage_statistics_failed = false;
-        if let Some(provider) = &self.table_storage_stats {
-            match provider
-                .load_table_storage_statistics(&self.active_resource_group, needs_column_lengths)
-            {
-                Ok(statistics) => storage_statistics = Some(statistics),
-                // The production provider already mirrors Go's
-                // warn-and-serve-cache refresh, so it never returns Err; a
-                // seam provider that does is served with zero size columns
-                // for this statement rather than failing the query, matching
-                // Go's reader never failing on a stats refresh error. Go has
-                // no line for it: its refresh warning is the provider's.
-                Err(_) => storage_statistics_failed = true,
-            }
-        }
         let mut scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
-        if storage_statistics_failed {
-            scratch.clear_table_storage_statistics();
-        } else if let Some(statistics) = storage_statistics {
-            for table in statistics {
-                scratch.set_table_storage_statistics(
-                    table.table_id,
-                    table.table,
-                    &table.partitions,
-                );
+        let estimates = match &self.table_storage_stats {
+            Some(provider) => {
+                let physical_ids = tidb_executor::table_size_stats::physical_table_ids(&scratch);
+                match provider.load_table_row_stats(
+                    &self.active_resource_group,
+                    needs_column_lengths,
+                    &physical_ids,
+                ) {
+                    Ok(row_stats) => {
+                        tidb_executor::table_size_stats::table_storage_estimates_from_row_stats(
+                            &scratch, &row_stats,
+                        )
+                    }
+                    // The production provider already mirrors Go's
+                    // warn-and-serve-cache refresh, so it never returns Err;
+                    // a seam provider that does is served with zero size
+                    // columns for this statement rather than failing the
+                    // query, matching Go's reader never failing on a stats
+                    // refresh error. Go has no line for it: its refresh
+                    // warning is the provider's.
+                    Err(_) => {
+                        scratch.clear_table_storage_statistics();
+                        return Ok(scratch);
+                    }
+                }
             }
-        } else if self.table_storage_stats.is_none() {
             // The in-process store is its own statistics handle: Go's
             // `TableRowStatsCache` reads `stats_meta` and the column
             // histograms, which here are the catalog's table statistics.
-            for estimate in tidb_executor::table_size_stats::table_storage_estimates(&scratch) {
-                scratch.set_table_storage_statistics(
-                    estimate.table_id,
-                    estimate.table,
-                    &estimate.partitions,
-                );
-            }
+            None => tidb_executor::table_size_stats::table_storage_estimates(&scratch),
+        };
+        for estimate in estimates {
+            scratch.set_table_storage_statistics(
+                estimate.table_id,
+                estimate.table,
+                &estimate.partitions,
+            );
         }
         Ok(scratch)
     }
@@ -2601,51 +2610,25 @@ impl Session {
     /// is recorded on the transaction as `table id -> the LATEST domain
     /// schema version` at first use, and the metadata-lock gate blocks a DDL
     /// job while some live map holds one of its tables below the job's
-    /// version (`RemoveLockDDLJobs`). Go records at planner resolution; this
-    /// port records at the same statement funnel from the parsed names and
-    /// expands views to their concrete base-table IDs. A name that resolves
-    /// to no stored table reports `record_unresolved` and the gate falls back
-    /// to blocking conservatively.
+    /// version (`RemoveLockDDLJobs`). The preprocessor locks each name the
+    /// statement writes (`tableByName`), recorded here; the planner locks
+    /// every table it builds a data source for, a view's body included
+    /// (`buildDataSource`), through [`Session::mdl_related_table_recorder`]. A
+    /// name that resolves to nothing reports `record_unresolved` and the gate
+    /// falls back to blocking conservatively.
     ///
     /// Go's exemption is kept verbatim: a READ-ONLY statement under
     /// autocommit records nothing (`IsAutoCommitTxn && IsReadOnly` returns
     /// before the store), so the hot point-read path pays nothing here
     /// either.
     fn record_mdl_related_tables(&mut self, stmt: &Stmt, names: &[(String, String)]) {
-        let Some(sink) = self.mdl_related_tables.clone() else {
-            return;
-        };
         // Go's `IsAutoCommitTxn && StmtCtx.IsReadOnly` exemption does not
         // apply to locking reads. `SELECT ... FOR UPDATE/FOR SHARE` enters
         // the transaction's related-table map even when autocommit is on.
         let read_only = matches!(stmt, Stmt::Query(_)) && !query_has_lock(stmt);
-        if read_only && !self.in_transaction() && self.is_autocommit() {
-            return;
-        }
-        let version = self.cluster_schema_version_now();
-        let current_db = self.current_database().to_owned();
-        let catalog = match self.lock_catalog() {
-            Ok(catalog) => catalog,
-            Err(_) => {
-                sink.record_unresolved();
-                return;
-            }
-        };
-        for (db, table) in names {
-            let db = if db.is_empty() { &current_db } else { db };
-            match catalog.mdl_table_ids(db, table) {
-                Some(table_ids) => {
-                    for table_id in table_ids {
-                        sink.record_table(table_id, version);
-                        if let Some(process) = &self.process {
-                            process
-                                .registry()
-                                .transaction_related_table(process.id(), table_id);
-                        }
-                    }
-                }
-                None => sink.record_unresolved(),
-            }
+        self.mdl_statement_locks = !(read_only && !self.in_transaction() && self.is_autocommit());
+        if self.mdl_statement_locks {
+            self.record_mdl_named_tables(names);
         }
     }
 
@@ -2655,9 +2638,18 @@ impl Session {
     /// above), and inside an explicit transaction it records exactly that
     /// one table.
     fn record_mdl_related_table_names(&mut self, names: &[(String, String)]) {
-        if !self.in_transaction() {
-            return;
+        if let Ok(mut locked) = self.mdl_statement_tables.lock() {
+            locked.clear();
         }
+        self.mdl_statement_locks = self.in_transaction();
+        if self.mdl_statement_locks {
+            self.record_mdl_named_tables(names);
+        }
+    }
+
+    /// The preprocessor's half: each name the statement writes, as its own
+    /// stored object.
+    fn record_mdl_named_tables(&mut self, names: &[(String, String)]) {
         let Some(sink) = self.mdl_related_tables.clone() else {
             return;
         };
@@ -2672,17 +2664,23 @@ impl Session {
         };
         for (db, table) in names {
             let db = if db.is_empty() { &current_db } else { db };
-            match catalog.mdl_table_ids(db, table) {
-                Some(table_ids) => {
-                    for table_id in table_ids {
-                        sink.record_table(table_id, version);
-                        if let Some(process) = &self.process {
-                            process
-                                .registry()
-                                .transaction_related_table(process.id(), table_id);
-                        }
+            match catalog.related_table_id_for_mdl(db, table) {
+                Some(Some(table_id)) => {
+                    if !self
+                        .mdl_statement_tables
+                        .lock()
+                        .is_ok_and(|mut locked| locked.insert(table_id))
+                    {
+                        continue;
+                    }
+                    sink.record_table(table_id, version);
+                    if let Some(process) = &self.process {
+                        process
+                            .registry()
+                            .transaction_related_table(process.id(), table_id);
                     }
                 }
+                Some(None) => {}
                 None => sink.record_unresolved(),
             }
         }
@@ -2960,6 +2958,12 @@ impl Session {
         select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
+        // A statement locks nothing until its preprocessing decides it does
+        // (`record_mdl_related_tables`).
+        self.mdl_statement_locks = false;
+        if let Ok(mut locked) = self.mdl_statement_tables.lock() {
+            locked.clear();
+        }
         if tidb_util::sem_v2::is_enabled()
             && tidb_util::sem_v2::is_restricted_sql(&sem_stmt_view(&stmt))
             && !self.has_dynamic_privilege("RESTRICTED_SQL_ADMIN", false)

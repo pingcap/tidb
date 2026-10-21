@@ -1542,6 +1542,18 @@ fn rewrite_row_comparison(
     compose_comparisons(BinaryOp::LogicOr, comparisons, resolver)
 }
 
+/// Go `expression.CheckArgsNotMultiColumnRow` at a rewriter step: an
+/// operator that takes one value refuses a row (`ErrOperandColumns`, 1241).
+fn ensure_single_column(args: &[&Expression]) -> Result<(), EvalError> {
+    if args
+        .iter()
+        .any(|arg| crate::expr_util::get_row_len(arg) != 1)
+    {
+        return Err(EvalError::OperandColumns(1));
+    }
+    Ok(())
+}
+
 /// Rewrites a parsed AST expression without a column scope.
 pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
     rewrite_expr_resolved(expr, &NoResolver)
@@ -1916,6 +1928,41 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             let resolver = &child_resolver;
             let left = rewrite_expr_resolved(lhs, resolver)?;
             let right = rewrite_expr_resolved(rhs, resolver)?;
+            // Go `binaryOpToExpression`: only a comparison takes a row, and
+            // `constructBinaryOpFunction` compares rows of one arity element
+            // by element (a folded scalar subquery is a built row).
+            if matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::NullEq
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+            ) {
+                let (l_len, r_len) = (
+                    crate::expr_util::get_row_len(&left),
+                    crate::expr_util::get_row_len(&right),
+                );
+                if l_len != r_len {
+                    return Err(EvalError::OperandColumns(l_len));
+                }
+                if let (Expression::ScalarFunction(l_row), Expression::ScalarFunction(r_row)) =
+                    (&left, &right)
+                {
+                    if l_len != 1 {
+                        return row_comparison_of_built(
+                            *op,
+                            l_row.get_args(),
+                            r_row.get_args(),
+                            resolver,
+                        );
+                    }
+                }
+            } else {
+                ensure_single_column(&[&left, &right])?;
+            }
             // Result types come from the transcreated function classes:
             // builtin_arithmetic (plus/minus/mul/div/intdiv/mod),
             // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
@@ -2860,6 +2907,8 @@ fn rewrite_leaf_compound(
         // so the wrapping NOT is exact.
         Expr::Is { expr, target, not } => {
             let arg = rewrite_expr_resolved(expr, resolver)?;
+            // Go `isNullToExpression` / `isTrueToScalarFunc`.
+            ensure_single_column(&[&arg])?;
             let name = match target {
                 // `IS UNKNOWN` is `IS NULL` (Go maps both to isnull).
                 IsTarget::Null | IsTarget::Unknown => "isnull",
@@ -2908,6 +2957,8 @@ fn rewrite_leaf_compound(
             if matches!(op, UnaryOp::Plus) {
                 return Ok(arg);
             }
+            // Go `unaryOpToExpression`.
+            ensure_single_column(&[&arg])?;
             let name = unary_op_name(*op);
             // not/bitneg/unaryminus result types come from the transcreated
             // builtin_op function classes; anything uncovered (the deferred
@@ -3474,6 +3525,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             validate_cast_type(cast)?;
             let (name, ret_type) = resolved_cast_target(cast, resolver)?;
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
+            // Go `Leave(*ast.FuncCastExpr)`.
+            ensure_single_column(&[&arg])?;
             // `CAST(x AS BINARY)` is Go's `funcPropAuto` binary-result arm:
             // a gbk-charset argument transcodes on the way in, which is why
             // `HEX(CAST(gbk_col AS BINARY))` reports the GBK bytes; a binary

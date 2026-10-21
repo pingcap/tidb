@@ -492,20 +492,26 @@ pub(crate) fn run_correlated_subquery(
     }
 
     let bound = bind_subquery_columns_query(&correlated.query, &bindings)?;
-    let (_, rows) = run_query_stmt(&bound, catalog, current_db, ctx)?;
+    let (columns, rows) = run_query_stmt(&bound, catalog, current_db, ctx)?;
+    // Go plans a correlated scalar subquery of several columns as a `row`
+    // over the Apply's columns, which a scalar position refuses at rewrite
+    // time (`CheckArgsNotMultiColumnRow`), before any row is read.
+    if matches!(correlated.kind, SubqueryKind::Scalar) && columns.len() > 1 {
+        return Err(DriverError::Exec(ExecError::Eval(
+            tidb_expr::EvalError::OperandColumns(1),
+        )));
+    }
     match &correlated.kind {
         // EXISTS folds to 1/0 per outer row.
         SubqueryKind::Exists { not } => Ok(Datum::Int(i64::from(!rows.is_empty() != *not))),
         SubqueryKind::Scalar => match rows.len() {
             0 => Ok(Datum::Null),
-            1 => {
-                let [value] = rows[0].as_slice() else {
-                    return Err(DriverError::unsupported(
-                        "a scalar subquery selecting several columns is not supported yet",
-                    ));
-                };
-                Ok(value.clone())
-            }
+            1 => match rows[0].as_slice() {
+                [value] => Ok(value.clone()),
+                _ => Err(DriverError::Exec(ExecError::Eval(
+                    tidb_expr::EvalError::OperandColumns(1),
+                ))),
+            },
             _ => Err(DriverError::SubqueryReturnsMoreThanOneRow),
         },
         // The semi-join shapes: this outer row's inner result becomes a value
@@ -865,19 +871,24 @@ pub(crate) fn fold_subqueries(
     }
     Ok(match expr {
         Expr::Subquery(query) => {
-            let rows = run_subquery(query, catalog, current_db, ctx)?;
+            let (columns, rows) = run_query_stmt(query, catalog, current_db, ctx)?;
             match rows.len() {
+                // Go `handleScalarSubquery`: a subquery selecting several
+                // columns is a `row` of its values (NULLs without a row); the
+                // enclosing rewrite decides whether a row may stand there
+                // (`ErrOperandColumns` otherwise).
+                0 if columns.len() > 1 => Expr::Row(vec![Expr::Null; columns.len()]),
                 // Go: a scalar subquery with no rows is NULL.
                 0 => Expr::Null,
-                1 => {
-                    let row = &rows[0];
-                    let [value] = row.as_slice() else {
-                        return Err(DriverError::unsupported(
-                            "a scalar subquery selecting several columns is not supported yet",
-                        ));
-                    };
-                    datum_to_literal(value)?
-                }
+                1 => match rows[0].as_slice() {
+                    [value] => datum_to_literal(value)?,
+                    values => Expr::Row(
+                        values
+                            .iter()
+                            .map(datum_to_literal)
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                },
                 // Go's buildMaxOneRow raises ER_SUBQUERY_NO_1_ROW here.
                 _ => return Err(DriverError::SubqueryReturnsMoreThanOneRow),
             }

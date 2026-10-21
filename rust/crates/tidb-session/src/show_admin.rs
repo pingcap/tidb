@@ -750,7 +750,9 @@ impl crate::Session {
         // Go `ShowDDLJobsExec.Next`: every running job, then at most
         // `job_number` history jobs.
         let (running, history) = self.all_ddl_jobs()?;
-        let rows = self.with_planning_catalog(|catalog| {
+        // Go `ShowDDLJobsExec.Open`: names resolve through the statement's
+        // InfoSchema (`DDLJobRetriever.is = e.is`).
+        let rows = self.with_catalog_mut(|catalog| {
             Ok(running
                 .iter()
                 .chain(history.iter().take(job_number))

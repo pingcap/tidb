@@ -46,13 +46,15 @@ fn ddl_error_count_limit_publishes_set_load_and_reset() {
         .run("SET GLOBAL tidb_ddl_error_count_limit = 7")
         .unwrap();
     assert_eq!(tidb_vardef::ddl_error_count_limit(), 7);
-    // A DDL worker can load a peer's committed limit before this registry
-    // refreshes. An unrelated SET must not republish its stale copy.
+    // Every `SET GLOBAL` rebuilds the sysvar cache from the table (Go
+    // `NotifyUpdateSysVarCache(true)`), and the rebuild runs each variable's
+    // SetGlobal hook with its stored value, so an unrelated SET republishes
+    // the stored limit over a value written behind the table's back.
     tidb_vardef::set_ddl_error_count_limit(3);
     session
         .run("SET GLOBAL max_allowed_packet = 67108864")
         .unwrap();
-    assert_eq!(tidb_vardef::ddl_error_count_limit(), 3);
+    assert_eq!(tidb_vardef::ddl_error_count_limit(), 7);
     globals.load_from_cluster(vec![(
         "tidb_ddl_error_count_limit".to_owned(),
         "0".to_owned(),
@@ -1368,9 +1370,12 @@ fn resource_control_global_hooks_publish_process_switches() {
     tidb_vardef::ENABLE_RESOURCE_CONTROL_STRICT_MODE
         .store(true, std::sync::atomic::Ordering::SeqCst);
 
+    // Opening a session builds the sysvar cache (Go's domain init runs
+    // `rebuildSysVarCache`), and the rebuild runs both SetGlobal hooks with
+    // the registry values, publishing the process switches.
     let (mut session, _peer, _globals) = two_sessions_sharing_globals();
     assert!(session.vars().resource_control_enabled());
-    assert!(!tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
+    assert!(tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst));
     assert!(session.vars().resource_control_strict_mode());
 
     session
@@ -2068,6 +2073,78 @@ fn global_noop_gate_cannot_be_disabled_while_read_only_is_on() {
     session
         .run("SET GLOBAL tidb_enable_noop_functions = OFF")
         .unwrap();
+}
+
+/// Go `SetGlobalSysVar` -> `NotifyUpdateSysVarCache(true)` rebuilds the
+/// sysvar cache from `mysql.global_variables`, so a row written straight
+/// into the table becomes the GLOBAL value -- and a new session's copy -- at
+/// the next `SET GLOBAL` of any variable. Captured from Go
+/// (`probe_reload.py`): 24 after the UPDATE, 23 after the unrelated SET, and
+/// `(23, 23)` for a new session's `@@x, @@global.x`.
+#[test]
+fn set_global_rebuilds_the_sysvar_cache_from_the_in_process_table() {
+    let mut session = Session::new();
+    session
+        .run(
+            "UPDATE mysql.global_variables SET variable_value = '23' \
+             WHERE variable_name = 'tidb_stmt_summary_history_size'",
+        )
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_stmt_summary_history_size"
+        ),
+        Some("24".to_owned())
+    );
+    session
+        .run("SET GLOBAL tidb_stmt_summary_max_sql_length = 32768")
+        .unwrap();
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT @@global.tidb_stmt_summary_history_size"
+        ),
+        Some("23".to_owned())
+    );
+    let mut peer = Session::with_catalog(session.shared_catalog());
+    peer.attach_globals(session.vars().global_sysvars())
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut peer, "SELECT @@tidb_stmt_summary_history_size"),
+        Some("23".to_owned())
+    );
+}
+
+/// Go `SysVar.SkipInit` leaves a `skipInit` variable out of a new session's
+/// copy; `GetSessionOrGlobalSystemVar` stores the GLOBAL value into the
+/// session at its first read. Captured from Go (`probe_skipinit.py`): a
+/// session that never read `tidb_opt_tiflash_concurrency_factor` reads the
+/// new global after `SET GLOBAL` (31), one that read it first keeps its value
+/// (24), and once read a later `SET GLOBAL` no longer reaches it.
+#[test]
+fn skip_init_globals_are_read_through_once_then_kept() {
+    let (mut setter, mut reader, globals) = two_sessions_sharing_globals();
+    let mut unread = Session::with_catalog(setter.shared_catalog());
+    unread.set_user("root@%".to_owned(), "root@%".to_owned());
+    unread.attach_globals(globals.clone()).unwrap();
+    let read = |session: &mut Session| {
+        scalar_text(session, "SELECT @@tidb_opt_tiflash_concurrency_factor")
+    };
+    assert_eq!(read(&mut reader), Some("24".to_owned()));
+    setter
+        .run("SET GLOBAL tidb_opt_tiflash_concurrency_factor = 31")
+        .unwrap();
+    assert_eq!(read(&mut unread), Some("31".to_owned()));
+    assert_eq!(read(&mut reader), Some("24".to_owned()));
+    let mut fresh = Session::with_catalog(setter.shared_catalog());
+    fresh.attach_globals(globals).unwrap();
+    assert_eq!(read(&mut fresh), Some("31".to_owned()));
+    setter
+        .run("SET GLOBAL tidb_opt_tiflash_concurrency_factor = 32")
+        .unwrap();
+    assert_eq!(read(&mut unread), Some("31".to_owned()));
+    assert_eq!(read(&mut fresh), Some("31".to_owned()));
 }
 
 /// Go `SysVar.SkipInit` includes `IsNoop` variables, so a fresh session holds

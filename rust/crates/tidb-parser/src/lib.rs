@@ -356,6 +356,35 @@ pub fn parse_multi_with_sql_mode_and_config(
     parse_multi_with_parser(sql, &mut parser)
 }
 
+/// Go `parser.New()`, `SetParserConfig(config)`, then `ParseOneStmt(sql,
+/// charset, collation)`: the new parser's own `ModeNone` SQL mode and default
+/// scanner encodings, the session's switches, and string literals typed with
+/// `charset`/`collation`. `BuildDataSourceFromView` parses a stored view body
+/// this way, with the session's `GetCharsetInfo()`.
+pub fn parse_with_config_and_connection(
+    sql: &str,
+    config: ParserConfig,
+    charset: &str,
+    collation: &str,
+) -> PResult<Stmt> {
+    let encodings = ParserConfig {
+        charset_client: ParserConfig::default().charset_client,
+        charset_connection: ParserConfig::default().charset_connection,
+        ..config
+    };
+    let mut parser = Parser::new_with_all_configuration(
+        sql,
+        false,
+        SqlMode::default(),
+        charset,
+        collation,
+        config.enable_window_function,
+        encodings,
+    );
+    parser.strict_double_type_check = config.enable_strict_double_type_check;
+    parse_one_with_parser(sql, &mut parser)
+}
+
 /// Parses one statement with Go's `Parser.SetStrictDoubleTypeCheck` switch.
 /// The ordinary [`parse`] entry point keeps TiDB's strict default.
 pub fn parse_with_strict_double_type_check(sql: &str, enabled: bool) -> PResult<Stmt> {

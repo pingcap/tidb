@@ -32,7 +32,8 @@
 //! into the AST is the stored definition: every `*` unfolded into qualified
 //! columns, every field aliased, GROUP BY positions and aliases replaced by
 //! the select field's expression, and each column inside an aggregate of
-//! HAVING or ORDER BY replaced by the select field it resolves to.
+//! HAVING, ORDER BY or a window function replaced by the select field it
+//! resolves to.
 //!
 //! This builder reads the AST through shared references and never mutates it
 //! (the marker spec's rule 5), so each `SelectStmt` build RECORDS the writes
@@ -80,6 +81,8 @@ pub struct ExpandedSelect {
     pub having: Option<Expr>,
     /// Each `sel.OrderBy.Items[i].Expr` after the same resolver.
     pub order_by: Vec<Expr>,
+    /// `sel.WindowSpecs` after `resolveWindowFunction`.
+    pub windows: Vec<(String, tidb_ast::WindowDef)>,
 }
 
 /// Go `checkForUserVariables` (`planbuilder.go:5291`): any `ast.VariableExpr`
@@ -174,6 +177,7 @@ pub fn apply_expanded_selects(query: &mut QueryStmt, expanded: &BTreeMap<i32, Ex
             for (item, expr) in select.order_by.iter_mut().zip(&expanded.order_by) {
                 item.expr = expr.clone();
             }
+            select.windows = expanded.windows.clone();
             false
         }
 
@@ -266,45 +270,81 @@ fn resolve_from_plan_name(plan: &LogicalPlan, path: &[String]) -> Option<FieldNa
 /// it resolves to, `return a.selectFields[index].Expr, true`. A plan column
 /// takes the first select field that is that column (`c.Name.Match`), or else
 /// the auxiliary field `resolveFromPlan` appends, its fully qualified name; a
-/// name only the select list knows takes that field's expression; a column of
-/// an outer query stays. Subqueries are another context and are skipped.
-fn expand_aggregate_columns(expr: &mut Expr, fields: &[ProjectionField], plan: &LogicalPlan) {
-    visit_exprs(expr, &mut |node| {
-        if !is_aggregate_call(node) {
-            return false;
-        }
-        visit_exprs(node, &mut |inner| {
-            let Expr::Column(path) = inner else {
+/// name only the select list knows takes that field's expression when the
+/// clause falls back to the select list (`select_list_fallback`: HAVING and
+/// ORDER BY, not the select list or a window specification); a column of an
+/// outer query stays. Subqueries are another context and are skipped.
+fn expand_aggregate_columns<N: tidb_ast::Visitable>(
+    node: &mut N,
+    fields: &[ProjectionField],
+    plan: &LogicalPlan,
+    select_list_fallback: bool,
+) {
+    struct Expander<'a> {
+        fields: &'a [ProjectionField],
+        plan: &'a LogicalPlan,
+        select_list_fallback: bool,
+    }
+    impl tidb_ast::Visitor for Expander<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if node.is::<QueryStmt>() {
+                return true;
+            }
+            let Some(expr) = node.downcast_mut::<Expr>() else {
                 return false;
             };
-            if let Some(name) = resolve_from_plan_name(plan, path) {
-                let resolved = (
-                    name.names.database.original.as_str(),
-                    name.names.table.original.as_str(),
-                    name.names.column.original.as_str(),
-                );
-                let written = fields.iter().find_map(|field| match &field.expr {
-                    Expr::Column(own) if column_name_match(own, resolved) => {
-                        Some(field.expr.clone())
-                    }
-                    _ => None,
-                });
-                *inner = written.unwrap_or_else(|| {
-                    Expr::Column(
-                        [resolved.0, resolved.1, resolved.2]
-                            .into_iter()
-                            .filter(|part| !part.is_empty())
-                            .map(str::to_owned)
-                            .collect(),
-                    )
-                });
-            } else if let Ok(Some(index)) = resolve_from_select_fields(path, fields, false) {
-                *inner = fields[index].expr.clone();
+            if !is_aggregate_call(expr) {
+                return false;
             }
+            let (fields, plan) = (self.fields, self.plan);
+            let select_list_fallback = self.select_list_fallback;
+            visit_exprs(expr, &mut |inner| {
+                let Expr::Column(path) = inner else {
+                    return false;
+                };
+                if let Some(name) = resolve_from_plan_name(plan, path) {
+                    let resolved = (
+                        name.names.database.original.as_str(),
+                        name.names.table.original.as_str(),
+                        name.names.column.original.as_str(),
+                    );
+                    let written = fields.iter().find_map(|field| match &field.expr {
+                        Expr::Column(own) if column_name_match(own, resolved) => {
+                            Some(field.expr.clone())
+                        }
+                        _ => None,
+                    });
+                    *inner = written.unwrap_or_else(|| {
+                        Expr::Column(
+                            [resolved.0, resolved.1, resolved.2]
+                                .into_iter()
+                                .filter(|part| !part.is_empty())
+                                .map(str::to_owned)
+                                .collect(),
+                        )
+                    });
+                } else if select_list_fallback {
+                    if let Ok(Some(index)) = resolve_from_select_fields(path, fields, false) {
+                        *inner = fields[index].expr.clone();
+                    }
+                }
+                true
+            });
             true
-        });
-        true
-    });
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    tidb_ast::Visitable::accept(
+        node,
+        &mut Expander {
+            fields,
+            plan,
+            select_list_fallback,
+        },
+    );
 }
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
@@ -483,29 +523,41 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .as_ref()
             .map(|having| self.written_expr(having));
         if let Some(having) = having.as_mut() {
-            expand_aggregate_columns(having, fields, plan);
+            expand_aggregate_columns(having, fields, plan, true);
         }
-        // An ORDER BY item with a window call is `resolveWindowFunction`'s,
-        // which `resolveHavingAndOrderBy` skips.
+        // `resolveHavingAndOrderBy` takes the ORDER BY items without a window
+        // call, and `resolveWindowFunction` the others, both in ORDER BY's
+        // clause.
         let order_by = select
             .order_by
             .iter()
             .map(|item| {
                 let mut expr = self.written_expr(&item.expr);
-                if !has_window_flag(&expr) {
-                    expand_aggregate_columns(&mut expr, fields, plan);
-                }
+                expand_aggregate_columns(&mut expr, fields, plan, true);
                 expr
             })
             .collect();
+        // `resolveWindowFunction` over the select list: each field with a
+        // window call, and each named window, in the field-list clause.
+        let mut windows = select.windows.clone();
+        for (_, window) in &mut windows {
+            expand_aggregate_columns(window, fields, plan, false);
+        }
         let expanded = ExpandedSelect {
             fields: fields
                 .iter()
-                .map(|field| SelectField::Expr {
-                    expr: field.expr.clone(),
-                    alias: field.alias.clone(),
+                .map(|field| {
+                    let mut expr = field.expr.clone();
+                    if has_window_flag(&expr) {
+                        expand_aggregate_columns(&mut expr, fields, plan, false);
+                    }
+                    SelectField::Expr {
+                        expr,
+                        alias: field.alias.clone(),
+                    }
                 })
                 .collect(),
+            windows,
             group_by: gby_exprs
                 .iter()
                 .map(|expr| self.written_expr(expr))

@@ -78,6 +78,8 @@ pub struct NestedLoopApplyExec {
     active_outer: Option<usize>,
     has_match: bool,
     has_null: bool,
+    /// Set only by a failed inner fetch, which leaves no iterator to resume;
+    /// an exhausted outer child is asked again on every call, as in Go.
     done: bool,
 }
 impl NestedLoopApplyExec {
@@ -292,8 +294,9 @@ impl NestedLoopApplyExec {
             if self.outer_cursor >= self.outer_chunk.num_rows() {
                 let previous_cursor = self.outer_cursor;
                 self.outer.next(&mut self.outer_chunk)?;
+                // Go keeps no end-of-input state: the next call's
+                // `fetchSelectedOuterRow` asks the outer child again.
                 if self.outer_chunk.num_rows() == 0 {
-                    self.done = true;
                     return Ok(false);
                 }
                 self.outer_selected = if let Some(selected) = self.preset_outer_selection {

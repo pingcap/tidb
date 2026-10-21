@@ -1879,7 +1879,11 @@ fn cast_to_time_value(
         Err(Some(tidb_datatype::TimeError::Syntax))
             if matches!(v, Datum::String(_) | Datum::Bytes(_)) =>
         {
-            ctx.append_warning(8034, &format!("Incorrect datetime value: '{s}'"));
+            handle_invalid_time_error(
+                ctx,
+                tidb_error::tidb::errcode::ErrIncorrectDatetimeValue,
+                &format!("Incorrect datetime value: '{s}'"),
+            )?;
             return Ok(None);
         }
         Err(_) => {
@@ -1888,7 +1892,7 @@ fn cast_to_time_value(
             // numeric sources parse the INT64/FLOAT reinterpretations and warn
             // `Incorrect time value: '<int64>'` (a u64 overflow reads -1).
             if matches!(v, Datum::String(_) | Datum::Bytes(_)) {
-                invalid_time_warning(ctx, &s, fsp.unwrap_or(0));
+                invalid_time_warning(ctx, &s, fsp.unwrap_or(0))?;
             } else if matches!(v, Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_)) {
                 // The DECIMAL/REAL sources read the value through
                 // `ParseTimeFromFloatString` -- the same wall-clock TEXT parser
@@ -1896,7 +1900,7 @@ fn cast_to_time_value(
                 // the DATETIME word and the full decimal text (`cast(2.5 as
                 // datetime)` warns `Incorrect datetime value: '2.5'`, not a
                 // truncated integer).
-                invalid_time_warning(ctx, &s, fsp.unwrap_or(0));
+                invalid_time_warning(ctx, &s, fsp.unwrap_or(0))?;
             } else {
                 // go ParseTimeFromNum consumes the number's INT64 WRAP: a u64
                 // overflow wraps to -1 (not the saturating i64::MAX).
@@ -1907,7 +1911,11 @@ fn cast_to_time_value(
                         .map(|converted| format!("{}", converted.value))
                         .unwrap_or_else(|_| s.clone()),
                 };
-                ctx.append_warning(1292, &format!("Incorrect time value: '{signed}'"));
+                handle_invalid_time_error(
+                    ctx,
+                    tidb_error::tidb::errcode::ErrTruncatedWrongValue,
+                    &format!("Incorrect time value: '{signed}'"),
+                )?;
             }
             return Ok(None);
         }
@@ -2381,7 +2389,32 @@ fn real_to_time(
 
 /// Go `handleInvalidTimeError` on the read path: `ErrWrongValue` (1292)
 /// becomes a warning and the cast yields NULL.
-fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) {
+/// Go `handleInvalidTimeError` -> `errctx.HandleError`: a time conversion
+/// failure belongs to `ErrGroupTruncate`, so it warns in a read or a
+/// non-strict write and fails a strict INSERT/UPDATE/DELETE.
+fn handle_invalid_time_error(
+    ctx: &dyn crate::Columns,
+    code: u16,
+    message: &str,
+) -> Result<(), EvalError> {
+    match ctx.truncate_level() {
+        crate::ErrorLevel::Ignore => Ok(()),
+        crate::ErrorLevel::Warn => {
+            ctx.append_warning(code, message);
+            Ok(())
+        }
+        crate::ErrorLevel::Error
+            if code == tidb_error::tidb::errcode::ErrIncorrectDatetimeValue =>
+        {
+            Err(EvalError::Conversion(
+                tidb_datatype::ERR_INCORRECT_DATETIME_VALUE.generate(message.to_owned()),
+            ))
+        }
+        crate::ErrorLevel::Error => Err(EvalError::TruncatedWrongValue(message.to_owned())),
+    }
+}
+
+fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) -> Result<(), EvalError> {
     // go splits the failure classes by SHAPE (oracle-captured):
     //  * the ZERO date renders through the parsed value with its fsp
     //    (`'0000-00-00 00:00:00.000000'` for fsp 6 -- g-fsp);
@@ -2417,18 +2450,21 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) {
             } else {
                 String::new()
             };
-            ctx.append_warning(
+            return handle_invalid_time_error(
+                ctx,
                 1292,
                 &format!("Incorrect datetime value: '0000-00-00 00:00:00{fraction}'"),
             );
-            return;
         }
         // Go `checkMonthDay` renders a month past 12 from the parsed parts,
         // unpadded, like an out-of-range day (`'2024-13-1'`).
         if month > 12 && head[2].bytes().all(|byte| byte.is_ascii_digit()) {
             let rendered = format!("{year}-{month}-{day}");
-            ctx.append_warning(1292, &format!("Incorrect datetime value: '{rendered}'"));
-            return;
+            return handle_invalid_time_error(
+                ctx,
+                1292,
+                &format!("Incorrect datetime value: '{rendered}'"),
+            );
         }
         if (1..=12).contains(&month) && (1..=31).contains(&day) {
             let days_in_month = match month {
@@ -2445,12 +2481,15 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) {
             };
             if day > days_in_month && head[2].bytes().all(|byte| byte.is_ascii_digit()) {
                 let rendered = format!("{year}-{month}-{day}");
-                ctx.append_warning(1292, &format!("Incorrect datetime value: '{rendered}'"));
-                return;
+                return handle_invalid_time_error(
+                    ctx,
+                    1292,
+                    &format!("Incorrect datetime value: '{rendered}'"),
+                );
             }
         }
     }
-    ctx.append_warning(1292, &format!("Incorrect datetime value: '{input}'"));
+    handle_invalid_time_error(ctx, 1292, &format!("Incorrect datetime value: '{input}'"))
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a

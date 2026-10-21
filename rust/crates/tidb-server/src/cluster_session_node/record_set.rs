@@ -185,7 +185,6 @@ impl ClusterServerSession {
     pub(super) fn open_statement_result<'a>(
         &'a mut self,
         shape: StatementReadShape,
-        bind_prelock_keys: impl FnOnce(&Session) -> Vec<Vec<u8>>,
         resource_group: &str,
         mut run: impl FnMut(&mut Session) -> Result<OpenedStatement, SqlQueryError>,
     ) -> Result<QueryResult<'a>, SqlQueryError> {
@@ -207,35 +206,27 @@ impl ClusterServerSession {
                 .as_ref()
                 .is_some_and(|transaction| transaction.is_pessimistic());
         let (opened, snapshot) = if buffers_rows || shape == StatementReadShape::AutocommitWrite {
-            let prelock_keys = self.bind_statement_prelocks(shape, bind_prelock_keys);
             // The drained record set of the latest attempt stays here, outside
             // the attempt loop, until the statement's outcome is known: a step
             // after the drain (the pessimistic lock) can still fail the
             // statement, and only this owner can close it with that error.
             let mut drained: Option<StatementRecordSet> = None;
-            let opened = self.with_bound_statement(
-                shape,
-                &prelock_keys,
-                resource_group,
-                true,
-                false,
-                |session| {
-                    // A lock-conflict retry re-executes: Go closes the losing
-                    // attempt's executor and finishes the statement once.
-                    drained = None;
-                    match run(session)? {
-                        OpenedStatement::Rows(mut state) => {
-                            if let Err(error) = state.retain_chunks(session) {
-                                let _ = state.close(session);
-                                return Err(map_error(error));
-                            }
-                            drained = Some(state);
-                            Ok(None)
+            let opened = self.with_bound_statement(shape, resource_group, true, false, |session| {
+                // A lock-conflict retry re-executes: Go closes the losing
+                // attempt's executor and finishes the statement once.
+                drained = None;
+                match run(session)? {
+                    OpenedStatement::Rows(mut state) => {
+                        if let Err(error) = state.retain_chunks(session) {
+                            let _ = state.close(session);
+                            return Err(map_error(error));
                         }
-                        opened => Ok(Some(opened)),
+                        drained = Some(state);
+                        Ok(None)
                     }
-                },
-            );
+                    opened => Ok(Some(opened)),
+                }
+            });
             let opened = match opened {
                 Ok(Some(opened)) => opened,
                 Ok(None) => OpenedStatement::Rows(
@@ -316,7 +307,7 @@ impl ClusterServerSession {
                         WireStatus::of_session(&self.session),
                     )
                     .with_statement_output(
-                        0,
+                        self.session.statement_affected_rows(),
                         self.session.statement_insert_id(),
                         self.session.statement_message().as_bytes().to_vec(),
                     ))
@@ -331,7 +322,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         Some(StatementStatus {
             warnings: session.wire_warning_count(),
             status: WireStatus::of_session(session),
-            affected_rows: 0,
+            affected_rows: session.statement_affected_rows(),
             last_insert_id: session.statement_insert_id(),
             info: session.statement_message().as_bytes(),
         })

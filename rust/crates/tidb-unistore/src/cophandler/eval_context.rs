@@ -39,19 +39,18 @@ impl RequestEvalContext {
         }
     }
 
-    pub(super) fn condition_value(&self, value: &Datum) -> Result<i128, String> {
+    pub(super) fn condition_value(&self, value: &Datum) -> Result<i128, super::CopExecError> {
         let converted = value.to_bool().map_err(|err| format!("{err:?}"))?;
         if converted.event.is_some() {
             let text = match value {
                 Datum::String(value) => value.as_utf8().map_err(|err| err.to_string())?,
                 Datum::Bytes(value) => std::str::from_utf8(value).map_err(|err| err.to_string())?,
-                _ => return Err("unsupported condition conversion event".to_owned()),
+                _ => return Err("unsupported condition conversion event".to_owned().into()),
             };
             self.handle_truncate(&format!(
                 "Truncated incorrect DOUBLE value: '{}'",
                 tidb_datatype::float_warning_input(text)
-            ))
-            .map_err(|err| format!("{err:?}"))?;
+            ))?;
         }
         Ok(i128::from(converted.value))
     }

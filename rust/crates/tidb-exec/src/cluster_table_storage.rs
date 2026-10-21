@@ -201,13 +201,16 @@ fn acquire_statement_locks<S: StoreClient>(
     presume_not_exists: &BTreeSet<Vec<u8>>,
     duplicate_hints: &BTreeMap<Vec<u8>, DuplicateKeyHint>,
     return_values: bool,
+    lock_only_if_exists: bool,
     wait: LockWaitTime,
     call: &UnaryCallContext,
 ) -> LockKeysOutcome {
     // KVTxn owns held-key filtering, existence checks, rollback of partial
     // lock attempts, and fair-lock retry state. TiDB only classifies the SQL
     // result and asks its statement provider for a newer read timestamp.
-    let result = if return_values {
+    let result = if lock_only_if_exists {
+        transaction.acquire_locks_returning_values_if_exist(keys, wait, call)
+    } else if return_values {
         transaction.acquire_locks_returning_values(keys, presume_not_exists, wait, call)
     } else {
         transaction.acquire_locks(keys, presume_not_exists, wait, call)
@@ -995,6 +998,53 @@ impl<S: StoreClient> SessionTransaction<S> {
         )
     }
 
+    /// Go `lockKeyIfExists` under read committed: locks only the keys that
+    /// exist, caching every key's returned value for the statement's reads.
+    pub fn lock_keys_with_values_if_exist(
+        &self,
+        keys: Vec<Vec<u8>>,
+        wait: LockWaitTime,
+    ) -> Result<LockKeysOutcome, StorageError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        arm_fair_locking(&mut state, self.fair_locking);
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        let outcome = match &mut *state {
+            SessionTransactionState::Pessimistic {
+                transaction,
+                lock_values,
+                ..
+            } => acquire_statement_locks(
+                transaction,
+                lock_values,
+                &keys,
+                &BTreeSet::new(),
+                &BTreeMap::new(),
+                true,
+                true,
+                wait,
+                &call,
+            ),
+            SessionTransactionState::Optimistic(_) => {
+                return Ok(LockKeysOutcome::Locked {
+                    for_update_ts: 0,
+                    newly_locked: Vec::new(),
+                })
+            }
+            SessionTransactionState::Finished => {
+                return Err(StorageError::Backend(
+                    "the transaction is already finished".to_owned(),
+                ));
+            }
+        };
+        if matches!(outcome, LockKeysOutcome::TransactionError(_)) {
+            let _ = finish_session_transaction(&mut state);
+        }
+        Ok(outcome)
+    }
+
     /// [`Self::lock_keys`], asking TiKV to answer each newly locked key's row
     /// WITH the lock and serving later reads of those keys from the answers —
     /// Go's point-write fold (`InitReturnValues` /
@@ -1037,6 +1087,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                 &presume_not_exists,
                 &duplicate_hints,
                 return_values,
+                false,
                 wait,
                 &call,
             ),
@@ -1932,7 +1983,12 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
     /// return, which this statement's reads of those keys then answer from.
     /// The outcome Go's `handlePessimisticLockError` acts on is kept for the
     /// statement owner (see [`StatementLockFailure`]).
-    fn lock_keys_for_read(&mut self, keys: &[Key], wait: LockWaitTime) -> Result<(), StorageError> {
+    fn lock_keys_for_read(
+        &mut self,
+        keys: &[Key],
+        wait: LockWaitTime,
+        only_if_exists: bool,
+    ) -> Result<(), StorageError> {
         use std::sync::atomic::Ordering;
         if keys.is_empty() {
             return Ok(());
@@ -1971,6 +2027,7 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
             &BTreeSet::new(),
             &BTreeMap::new(),
             true,
+            only_if_exists,
             wait,
             &call,
         );
