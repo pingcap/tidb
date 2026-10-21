@@ -1242,6 +1242,7 @@ func TestDDLCleanupGlobalIndexesHandler(t *testing.T) {
 	require.Equal(t, []int64{leftover.ID}, result.DroppedIndexIDs)
 	require.Greater(t, result.SchemaVersion, int64(0))
 	require.Equal(t, createJobID, result.GCJobID)
+	require.Equal(t, "create table", result.GCJobType)
 }
 
 func filterSpaces(bs []byte) []byte {

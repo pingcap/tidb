@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -133,6 +135,46 @@ func deleteRangesOfIndexes(t *testing.T, tk *testkit.TestKit, tableID int64, ind
 	return jobIDs, elementIDs
 }
 
+// cancelReorganizePartition runs a REORGANIZE PARTITION on test.t, cancels it in delete only and
+// returns its job ID.
+func cancelReorganizePartition(t *testing.T, store kv.Storage, tk *testkit.TestKit, alter string) int64 {
+	var jobID int64
+	tkCancel := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if jobID == 0 && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
+			jobID = job.ID
+			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+		}
+	})
+	tk.MustGetErrCode(alter, errno.ErrCancelledDDLJob)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	require.NotZero(t, jobID)
+	return jobID
+}
+
+func updateHistoryJob(t *testing.T, store kv.Storage, jobID int64, update func(job *model.Job)) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		job, err := m.GetHistoryDDLJob(jobID)
+		if err != nil {
+			return err
+		}
+		update(job)
+		return m.AddHistoryDDLJob(job, false)
+	}))
+}
+
+func checkGCJob(t *testing.T, tk *testkit.TestKit, gcJob *model.Job, wantID int64, wantType model.ActionType) {
+	require.NotNil(t, gcJob)
+	require.Equal(t, wantID, gcJob.ID)
+	require.Equal(t, wantType, gcJob.Type)
+	// The GC worker looks up this job and does not complete the delete range if it is missing.
+	job, err := ddl.GetHistoryJobByID(tk.Session(), gcJob.ID)
+	require.NoError(t, err)
+	require.NotNil(t, job, "delete range job %d has no history job", gcJob.ID)
+}
+
 func checkLeftoverGlobalIndexesDropped(t *testing.T, tk *testkit.TestKit, tblInfo *model.TableInfo, leftoverIDs []int64, addingID, gcJobID int64) {
 	after := external.GetTableByName(t, tk, "test", "t").Meta()
 	require.Len(t, after.Indices, 3)
@@ -148,10 +190,6 @@ func checkLeftoverGlobalIndexesDropped(t *testing.T, tk *testkit.TestKit, tblInf
 	for _, jobID := range jobIDs {
 		require.Equal(t, gcJobID, jobID)
 	}
-	// The GC worker looks up this job and does not complete the delete range if it is missing.
-	job, err := ddl.GetHistoryJobByID(tk.Session(), gcJobID)
-	require.NoError(t, err)
-	require.NotNil(t, job, "delete range job %d has no history job", gcJobID)
 }
 
 func TestCleanupLeftoverIndexes(t *testing.T) {
@@ -164,18 +202,18 @@ func TestCleanupLeftoverIndexes(t *testing.T) {
 	tk.MustExec("rename table t_tmp to t")
 
 	ctx := context.Background()
-	indexIDs, ver, gcJobID, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	indexIDs, ver, gcJob, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 	require.ElementsMatch(t, leftoverIDs, indexIDs)
 	require.Greater(t, ver, int64(0))
-	require.Equal(t, createJobID, gcJobID)
+	checkGCJob(t, tk, gcJob, createJobID, model.ActionCreateTable)
 	require.NoError(t, dom.Reload())
-	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID, gcJobID)
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID, gcJob.ID)
 
-	indexIDs, _, gcJobID, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	indexIDs, _, gcJob, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 	require.Empty(t, indexIDs)
-	require.Zero(t, gcJobID)
+	require.Nil(t, gcJob)
 }
 
 func TestCleanupLeftoverIndexesElementIDs(t *testing.T) {
@@ -205,14 +243,14 @@ func TestCleanupLeftoverIndexesElementIDs(t *testing.T) {
 	require.GreaterOrEqual(t, maxElementID, int64(2))
 	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization, model.StateDeleteOnly)
 
-	indexIDs, _, gcJobID, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	indexIDs, _, gcJob, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 	require.ElementsMatch(t, copyIDs, indexIDs)
-	require.Equal(t, addIndexJobID, gcJobID)
+	checkGCJob(t, tk, gcJob, addIndexJobID, model.ActionAddIndex)
 	after, _ := jobRanges()
 	require.Equal(t, before+len(copyIDs), after)
 	jobIDs, elementIDs := deleteRangesOfIndexes(t, tk, tblID, copyIDs)
-	require.ElementsMatch(t, []int64{gcJobID, gcJobID}, jobIDs)
+	require.ElementsMatch(t, []int64{gcJob.ID, gcJob.ID}, jobIDs)
 	require.ElementsMatch(t, []int64{maxElementID + 1, maxElementID + 2}, elementIDs)
 	require.NoError(t, dom.Reload())
 	tk.MustExec("admin check table t")
@@ -230,10 +268,10 @@ func TestCleanupLeftoverIndexesNoGCJob(t *testing.T) {
 	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
 	ver := dom.InfoSchema().SchemaMetaVersion()
 
-	indexIDs, _, gcJobID, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
-	require.ErrorContains(t, err, "has no finished DDL history job")
+	indexIDs, _, gcJob, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.ErrorContains(t, err, "has no DDL history job")
 	require.Empty(t, indexIDs)
-	require.Zero(t, gcJobID)
+	require.Nil(t, gcJob)
 	require.NoError(t, dom.Reload())
 	require.Equal(t, ver, dom.InfoSchema().SchemaMetaVersion())
 	require.NotNil(t, external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByID(copyIDs[0]))
@@ -241,6 +279,100 @@ func TestCleanupLeftoverIndexesNoGCJob(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf(`select count(*) from (select start_key from mysql.gc_delete_range
 		union all select start_key from mysql.gc_delete_range_done) r where start_key = '%s'`, idxPrefix)).Check(testkit.Rows("0"))
 }
+func TestCleanupLeftoverIndexesPrefersNoopJob(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key idx_g (a) global)
+		partition by range (b) (partition p0 values less than (10), partition pMax values less than (maxvalue))`)
+	tk.MustExec("insert into t values (1, 1), (2, 20)")
+	tblID := external.GetTableByName(t, tk, "test", "t").Meta().ID
+	createJobID := historyJobID(t, tk, tblID, "create table")
+	reorgJobID := cancelReorganizePartition(t, store, tk,
+		"alter table t reorganize partition pMax into (partition p1 values less than (30), partition pMax values less than (maxvalue))")
+	require.Greater(t, reorgJobID, createJobID)
+	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+
+	indexIDs, _, gcJob, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.Subset(t, indexIDs, copyIDs)
+	checkGCJob(t, tk, gcJob, createJobID, model.ActionCreateTable)
+}
+
+func TestCleanupLeftoverIndexesRolledBackReorg(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key idx_g (a) global)
+		partition by range (b) (partition p0 values less than (10), partition pMax values less than (maxvalue))`)
+	tk.MustExec("insert into t values (1, 1), (2, 20)")
+	tblID := external.GetTableByName(t, tk, "test", "t").Meta().ID
+	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_ddl_history where table_ids = '%d'", tblID))
+	reorgJobID := cancelReorganizePartition(t, store, tk,
+		"alter table t reorganize partition pMax into (partition p1 values less than (30), partition pMax values less than (maxvalue))")
+	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+
+	// GC decodes the args of a rolled back REORGANIZE PARTITION, so the cleanup fails without changes when they cannot be decoded.
+	var rawArgs []byte
+	updateHistoryJob(t, store, reorgJobID, func(job *model.Job) {
+		rawArgs = job.RawArgs
+		job.RawArgs = []byte("[1]")
+	})
+	ver := dom.InfoSchema().SchemaMetaVersion()
+	indexIDs, _, gcJob, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.ErrorContains(t, err, fmt.Sprintf("decode args of DDL history job %d", reorgJobID))
+	require.Empty(t, indexIDs)
+	require.Nil(t, gcJob)
+	require.NoError(t, dom.Reload())
+	require.Equal(t, ver, dom.InfoSchema().SchemaMetaVersion())
+	require.NotNil(t, external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByID(copyIDs[0]))
+	idxPrefix := hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(tblID, copyIDs[0]))
+	tk.MustQuery(fmt.Sprintf(`select count(*) from (select start_key from mysql.gc_delete_range
+		union all select start_key from mysql.gc_delete_range_done) r where start_key = '%s'`, idxPrefix)).Check(testkit.Rows("0"))
+
+	updateHistoryJob(t, store, reorgJobID, func(job *model.Job) {
+		job.RawArgs = rawArgs
+	})
+	indexIDs, _, gcJob, err = ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.Subset(t, indexIDs, copyIDs)
+	checkGCJob(t, tk, gcJob, reorgJobID, model.ActionReorganizePartition)
+	require.True(t, gcJob.IsRollbackDone())
+	jobIDs, _ := deleteRangesOfIndexes(t, tk, tblID, copyIDs)
+	require.Equal(t, []int64{reorgJobID}, jobIDs)
+	require.NoError(t, dom.Reload())
+	tk.MustExec("admin check table t")
+}
+
+func TestCleanupLeftoverIndexesSkipsPartitionBy(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key idx_g (a) global)
+		partition by range (b) (partition p0 values less than (10), partition pMax values less than (maxvalue))`)
+	tk.MustExec("insert into t values (1, 1), (2, 20)")
+	oldTblID := external.GetTableByName(t, tk, "test", "t").Meta().ID
+	tk.MustExec(`alter table t partition by range (b) (partition p0 values less than (5), partition pMax values less than (maxvalue))`)
+	tblID := external.GetTableByName(t, tk, "test", "t").Meta().ID
+	require.NotEqual(t, oldTblID, tblID)
+	partitionByJobID := historyJobID(t, tk, oldTblID, "alter table partition by")
+	// Make the PARTITION BY job a candidate of the new table ID.
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_ddl_history set table_ids = '%d' where job_id = %d", tblID, partitionByJobID))
+	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+
+	_, _, gcJob, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.ErrorContains(t, err, "has no DDL history job")
+	require.Nil(t, gcJob)
+
+	reorgJobID := cancelReorganizePartition(t, store, tk,
+		"alter table t reorganize partition pMax into (partition p1 values less than (30), partition pMax values less than (maxvalue))")
+	require.Greater(t, reorgJobID, partitionByJobID)
+	indexIDs, _, gcJob, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.Subset(t, indexIDs, copyIDs)
+	checkGCJob(t, tk, gcJob, reorgJobID, model.ActionReorganizePartition)
+}
+
 func TestCleanupLeftoverIndexesAfterReorganizePartition(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -260,11 +392,11 @@ func TestCleanupLeftoverIndexesAfterReorganizePartition(t *testing.T) {
 	tblInfo.Partition.DDLChangedIndex = map[int64]bool{tblInfo.FindIndexByName("idx_g").ID: true}
 	updateTableMeta(t, store, dom, dbInfo.ID, tblInfo)
 
-	indexIDs, _, gcJobID, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	indexIDs, _, gcJob, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
 	require.ElementsMatch(t, leftoverIDs, indexIDs)
 	require.NoError(t, dom.Reload())
-	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID, gcJobID)
+	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo, leftoverIDs, addingID, gcJob.ID)
 }
 
 func TestCleanupLeftoverIndexesSkipsUnique(t *testing.T) {
