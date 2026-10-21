@@ -299,7 +299,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "RU Max - 1s",
+               "title": "Peak RU/s",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
