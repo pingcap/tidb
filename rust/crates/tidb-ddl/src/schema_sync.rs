@@ -1,0 +1,1155 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Acknowledging loaded schema versions to a Go DDL owner.
+//!
+//! A node registered under `/tidb/server/info/<id>` is IN the owner's wait
+//! set: Go's `WaitVersionSynced` (`pkg/ddl/schemaver/syncer.go`) holds every
+//! DDL job until each registered node PUTs
+//! `/tidb/ddl/all_schema_by_job_versions/<jobID>/<id>` at the job's schema
+//! version. A node that registers but never acks therefore blocks EVERY DDL
+//! issued through a Go tidb-server on the shared cluster — receipted by the
+//! sysbench ladder's Go-control `CREATE DATABASE` hanging while the owner
+//! logged this node's id as "someone is not synced", once per second.
+//!
+//! This module is Go's non-owner loop (`MDLCheckLoop` +
+//! `refreshMDLCheckTableInfo`, `pkg/infoschema/issyncer/syncer.go`) reduced
+//! to this node's shape: after the catalog reloader publishes version `V`,
+//! read `mysql.tidb_mdl_info`, and for each job whose version is at most `V`
+//! — and whose OLD schema no live local statement or transaction still uses
+//! — report through `tidb-schemaver::Syncer`. The "still uses" gate is
+//! [`SchemaPinRegistry`]: Go
+//! removes a job from the ack set while a session on an older schema touches
+//! the job's tables (`CheckOldRunningTxn`).
+
+use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use tidb_exec::catalog_watch::{
+    CatalogReloadStats, CatalogReloadStatsSource, CatalogReloadWaker, SharedCatalog,
+};
+use tidb_exec::ddl_systable::MinJobIdRefresher;
+use tidb_exec::mdl_info_load::{load_mdl_jobs, MdlJob};
+use tidb_exec::mysql_system_tables::SystemTableError;
+use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
+use tidb_pd_client::EtcdClient;
+use tidb_schemaver::etcd_syncer::new_etcd_syncer;
+use tidb_schemaver::{Context as SchemaVersionContext, Recv, Syncer as SchemaVersionSyncer};
+use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, StoreClient};
+
+/// The tables live local work still reads at older schema versions.
+///
+/// Go's shape, ported from `RemoveLockDDLJobs`
+/// (`pkg/sessionctx/variable/session.go:3935-3962`) and the recording in
+/// `pkg/planner/core/preprocess.go:2243-2270`: each open transaction carries
+/// a map `table id -> the domain schema version at the table's FIRST use in
+/// this transaction` (`GetRelatedTableForMDL`), and a DDL job is blocked iff
+/// some live map holds one of the job's tables at a version below the
+/// job's. The map lives exactly as long as the transaction
+/// (`TransactionContext.Cleanup` drops it, `session.go:451`).
+///
+/// Go records tables while the planner resolves them, including base tables
+/// behind views. This registry only blocks jobs for concrete table IDs; an
+/// unresolved name has no table ID and must not become an all-table pin.
+#[derive(Debug, Default)]
+pub struct SchemaPinRegistry {
+    pins: Mutex<HashMap<u64, ConnPins>>,
+}
+
+/// One connection's live work.
+#[derive(Debug, Default)]
+struct ConnPins {
+    /// Nesting count: a statement inside an explicit transaction holds too.
+    count: u32,
+    /// The catalog version of the OUTERMOST live hold.
+    version: i64,
+    /// Go `GetRelatedTableForMDL`: table id -> version at first use.
+    tables: HashMap<i64, i64>,
+}
+
+impl SchemaPinRegistry {
+    /// Registers one unit of live work at `version`; released by dropping
+    /// the guard.
+    pub fn hold(self: &Arc<Self>, connection_id: u64, version: i64) -> SchemaPinGuard {
+        {
+            let mut pins = self.pins.lock().expect("schema pin registry poisoned");
+            let entry = pins.entry(connection_id).or_default();
+            if entry.count == 0 {
+                entry.version = version;
+            } else {
+                // Nested holds keep the OLDER bound: an explicit
+                // transaction's pin must not be masked by a statement
+                // re-pinning after a rebuild that cannot have happened while
+                // it was open.
+                entry.version = entry.version.min(version);
+            }
+            entry.count += 1;
+        }
+        SchemaPinGuard {
+            registry: Arc::clone(self),
+            connection_id,
+        }
+    }
+
+    /// Go `preprocess.go:2270`'s store: the table was bound at `version`;
+    /// first use wins, exactly as Go only stores on a `Load` miss.
+    pub fn record_table_use(&self, connection_id: u64, table_id: i64, version: i64) {
+        let mut pins = self.pins.lock().expect("schema pin registry poisoned");
+        if let Some(entry) = pins.get_mut(&connection_id) {
+            entry.tables.entry(table_id).or_insert(version);
+        }
+    }
+
+    /// Go `RemoveLockDDLJobs`'s per-session test, over every live
+    /// connection: blocked iff some connection used one of the job's tables
+    /// at a version below the job's.
+    #[must_use]
+    pub fn blocks(&self, job_version: i64, job_table_ids: &[i64]) -> bool {
+        let pins = self.pins.lock().expect("schema pin registry poisoned");
+        pins.values().any(|entry| {
+            entry.count > 0
+                && job_table_ids.iter().any(|table| {
+                    entry
+                        .tables
+                        .get(table)
+                        .is_some_and(|&used| used < job_version)
+                })
+        })
+    }
+
+    fn release(&self, connection_id: u64) {
+        let mut pins = self.pins.lock().expect("schema pin registry poisoned");
+        if let Some(entry) = pins.get_mut(&connection_id) {
+            entry.count = entry.count.saturating_sub(1);
+            if entry.count == 0 {
+                // Go `TransactionContext.Cleanup` (`session.go:451`): the
+                // related-table map dies with the transaction.
+                pins.remove(&connection_id);
+            }
+        }
+    }
+}
+
+/// One held pin; dropping it releases the hold, disconnects included.
+#[derive(Debug)]
+pub struct SchemaPinGuard {
+    registry: Arc<SchemaPinRegistry>,
+    connection_id: u64,
+}
+
+impl Drop for SchemaPinGuard {
+    fn drop(&mut self) {
+        self.registry.release(self.connection_id);
+    }
+}
+
+/// Which jobs are due an acknowledgement this pass.
+///
+/// Pure so the whole MDL decision is testable without etcd or TiKV. `acked`
+/// is Go's `jobCache`: the versions already written, so an ack is sent once
+/// per (job, version).
+fn acks_due(
+    loaded_version: i64,
+    pins: &SchemaPinRegistry,
+    jobs: &[MdlJob],
+    acked: &BTreeMap<i64, i64>,
+) -> Vec<MdlJob> {
+    jobs.iter()
+        .filter(|job| {
+            // Go reads `... where version <= domainSchemaVer`: a job whose
+            // version this node has not loaded yet cannot be acknowledged.
+            job.version <= loaded_version
+                // Go `RemoveLockDDLJobs`: live work that used one of the
+                // job's tables on an older schema holds the job back.
+                // A zero table id is Go's sentinel for a schema-level DDL
+                // job (for example CREATE DATABASE). It has no table lock
+                // conflict.
+                && (job.table_ids.iter().all(|&table_id| table_id == 0)
+                    || !pins.blocks(job.version, &job.table_ids))
+                // Go's `jobCache`: one ack per (job, version).
+                && acked.get(&job.job_id).is_none_or(|&sent| sent < job.version)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Go `mdlCheckLookDuration` (`pkg/infoschema/issyncer/syncer.go`): the
+/// tick of `MDLCheckLoop`, which acknowledges every job whose tables no
+/// session still uses at an older version. The owner's `WaitVersionSynced`
+/// waits on that acknowledgement from every registered node before the
+/// job's next step, so the tick bounds how long every DDL in the cluster
+/// waits on this node; a tick of `schema_lease / 2` (22.5 s at the default
+/// lease) made each step of every other node's DDL wait up to that long.
+pub const MDL_CHECK_LOOK_DURATION: Duration = Duration::from_millis(50);
+
+/// Go refreshes `tidb_mdl_info` after a schema reload. An empty result can
+/// race the owner's MDL row write, so retry that read at a bounded cadence.
+const EMPTY_MDL_RETRY: Duration = Duration::from_secs(1);
+
+/// The background acknowledger; dropping it stops the thread.
+pub struct SchemaSyncAck {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    global_watch_thread: Option<std::thread::JoinHandle<()>>,
+    syncer_context: SchemaVersionContext,
+    syncer_thread: Option<std::thread::JoinHandle<()>>,
+    syncer: Arc<dyn SchemaVersionSyncer>,
+}
+
+impl SchemaSyncAck {
+    /// Starts the ack loop.
+    ///
+    /// `tick` is Go's `MDLCheckLoop` cadence ([`MDL_CHECK_LOOK_DURATION`];
+    /// a caller may only slow it down); each tick costs an atomic load, and
+    /// the loop only touches TiKV when the loaded version moved or an ack is
+    /// still owed. Session, watch, monotonic-write, and owner-wait behavior
+    /// comes from the shared `tidb-schemaver` package implementation.
+    pub fn spawn<S>(
+        catalog: Arc<SharedCatalog>,
+        opener: RealOptimisticTransactionOpener<S>,
+        pins: Arc<SchemaPinRegistry>,
+        min_job_id_refresher: Arc<MinJobIdRefresher>,
+        etcd: Arc<EtcdClient>,
+        ddl_id: String,
+        server_info: Arc<tidb_domain::serverinfo_syncer::Syncer>,
+        schema_validator: Arc<SchemaValidator>,
+        reload_waker: CatalogReloadWaker,
+        reload_stats: CatalogReloadStatsSource,
+        tick: Duration,
+        timeout: Duration,
+    ) -> Result<Self, String>
+    where
+        S: StoreClient + Send + 'static,
+    {
+        let etcd_ops = Arc::new(crate::etcd_ops::EtcdClientOps::new(etcd));
+        let syncer = Arc::new(new_etcd_syncer(etcd_ops, &ddl_id));
+        syncer.set_server_info_syncer(Arc::new(move || {
+            server_info
+                .all_server_info()
+                .map(|servers| servers.into_values().collect())
+        }));
+        let syncer_context = SchemaVersionContext::background();
+        syncer.init(&syncer_context)?;
+        let syncer_thread =
+            match crate::worker::sql_worker_thread("schema-version-mirror").spawn({
+                let syncer = Arc::clone(&syncer);
+                let context = syncer_context.clone();
+                move || syncer.sync_job_schema_ver_loop(&context)
+            }) {
+                Ok(thread) => thread,
+                Err(error) => {
+                    syncer_context.cancel();
+                    syncer.close();
+                    return Err(error.to_string());
+                }
+            };
+
+        // Go's SyncLoop reloads immediately on GlobalVersionCh. Keep the
+        // lease/2 reloader as the correctness backstop, but consume the
+        // schema-version watch and nudge it for the same prompt path.
+        let stop = Arc::new(AtomicBool::new(false));
+        let global_watch_stop = Arc::clone(&stop);
+        let global_watch_syncer = Arc::clone(&syncer);
+        let global_watch_context = syncer_context.clone();
+        let global_watch_waker = reload_waker.clone();
+        let global_watch_thread = match crate::worker::sql_worker_thread(
+            "schema-global-reload-watch",
+        )
+        .spawn(move || {
+            run_global_version_watch_loop(
+                global_watch_syncer.as_ref(),
+                &global_watch_context,
+                &global_watch_waker,
+                &global_watch_stop,
+            );
+        }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                stop.store(true, Ordering::SeqCst);
+                syncer_context.cancel();
+                let _ = syncer_thread.join();
+                syncer.close();
+                return Err(error.to_string());
+            }
+        };
+
+        let syncer: Arc<dyn SchemaVersionSyncer> = syncer;
+        let stop_seen = Arc::clone(&stop);
+        let tick = tick.max(MDL_CHECK_LOOK_DURATION);
+        let ack_syncer = Arc::clone(&syncer);
+        let ack_context = syncer_context.clone();
+        let thread = match crate::worker::sql_worker_thread("schema-sync-ack").spawn(move || {
+            run_ack_loop(
+                &catalog,
+                &opener,
+                &pins,
+                &min_job_id_refresher,
+                ack_syncer.as_ref(),
+                &ack_context,
+                &schema_validator,
+                &reload_waker,
+                &reload_stats,
+                tick,
+                timeout,
+                &stop_seen,
+            );
+        }) {
+            Ok(thread) => thread,
+            Err(error) => {
+                syncer_context.cancel();
+                stop.store(true, Ordering::SeqCst);
+                let _ = global_watch_thread.join();
+                let _ = syncer_thread.join();
+                syncer.close();
+                return Err(error.to_string());
+            }
+        };
+        Ok(Self {
+            stop,
+            thread: Some(thread),
+            global_watch_thread: Some(global_watch_thread),
+            syncer_context,
+            syncer_thread: Some(syncer_thread),
+            syncer,
+        })
+    }
+
+    /// The package-parity schema-version syncer shared with the DDL owner.
+    pub fn syncer(&self) -> Arc<dyn SchemaVersionSyncer> {
+        Arc::clone(&self.syncer)
+    }
+}
+
+impl Drop for SchemaSyncAck {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        self.syncer_context.cancel();
+        if let Some(thread) = self.global_watch_thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        if let Some(thread) = self.syncer_thread.take() {
+            let _ = thread.join();
+        }
+        self.syncer.close();
+    }
+}
+
+/// Forwards Go's `GlobalVersionCh` events to the catalog reload waker.
+///
+/// The receiver is reacquired after a closed watch because the etcd syncer
+/// replaces its channel when `watch_global_schema_ver` re-establishes it.
+fn run_global_version_watch_loop(
+    syncer: &dyn SchemaVersionSyncer,
+    context: &SchemaVersionContext,
+    reload_waker: &CatalogReloadWaker,
+    stop: &AtomicBool,
+) {
+    while !stop.load(Ordering::SeqCst) {
+        handle_global_version_recv(
+            syncer
+                .global_version_ch()
+                .recv_timeout(Duration::from_millis(50)),
+            syncer,
+            context,
+            reload_waker,
+        );
+    }
+}
+
+fn handle_global_version_recv(
+    recv: Recv<tidb_schemaver::WatchEvent>,
+    syncer: &dyn SchemaVersionSyncer,
+    context: &SchemaVersionContext,
+    reload_waker: &CatalogReloadWaker,
+) {
+    match recv {
+        Recv::Item(_) => reload_waker.nudge(),
+        Recv::Timeout => {}
+        Recv::Closed => {
+            // Go's SyncLoop handles the watch result before rebuilding a
+            // closed channel: every close is a reload request, even when
+            // the replacement watch cannot replay the event that caused
+            // the close.
+            reload_waker.nudge();
+            syncer.watch_global_schema_ver(context);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_ack_loop<S>(
+    catalog: &SharedCatalog,
+    opener: &RealOptimisticTransactionOpener<S>,
+    pins: &SchemaPinRegistry,
+    min_job_id_refresher: &MinJobIdRefresher,
+    syncer: &dyn SchemaVersionSyncer,
+    syncer_context: &SchemaVersionContext,
+    validator: &SchemaValidator,
+    reload_waker: &CatalogReloadWaker,
+    reload_stats: &CatalogReloadStatsSource,
+    tick: Duration,
+    timeout: Duration,
+    stop: &AtomicBool,
+) where
+    S: StoreClient,
+{
+    // Go's `jobCache`: (job id -> version already acknowledged).
+    let mut acked: BTreeMap<i64, i64> = BTreeMap::new();
+    // Keep rows loaded by the schema-reload path. MDL checks run every tick,
+    // but Go does not rescan the system table for every check.
+    let mut mdl_jobs: Vec<MdlJob> = Vec::new();
+    let mut scanned_version: Option<i64> = None;
+    let mut next_mdl_scan = Instant::now();
+    let mut retry_mdl_scan = false;
+    let mut last_reload_pass: Option<u64> = None;
+    let mut reported_loaded_version: Option<(bool, i64)> = None;
+    while !stop.load(Ordering::SeqCst) {
+        // Go `SyncLoop`'s `<-syncer.Done()` arm (`issyncer/syncer.go:327-353`):
+        // the etcd session that registered this node is gone, so the owner
+        // no longer waits for it and may already have published versions it
+        // never acknowledged. Until the node re-registers and reloads, no
+        // transaction may commit.
+        if matches!(
+            syncer.done().recv_timeout(Duration::ZERO),
+            Recv::Item(()) | Recv::Closed
+        ) {
+            if !recover_schema_syncer(
+                syncer,
+                syncer_context,
+                validator,
+                reload_waker,
+                reload_stats,
+                catalog,
+                stop,
+            ) {
+                return;
+            }
+            continue;
+        }
+        let loaded = catalog.load().schema_version;
+        let reload_pass = reload_stats().passes;
+        let mdl_enabled = tidb_vardef::is_mdl_enabled(tidb_config::kerneltype::is_next_gen());
+
+        // Go's domain reload path reports every newly loaded version with
+        // job id zero. The etcd syncer turns this into the leased self-key
+        // update only when MDL is disabled; with MDL enabled it is a no-op.
+        if reported_loaded_version != Some((mdl_enabled, loaded)) {
+            match syncer.update_self_version(syncer_context, 0, loaded) {
+                Ok(()) => reported_loaded_version = Some((mdl_enabled, loaded)),
+                // Go `issyncer.Syncer.Reload`.
+                Err(error) => tidb_util::logutil::bg_logger().info(
+                    "update self version failed",
+                    &[
+                        tidb_log::Field::new(
+                            "oldSchemaVersion",
+                            tidb_log::Value::I64(
+                                reported_loaded_version.map_or(0, |(_, version)| version),
+                            ),
+                        ),
+                        tidb_log::Field::new("neededSchemaVersion", tidb_log::Value::I64(loaded)),
+                        crate::worker::zap_error(error),
+                    ],
+                ),
+            }
+        }
+
+        if mdl_enabled {
+            if should_refresh_mdl_jobs(
+                scanned_version,
+                loaded,
+                mdl_jobs.is_empty(),
+                Instant::now(),
+                next_mdl_scan,
+                retry_mdl_scan,
+                reload_pass,
+                last_reload_pass,
+            ) {
+                let min_job_id = min_job_id_refresher.current_min_job_id();
+                match load_mdl_jobs(opener, timeout, &catalog.load(), min_job_id) {
+                    Ok(jobs) => {
+                        scanned_version = Some(loaded);
+                        last_reload_pass = Some(reload_pass);
+                        retry_mdl_scan = false;
+                        // A schema watch can win the race with the
+                        // transaction that publishes tidb_mdl_info.  Go's
+                        // SQL refresh replaces its map on every reload; a
+                        // Rust snapshot that returns only older rows must
+                        // not turn that race into a one-hour cache miss.
+                        next_mdl_scan = if should_retry_mdl_scan(loaded, &jobs) {
+                            Instant::now() + EMPTY_MDL_RETRY
+                        } else {
+                            Instant::now() + Duration::from_secs(3600)
+                        };
+                        mdl_jobs = jobs;
+                        // The owner deletes a finished job's row; forgetting
+                        // its cache entry keeps the cache from growing.
+                        acked.retain(|job_id, _| mdl_jobs.iter().any(|job| job.job_id == *job_id));
+                    }
+                    Err(error) => {
+                        last_reload_pass = Some(reload_pass);
+                        retry_mdl_scan = true;
+                        next_mdl_scan = Instant::now() + EMPTY_MDL_RETRY;
+                        if matches!(error, SystemTableError::Missing { .. }) {
+                            // The MDL row is published by the DDL owner while
+                            // a node can still hold its startup catalog. Go's
+                            // SQL path resolves the table from its fresh
+                            // session schema; refresh the Rust catalog through
+                            // the same fresh snapshot before retrying.
+                            let _reload = catalog.lock_reload();
+                            let current = catalog.load();
+                            match tidb_exec::real_tikv_catalog::load_catalog_from_cluster(
+                                opener, timeout,
+                            ) {
+                                Ok(refreshed)
+                                    if refreshed.schema_version >= current.schema_version =>
+                                {
+                                    catalog.store(refreshed);
+                                }
+                                // Go resolves the table from a fresh session
+                                // and has no such refresh to log.
+                                Ok(_) | Err(_) => {}
+                            }
+                        }
+                        // Go `refreshMDLCheckTableInfo`.
+                        tidb_util::logutil::bg_logger().warn(
+                            "get mdl info from tidb_mdl_info failed",
+                            &[crate::worker::zap_error(error)],
+                        );
+                    }
+                }
+            }
+
+            // Re-evaluate pins every tick, but use cached rows. This is the
+            // Go MDLCheckLoop split between refreshMDLCheckTableInfo and
+            // CheckOldRunningTxn.
+            let due = acks_due(loaded, pins, &mdl_jobs, &acked);
+            for job in due {
+                // Go `MDLCheckLoop`'s lines around each self-version ack.
+                let ack_fields = [
+                    tidb_log::Field::new("jobID", tidb_log::Value::I64(job.job_id)),
+                    tidb_log::Field::new("version", tidb_log::Value::I64(job.version)),
+                ];
+                tidb_util::logutil::bg_logger()
+                    .info("mdl gets lock, update self version to owner", &ack_fields);
+                match syncer.update_self_version(syncer_context, job.job_id, job.version) {
+                    Ok(()) => {
+                        acked.insert(job.job_id, job.version);
+                    }
+                    Err(error) => {
+                        let mut fields = ack_fields.to_vec();
+                        fields.push(crate::worker::zap_error(error));
+                        tidb_util::logutil::bg_logger().warn(
+                            "mdl gets lock, update self version to owner failed",
+                            &fields,
+                        );
+                    }
+                }
+            }
+        } else {
+            // Do not carry MDL rows across a runtime mode switch. The Go
+            // non-MDL path reports only the leased self-version.
+            mdl_jobs.clear();
+            acked.clear();
+            scanned_version = None;
+            next_mdl_scan = Instant::now();
+            retry_mdl_scan = false;
+            last_reload_pass = None;
+        }
+
+        // A sleep in small slices so a shutdown never waits a whole tick.
+        let mut remaining = tick;
+        while !stop.load(Ordering::SeqCst) && !remaining.is_zero() {
+            let slice = remaining.min(Duration::from_millis(50));
+            std::thread::sleep(slice);
+            remaining = remaining.saturating_sub(slice);
+        }
+    }
+}
+
+fn should_refresh_mdl_jobs(
+    scanned_version: Option<i64>,
+    loaded_version: i64,
+    jobs_empty: bool,
+    now: Instant,
+    next_retry: Instant,
+    retry_mdl_scan: bool,
+    reload_pass: u64,
+    last_reload_pass: Option<u64>,
+) -> bool {
+    scanned_version != Some(loaded_version)
+        || reload_pass != last_reload_pass.unwrap_or_default()
+        || now >= next_retry && (jobs_empty || retry_mdl_scan)
+}
+
+fn should_retry_mdl_scan(loaded_version: i64, jobs: &[MdlJob]) -> bool {
+    jobs.is_empty() || !jobs.iter().any(|job| job.version == loaded_version)
+}
+
+/// How long one requested reload pass is given before it is asked for again.
+const MUST_RELOAD_PASS_WAIT: Duration = Duration::from_secs(5);
+
+/// Go `SyncLoop`'s recovery after `<-syncer.Done()`
+/// (`issyncer/syncer.go:327-353`): stop the validator, restart the syncer
+/// until it takes (`mustRestartSyncer`, one second apart), reload until it
+/// succeeds (`mustReload`), then restart the validator at the reloaded
+/// version so a transaction still holding an older one is refused at commit.
+/// `false` means the node is stopping.
+fn recover_schema_syncer(
+    syncer: &dyn SchemaVersionSyncer,
+    syncer_context: &SchemaVersionContext,
+    validator: &SchemaValidator,
+    reload_waker: &CatalogReloadWaker,
+    reload_stats: &CatalogReloadStatsSource,
+    catalog: &SharedCatalog,
+    stop: &AtomicBool,
+) -> bool {
+    let logger = tidb_util::logutil::bg_logger();
+    logger.info("reload schema in loop, schema syncer need restart", &[]);
+    validator.stop();
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        match syncer.restart(syncer_context) {
+            Ok(()) => break,
+            Err(error) => {
+                logger.error(
+                    "restart the schema syncer failed",
+                    &[crate::worker::zap_error(error)],
+                );
+                sleep_sliced(Duration::from_secs(1), stop);
+            }
+        }
+    }
+    if !must_reload(reload_waker, reload_stats, stop) {
+        return false;
+    }
+    let version = catalog.load().schema_version;
+    validator.restart(version);
+    logger.info("schema syncer restarted", &[]);
+    true
+}
+
+/// Go `mustReload` (`issyncer/syncer.go:385-401`) against the reload thread:
+/// ask for a pass and wait for one to succeed; a pass that fails is asked
+/// for again 200 ms later, until one succeeds or the node stops.
+fn must_reload(
+    reload_waker: &CatalogReloadWaker,
+    reload_stats: &CatalogReloadStatsSource,
+    stop: &AtomicBool,
+) -> bool {
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        let before = reload_stats();
+        reload_waker.nudge();
+        let deadline = Instant::now() + MUST_RELOAD_PASS_WAIT;
+        loop {
+            if stop.load(Ordering::SeqCst) {
+                return false;
+            }
+            let now = reload_stats();
+            if successful_passes(&now) > successful_passes(&before) {
+                return true;
+            }
+            if now.failures > before.failures || Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        sleep_sliced(Duration::from_millis(200), stop);
+    }
+}
+
+const fn successful_passes(stats: &CatalogReloadStats) -> u64 {
+    stats.passes.saturating_sub(stats.failures)
+}
+
+/// A sleep in small slices so a shutdown never waits it out.
+fn sleep_sliced(total: Duration, stop: &AtomicBool) {
+    let mut remaining = total;
+    while !stop.load(Ordering::SeqCst) && !remaining.is_zero() {
+        let slice = remaining.min(Duration::from_millis(50));
+        std::thread::sleep(slice);
+        remaining = remaining.saturating_sub(slice);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_exec::catalog_watch::{CatalogReloadPass, CatalogReloader};
+    use tidb_exec::cluster_catalog::ClusterCatalog;
+    use tidb_schemaver::mem_syncer::MemSyncer;
+
+    #[test]
+    fn global_version_event_nudges_catalog_reloader() {
+        let syncer = Arc::new(MemSyncer::new());
+        let context = SchemaVersionContext::background();
+        syncer.init(&context).unwrap();
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            resource_groups: Vec::new(),
+            policies: Vec::new(),
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
+        )
+        .expect("reloader");
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher_stop = Arc::clone(&stop);
+        let watcher_syncer: Arc<dyn SchemaVersionSyncer> = syncer.clone();
+        let watcher_context = context.clone();
+        let watcher = std::thread::spawn({
+            let waker = reloader.waker();
+            move || {
+                run_global_version_watch_loop(
+                    watcher_syncer.as_ref(),
+                    &watcher_context,
+                    &waker,
+                    &watcher_stop,
+                );
+            }
+        });
+
+        syncer.owner_update_global_version(&context, 8).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while reloader.stats().nudged == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(reloader.stats().nudged, 1);
+
+        stop.store(true, Ordering::SeqCst);
+        context.cancel();
+        watcher.join().unwrap();
+    }
+
+    #[test]
+    fn closed_global_version_watch_nudges_before_rewatch() {
+        let syncer = Arc::new(MemSyncer::new());
+        let context = SchemaVersionContext::background();
+        syncer.init(&context).unwrap();
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            resource_groups: Vec::new(),
+            policies: Vec::new(),
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
+        )
+        .expect("reloader");
+        let closed = {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            drop(sender);
+            tidb_schemaver::SharedRecv::new(receiver)
+        };
+        let waker = reloader.waker();
+
+        // A closed etcd watch is the path that previously only re-established
+        // the channel, leaving the catalog on the lease/2 fallback.
+        handle_global_version_recv(
+            closed.recv_timeout(Duration::ZERO),
+            syncer.as_ref(),
+            &context,
+            &waker,
+        );
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while reloader.stats().nudged == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(reloader.stats().nudged, 1);
+    }
+
+    /// Go `mustReload`: a reload that fails is asked for again until one
+    /// succeeds -- here the pass fails twice before it answers.
+    #[test]
+    fn must_reload_waits_out_failed_passes_until_one_succeeds() {
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            resource_groups: Vec::new(),
+            policies: Vec::new(),
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let mut failures_left = 2;
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(move |_| {
+                if failures_left > 0 {
+                    failures_left -= 1;
+                    Err("store unreachable".to_owned())
+                } else {
+                    Ok(CatalogReloadPass::Unchanged)
+                }
+            }),
+        )
+        .expect("reloader");
+        let stop = AtomicBool::new(false);
+        assert!(must_reload(
+            &reloader.waker(),
+            &reloader.stats_source(),
+            &stop
+        ));
+        let stats = reloader.stats();
+        assert_eq!(stats.failures, 2);
+        assert!(stats.unchanged >= 1);
+    }
+
+    /// A node that is stopping gives up instead of waiting forever.
+    #[test]
+    fn must_reload_gives_up_when_the_node_stops() {
+        let catalog = Arc::new(SharedCatalog::new(ClusterCatalog {
+            resource_groups: Vec::new(),
+            policies: Vec::new(),
+            schema_version: 7,
+            databases: Vec::new(),
+        }));
+        let reloader = CatalogReloader::spawn(
+            catalog,
+            Duration::from_secs(3600),
+            Box::new(|_| Err("store unreachable".to_owned())),
+        )
+        .expect("reloader");
+        let stop = AtomicBool::new(true);
+        assert!(!must_reload(
+            &reloader.waker(),
+            &reloader.stats_source(),
+            &stop
+        ));
+    }
+
+    #[test]
+    fn mdl_job_refresh_matches_go_reload_and_empty_retry_cadence() {
+        let now = Instant::now();
+        assert!(should_refresh_mdl_jobs(
+            None,
+            7,
+            true,
+            now,
+            now + Duration::from_secs(10),
+            false,
+            0,
+            None,
+        ));
+        assert!(!should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            false,
+            now,
+            now,
+            false,
+            0,
+            Some(0),
+        ));
+        assert!(!should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            true,
+            now,
+            now + Duration::from_secs(1),
+            false,
+            0,
+            Some(0),
+        ));
+        assert!(should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            true,
+            now + Duration::from_secs(1),
+            now,
+            false,
+            0,
+            Some(0),
+        ));
+        assert!(should_refresh_mdl_jobs(
+            Some(7),
+            8,
+            false,
+            now,
+            now + Duration::from_secs(10),
+            false,
+            0,
+            Some(0),
+        ));
+        assert!(should_refresh_mdl_jobs(
+            Some(7),
+            7,
+            false,
+            now,
+            now + Duration::from_secs(10),
+            false,
+            1,
+            Some(0),
+        ));
+        assert!(should_retry_mdl_scan(8, &[]));
+        assert!(should_retry_mdl_scan(
+            8,
+            &[MdlJob {
+                job_id: 7,
+                version: 7,
+                table_ids: vec![0],
+            }]
+        ));
+        assert!(!should_retry_mdl_scan(
+            8,
+            &[MdlJob {
+                job_id: 8,
+                version: 8,
+                table_ids: vec![0],
+            }]
+        ));
+    }
+
+    #[test]
+    fn disabled_mdl_reports_loaded_schema_without_replaying_job_versions() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        use tidb_exec::cluster_ddl::MdlInfoUpdate;
+        use tidb_schemaver::{AllServerInfo, Context, DoneCh, GlobalVerRx, SyncSummary};
+        struct Reporter {
+            inner: tidb_schemaver::mem_syncer::MemSyncer,
+            reports: Mutex<Vec<(i64, i64)>>,
+            stop: AtomicBool,
+        }
+        impl SchemaVersionSyncer for Reporter {
+            fn init(&self, ctx: &Context) -> Result<(), String> {
+                self.inner.init(ctx)
+            }
+            fn update_self_version(
+                &self,
+                _: &Context,
+                job: i64,
+                version: i64,
+            ) -> Result<(), String> {
+                self.reports.lock().unwrap().push((job, version));
+                self.stop.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+            fn done(&self) -> DoneCh {
+                self.inner.done()
+            }
+            fn owner_update_global_version(&self, _: &Context, _: i64) -> Result<(), String> {
+                unreachable!()
+            }
+            fn global_version_ch(&self) -> GlobalVerRx {
+                unreachable!()
+            }
+            fn watch_global_schema_ver(&self, _: &Context) {
+                unreachable!()
+            }
+            fn restart(&self, _: &Context) -> Result<(), String> {
+                unreachable!()
+            }
+            fn wait_version_synced(
+                &self,
+                _: &Context,
+                _: i64,
+                _: i64,
+                _: bool,
+            ) -> Result<SyncSummary, String> {
+                unreachable!()
+            }
+            fn sync_job_schema_ver_loop(&self, _: &Context) {
+                unreachable!()
+            }
+            fn set_server_info_syncer(&self, _: AllServerInfo) {
+                unreachable!()
+            }
+            fn close(&self) {}
+        }
+        let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
+        let timeout = Duration::from_secs(5);
+        crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        tidb_vardef::set_enable_mdl(false);
+        let mut loaded =
+            tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, timeout).unwrap();
+        let (_, table) = loaded.find_table("mysql", "tidb_mdl_info").unwrap();
+        let info = MdlInfoUpdate {
+            table: Box::new(table.clone_like_go()),
+            table_ids: "0".into(),
+            omit_owner_id: false,
+        };
+        let mut mutations = Vec::new();
+        info.append_mutations(700, 1, "old-owner", &mut mutations)
+            .unwrap();
+        opener
+            .begin()
+            .unwrap()
+            .commit(
+                mutations,
+                &tidb_txnkv::UnaryCallContext::with_timeout(timeout),
+            )
+            .unwrap();
+        loaded.schema_version = 5;
+        let catalog = Arc::new(SharedCatalog::new(loaded));
+        let reloader = CatalogReloader::spawn(
+            catalog.clone(),
+            Duration::from_secs(3600),
+            Box::new(|_| Ok(CatalogReloadPass::Unchanged)),
+        )
+        .unwrap();
+        let reporter = Reporter {
+            inner: Default::default(),
+            reports: Mutex::new(Vec::new()),
+            stop: AtomicBool::new(false),
+        };
+        let context = Context::background();
+        reporter.init(&context).unwrap();
+        run_ack_loop(
+            &catalog,
+            &opener,
+            &SchemaPinRegistry::default(),
+            &MinJobIdRefresher::new(),
+            &reporter,
+            &context,
+            &SchemaValidator::new(Duration::from_secs(45)),
+            &reloader.waker(),
+            &reloader.stats_source(),
+            Duration::ZERO,
+            timeout,
+            &reporter.stop,
+        );
+        assert_eq!(
+            *reporter.reports.lock().unwrap(),
+            vec![(0, 5)],
+            "an old MDL row must not overwrite the loaded self version"
+        );
+    }
+
+    fn job(job_id: i64, version: i64, table_ids: &[i64]) -> MdlJob {
+        MdlJob {
+            job_id,
+            version,
+            table_ids: table_ids.to_vec(),
+        }
+    }
+
+    /// Go reads `... where version <= domainSchemaVer`: a job ahead of the
+    /// loaded catalog is not acknowledged yet.
+    #[test]
+    fn a_job_ahead_of_the_loaded_version_waits() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let due = acks_due(
+            5,
+            &pins,
+            &[job(1, 6, &[100]), job(2, 5, &[100])],
+            &BTreeMap::new(),
+        );
+        assert_eq!(due, vec![job(2, 5, &[100])]);
+    }
+
+    /// Go `RemoveLockDDLJobs` (`pkg/sessionctx/variable/session.go:3944`):
+    /// a job is blocked iff live work USED one of the job's tables at a
+    /// version below the job's -- a transaction on an unrelated table does
+    /// not hold it, which is the whole point of the per-table check.
+    #[test]
+    fn only_work_on_the_jobs_own_tables_holds_it_back() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 4);
+        pins.record_table_use(7, 100, 4);
+
+        let unrelated = [job(1, 5, &[200])];
+        assert_eq!(
+            acks_due(5, &pins, &unrelated, &BTreeMap::new()),
+            unrelated.to_vec(),
+            "a transaction on table 100 must not hold a DDL on table 200"
+        );
+
+        let related = [job(2, 5, &[100, 300])];
+        assert!(
+            acks_due(5, &pins, &related, &BTreeMap::new()).is_empty(),
+            "the same transaction must hold a DDL on table 100"
+        );
+
+        // Work AT the job's version already sees the new schema (Go's
+        // `value.(int64) < jobMDL.Ver` is strict).
+        pins.record_table_use(7, 300, 5);
+        let at_version = [job(3, 5, &[300])];
+        assert_eq!(
+            acks_due(5, &pins, &at_version, &BTreeMap::new()),
+            at_version.to_vec()
+        );
+
+        drop(txn);
+        assert!(
+            acks_due(5, &pins, &related, &BTreeMap::new()) == related.to_vec(),
+            "the map dies with the transaction (Go TxnCtx.Cleanup)"
+        );
+    }
+
+    /// Go records at FIRST use only (`preprocess.go:2247`: store on a Load
+    /// miss), so a later re-bind at a newer version must not weaken the pin.
+    #[test]
+    fn first_use_wins_and_release_clears() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 3);
+        pins.record_table_use(7, 100, 3);
+        pins.record_table_use(7, 100, 9);
+        assert!(pins.blocks(5, &[100]), "first use at 3 still blocks 5");
+        let statement = pins.hold(7, 3);
+        drop(statement);
+        assert!(pins.blocks(5, &[100]), "the transaction still holds");
+        drop(txn);
+        assert!(!pins.blocks(5, &[100]));
+    }
+
+    /// An unresolved name has no concrete table ID. Go only blocks jobs whose
+    /// table IDs are present in the transaction's related-table map.
+    #[test]
+    fn an_unresolved_name_does_not_block_unrelated_work() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 4);
+        assert!(!pins.blocks(5, &[999]), "unresolved names have no table ID");
+        drop(txn);
+        assert!(!pins.blocks(5, &[999]));
+    }
+
+    #[test]
+    fn a_schema_job_is_not_blocked_by_unresolved_work() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let txn = pins.hold(7, 1);
+        assert_eq!(
+            acks_due(2, &pins, &[job(1, 2, &[0])], &BTreeMap::new()),
+            vec![job(1, 2, &[0])]
+        );
+        drop(txn);
+    }
+
+    /// Go's `jobCache`: one ack per (job, version), but a job re-published
+    /// at a HIGHER version is acknowledged again.
+    #[test]
+    fn an_acknowledged_job_is_not_resent_until_its_version_moves() {
+        let pins = Arc::new(SchemaPinRegistry::default());
+        let mut acked = BTreeMap::new();
+        acked.insert(1, 5_i64);
+        assert!(acks_due(5, &pins, &[job(1, 5, &[1])], &acked).is_empty());
+        assert_eq!(
+            acks_due(6, &pins, &[job(1, 6, &[1])], &acked),
+            vec![job(1, 6, &[1])]
+        );
+    }
+}

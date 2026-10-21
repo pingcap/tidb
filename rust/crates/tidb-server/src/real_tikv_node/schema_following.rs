@@ -9,7 +9,7 @@
 //! availability property for a latency one.
 
 use super::*;
-use tidb_exec::real_tikv_catalog::ReloadedCatalogAt;
+use tidb_exec::real_tikv_catalog::note_reload;
 use tidb_exec::schema_validator::{SchemaValidator, Validator as _};
 
 /// Connects the node's one etcd client (Go `domain.NewDomain`'s
@@ -370,60 +370,6 @@ where
         }),
     )?;
     Ok((catalog, reloader, validator))
-}
-
-/// What Go's `Syncer.Reload` does with a load's result
-/// (`issyncer/syncer.go:436-495`): a full load resets the validator ("full
-/// load and reset schema validator"); every pass, hit or not, renews the
-/// lease at the timestamp the pass read at
-/// (`schemaValidator.Update(version, oldSchemaVersion, newVersion, changes)`),
-/// recording the diffs' changed tables when the version moved. Go's cache
-/// hit reports `oldSchemaVersion` as 0 (`loader.go:196`), and so does an
-/// unchanged pass here.
-pub(crate) fn note_reload(
-    validator: &SchemaValidator,
-    current_version: i64,
-    at: ReloadedCatalogAt,
-) -> CatalogReloadPass {
-    let ReloadedCatalogAt {
-        lease_grant_ts,
-        reloaded,
-    } = at;
-    match reloaded {
-        ReloadedCatalog::Unchanged { version } => {
-            validator.update(lease_grant_ts, 0, version, None);
-            CatalogReloadPass::Unchanged
-        }
-        ReloadedCatalog::Diffs {
-            catalog, changes, ..
-        } => {
-            validator.update(
-                lease_grant_ts,
-                current_version,
-                catalog.schema_version,
-                Some(&changes),
-            );
-            CatalogReloadPass::Diffs(catalog)
-        }
-        ReloadedCatalog::Full { catalog, reason } => {
-            // Go `issyncer.Syncer.Reload`'s line for a full load.
-            tidb_util::logutil::bg_logger().info("full load and reset schema validator", &[]);
-            // Not log content: rust/scripts/run-realtikv-ddl.sh reads this
-            // JSON line from stderr.
-            eprintln!(
-                "{{\"event\":\"catalog_full_reload\",\"schema_version\":{},\"reason\":\"{reason}\"}}",
-                catalog.schema_version
-            );
-            validator.reset();
-            validator.update(
-                lease_grant_ts,
-                current_version,
-                catalog.schema_version,
-                None,
-            );
-            CatalogReloadPass::Full(catalog)
-        }
-    }
 }
 
 #[cfg(test)]

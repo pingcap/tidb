@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The DDL seam: this node's one route to the cluster's stored schema. Split
-//! out of `cluster_session_node` because it is one of the independent seams
-//! that accreted there; see that module's doc comment for how a DDL
+//! The DDL seam: this node's one route to the cluster's stored schema (Go's
+//! `ddl` package from the submitting side's `DoDDLJob` to the owner's job
+//! worker). It was split out of `tidb-server`'s `cluster_session_node` and now
+//! sits below the session; see that module's doc comment for how a DDL
 //! statement is routed here and what happens to the connection's own
 //! catalog afterwards.
 
@@ -48,8 +49,8 @@ use tidb_executor::cluster_storage::{ClusterSnapshot, ClusterTableStorage, Mutat
 use tidb_executor::{RowDecodeContext, StmtContext};
 use tidb_pd_client::EtcdClient;
 
-use crate::cluster_session::{cluster_table, AutoIdSource};
-use crate::sql_node::{cluster_ddl_error, SqlQueryError};
+use tidb_exec::sql_query_error::{cluster_ddl_error, SqlQueryError};
+use tidb_exec::table_from_meta::{cluster_table, AutoIdSource};
 
 /// This node's one route to the cluster's stored schema.
 ///
@@ -84,6 +85,20 @@ pub trait ClusterDdl: Send + Sync {
     fn is_owner(&self) -> bool {
         false
     }
+}
+
+/// A named thread with the SQL worker's stack, for every background worker
+/// that runs a transaction or a catalog reload (the same stack the server's
+/// `sql_worker_thread` gives its own).
+pub(crate) fn sql_worker_thread(name: impl Into<String>) -> std::thread::Builder {
+    std::thread::Builder::new()
+        .name(name.into())
+        .stack_size(tidb_util::worker_stack::WORKER_STACK_BYTES)
+}
+
+/// zap `zap.Error(err)`.
+pub(crate) fn zap_error(error: impl std::fmt::Display) -> tidb_log::Field {
+    tidb_log::Field::new("error", tidb_log::Value::Str(error.to_string()))
 }
 
 /// Go `jobV2FirstVer`: every TiDB at or above it runs job version 2.
@@ -187,7 +202,7 @@ fn detect_and_update_job_version(
     }
     let (stop, stopped) = channel::<()>();
     let server_info = Arc::clone(server_info);
-    let worker = crate::sql_node::sql_worker_thread("ddl-detect-job-version")
+    let worker = sql_worker_thread("ddl-detect-job-version")
         .spawn(move || loop {
             match stopped.recv_timeout(DETECT_JOB_VER_INTERVAL) {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -325,12 +340,12 @@ where
                 {
                     tidb_ddl_logutil::ddl_logger().warn(
                         "the owner sets global state to owner operator value failed",
-                        &[crate::zap_error(error)],
+                        &[zap_error(error)],
                     );
                 }
             }
             Err(error) => tidb_ddl_logutil::ddl_logger()
-                .warn("get global state failed", &[crate::zap_error(error)]),
+                .warn("get global state failed", &[zap_error(error)]),
         }
     }
 
@@ -414,7 +429,7 @@ where
                             Err(error) => tidb_ddl_logutil::ddl_logger().info(
                                 "transit one job step and wait sync failed",
                                 &[
-                                    crate::zap_error(error),
+                                    zap_error(error),
                                     tidb_log::Field::new(
                                         "job",
                                         tidb_log::Value::Str(job.to_string()),
@@ -425,7 +440,7 @@ where
                     }
                 }
                 Err(error) => tidb_ddl_logutil::sample_logger()
-                    .warn("load and deliver jobs failed", &[crate::zap_error(error)]),
+                    .warn("load and deliver jobs failed", &[zap_error(error)]),
             }
 
             let (generation, condvar) = &*wake;
@@ -503,7 +518,7 @@ where
         // aborted the whole-corpus replay over the embedded store.
         let handle = std::thread::Builder::new()
             .name("ddl-job-scheduler".to_owned())
-            .stack_size(crate::sql_node::SQL_WORKER_STACK_BYTES)
+            .stack_size(tidb_util::worker_stack::WORKER_STACK_BYTES)
             .spawn({
                 let opener = Arc::clone(&self.opener);
                 let notifier = self.notifier.clone();
@@ -674,7 +689,7 @@ where
             .map_err(|error| error.to_string())?;
         let opener = Arc::new(opener);
         let (min_job_id_stop, min_job_id_stopped) = channel();
-        let min_job_id_worker = crate::sql_node::sql_worker_thread("ddl-min-job-id-refresher")
+        let min_job_id_worker = sql_worker_thread("ddl-min-job-id-refresher")
             .spawn({
                 let refresher = Arc::clone(&min_job_id_refresher);
                 let opener = Arc::clone(&opener);
@@ -789,7 +804,7 @@ where
         };
         if let Err(error) = etcd.put(ADDING_DDL_JOB_NOTIFY_KEY, b"0") {
             tidb_ddl_logutil::ddl_logger()
-                .info("notify new DDL job failed", &[crate::zap_error(error)]);
+                .info("notify new DDL job failed", &[zap_error(error)]);
         }
     }
 
@@ -1013,7 +1028,7 @@ mod schema_sync_tests {
                 panic!("disabled MDL must not clean per-job acknowledgement keys")
             }
         }
-        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
         crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
@@ -1257,7 +1272,7 @@ mod schema_sync_tests {
                 Err("etcd unavailable".into())
             }
         }
-        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
         let (outcome, _) = crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
@@ -1994,7 +2009,7 @@ mod schema_sync_tests {
         // Restore the CHECK intermediate state and force its validator to
         // panic. The worker must discard the incomplete action and persist
         // Go's cancellation outcome under the current limit.
-        let panic_count = crate::server_metrics::PANIC_TOTAL
+        let panic_count = tidb_util::panic_metrics::PANIC_TOTAL
             .with_label_values(&["ddl-worker"])
             .get();
         set_limit(0);
@@ -2186,7 +2201,7 @@ mod schema_sync_tests {
             "cancellation must finish metadata rollback"
         );
         assert_eq!(
-            crate::server_metrics::PANIC_TOTAL
+            tidb_util::panic_metrics::PANIC_TOTAL
                 .with_label_values(&["ddl-worker"])
                 .get(),
             panic_count + 4,
@@ -2232,7 +2247,7 @@ mod schema_sync_tests {
                 fail::remove("beforeCleanupDDLReorgHandles");
             }
         }
-        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let (_pd, opener) = crate::embedded_store::in_process_write_stack().unwrap();
         let opener = Arc::new(opener);
         let timeout = Duration::from_secs(5);
         let (outcome, _) = crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
@@ -2403,7 +2418,7 @@ where
         let current = self.catalog.load();
         let at = reload_catalog_from_cluster(&self.opener, self.timeout, &current)
             .map_err(|error| error.to_string())?;
-        match crate::real_tikv_node::note_reload(&self.schema_validator, current.schema_version, at)
+        match tidb_exec::real_tikv_catalog::note_reload(&self.schema_validator, current.schema_version, at)
         {
             CatalogReloadPass::Unchanged => {}
             CatalogReloadPass::Diffs(catalog) | CatalogReloadPass::Full(catalog) => {
@@ -2824,7 +2839,7 @@ struct DdlTransactionAutoIds {
 
 use tidb_executor::kv_table::TableAutoId;
 
-impl crate::cluster_session::TableAutoIds for DdlTransactionAutoIds {
+impl tidb_exec::table_from_meta::TableAutoIds for DdlTransactionAutoIds {
     fn allocator_for(&self, db_id: i64, table: &tidb_model::TableInfo) -> TableAutoId {
         self.over(tidb_exec::cluster_auto_id::auto_id_key_for(db_id, table))
     }

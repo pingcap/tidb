@@ -24,16 +24,24 @@
 //! against that store; no PD or etcd connection is needed.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use tidb_distsql::cop_paging::CopRuntimeConfig;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
-use tidb_pd_client::ClusterSecurity;
 use tidb_txnkv::driver::tikv_store::TikvStore;
-use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+#[cfg(test)]
 use tidb_unistore::kv_handler::KvHandler;
+#[cfg(test)]
 use tidb_unistore::mvcc_store::MvccStore;
+#[cfg(test)]
 use tidb_unistore::tso::InProcessPd;
+
+pub(crate) use tidb_ddl::embedded_store::{in_process_stack, InProcessStack, IN_PROCESS_TIMEOUT};
+#[cfg(test)]
+pub(crate) use tidb_ddl::embedded_store::{
+    embedded_tikv_store, in_process_write_stack, InProcessOpener,
+};
+#[cfg(test)]
+use tidb_pd_client::ClusterSecurity;
 
 use crate::real_tikv_node::{configured_account_store, RunConfiguredNodeError};
 use crate::sql_node::ConcurrentSqlNode;
@@ -53,10 +61,6 @@ fn finish_with_signal_code(
     }
     result
 }
-
-/// The per-statement RPC budget an in-process call gets. Nothing waits on a
-/// network, so this bounds only local lock waits.
-const IN_PROCESS_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The transport an in-process session reads through: Go's coprocessor over
 /// the node's client-rust store, whose region cache and sender reach the
@@ -84,11 +88,6 @@ impl RealTiKvSessionTransportFactory for InProcessReadSessionFactory {
         ))
     }
 }
-
-/// The embedded write stack: one store, its region plane, its TSO, and the
-/// generic transaction opener over all three. Every unistore surface --
-/// bootstrap, reads and writes alike -- derives from this one build.
-type InProcessOpener = RealOptimisticTransactionOpener<tidb_unistore::mock::StorePdClient>;
 
 #[cfg(test)]
 mod transaction_buffer_tests {
@@ -303,87 +302,6 @@ mod transaction_buffer_tests {
         );
         reader.finish_without_writes().unwrap();
     }
-}
-
-/// The transaction half of [`InProcessStack`], for tests that open
-/// transactions over the embedded store.
-#[cfg(test)]
-pub(crate) fn in_process_write_stack() -> Result<(InProcessPd, InProcessOpener), SqlQueryError> {
-    in_process_stack(&ClusterSecurity::plaintext()).map(|stack| (stack.pd, stack.opener))
-}
-
-/// The embedded node's stores: the transaction stack, the region manager,
-/// and the node's client-rust store (Go `tikvStore`'s `*tikv.KVStore`), which
-/// the coprocessor reads through.
-pub(crate) struct InProcessStack {
-    pub(crate) pd: InProcessPd,
-    pub(crate) opener: InProcessOpener,
-    pub(crate) regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
-    pub(crate) tikv_store: Arc<TikvStore<tidb_unistore::mock::StorePdClient>>,
-    /// The store's RPC client, whose send hook is Go's
-    /// `UnistoreRPCClientSendHook`: a test's look at every request.
-    pub(crate) rpc: tidb_unistore::rpc::RpcClient,
-}
-
-/// Builds [`InProcessStack`]; TiDB requests to peers use `security`, as Go's
-/// mock store dials them with the cluster security.
-pub(crate) fn in_process_stack(
-    security: &ClusterSecurity,
-) -> Result<InProcessStack, SqlQueryError> {
-    let pd = InProcessPd::new();
-    let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
-    // Go's unistore store holds THE cluster's mock PD client
-    // (`mock_region.go`), so its async-commit/1PC `minCommitTS` draws from
-    // the same oracle start timestamps do. The embedded store mirrors that:
-    // one shared oracle, both faster protocols available.
-    let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(
-        MvccStore::with_pd(pd.oracle()),
-        Arc::clone(&regions),
-    )));
-    let (tikv_store, rpc) = embedded_tikv_store(handler, Arc::clone(&regions), &pd, security)?;
-    // The bootstrapped cluster protocol -- async commit and 1PC are both ON
-    // on TiKV (`session_commit_protocol`) -- and the shared-oracle store can
-    // answer both, exactly as Go's unistore does under its mock PD.
-    let transaction_opener =
-        RealOptimisticTransactionOpener::from_capabilities(tikv_store.clone(), IN_PROCESS_TIMEOUT)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-            .with_commit_protocol(tidb_exec::session_commit_protocol::bootstrap_commit_protocol());
-    Ok(InProcessStack {
-        pd,
-        opener: transaction_opener,
-        regions,
-        tikv_store: Arc::new(tikv_store),
-        rpc,
-    })
-}
-
-/// Go `mockstore.NewMockStore`'s `tikv.NewTestTiKVStore` over unistore: the
-/// node's client-rust store keeps its region cache and routing over
-/// unistore's PD and RPC clients, which reach the same handler, regions and
-/// oracle, and loads its txn safe point from the mock PD's GC states like a
-/// real cluster's.
-fn embedded_tikv_store(
-    handler: Arc<std::sync::Mutex<KvHandler>>,
-    regions: Arc<tidb_unistore::region_manager::InProcessRegionManager>,
-    pd: &InProcessPd,
-    security: &ClusterSecurity,
-) -> Result<
-    (
-        TikvStore<tidb_unistore::mock::StorePdClient>,
-        tidb_unistore::rpc::RpcClient,
-    ),
-    SqlQueryError,
-> {
-    let (rpc, pd_client, _cluster) =
-        tidb_unistore::mock::over(handler, regions, pd.oracle(), Vec::new())
-            .map_err(SqlQueryError::unknown)?;
-    let store = tidb_unistore::mock::new_test_tikv_store(
-        &rpc,
-        pd_client,
-        tidb_txnkv::driver::tikv_store::cluster_security_config(security),
-    )
-    .map_err(SqlQueryError::unknown)?;
-    Ok((store, rpc))
 }
 
 /// Runs the wide cluster-session surface over the embedded store.

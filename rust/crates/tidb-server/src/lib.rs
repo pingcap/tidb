@@ -53,7 +53,7 @@ pub(crate) fn isolate_process_globals() -> bool {
 mod auth_exchange;
 mod auth_identity;
 mod auth_plugin_registry;
-pub mod bootstrap_publish;
+pub use tidb_ddl::bootstrap_publish;
 pub mod cluster_account_seam;
 pub mod cluster_analyze_seam;
 pub mod cluster_auto_id_seam;

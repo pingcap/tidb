@@ -390,7 +390,7 @@ fn jitter_below(upper: u32) -> u32 {
 mod bdr_role_store;
 mod binding_maintenance;
 mod boot;
-mod ddl;
+use tidb_ddl::worker as ddl;
 mod ddl_job_history_store;
 mod ddl_notifier;
 pub(crate) mod gc_worker;

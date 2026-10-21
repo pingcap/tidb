@@ -79,6 +79,7 @@ members = [
     "crates/tidb-timer",
     "crates/tidb-ttl",
     "crates/tidb-exec",
+    "crates/tidb-ddl",
     "crates/tidb-stmtsummary",
     "crates/tidb-server",
     "crates/tidb-session",

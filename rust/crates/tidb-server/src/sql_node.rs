@@ -24,16 +24,14 @@ use std::time::{Duration, Instant};
 
 use tidb_ast::Stmt;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
-use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
-use tidb_exec::real_tikv_ddl::ClusterDdlError;
 #[cfg(test)]
 use tidb_exec::real_tikv_dml::ConfiguredWriteError;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
-use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
@@ -299,128 +297,9 @@ impl ShutdownHandle {
     }
 }
 
-/// A source-rendered error returned before a query result escapes.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SqlQueryError {
-    /// MySQL error number.
-    pub code: u16,
-    /// Five-byte SQLSTATE.
-    pub state: [u8; 5],
-    /// Caller-rendered error text.
-    pub message: String,
-    /// A commit write conflict's `newWriteConflictError` arguments, which the
-    /// session rewrites with table names (Go `tryReplaceWriteConflictError`).
-    pub write_conflict: Option<Box<WriteConflictArgs>>,
-    /// The Go `*terror.Error` identity the failure was raised as, `None` for a
-    /// plain error. Go's `err.Error()` -- `@@tidb_last_query_info`, logs --
-    /// prints it as `[class:code]message`; the wire carries only the message.
-    pub identity: Option<tidb_error::terror::TerrorIdentity>,
-}
-
-impl SqlQueryError {
-    /// Creates one explicit client-visible query failure.
-    #[must_use]
-    pub fn new(code: u16, state: [u8; 5], message: impl Into<String>) -> Self {
-        Self {
-            code,
-            state,
-            message: message.into(),
-            write_conflict: None,
-            identity: None,
-        }
-    }
-
-    /// Labels the failure with the Go identity it was raised as.
-    #[must_use]
-    pub fn with_identity(mut self, identity: Option<tidb_error::terror::TerrorIdentity>) -> Self {
-        self.identity = identity;
-        self
-    }
-
-    /// Go `err.Error()`: `[<class>:<code>]<message>` for a `*terror.Error`,
-    /// the bare message for a plain error.
-    #[must_use]
-    pub fn error_string(&self) -> String {
-        match self.identity {
-            Some(identity) if identity.class().description().is_empty() => {
-                format!("[{}]{}", identity.code().value(), self.message)
-            }
-            Some(identity) => format!("[{}]{}", identity.rfc_code(), self.message),
-            None => self.message.clone(),
-        }
-    }
-
-    /// Creates the fail-closed generic boundary for an injected engine error.
-    #[must_use]
-    pub fn unknown(message: impl Into<String>) -> Self {
-        Self::new(1105, *b"HY000", message)
-    }
-
-    /// The one failure whose answer is "nobody knows", not "it failed".
-    ///
-    /// Go `pkg/parser/terror/terror.go:265-269` defines
-    /// `ErrResultUndetermined = ClassGlobal.NewStdErr(CodeResultUndetermined,
-    /// mysql.Message("execution result undetermined", nil))`, which carries
-    /// the default MySQL code `mysql.ErrUnknown` (1105). It exists because no
-    /// SQL error code can express "unknown", and a client that receives an
-    /// ordinary error is entitled to retry — which double-applies if the
-    /// commit did land. `pkg/server/conn.go:1288-1291` therefore closes the
-    /// connection rather than reporting either outcome.
-    #[must_use]
-    pub fn result_undetermined() -> Self {
-        Self::new(1105, *b"HY000", RESULT_UNDETERMINED_MESSAGE)
-    }
-
-    /// Whether this failure is the undetermined verdict, so the caller must
-    /// close the connection instead of answering.
-    ///
-    /// Go matches on the `terror` identity (`terror.ErrResultUndetermined
-    /// .Equal(err)`); we have no error identities on the wire boundary, so the
-    /// exact message is the identity. It is safe as an identity precisely
-    /// because the client never sees it: Go closes the connection without
-    /// writing an ERR packet at all, and so do we.
-    #[must_use]
-    pub fn is_result_undetermined(&self) -> bool {
-        self.code == 1105 && self.message == RESULT_UNDETERMINED_MESSAGE
-    }
-}
-
-/// Go `pkg/parser/terror/terror.go:268`: `mysql.Message("execution result
-/// undetermined", nil)`.
-pub const RESULT_UNDETERMINED_MESSAGE: &str = "execution result undetermined";
-
-/// Preserves a transaction driver's client-visible error triple at the SQL
-/// boundary. Domain-specific commit errors delegate here instead of
-/// reclassifying an already typed failure from its display text.
-pub(crate) fn lock_sql_error(error: &LockSqlError) -> SqlQueryError {
-    SqlQueryError {
-        write_conflict: error.write_conflict.clone(),
-        ..SqlQueryError::new(error.code, error.state, error.message.clone())
-    }
-}
-
-/// Preserves the one DDL outcome that is not a failure verdict while mapping
-/// every determinate catalog error to its ordinary client diagnostic.
-pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
-    match error {
-        ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ClusterDdlError::Commit(error) => lock_sql_error(&error),
-        ClusterDdlError::IndexBackfill(error) => lock_sql_error(&error),
-        ClusterDdlError::Plan(error) => {
-            let error = error.to_sql_error();
-            SqlQueryError::new(
-                error.code,
-                error
-                    .state
-                    .as_bytes()
-                    .try_into()
-                    .expect("catalog SQLSTATE has five bytes"),
-                error.message,
-            )
-        }
-        other => SqlQueryError::unknown(other.to_string()),
-    }
-}
+pub use tidb_exec::sql_query_error::{lock_sql_error, SqlQueryError, RESULT_UNDETERMINED_MESSAGE};
+#[cfg(test)]
+pub(crate) use tidb_exec::sql_query_error::cluster_ddl_error;
 
 pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
     match error {

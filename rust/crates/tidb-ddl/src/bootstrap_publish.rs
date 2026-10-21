@@ -90,7 +90,7 @@ pub fn notify_committed_bootstrap(
 }
 
 /// Go `session.bootstrap`'s line once the owner finished the bootstrap.
-pub(crate) fn log_bootstrap_successful(started: std::time::Instant) {
+pub fn log_bootstrap_successful(started: std::time::Instant) {
     tidb_util::logutil::bg_logger().info(
         "bootstrap successful",
         &[tidb_log::Field::new(

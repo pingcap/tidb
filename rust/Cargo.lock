@@ -3480,6 +3480,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-ddl"
+version = "0.0.0"
+dependencies = [
+ "fail",
+ "serde_json",
+ "tidb-ast",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-ddl-logutil",
+ "tidb-ddl-serverstate",
+ "tidb-domain",
+ "tidb-error",
+ "tidb-exec",
+ "tidb-executor",
+ "tidb-hack",
+ "tidb-log",
+ "tidb-meta",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-owner",
+ "tidb-pd-client",
+ "tidb-schemaver",
+ "tidb-txnkv",
+ "tidb-unistore",
+ "tidb-util",
+ "tidb-vardef",
+ "tikv-client",
+]
+
+[[package]]
 name = "tidb-ddl-copr"
 version = "0.0.0"
 dependencies = [
@@ -4155,6 +4185,7 @@ dependencies = [
  "tidb-codec",
  "tidb-config",
  "tidb-datatype",
+ "tidb-ddl",
  "tidb-ddl-logutil",
  "tidb-ddl-notifier",
  "tidb-ddl-serverstate",

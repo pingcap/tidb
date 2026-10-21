@@ -1,0 +1,48 @@
+[package]
+name = "tidb-ddl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/ddl's worker side: the owner-stepped DDL job scheduler, the schema-version sync it publishes through, and the embedded store the bootstrap and unit tests run it on."
+
+[lints]
+workspace = true
+
+[dependencies]
+tikv-client.workspace = true
+serde_json.workspace = true
+tidb-ast = { path = "../tidb-ast" }
+tidb-config = { path = "../tidb-config" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
+tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
+tidb-domain = { path = "../tidb-domain" }
+tidb-error = { path = "../tidb-error" }
+tidb-exec = { path = "../tidb-exec" }
+tidb-executor = { path = "../tidb-executor" }
+tidb-hack = { path = "../tidb-hack" }
+tidb-log = { path = "../tidb-log" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+tidb-owner = { path = "../tidb-owner" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-schemaver = { path = "../tidb-schemaver" }
+tidb-txnkv = { path = "../tidb-txnkv" }
+tidb-unistore = { path = "../tidb-unistore" }
+tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
+
+[dev-dependencies]
+fail = { version = "0.4", features = ["failpoints"] }
+tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
+tidb-util = { path = "../tidb-util", features = ["failpoints"] }
+
+[features]
+failpoints = [
+    "tidb-ddl-serverstate/failpoints",
+    "tidb-exec/failpoints",
+    "tidb-util/failpoints",
+]

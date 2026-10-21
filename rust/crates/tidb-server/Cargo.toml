@@ -43,6 +43,7 @@ tidb-hack = { path = "../tidb-hack" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-ddl = { path = "../tidb-ddl" }
 tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
 tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
 tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
@@ -133,6 +134,7 @@ diagnostics = []
 # for builds that must stay on the platform allocator.
 default = ["jemalloc"]
 failpoints = [
+    "tidb-ddl/failpoints",
     "tidb-ddl-serverstate/failpoints",
     "tidb-exec/failpoints",
     "tidb-resourcemanager/failpoints",

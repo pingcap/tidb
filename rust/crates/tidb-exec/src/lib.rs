@@ -102,6 +102,7 @@ mod result_metadata;
 pub mod runtime_stats;
 pub mod schema_validator;
 pub mod session_commit_protocol;
+pub mod sql_query_error;
 pub mod statement_cop_stats;
 pub mod stats_watch;
 pub mod system_row_write;

@@ -17,10 +17,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidb_exec::catalog_reload::ReloadedCatalog;
-use tidb_exec::catalog_watch::{
-    CatalogReloadError, CatalogReloadPass, CatalogReloader, SharedCatalog,
-};
+use tidb_exec::catalog_watch::{CatalogReloadError, CatalogReloader, SharedCatalog};
 use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::real_tikv_catalog::reload_catalog_from_cluster;
 use tidb_exec::real_tikv_read::{
@@ -44,8 +41,8 @@ mod schema_following;
 mod session_time_zone;
 
 pub(crate) use schema_following::{
-    connect_etcd_client, note_reload, spawn_catalog_reloader, spawn_node_stats,
-    spawn_privilege_watch, spawn_sysvar_watch,
+    connect_etcd_client, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
+    spawn_sysvar_watch,
 };
 pub(crate) use session_time_zone::RealTiKvSessionTimeZone;
 
