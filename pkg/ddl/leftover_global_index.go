@@ -18,7 +18,6 @@ import (
 	"slices"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -32,9 +31,6 @@ import (
 // jobs cancelled on older versions. It runs once when this node becomes the DDL owner and only
 // scans partitioned tables.
 func (s *jobScheduler) cleanupLeftoverGlobalIndexes() {
-	if !config.GetGlobalConfig().Experimental.CleanupLeftoverGlobalIndexes {
-		return
-	}
 	is := s.infoCache.GetLatest()
 	if is == nil {
 		return
