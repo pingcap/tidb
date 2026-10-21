@@ -121,6 +121,7 @@ pub mod plan_cost_ver2;
 pub mod plan_hint;
 pub mod point_get_value;
 pub mod prepared_dml;
+pub mod preprocess;
 pub mod pushdown;
 pub mod ranger;
 pub mod read_only_scan;

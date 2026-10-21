@@ -468,6 +468,7 @@ impl Visitor for QBHintHandler {
             self.check_query_block_hints(&delete.hints, 0);
         } else if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
             self.select_stmt_offset += 1;
+            select.query_block_offset = self.select_stmt_offset;
             self.handle_view_hints(&mut select.hints, self.select_stmt_offset);
             self.check_query_block_hints(&select.hints, self.select_stmt_offset);
             self.left_hints

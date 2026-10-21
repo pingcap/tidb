@@ -546,6 +546,10 @@ pub struct StmtContextSessionState {
     /// `SQL SECURITY DEFINER` view's definer; `None` is a session that
     /// enforces no privileges.
     pub view_definer_privilege: Option<ViewDefinerPrivilegeCheck>,
+    /// Go `RequestVerification(activeRoles, ...)`, which the planner asks for
+    /// the session's own account while it expands a view under EXPLAIN;
+    /// `None` is a session that enforces no privileges.
+    pub session_privilege: Option<SessionPrivilegeCheck>,
     /// Go `RequestVerification("", "", "", mysql.ProcessPriv)` as
     /// `TIDB_DECODE_SQL_DIGESTS` asks it: whether the session holds PROCESS.
     pub process_privilege: bool,
@@ -585,6 +589,7 @@ impl Default for StmtContextSessionState {
             default_collation_for_utf8mb4: "utf8mb4_bin".to_owned(),
             sequence_privilege: None,
             view_definer_privilege: None,
+            session_privilege: None,
             process_privilege: true,
             sql_digest_text_retriever: None,
             fk_cascade_table_lock: None,
@@ -604,6 +609,11 @@ pub type SequencePrivilegeCheck = Arc<dyn Fn(&str, &str, bool) -> bool + Send + 
 /// stored ones by host pattern.
 pub type ViewDefinerPrivilegeCheck =
     Arc<dyn Fn(&str, &str, &str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
+
+/// The session's answer to "does this session hold this privilege": `(database,
+/// table, column, privilege)` for its own account with its active roles.
+pub type SessionPrivilegeCheck =
+    Arc<dyn Fn(&str, &str, &str, tidb_mysql::PrivilegeType) -> bool + Send + Sync>;
 
 /// Go `SQLDigestTextRetriever.RetrieveGlobal` as `TIDB_DECODE_SQL_DIGESTS`
 /// runs it while evaluating in `StmtContext`: each requested digest's
@@ -788,6 +798,8 @@ pub struct StmtContextData {
     sequence_privilege: Option<SequencePrivilegeCheck>,
     /// See [`StmtContextSessionState::view_definer_privilege`].
     view_definer_privilege: Option<ViewDefinerPrivilegeCheck>,
+    /// See [`StmtContextSessionState::session_privilege`].
+    session_privilege: Option<SessionPrivilegeCheck>,
     /// See [`StmtContextSessionState::process_privilege`].
     process_privilege: bool,
     /// See [`StmtContextSessionState::sql_digest_text_retriever`].
@@ -887,9 +899,6 @@ pub struct StmtContextData {
     /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
     /// with no session behind it (a test, a DDL-time fold) is permissive.
     only_full_group_by: bool,
-    /// The statement builds a `CREATE VIEW` body: Go's `PlanBuilder` then
-    /// sets `isCreateView` and `capFlag |= canExpandAST`.
-    create_view: bool,
     auto_increment_in_generated: bool,
     /// Go `SessionVars.TMPTableSize` (`@@tidb_tmp_table_max_size`).
     tmp_table_max_size: i64,
@@ -2069,13 +2078,6 @@ context_configuration! {
         self
     }
 
-    /// Marks the statement as building a `CREATE VIEW` body.
-    #[must_use]
-    pub fn with_create_view(mut self, create_view: bool) -> Self {
-        self.create_view = create_view;
-        self
-    }
-
     /// Sets Go EnableAutoIncrementInGenerated for DDL validation.
     #[must_use]
     pub fn with_auto_increment_in_generated(mut self, enabled: bool) -> Self {
@@ -2544,6 +2546,7 @@ impl StmtContext {
             default_collation_for_utf8mb4: session.default_collation_for_utf8mb4,
             sequence_privilege: session.sequence_privilege,
             view_definer_privilege: session.view_definer_privilege,
+            session_privilege: session.session_privilege,
             process_privilege: session.process_privilege,
             sql_digest_text_retriever: session.sql_digest_text_retriever,
             fk_cascade_table_lock: session.fk_cascade_table_lock,
@@ -2568,7 +2571,6 @@ impl StmtContext {
             allow_auto_random_explicit_insert: false,
             shard_allocate_step: i64::MAX as u64,
             only_full_group_by: false,
-            create_view: false,
             auto_increment_in_generated: false,
             // Go `DefTiDBTmpTableMaxSize`.
             tmp_table_max_size: 64 << 20,
@@ -3616,6 +3618,11 @@ impl StmtContext {
         self.view_definer_privilege.as_ref()
     }
 
+    /// The privilege answer the planner asks for the session's own account.
+    pub(crate) fn session_privilege(&self) -> Option<&SessionPrivilegeCheck> {
+        self.session_privilege.as_ref()
+    }
+
     fn check_sequence_privilege(
         &self,
         path: &[String],
@@ -4167,12 +4174,6 @@ impl StmtContext {
     #[must_use]
     pub fn only_full_group_by(&self) -> bool {
         self.only_full_group_by
-    }
-
-    /// Whether the statement builds a `CREATE VIEW` body.
-    #[must_use]
-    pub fn create_view(&self) -> bool {
-        self.create_view
     }
 
     /// Whether generated expressions may reference AUTO_INCREMENT columns.

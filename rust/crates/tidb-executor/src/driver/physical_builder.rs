@@ -6659,20 +6659,6 @@ pub(super) fn planned_result_columns(
     ))
 }
 
-/// [`planned_result_columns`] for either query shape, choosing the naming
-/// rule exactly as [`execute_query`] does for the executor it would build.
-pub(super) fn planned_query_result_columns(
-    query: &tidb_ast::QueryStmt,
-    physical: &PhysicalPlan,
-) -> Result<Vec<(String, FieldType)>, DriverError> {
-    match query {
-        tidb_ast::QueryStmt::Select(select) => planned_result_columns(select, physical),
-        tidb_ast::QueryStmt::SetOpr(_) => {
-            Ok(physical_result_columns(physical, &plan_schema(physical)?))
-        }
-    }
-}
-
 /// Go's common query execution seam: both SELECT and set-operation logical
 /// roots are already physical plans before executor construction begins.
 pub(super) fn open_query(

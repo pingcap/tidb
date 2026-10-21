@@ -903,9 +903,8 @@ pub(super) fn logical_from_plan(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
-    builder.can_expand_ast = ctx.create_view();
-    builder.is_create_view = ctx.create_view();
     builder.advanced_join_hint = ctx.advanced_join_hint();
+    builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -2948,104 +2947,200 @@ fn planner_built_query_with_allocators(
     registry: &ScalarSubqueryRegistry,
     building_view: Option<(&str, &str)>,
 ) -> Result<(LogicalPlan, u64), tidb_planner::plan_base::PlanError> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx)
-        .with_privilege_verifier(ctx);
-    let session_zone = ctx.session_zone();
-    let evaluator = subquery_evaluator(
+    let parts = QueryBuilderParts {
         catalog,
+        current_database,
         ctx,
+        use_plan_cache,
         plan_ids,
         column_ids,
-        use_plan_cache,
-        &session_zone,
         registry,
-    );
-    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
-    let defaults = default_evaluator(catalog, ctx);
-    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator)
-        .with_default_evaluator(&defaults);
-    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
-    builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
-    builder.only_full_group_by = ctx.only_full_group_by();
-    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
-    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
-    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
-    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
-    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
-    builder.set_isolation_read_engines(ctx.isolation_read_engines());
-    builder.can_expand_ast = ctx.create_view();
-    builder.is_create_view = ctx.create_view();
-    builder.advanced_join_hint = ctx.advanced_join_hint();
-    builder.set_partition_processor_enabled(
-        ctx.static_partition_prune() && !static_global_index_point_lookup(query, &source, ctx),
-    );
-    builder.set_dynamic_prune_fallback(&prune_fallback);
-    if let Some((database, view)) = building_view {
-        builder.building_view_stack.insert((
-            tidb_mysql::to_lowercase(database),
-            tidb_mysql::to_lowercase(view),
-        ));
-    }
-    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
-    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
-    builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
-    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
-    builder.prefer_index_merge_by_fix_control = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
-    builder.index_merge_skip_range_scan_check = ctx
-        .optimizer_fix_control()
-        .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
-    let node = tidb_resolve::NodeW::new(query.clone());
-    let plan = builder.build_query_node(&node, false)?;
-    ctx.set_block_as_names(builder.statement_block_as_names());
-    Ok((plan, builder.get_opt_flag()))
+    };
+    parts.build(Some(query), building_view, |builder| {
+        let node = tidb_resolve::NodeW::new(query.clone());
+        let plan = builder.build_query_node(&node, false)?;
+        ctx.set_block_as_names(builder.statement_block_as_names());
+        Ok((plan, builder.get_opt_flag()))
+    })
 }
 
-/// The types of a query's output columns as Go's `PlanBuilder` derives them:
-/// from the built logical plan's schema, before optimization can inline a CTE
-/// or fold a projection away (a CTE's columns are nullable, a literal's are
-/// not). This is what `tryFillViewColumnType` reads for a view.
-pub(crate) fn built_query_column_types(
-    query: &tidb_ast::QueryStmt,
+/// Go `buildDDL`'s `*ast.CreateViewStmt` arm over this catalog: the body is
+/// built, never run; `create.query` is left holding the expanded body
+/// `ddl.BuildViewInfo` restores and `create.columns` the view's column names.
+/// Returns the types of the body's output columns.
+pub(crate) fn build_create_view(
+    create: &mut tidb_ast::CreateViewStmt,
+    view_schema: &str,
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-    building_view: Option<(&str, &str)>,
 ) -> Result<Vec<tidb_datatype::FieldType>, tidb_planner::plan_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
-    let (plan, _) = planner_built_query_with_allocators(
-        query,
+    let parts = QueryBuilderParts {
         catalog,
         current_database,
         ctx,
-        false,
-        &plan_ids,
-        &column_ids,
-        &registry,
-        building_view,
-    )?;
-    Ok(plan
-        .schema()
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+    };
+    let body = (*create.query).clone();
+    parts.build(Some(&body), None, |builder| {
+        let plan = builder.build_create_view(view_schema, create)?;
+        Ok(logical_column_types(&plan))
+    })
+}
+
+/// What [`QueryBuilderParts::build`] configures a query's `PlanBuilder` from.
+struct QueryBuilderParts<'a> {
+    catalog: &'a Catalog,
+    current_database: &'a str,
+    ctx: &'a crate::StmtContext,
+    use_plan_cache: bool,
+    plan_ids: &'a PlanIdAllocator,
+    column_ids: &'a ColumnIdAllocator,
+    registry: &'a ScalarSubqueryRegistry,
+}
+
+impl QueryBuilderParts<'_> {
+    /// Go `NewPlanBuilder().Init(sctx, is, ...)` for a query: a builder over
+    /// this catalog with the session's planner variables, handed to `build`.
+    /// `query` is the statement the build is for, when there is one, which
+    /// decides static pruning's global-index exception.
+    fn build<R>(
+        &self,
+        query: Option<&tidb_ast::QueryStmt>,
+        building_view: Option<(&str, &str)>,
+        build: impl FnOnce(
+            &mut PlanBuilder<'_, super::catalog::PlannerCatalog, crate::StmtContext>,
+        ) -> Result<R, tidb_planner::plan_base::PlanError>,
+    ) -> Result<R, tidb_planner::plan_base::PlanError> {
+        let (catalog, current_database, ctx) = (self.catalog, self.current_database, self.ctx);
+        let (plan_ids, column_ids) = (self.plan_ids, self.column_ids);
+        let source = catalog
+            .planner_catalog(current_database, ctx.latest_index_schema())
+            .with_explain_hypo_state(ctx)
+            .with_dirty_tables(ctx)
+            .with_privilege_verifier(ctx);
+        let session_zone = ctx.session_zone();
+        let evaluator = subquery_evaluator(
+            catalog,
+            ctx,
+            plan_ids,
+            column_ids,
+            self.use_plan_cache,
+            &session_zone,
+            self.registry,
+        );
+        let prune_fallback = dynamic_prune_fallback(catalog, ctx);
+        let defaults = default_evaluator(catalog, ctx);
+        let mut builder =
+            PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
+                .with_subquery_evaluator(&evaluator)
+                .with_default_evaluator(&defaults);
+        builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
+        builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
+        builder.only_full_group_by = ctx.only_full_group_by();
+        builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
+        builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+        builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
+        builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
+        builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
+        builder.set_isolation_read_engines(ctx.isolation_read_engines());
+        builder.advanced_join_hint = ctx.advanced_join_hint();
+        builder.in_explain_stmt = ctx.in_explain_stmt();
+        builder.set_partition_processor_enabled(
+            ctx.static_partition_prune()
+                && !query
+                    .is_some_and(|query| static_global_index_point_lookup(query, &source, ctx)),
+        );
+        builder.set_dynamic_prune_fallback(&prune_fallback);
+        if let Some((database, view)) = building_view {
+            builder.building_view_stack.insert((
+                tidb_mysql::to_lowercase(database),
+                tidb_mysql::to_lowercase(view),
+            ));
+        }
+        builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
+        builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
+        builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
+        builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
+        builder.prefer_index_merge_by_fix_control = ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_planner::fix_control::FIX_52869, false);
+        builder.index_merge_skip_range_scan_check = ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
+        build(&mut builder)
+    }
+}
+
+/// Go `tryFillViewColumnType`'s build: `BuildDataSourceFromView` over the
+/// view `database`.`view_name`, whose body is parsed and built -- never run --
+/// under the view's own recursion guard, privilege rule and `ErrViewInvalid`
+/// mapping. Each of `columns` takes the static type of the output column of
+/// its name (`expression.FindFieldNameIdxByColName`), `None` when there is
+/// none.
+pub(crate) fn view_column_types(
+    database: &str,
+    view_name: &str,
+    columns: &[String],
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<Option<tidb_datatype::FieldType>>, tidb_planner::plan_base::PlanError> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database: database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+    };
+    parts.build(None, None, |builder| {
+        let view = builder
+            .source
+            .find_view(database, view_name)
+            .cloned()
+            .ok_or_else(|| {
+                tidb_planner::plan_base::PlanError::unknown_table(format!("{database}.{view_name}"))
+            })?;
+        let plan = builder.build_data_source_from_view(&view)?;
+        let types = logical_column_types(&plan);
+        let names = plan.output_names();
+        Ok(columns
+            .iter()
+            .map(|column| {
+                names
+                    .iter()
+                    .position(|name| tidb_mysql::lowercase_equal(&name.names.column.lower, column))
+                    .and_then(|index| types.get(index).cloned())
+            })
+            .collect())
+    })
+}
+
+/// The static type of each output column of a built logical plan.
+fn logical_column_types(plan: &LogicalPlan) -> Vec<tidb_datatype::FieldType> {
+    plan.schema()
         .map(|schema| {
             schema
                 .columns
                 .iter()
                 .map(|column| {
-                    column
-                        .ret_type
-                        .clone()
-                        .unwrap_or_else(|| tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong))
+                    column.ret_type.clone().unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong)
+                    })
                 })
                 .collect()
         })
-        .unwrap_or_default())
+        .unwrap_or_default()
 }
 
 /// Go's `visitInfo` for a query: the privileges its plan needs, collected by
@@ -3106,6 +3201,7 @@ fn query_visit_info_inner(
     builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
     builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
+    builder.in_explain_stmt = ctx.in_explain_stmt();
     let node = tidb_resolve::NodeW::new(query.clone());
     builder
         .build_query_node(&node, false)
@@ -3316,9 +3412,8 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
-    builder.can_expand_ast = ctx.create_view();
-    builder.is_create_view = ctx.create_view();
     builder.advanced_join_hint = ctx.advanced_join_hint();
+    builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
@@ -3991,9 +4086,8 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
     builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
     builder.set_isolation_read_engines(ctx.isolation_read_engines());
-    builder.can_expand_ast = ctx.create_view();
-    builder.is_create_view = ctx.create_view();
     builder.advanced_join_hint = ctx.advanced_join_hint();
+    builder.in_explain_stmt = ctx.in_explain_stmt();
     builder.set_partition_processor_enabled(ctx.static_partition_prune());
     builder.set_dynamic_prune_fallback(&prune_fallback);
     builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();

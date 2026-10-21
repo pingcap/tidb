@@ -167,6 +167,7 @@ pub mod aggregation;
 #[cfg(test)]
 mod aggregation_tests;
 pub mod catalog;
+pub mod create_view;
 pub mod cte;
 pub mod expand;
 pub mod field_name;
@@ -788,11 +789,28 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// `getPossibleAccessPaths` may enumerate invisible indexes.
     pub optimizer_use_invisible_indexes: bool,
     /// Go `capFlag & canExpandAST`: building a `CREATE VIEW` body, which
-    /// skips the storage-engine check.
+    /// skips the storage-engine check and expands the body's AST (see
+    /// [`create_view`]).
     pub can_expand_ast: bool,
     /// Go `isCreateView`: building a `CREATE VIEW` body, whose ungrouped
     /// columns `tblInfoFromCol` ignores.
     pub is_create_view: bool,
+    /// Go `capFlag & renameView` with `renamingViewName`: the view a `CREATE
+    /// VIEW` defines, which its own body may not read (`checkRecursiveView`).
+    pub renaming_view_name: Option<SchemaTableKey>,
+    /// What Go's `buildSelect` writes back into each `*ast.SelectStmt` under
+    /// `canExpandAST`, keyed by the statement's `QueryBlockOffset`.
+    pub(crate) expanded_selects: BTreeMap<i32, create_view::ExpandedSelect>,
+    /// Under `canExpandAST`, the aggregate each `MarkerKind::CorrelatedAgg`
+    /// slot replaced in a subquery's AST, by slot.
+    pub(crate) expanded_correlated_aggs: BTreeMap<usize, Expr>,
+    /// Go `SessionVars.StmtCtx.InExplainStmt`: an EXPLAIN builds the
+    /// statement, so each expanded view needs SHOW VIEW
+    /// (`BuildDataSourceFromView`).
+    pub in_explain_stmt: bool,
+    /// Go `SessionVars.StmtCtx.ViewDepth`: how many views this statement has
+    /// expanded so far, nested or not; never decremented.
+    pub view_depth: usize,
     /// Whether `SessionVars.IsolationReadEngines` contains TiKV.
     pub tikv_in_isolation_read: bool,
     /// Whether `SessionVars.IsolationReadEngines` contains TiFlash.
@@ -1543,6 +1561,11 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             optimizer_use_invisible_indexes: false,
             can_expand_ast: false,
             is_create_view: false,
+            renaming_view_name: None,
+            expanded_selects: BTreeMap::new(),
+            expanded_correlated_aggs: BTreeMap::new(),
+            in_explain_stmt: false,
+            view_depth: 0,
             tikv_in_isolation_read: true,
             tiflash_in_isolation_read: true,
             tidb_in_isolation_read: true,
@@ -2883,6 +2906,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
             return Err(PlanError::unknown_table(format!("{db_name}.{table_name}")));
         };
+        // `:4967` a view definition is shared by every session, while a LOCAL
+        // temporary table belongs to one connection and dies with it.
+        if self.is_create_view && table.is_local_temporary {
+            return Err(PlanError::view_select_temporary_table(&table_name));
+        }
         self.append_select_visit(&db_name, &table.table_name);
 
         if self.resolve_ctx.read().table_name(table_ref).is_none() {
@@ -4394,7 +4422,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .base
             .set_schema(Some(Schema::new(projection_columns)));
         projection.base.base.set_output_names(projection_names);
-        if self.new_only_full_group_by_check && self.only_full_group_by {
+        // "delay the only-full-group-by-check in create view statement to
+        // later query."
+        if !self.is_create_view && self.new_only_full_group_by_check && self.only_full_group_by {
             projection_group_check::check(&mut projection, fields, order_by_range)?;
         }
         Ok((LogicalPlan::Projection(projection), exprs))
@@ -4504,7 +4534,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .base
             .set_schema(Some(Schema::new(projection_columns)));
         projection.base.base.set_output_names(projection_names);
-        if self.new_only_full_group_by_check && self.only_full_group_by {
+        if !self.is_create_view && self.new_only_full_group_by_check && self.only_full_group_by {
             projection_group_check::check(&mut projection, fields, None)?;
         }
         Ok(LogicalPlan::Projection(projection))
@@ -5203,6 +5233,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // is resolved against the SOURCE scope and the written select list,
         // both of which exist before any operator above the FROM.
         let mut fields = Self::expand_fields_for_plan_checked(&select.fields, &plan)?;
+        // `:4358` "To be compatible with MySQL, we add alias name for each
+        // select field when creating view."
+        if self.can_expand_ast {
+            self.add_alias_name(select, &mut fields);
+        }
         // Go `buildSelect` calls `resolveGbyExprs` only under
         // `if sel.GroupBy != nil` (`logical_plan_builder.go:4361`). The call
         // sets `b.curClause = groupByClause`, so invoking it for a query with
@@ -5215,6 +5250,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         } else {
             self.resolve_gby_exprs(&select.group_by, &fields, &source_names)?
         };
+        if self.can_expand_ast {
+            self.record_expanded_select(select, &fields, &gby_exprs, &plan);
+        }
 
         // `:4370` "checkOnlyFullGroupBy should be executed before rewrite
         // gbyExprs, because the field type of the fields may change."

@@ -1064,29 +1064,29 @@ fn test_deduplicate_and_restore_gby_expressions_round_trip() {
 
 #[test]
 fn test_add_alias_name_gives_every_field_an_explicit_alias() {
-    let mut fields = vec![
-        ProjectionField {
-            default_name: None,
-            window_spec_column: false,
-            expr: Expr::Column(vec!["t".to_owned(), "b".to_owned()]),
-            column_reference: true,
-            alias: None,
-            text: None,
-            hidden: false,
-        },
-        ProjectionField {
-            default_name: None,
-            window_spec_column: false,
-            expr: Expr::Int("1".to_owned()),
-            column_reference: false,
-            alias: None,
-            text: Some("1".to_owned()),
-            hidden: false,
-        },
-    ];
-    PlanBuilder::<TestCatalog, ZonedNoColumns>::add_alias_name(&mut fields, &[]);
-    assert_eq!(fields[0].alias.as_deref(), Some("b"));
-    assert_eq!(fields[1].alias.as_deref(), Some("1"));
+    // Go `addAliasName`: a column takes its written name, any other field
+    // the name `buildProjectionFieldNameFromExpressions` gives its text, and
+    // under `AsViewSchema` a repeated anonymous name is renamed.
+    let mut select = parse_select("SELECT t.b, 1, 1, (b), b+1 AS x FROM t");
+    select.as_view_schema = true;
+    let mut fields = PlanBuilder::<TestCatalog, ZonedNoColumns>::expand_fields(
+        &select.fields,
+        &Schema::new(Vec::new()),
+        &[],
+    );
+    let harness = Harness::new();
+    harness.builder().add_alias_name(&select, &mut fields);
+    let aliases: Vec<_> = fields.iter().map(|field| field.alias.as_deref()).collect();
+    assert_eq!(
+        aliases,
+        vec![
+            Some("b"),
+            Some("1"),
+            Some("Name_exp_1"),
+            Some("(b)"),
+            Some("x")
+        ]
+    );
 }
 
 #[test]

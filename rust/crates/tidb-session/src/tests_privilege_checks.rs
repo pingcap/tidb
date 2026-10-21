@@ -204,6 +204,34 @@ fn explain_over_a_view_needs_show_view_and_select_on_nested_views() {
         .unwrap();
 }
 
+/// Go's `StmtCtx.ViewDepth` counts every view a statement expands, nested or
+/// not, so under EXPLAIN the second view of a join needs SELECT of the reader
+/// too, and `BuildDataSourceFromView` refuses it with `ErrViewNoExplain` while
+/// it plans -- before `CheckPrivilege` could report the statement's own
+/// SELECT visit on that view (1142).
+#[test]
+fn explain_needs_select_on_every_view_after_the_first() {
+    let (registry, mut root) = setup();
+    root.run("create database ev").unwrap();
+    root.run("create table ev.t (id int)").unwrap();
+    root.run("create view ev.v as select * from ev.t").unwrap();
+    root.run("create view ev.v1 as select * from ev.t").unwrap();
+    root.run("create user explainer").unwrap();
+    root.run("grant select, show view on ev.v to explainer").unwrap();
+    root.run("grant show view on ev.v1 to explainer").unwrap();
+    let mut user = session_as(&registry, root.shared_catalog(), "explainer", "%");
+    assert_eq!(
+        error_of(
+            &mut user,
+            "explain format='plan_tree' select * from ev.v join ev.v1"
+        ),
+        (
+            1345,
+            "EXPLAIN/SHOW can not be issued; lacking privileges for underlying table".to_owned(),
+        )
+    );
+}
+
 /// `privilege/privileges.test`: Go's `fetchShowColumns` wants a column
 /// privilege on the table (refusing as a denied SELECT), SHOW CREATE TABLE
 /// any privilege but CREATE TEMPORARY TABLES (refusing as a denied SHOW),

@@ -67,6 +67,9 @@ pub(crate) struct TablePrivilegeRequest {
     /// Further static privileges that grant the visit as well: Go checks a
     /// combined mask (`RequestVerification` asks `priv & mask > 0`).
     pub(crate) also_granted_by: &'static [GlobalPriv],
+    /// Go's `ErrViewNoExplain` authErr (1345): the SHOW VIEW visit
+    /// `BuildDataSourceFromView` appends under EXPLAIN.
+    pub(crate) view_no_explain: bool,
 }
 
 impl TablePrivilegeRequest {
@@ -82,6 +85,7 @@ impl TablePrivilegeRequest {
             dynamic_privileges: &[],
             specific_denial: None,
             also_granted_by: &[],
+            view_no_explain: false,
         }
     }
 
@@ -716,6 +720,7 @@ fn request_of_visit(
             request.table_error_override = Some((command, table.clone()));
         }
         VisitAuthError::None => request.table_named_in_error = false,
+        VisitAuthError::ViewNoExplain => request.view_no_explain = true,
         _ => {}
     }
     request

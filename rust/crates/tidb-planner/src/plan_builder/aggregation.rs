@@ -30,7 +30,6 @@
 //! | [`PlanBuilder::resolve_having_and_order_by`] | `resolveHavingAndOrderBy` (:2905) + `havingWindowAndOrderbyExprResolver` (:2661/:2686/:2784) |
 //! | [`resolve_from_select_fields`] | `resolveFromSelectFields` (:2607) |
 //! | [`PlanBuilder::build_sort_with_check`] | `buildSortWithCheck` (:2403) |
-//! | [`PlanBuilder::add_alias_name`] | `addAliasName` (:4141) |
 //!
 //! `checkOnlyFullGroupBy` and `checkOrderByInDistinct` are in
 //! [`super::only_full_group_by`]; `buildExpand` and the `ROLLUP` machinery are
@@ -113,10 +112,8 @@
 //!   arguments fails to resolve in the current scope but resolves in an outer
 //!   one is correlated, which is Go's `len(corCols) > 0 && len(cols) == 0`
 //!   over the same two scopes.
-//! * `sel.AsViewSchema` and the anonymous-field dedup loop
-//!   (`addAliasName`, `:4193`). `canExpandAST` is a dropped narrowing of
-//!   [`super`] — the view builder is a boundary — so
-//!   [`PlanBuilder::add_alias_name`] ports the aliasing half and says so.
+//! * `addAliasName` (`:4141`) and the other `canExpandAST` AST writes are in
+//!   [`super::create_view`].
 
 use std::collections::BTreeMap;
 
@@ -397,6 +394,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 text: None,
                 hidden: true,
             });
+            if self.can_expand_ast {
+                // Go keeps the aggregate in the subquery's AST; the marker
+                // that replaced it here is this builder's.
+                self.expanded_correlated_aggs
+                    .insert(self.correlated_agg_columns.len(), agg.clone());
+            }
             self.correlated_agg_columns
                 .push(CorrelatedColumn::default());
             appended.push(agg);
@@ -1555,35 +1558,6 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         self.check_order_by_in_distinct_ast(select, names)?;
         let sorted = self.build_sort(plan, items, markers)?;
         Ok(self.replace_grouping_func_in_sort(sorted))
-    }
-
-    /// Go `addAliasName(ctx, selectStmt, p)`
-    /// (`logical_plan_builder.go:4141`): every select field gains an explicit
-    /// alias, so that a view's column names are fixed at creation.
-    ///
-    /// A field that IS a column takes that column's written name; anything
-    /// else takes the name [`super::PlanBuilder::projection_field_name`]
-    /// would give it. The `AsViewSchema` dedup half is a narrowing; see this
-    /// module's header.
-    pub fn add_alias_name(fields: &mut [ProjectionField], names: &[FieldName]) {
-        for field in fields.iter_mut() {
-            if field.alias.is_some() {
-                continue;
-            }
-            field.alias = Some(match &field.expr {
-                Expr::Column(path) => path.last().cloned().unwrap_or_default(),
-                other => {
-                    let resolved = match other {
-                        Expr::Column(path) => find_field_name(names, path),
-                        _ => None,
-                    };
-                    match resolved.and_then(|index| names.get(index)) {
-                        Some(name) => name.names.column.original.clone(),
-                        None => field.text.clone().unwrap_or_else(|| field.expr.restore()),
-                    }
-                }
-            });
-        }
     }
 }
 

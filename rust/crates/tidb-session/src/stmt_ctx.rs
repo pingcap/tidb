@@ -774,7 +774,11 @@ impl Session {
         };
         let mut scanned = stmt.clone();
         let has_as_of = crate::binding::scan_statement_tables(&mut scanned).has_as_of;
-        self.check_noop_functions(&create.query)?;
+        // Go's preprocessor drops each body SELECT's lock
+        // (`checkCreateViewWithSelect`) before it reaches the SELECTs.
+        let mut body = (*create.query).clone();
+        tidb_executor::view::check_create_view_with_select(&mut body)?;
+        self.check_noop_functions(&body)?;
         self.refuse_stale_view_body(create, has_as_of)?;
         let create = create.clone();
         let current_db = self.current_db.clone();
@@ -1492,6 +1496,7 @@ impl Session {
             default_collation_for_utf8mb4,
             sequence_privilege: self.sequence_privilege_check(),
             view_definer_privilege: self.view_definer_privilege_check(),
+            session_privilege: self.session_privilege_check(),
             process_privilege: self.has_process_privilege(),
             sql_digest_text_retriever: Some(self.sql_digest_text_retrieval()),
             fk_cascade_table_lock: self.fk_cascade_table_lock_check(),

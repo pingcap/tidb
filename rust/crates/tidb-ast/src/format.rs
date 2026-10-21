@@ -664,6 +664,13 @@ impl RestoreContext {
         }
     }
 
+    /// Go `CTERestorer.IsCTETableName`: whether `name` is a CTE visible in
+    /// this restore scope.
+    pub fn is_cte_table_name(&self, name: &str) -> bool {
+        let name = identifier_to_lower(name);
+        self.cte_names.iter().any(|cte| *cte == name)
+    }
+
     /// Database prefix for an unqualified table, following Go TableName.Restore.
     pub fn default_db_for_table(&self, name: &str, is_alias: bool) -> Option<&str> {
         (!self.flags.has_without_schema_name()

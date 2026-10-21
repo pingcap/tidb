@@ -34,7 +34,7 @@ DDL details still open: the reorganize owner does not repeat `checkReorgPartitio
 
 ## Plan of work
 
-Milestone 2: a view body is one code path. `view.rs` still canonicalises a body the planner expands again; move the remaining logic into the planner and delete the catalog-surgery fallbacks. SHOW CREATE VIEW output stays byte-identical.
+Milestone 2: a view body is one code path. Done for CREATE VIEW, the view's metadata reads and EXPLAIN: `tidb_planner::plan_builder::create_view` is Go's `buildDDL` arm (the body built with `canExpandAST`, `renamingViewName` and `isCreateView`, the AST writes `buildSelect` makes recorded per `QueryBlockOffset` and applied to the statement, `v.Cols` from the plan), `tidb_planner::preprocess` is `handleTableName`, and `tidb-executor/src/view.rs` keeps only the preprocessor's `checkCreateViewWithSelect`, the DDL checks and `ddl.BuildViewInfo`. DESCRIBE and `information_schema.columns` build the view through `BuildDataSourceFromView` (`tryFillViewColumnType`), and the EXPLAIN view privileges (`ErrViewNoExplain`, SHOW VIEW visits, `StmtCtx.ViewDepth`) are the planner's. Two syntactic walks of stored view bodies remain outside the planner, each owned by another structure: the session's per-statement virtual-table materialisation (`information_schema_tables_in_query`) and the MDL table-id collection (`Catalog::mdl_table_ids`, Go's `tryLockMDLAndUpdateSchemaIfNecessary` in `buildDataSource`).
 
 Milestone 3: one DDL implementation, as decided. 3b: move the glue a store-backed session needs (boot, schema sync, the DDL worker) below `tidb-session` into a domain crate, as Go's `domain` sits below `session`. 3c: give `Session::new()` an in-process unistore through that crate. 3d: migrate statement kinds one per gate, with their tests, deleting the executor DDL for each kind once nothing calls it. 3e: delete the in-process catalog's row storage.
 
@@ -60,7 +60,7 @@ Each batch lands as its own commit through the pre-commit hook, so any one can b
 - [x] The production replay is in the gate.
 - [x] The 2026-10-18 review findings are worked off, except the transactions, caches, execution, duplicates and bootstrap items listed above.
 - [x] Every cluster schema change Go runs as a job is Go's persisted job (columns, indexes, tables, schemas, views, sequences, placement, resource groups, LOCK TABLES, every partition form, multi-schema changes), and the one-transaction DDL path is deleted (Batches 3 to 10, last `123c321787`).
-- [ ] Milestone 2.
+- [x] Milestone 2: CREATE VIEW, DESCRIBE / `information_schema.columns` of a view and the EXPLAIN view privileges run through the planner's Go-shaped paths; the executor canonicaliser (`view.rs` 1246 to 367 lines) and the catalog-copy `renaming_view` fallback are deleted. The virtual-table and MDL walks of view bodies are open (see the plan of work).
 - [ ] Milestone 3b to 3e.
 - [ ] Milestone 4.
 - [ ] Milestone 5.
@@ -73,6 +73,12 @@ A harness change once hid 56 statements in `OutOfDomain` behind a definer host-p
 
 The visit-info pass plans a statement a second time, and planning has effects: it raises warnings (truncated afterwards), constant folding evaluates builtins (suspended for the pass), and an uncorrelated subquery runs at plan time (answered with a row of NULLs in the pass). Double planning is the temporary price of Milestone 1; the end state plans once and checks afterwards.
 
+A view body's stored text is the planner's AST after `buildSelect`, and this planner never mutates its AST, so the CREATE VIEW build records Go's writes keyed by `SelectStmt.QueryBlockOffset` (now an AST field, written by `QBHintHandler` as Go does). The key survives the clones the builder makes (a recursive CTE's terms, a HAVING scratch copy); keying by node address did not. The correlated-aggregate resolver's `#corragg#` markers are put back before recording, since Go keeps the aggregate in the AST.
+
+Two Go details only the live oracle showed: `ColumnName.Restore` drops the schema of a column whose table is a CTE in scope (the old canonicaliser built CTE columns without one; the planner gives them the current database), and `StmtCtx.ViewDepth` counts every view a statement expands rather than the nesting depth, so under EXPLAIN the second view of a join needs SELECT too.
+
+`tryFillViewColumnType` runs in Go's system session, whose SQL mode carries no ONLY_FULL_GROUP_BY; the Rust build uses the statement's context, so a view whose body is a no-GROUP-BY aggregate over a plain column (`select a from t having sum(a) > 0`) is still left out of `information_schema.columns` and refused by DESCRIBE where Go lists it.
+
 ## Decision log
 
 Decided 2026-10-17 by the owner ("follow Go version implementation"): one DDL implementation, as Go has. Go's `ddl` executor builds a job, its worker applies it, and every session, a unit test's included, runs on a store. The Rust target is the cluster tier, reached by every session through one seam, over a store a bare `Session` also owns.
@@ -82,5 +88,7 @@ Decided 2026-10-18 (owner: "you make the call"): the production engine is the me
 Structure first, symptoms later (user direction, 2026-10-17). Harness visibility comes before every refactor; the stale-recording list is exact rather than a tolerance.
 
 ## Outcomes and retrospective
+
+Milestone 2 batch: 8990 tests across the touched crates green (one load flake, `unistore_cop::analyze_preserves_generated_execution_error`, green alone), 5 plan-text divergences in the in-process replay, production replay 8 diverged of 153 topics with none out of domain; SHOW CREATE VIEW, `information_schema.views` and view reads identical to the Go oracle across about 200 probe statements, except pre-existing parser and planner gaps.
 
 Gate g275 (`123c321787`): 10379 + 2833 tests green, 5 plan-text divergences in the in-process replay, production replay 8 diverged of 153 topics. Milestones 2, 3b-3e, 4 and 5 are open.

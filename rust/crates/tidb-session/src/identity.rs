@@ -177,6 +177,28 @@ impl Session {
         ))
     }
 
+    /// Go `privilege.Manager.RequestVerification(activeRoles, ...)` for the
+    /// planner: whether this session's account, with its active roles, holds
+    /// a privilege. `None` is a session that enforces no privileges.
+    pub(crate) fn session_privilege_check(&self) -> Option<tidb_executor::SessionPrivilegeCheck> {
+        let (registry, user, host) = self.privilege_context()?;
+        let registry = registry.clone();
+        let (user, host) = (user.to_owned(), host.to_owned());
+        let roles = self.active_roles().to_vec();
+        Some(Arc::new(
+            move |database: &str,
+                  table: &str,
+                  _column: &str,
+                  privilege: tidb_mysql::PrivilegeType| {
+                crate::table_privilege::global_privileges_of(privilege)
+                    .into_iter()
+                    .any(|global| {
+                        scoped_privilege(&registry, &user, &host, &roles, database, table, global)
+                    })
+            },
+        ))
+    }
+
     /// [`Self::has_scoped_privilege`] at table scope, the name the executor
     /// arms that predate the general form call it by.
     #[must_use]
@@ -372,6 +394,25 @@ impl Session {
         &self,
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
+        self.require_table_privileges(stmt, false)
+    }
+
+    /// [`Self::require_statement_table_privileges`] for the statement inside
+    /// an EXPLAIN, which Go plans under `StmtCtx.InExplainStmt`: every view
+    /// `BuildDataSourceFromView` expands then needs SHOW VIEW, and a view
+    /// expanded after the first SELECT, both refused with `ErrViewNoExplain`.
+    pub(crate) fn require_explain_statement_privileges(
+        &self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Result<(), DriverError> {
+        self.require_table_privileges(stmt, true)
+    }
+
+    fn require_table_privileges(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        in_explain: bool,
+    ) -> Result<(), DriverError> {
         self.validate_ddl_preprocess(stmt)?;
         if self.privilege_context().is_none()
             && self.statement_observation.is_none()
@@ -379,7 +420,7 @@ impl Session {
         {
             return Ok(());
         }
-        let requests = self.collect_table_privileges(stmt, false)?;
+        let requests = self.collect_table_privileges_in(stmt, false, in_explain)?;
         self.check_table_privilege_requests(&requests)
     }
 
@@ -388,11 +429,22 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         preparing: bool,
     ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
+        self.collect_table_privileges_in(stmt, preparing, false)
+    }
+
+    fn collect_table_privileges_in(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        preparing: bool,
+        in_explain: bool,
+    ) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError> {
         self.validate_ddl_preprocess(stmt)?;
         self.deny_missing_tables_without_privileges(stmt)?;
         // Both resolvers plan against the same catalog image the executor will
         // use, under the statement's own context.
-        let mut ctx = self.statement_context_for_stmt(stmt, false);
+        let mut ctx = self
+            .statement_context_for_stmt(stmt, false)
+            .with_in_explain_stmt(in_explain);
         if preparing {
             // Go initializes each PREPARE marker to NULL before building
             // its plan. EXECUTE uses the actual bound statement values.
@@ -660,6 +712,9 @@ impl Session {
             }
             if let Some(denial) = request.specific_denial {
                 return Err(DriverError::SpecificAccessDenied(denial.to_owned()));
+            }
+            if request.view_no_explain {
+                return Err(view_no_explain());
             }
             return Err(if request.database_named_in_error {
                 DriverError::DbAccessDenied {
@@ -1166,6 +1221,14 @@ impl Session {
         }
         rows
     }
+}
+
+/// Go `plannererrors.ErrViewNoExplain` (1345).
+fn view_no_explain() -> DriverError {
+    DriverError::Mysql(tidb_executor::MysqlError::new(
+        1345,
+        "EXPLAIN/SHOW can not be issued; lacking privileges for underlying table",
+    ))
 }
 
 /// Go `RequestVerification(activeRoles, database, table, "", priv)` for an

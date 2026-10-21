@@ -258,48 +258,6 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
     }
 }
 
-/// Query-local CTE visibility shared by physical-table admission and PREPARE
-/// database pinning. Go's preprocessWith publishes ordinary names after their
-/// definition, recursive names before it, and restores the enclosing scope.
-#[derive(Default)]
-struct CteScope {
-    visible: Vec<String>,
-    offsets: Vec<usize>,
-    recursive: Vec<bool>,
-}
-
-impl CteScope {
-    fn enter(&mut self, node: &mut dyn Any) {
-        if node.is::<tidb_ast::SelectStmt>() || node.is::<tidb_ast::SetOprStmt>() {
-            self.offsets.push(self.visible.len());
-        } else if let Some(with) = node.downcast_mut::<tidb_ast::WithClause>() {
-            self.recursive.push(with.recursive);
-        } else if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
-            self.offsets.push(self.visible.len());
-            if self.recursive.last().copied().unwrap_or(false) {
-                self.visible.push(go_to_lower(cte.name.clone()));
-            }
-        }
-    }
-
-    fn leave(&mut self, node: &mut dyn Any) {
-        if node.is::<tidb_ast::SelectStmt>() || node.is::<tidb_ast::SetOprStmt>() {
-            self.visible
-                .truncate(self.offsets.pop().expect("query scope entered"));
-        } else if node.is::<tidb_ast::WithClause>() {
-            self.recursive.pop();
-        } else if let Some(cte) = node.downcast_mut::<tidb_ast::Cte>() {
-            self.visible
-                .truncate(self.offsets.pop().expect("CTE scope entered"));
-            self.visible.push(go_to_lower(cte.name.clone()));
-        }
-    }
-
-    fn contains(&self, path: &[String]) -> bool {
-        matches!(path, [name] if self.visible.contains(&go_to_lower(name.clone())))
-    }
-}
-
 /// Physical read sources in traversal order. Qualified names always name a
 /// table, even when a visible CTE has the same name. Binding matching keeps its
 /// separate, deliberately unfiltered syntactic table-name collection.
@@ -307,7 +265,7 @@ pub(crate) fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
     #[derive(Default)]
     struct Collector {
         refs: Vec<Vec<String>>,
-        scope: CteScope,
+        scope: tidb_planner::preprocess::CteScope,
     }
     impl Visitor for Collector {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
@@ -331,82 +289,11 @@ pub(crate) fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
     collector.refs
 }
 
-/// Go `preprocessor.handleTableName` (`pkg/planner/core/preprocess.go:1758`):
-/// every unqualified table name that does not name a CTE takes the current
-/// database. PREPARE runs it on the statement it retains, so the stored
-/// `VisitInfos` and every later EXECUTE -- after any `USE` -- resolve against
-/// the database current at PREPARE (`PlanCacheStmt.StmtDB`); an unqualified
-/// name with no current database is Go's `ErrNoDB`.
+/// Go `preprocessor.handleTableName` over a retained statement; see
+/// [`tidb_planner::preprocess::handle_table_name`].
 pub(crate) fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
-    struct Pinner<'a> {
-        current_db: &'a str,
-        scope: CteScope,
-        unresolved: bool,
-    }
-    impl Pinner<'_> {
-        fn pin(&mut self, path: &mut Vec<String>) {
-            if path.len() != 1 {
-                return;
-            }
-            if self.current_db.is_empty() {
-                self.unresolved = true;
-                return;
-            }
-            path.insert(0, self.current_db.to_owned());
-        }
-    }
-    impl Visitor for Pinner<'_> {
-        fn enter(&mut self, node: &mut dyn Any) -> bool {
-            self.scope.enter(node);
-            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-                if !self.scope.contains(&table_ref.name) {
-                    self.pin(&mut table_ref.name);
-                }
-            } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
-                self.pin(&mut insert.table);
-            } else if let Some(import) = node.downcast_mut::<tidb_ast::ImportIntoStmt>() {
-                self.pin(&mut import.table);
-            } else if let Some(distribute) = node.downcast_mut::<tidb_ast::DistributeTableStmt>() {
-                self.pin(&mut distribute.table);
-            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateTableStmt>() {
-                self.pin(&mut create.name);
-            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateViewStmt>() {
-                self.pin(&mut create.name);
-            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateSequenceStmt>() {
-                self.pin(&mut create.name);
-            } else if let Some(drop) = node.downcast_mut::<tidb_ast::DropTableStmt>() {
-                for name in &mut drop.names {
-                    self.pin(name);
-                }
-            } else if let Some(alter) = node.downcast_mut::<tidb_ast::AlterTableStmt>() {
-                self.pin(&mut alter.name);
-            } else if let Some(create) = node.downcast_mut::<tidb_ast::CreateIndexStmt>() {
-                self.pin(&mut create.table);
-            } else if let Some(drop) = node.downcast_mut::<tidb_ast::DropIndexStmt>() {
-                self.pin(&mut drop.table);
-            } else if let Some(split) = node.downcast_mut::<tidb_ast::SplitRegionStmt>() {
-                self.pin(&mut split.table);
-            }
-            false
-        }
-
-        fn leave(&mut self, node: &mut dyn Any) -> bool {
-            self.scope.leave(node);
-            true
-        }
-    }
-    let mut pinner = Pinner {
-        current_db,
-        scope: CteScope::default(),
-        unresolved: false,
-    };
-    stmt.accept(&mut pinner);
-    if pinner.unresolved {
-        return Err(DriverError::Schema(
-            tidb_executor::SchemaErrorKind::NoDatabaseSelected,
-        ));
-    }
-    Ok(())
+    tidb_planner::preprocess::handle_table_name(stmt, current_db)
+        .map_err(|_| DriverError::Schema(tidb_executor::SchemaErrorKind::NoDatabaseSelected))
 }
 
 /// Go's shared binding, including stored plan digest and live usage times.

@@ -1980,3 +1980,129 @@ fn view_bodies_store_go_s_canonical_text_and_types() {
     assert_eq!(desc(&mut session, "w43"), ["a int YES PRI"]);
     assert_eq!(desc(&mut session, "w17"), ["date_format(e,'%Y') varchar(11) YES "]);
 }
+
+/// Go stores the body its planner expanded (`buildDDL` with `canExpandAST`,
+/// then `ddl.BuildViewInfo`), so every SELECT of the body is expanded the way
+/// the planner resolves it -- a subquery in ORDER BY, a LATERAL derived
+/// table, a subquery whose aggregate belongs to the outer block -- and a
+/// column of a CTE restores without the schema the planner gave it. Captured
+/// from the Go oracle, `m2_view` read as `test`.
+#[test]
+fn a_view_body_is_stored_as_the_planner_expanded_it() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b varchar(10), c int)").unwrap();
+    for sql in [
+        "create view z6 as select x.a from t x join lateral \
+         (select a from t where t.a = x.a) y",
+        "create view z7 as select a from t order by (select max(c) from t)",
+        "create view z8 as with c as (select a, b from t) select test.c.a, c.b from c \
+         where test.c.a > 0 group by test.c.a, c.b having count(test.c.a) > 0",
+        "create view z9 as select a, (select sum(t.c)) from t group by a",
+        "create view z4 as select a from t union \
+         (select a from t union select a from t for update)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let body = |session: &mut Session, view: &str| {
+        let (_, rows) = query_text(
+            session,
+            &format!(
+                "select view_definition from information_schema.views \
+                 where table_schema = 'test' and table_name = '{view}'"
+            ),
+        );
+        rows[0][0].clone()
+    };
+    assert_eq!(
+        body(&mut session, "z6"),
+        "SELECT `x`.`a` AS `a` FROM `test`.`t` AS `x` JOIN LATERAL \
+         (SELECT `a` AS `a` FROM `test`.`t` WHERE `t`.`a`=`x`.`a`) AS `y`"
+    );
+    assert_eq!(
+        body(&mut session, "z7"),
+        "SELECT `a` AS `a` FROM `test`.`t` ORDER BY \
+         (SELECT MAX(`c`) AS `max(c)` FROM `test`.`t`)"
+    );
+    assert_eq!(
+        body(&mut session, "z8"),
+        "WITH `c` AS (SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t`) \
+         SELECT `c`.`a` AS `a`,`c`.`b` AS `b` FROM `c` WHERE `c`.`a`>0 \
+         GROUP BY `c`.`a`,`c`.`b` HAVING COUNT(`c`.`a`)>0"
+    );
+    assert_eq!(
+        body(&mut session, "z9"),
+        "SELECT `a` AS `a`,(SELECT SUM(`t`.`c`) AS `sum(t.c)`) AS `(select sum(t.c))` \
+         FROM `test`.`t` GROUP BY `a`"
+    );
+    assert_eq!(
+        body(&mut session, "z4"),
+        "SELECT `a` AS `a` FROM `test`.`t` UNION (SELECT `a` AS `a` FROM `test`.`t` \
+         UNION SELECT `a` AS `a` FROM `test`.`t` )"
+    );
+}
+
+/// Go's preprocessor enters the CREATE VIEW before its body: the body's lock
+/// is `SelectLockNone` by the time `checkSelectNoopFuncs` runs, so a `LOCK IN
+/// SHARE MODE` body is created (restored with the trailing space), while an
+/// `INTO` clause is `ErrViewSelectClause`. The planner hides the view being
+/// defined from its body whether or not it replaces one (`renamingViewName`).
+/// Captured from the Go oracle.
+#[test]
+fn create_view_preprocesses_the_body_and_hides_the_view_it_defines() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b varchar(10), c int)").unwrap();
+    session
+        .run("create view z as select a from t lock in share mode")
+        .unwrap();
+    let (_, rows) = query_text(
+        &mut session,
+        "select view_definition from information_schema.views where table_name = 'z'",
+    );
+    assert_eq!(rows, [["SELECT `a` AS `a` FROM `test`.`t` "]]);
+    let error = session
+        .run("create view z5 as select * from t into outfile '/tmp/z5'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1350, "View's SELECT contains a 'INFO' clause")
+    );
+
+    session.run("create view x as select 1 as one").unwrap();
+    session.run("create view y as select * from x").unwrap();
+    for sql in [
+        "create view x as select * from x",
+        "create or replace view x as select * from y",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1146, "Table 'test.x' doesn't exist"),
+            "{sql}"
+        );
+    }
+}
+
+/// `DESCRIBE` fills a view's column types by building the view as a data
+/// source (`tryFillViewColumnType` over `BuildDataSourceFromView`), so a body
+/// that no longer resolves is `ErrViewInvalid`, as a read of the view is.
+/// Captured from the Go oracle.
+#[test]
+fn describe_builds_the_view_as_a_data_source() {
+    let mut session = Session::new();
+    session.run("create table t (a int, b varchar(10), c int)").unwrap();
+    session.run("create view v1 as select * from t").unwrap();
+    session.run("alter table t drop column c").unwrap();
+    for sql in ["select * from v1", "desc v1"] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (
+                1356,
+                "View 'test.v1' references invalid table(s) or column(s) or function(s) \
+                 or definer/invoker of view lack rights to use them"
+            ),
+            "{sql}"
+        );
+    }
+}

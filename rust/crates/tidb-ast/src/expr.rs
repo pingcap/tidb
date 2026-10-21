@@ -1174,25 +1174,26 @@ fn restore_path(path: &[String], out: &mut String) {
 /// (`table.col`), or three (`schema.table.col`) components; preserving that
 /// distinction avoids incorrectly treating a two-part path as if it had a
 /// schema component.
+///
+/// Go writes no schema for a column whose table is a CTE in scope
+/// (`!ctx.IsCTETableName(n.Table.L)`): a CTE belongs to no database.
 fn restore_path_with_context(path: &[String], out: &mut String, context: &RestoreContext) {
     let flags = context.flags();
-    if !flags.contains(RestoreFlags::WITHOUT_SCHEMA_NAME)
-        && !flags.contains(RestoreFlags::WITHOUT_TABLE_NAME)
-    {
+    let without_schema = flags.contains(RestoreFlags::WITHOUT_SCHEMA_NAME)
+        || matches!(path, [_, table, _] if context.is_cte_table_name(table));
+    let without_table = flags.contains(RestoreFlags::WITHOUT_TABLE_NAME);
+    if !without_schema && !without_table {
         restore_path(path, out);
         return;
     }
 
     let visible: Vec<&String> = match path {
         [] | [_] => path.iter().collect(),
-        [table, column] if flags.contains(RestoreFlags::WITHOUT_TABLE_NAME) => {
+        [table, column] if without_table => {
             let _ = table;
             vec![column]
         }
-        [schema, table, column] => match (
-            flags.contains(RestoreFlags::WITHOUT_SCHEMA_NAME),
-            flags.contains(RestoreFlags::WITHOUT_TABLE_NAME),
-        ) {
+        [schema, table, column] => match (without_schema, without_table) {
             (true, true) => vec![column],
             (true, false) => vec![table, column],
             (false, true) => vec![schema, column],

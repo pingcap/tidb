@@ -286,3 +286,28 @@ fn convert_using_follows_the_keyword_case_flag() {
         "SELECT convert(upper(uuid()) using 'utf8mb4')"
     );
 }
+
+/// Go `ColumnName.Restore` writes no schema for a column whose table is a CTE
+/// in scope (`!ctx.IsCTETableName(n.Table.L)`), and keeps it for a real
+/// table and outside the CTE's scope; captured from the Go oracle's stored
+/// view text (`m2_view.cte.a` restores as `cte`.`a`).
+#[test]
+fn a_cte_column_restores_without_its_schema() {
+    let restore = |sql: &str| {
+        parse(sql)
+            .unwrap()
+            .restore_with_flags(RestoreFlags::DEFAULT)
+    };
+    assert_eq!(
+        restore("with cte as (select a from t) select test.cte.a from cte where test.cte.a > 0"),
+        "WITH `cte` AS (SELECT `a` FROM `t`) SELECT `cte`.`a` FROM `cte` WHERE `cte`.`a`>0"
+    );
+    assert_eq!(
+        restore("with cte as (select a from t) select test.t.a from t"),
+        "WITH `cte` AS (SELECT `a` FROM `t`) SELECT `test`.`t`.`a` FROM `t`"
+    );
+    assert_eq!(
+        restore("select test.cte.a from cte"),
+        "SELECT `test`.`cte`.`a` FROM `cte`"
+    );
+}

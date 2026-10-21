@@ -161,6 +161,14 @@ pub struct SelectStmt {
     /// SelectionInto type"); this port restores the natural MySQL text
     /// instead, a divergence visible only through a path Go cannot take.
     pub into_vars: Vec<String>,
+    /// Go `QueryBlockOffset`: "the order of this SelectStmt if counted from
+    /// left to right in the sql text", written by `QBHintHandler.Enter`.
+    /// Zero until a hint handler numbers the statement. Restore ignores it.
+    pub query_block_offset: i32,
+    /// Go `AsViewSchema`: this is the SELECT whose fields name a `CREATE
+    /// VIEW`'s columns (`findStmtAsViewSchema`), so `addAliasName` renames its
+    /// duplicated anonymous fields. Restore ignores it.
+    pub as_view_schema: bool,
 }
 
 /// Go's `SelectIntoOption` payload. Only OUTFILE is restorable in Go; its
@@ -995,6 +1003,8 @@ impl crate::Visitable for SelectStmt {
             lock,
             into_outfile,
             into_vars: _,
+            query_block_offset: _,
+            as_view_schema: _,
         } = self;
         if !crate::Visitable::accept(kind, visitor) {
             return false;

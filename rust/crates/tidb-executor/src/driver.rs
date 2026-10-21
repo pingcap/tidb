@@ -177,47 +177,35 @@ pub fn run_select_meta_in(
     run_query_stmt(query, catalog, current_db, ctx)
 }
 
-/// Plans the query in `sql` and returns only its result-column metadata:
-/// Go's `PlanBuilder` for `CREATE VIEW` builds the body's logical plan and
-/// reads `plan.Schema()` and `plan.OutputNames()` (`planbuilder.go`, the
-/// `*ast.CreateViewStmt` case); the body is never executed. The same
-/// validation and optimizer as [`run_select_meta_in`] run, so a body that
-/// cannot be planned fails here exactly as it would there.
-pub fn plan_select_meta_in(
-    sql: &str,
+/// Go `preprocess` and `buildDDL`'s `*ast.CreateViewStmt` arm for `CREATE
+/// VIEW` (`planbuilder.go`): the preprocessor's set-operation and sequence
+/// checks visit the whole body, then the planner builds it -- never runs it --
+/// leaving the expanded body in `create.query` and the view's column names in
+/// `create.columns`. Returns the body's output column types.
+pub(crate) fn build_create_view(
+    create: &mut tidb_ast::CreateViewStmt,
+    view_schema: &str,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Vec<(String, FieldType)>, DriverError> {
-    let stmt = ctx.parse(sql)?;
-    let query = match &stmt {
-        Stmt::Query(query) => query.as_ref(),
-        _ => return Err(DriverError::unsupported("only SELECT is supported")),
-    };
-    validate_query_sequence_names(query, ctx)?;
-    set_opr::validate_query_usage(query, ctx)?;
-    let physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
-    physical_builder::planned_query_result_columns(query, &physical)
+) -> Result<Vec<FieldType>, DriverError> {
+    validate_query_sequence_names(&create.query, ctx)?;
+    set_opr::validate_query_usage(&create.query, ctx)?;
+    planner_bridge::build_create_view(create, view_schema, catalog, current_db, ctx)
+        .map_err(planner_error_to_driver)
 }
 
-/// [`plan_select_meta_in`]'s types read from the BUILT logical plan, the way
-/// Go's `tryFillViewColumnType` does: nothing is optimized, so a CTE inlined or
-/// a projection folded by the optimizer cannot change a column's nullability.
-pub fn plan_select_types_in(
-    sql: &str,
+/// Go `tryFillViewColumnType`: the static type of each of the view's
+/// `columns`, from `BuildDataSourceFromView` over `database`.`view_name`; see
+/// [`planner_bridge::view_column_types`].
+pub(crate) fn view_column_types(
+    database: &str,
+    view_name: &str,
+    columns: &[String],
     catalog: &Catalog,
-    current_db: &str,
     ctx: &crate::StmtContext,
-    building_view: Option<(&str, &str)>,
-) -> Result<Vec<FieldType>, DriverError> {
-    let stmt = ctx.parse(sql)?;
-    let query = match &stmt {
-        Stmt::Query(query) => query.as_ref(),
-        _ => return Err(DriverError::unsupported("only SELECT is supported")),
-    };
-    validate_query_sequence_names(query, ctx)?;
-    set_opr::validate_query_usage(query, ctx)?;
-    planner_bridge::built_query_column_types(query, catalog, current_db, ctx, building_view)
+) -> Result<Vec<Option<FieldType>>, DriverError> {
+    planner_bridge::view_column_types(database, view_name, columns, catalog, ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -533,6 +521,15 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
             DriverError::WrongNumberOfColumnsInSelect
         }
         tidb_planner::plan_base::PlanErrorKind::ViewWrongList => DriverError::ViewWrongList,
+        tidb_planner::plan_base::PlanErrorKind::ViewSelectVariable => {
+            DriverError::ViewSelectVariable
+        }
+        tidb_planner::plan_base::PlanErrorKind::ViewNoExplain => {
+            DriverError::Mysql(crate::MysqlError::new(1345, error.message()))
+        }
+        tidb_planner::plan_base::PlanErrorKind::ViewSelectTemporaryTable(table) => {
+            DriverError::ViewSelectTemporaryTable(table.clone())
+        }
         tidb_planner::plan_base::PlanErrorKind::ViewRecursive => DriverError::DdlCoded {
             errno: tidb_error::tidb::errcode::ErrViewRecursive,
             message: error.message().to_owned(),

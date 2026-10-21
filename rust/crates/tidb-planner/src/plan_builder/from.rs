@@ -80,9 +80,6 @@
 //!   built with [`PlanBuilder::build_select`], which is the SELECT statement
 //!   Go's `Build` dispatches to; a view whose body is a `UNION` reaches
 //!   `buildSetOpr`, batch 6d, and is refused by name.
-//! * `privilege.GetPrivilegeManager` and every `visitInfo` line in
-//!   `BuildDataSourceFromView`. 6a DROPPED `visitInfo`; the `SecurityDefiner`
-//!   and `ErrViewNoExplain` arms are its only readers here.
 //! * `aliasChecker` (`preprocess.go:2357`). Its whole body is the DELETE
 //!   statement's `IsAlias` tagging — `getTableRefsAlias` writes
 //!   `table.IsAlias = true` back into the AST for `DELETE t FROM t AS ...`.
@@ -102,10 +99,9 @@
 //!   UPDATE and DELETE restore the merged child schema instead of the
 //!   coalesced one. With no DML builder the guard is constant-false, so the
 //!   coalesced schema always stands — which is the SELECT behaviour Go has.
-//! * `b.ctx.GetSessionVars().StmtCtx.ViewDepth` — DROPPED in favour of the
-//!   name-keyed stack, which is the guard that actually refuses recursion.
-//!   The depth counter's only other reader is the `ErrViewNoExplain`
-//!   privilege arm, itself a boundary above.
+//! * `b.ctx.GetSessionVars().StmtCtx.ViewDepth` is the builder's
+//!   [`PlanBuilder::view_depth`]; recursion is refused by the name-keyed
+//!   stack, and the counter's only reader is the `ErrViewNoExplain` arm.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1736,16 +1732,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         // "If the view is being renamed, we return the mysql compatible error
         // message."
-        if self
-            .source
-            .renaming_view()
-            .is_some_and(|(renaming_db, renaming)| {
-                (
-                    tidb_mysql::to_lowercase(renaming_db),
-                    tidb_mysql::to_lowercase(renaming),
-                ) == key
-            })
-        {
+        if self.renaming_view_name.as_ref() == Some(&key) {
             return Err(PlanError::renaming_view_missing(format!(
                 "{db_name}.{table_name}"
             )));
@@ -1758,9 +1745,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// viewHints)` (`:5509`).
     ///
     /// Ported: the recursion guard, view-hint query-block conversion, the view
-    /// body's parse and build, the CTE save/restore around it, the column-count
-    /// check, and the projection over the result. Privilege collection remains
-    /// on the session/catalog boundary rather than this metadata-only builder.
+    /// body's parse and build, the CTE save/restore around it, the body's
+    /// visit info (verified against a `SQL SECURITY DEFINER` view's definer,
+    /// otherwise the reader's), the EXPLAIN arms (`ErrViewNoExplain`), the
+    /// column-count check, and the projection over the result.
     ///
     /// # Errors
     ///
@@ -1783,6 +1771,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         alias: Option<&str>,
         inherited_hints: tidb_hint::ViewHintContext,
     ) -> Result<LogicalPlan, PlanError> {
+        let view_depth = self.view_depth;
+        self.view_depth += 1;
         let guard = self.check_recursive_view(&view.db_name, &view.view_name)?;
         // Go relaxes truncation only while folding this view's constant
         // predicates; the outer statement keeps its own semantics.
@@ -1794,11 +1784,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // DEFINER view's is checked against its definer and then dropped,
         // an INVOKER view's is appended for the invoker to hold.
         let original_visit_info = std::mem::take(&mut self.visit_info);
+        // Under `canExpandAST` Go expands this body's freshly parsed AST too
+        // and drops it with the parse; its query-block offsets restart at 1,
+        // so its records must not reach the statement's (see
+        // [`super::create_view`]).
+        let outer_expanded = std::mem::take(&mut self.expanded_selects);
         let built = self.build_view_body(view, inherited_hints);
+        self.expanded_selects = outer_expanded;
         self.ignore_truncate_err_for_view_predicate_folding = outer_ignore_truncate;
         guard.release(self);
         let body_visit_info = std::mem::replace(&mut self.visit_info, original_visit_info);
         let mut plan = built?;
+        let (db_lower, view_lower) = (
+            tidb_mysql::to_lowercase(&view.db_name),
+            tidb_mysql::to_lowercase(&view.view_name),
+        );
+        // Under EXPLAIN every view after the statement's first needs SELECT
+        // of the session's own account.
+        if view_depth != 0 && self.in_explain_stmt {
+            if let Some(verifier) = self.source.privilege_verifier() {
+                if !verifier.request_verification(
+                    &db_lower,
+                    &view_lower,
+                    "",
+                    tidb_mysql::SelectPriv,
+                ) {
+                    return Err(PlanError::view_no_explain());
+                }
+            }
+        }
         if view.security_definer {
             if let Some(verifier) = self.source.privilege_verifier() {
                 for visit in &body_visit_info {
@@ -1816,6 +1830,15 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         } else {
             self.visit_info.extend(body_visit_info);
+        }
+        if self.in_explain_stmt {
+            self.visit_info.push(super::visit_info::VisitInfo {
+                privilege: tidb_mysql::ShowViewPriv,
+                database: db_lower,
+                table: view_lower,
+                column: String::new(),
+                error: super::visit_info::VisitAuthError::ViewNoExplain,
+            });
         }
         if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {
             let mut names = plan.output_names().to_vec();
@@ -1879,6 +1902,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 | PlanErrorKind::RenamingViewMissing(_)
                 | PlanErrorKind::FieldNotInGroupBy { .. }
                 | PlanErrorKind::FieldNotInAggregatedQuery { .. }
+                | PlanErrorKind::ViewNoExplain
                 | PlanErrorKind::NotSupportedYet(_) => error,
                 _ => view_invalid(&view.db_name, &view.view_name),
             }

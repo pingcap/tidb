@@ -72,6 +72,8 @@ fn do_projection_query(exprs: &[tidb_ast::Expr]) -> Stmt {
             lock: None,
             into_outfile: None,
             into_vars: Vec::new(),
+            query_block_offset: 0,
+            as_view_schema: false,
         }),
     )))
 }
@@ -3030,8 +3032,12 @@ impl Session {
             if let tidb_ast::DdlStmt::CreateView(create) = ddl.as_ref() {
                 // The preprocessor walks the whole CREATE VIEW statement at
                 // compile time, so a gated clause in the body is refused
-                // before the executor ever looks at the view.
-                self.check_noop_functions(&create.query)?;
+                // before the executor ever looks at the view. It enters the
+                // CREATE VIEW first, whose `checkCreateViewWithSelect` has
+                // already dropped each body SELECT's lock.
+                let mut body = (*create.query).clone();
+                tidb_executor::view::check_create_view_with_select(&mut body)?;
+                self.check_noop_functions(&body)?;
                 self.refuse_stale_view_body(create, scan.has_as_of)?;
             }
         }

@@ -420,6 +420,13 @@ pub enum PlanErrorKind {
     ViewRecursive,
     /// Go plannererrors.ErrViewInvalid (1356), with the qualified view name.
     ViewInvalid(String),
+    /// Go `plannererrors.ErrViewSelectVariable` (1351).
+    ViewSelectVariable,
+    /// Go `plannererrors.ErrViewNoExplain` (1345).
+    ViewNoExplain,
+    /// Go `plannererrors.ErrViewSelectTemporaryTable` (1352), with the table
+    /// name as written.
+    ViewSelectTemporaryTable(String),
     /// Go plannererrors.ErrInvalidLateralJoin (3809).
     InvalidLateralJoin(&'static str),
     /// Go `plannererrors.ErrWrongGroupField` (1056).
@@ -791,6 +798,34 @@ impl PlanError {
                 "View '{name}' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them"
             ),
             kind: PlanErrorKind::ViewInvalid(name),
+        }
+    }
+
+    /// Go `plannererrors.ErrViewNoExplain`.
+    #[must_use]
+    pub fn view_no_explain() -> Self {
+        Self {
+            kind: PlanErrorKind::ViewNoExplain,
+            message: "EXPLAIN/SHOW can not be issued; lacking privileges for underlying table"
+                .to_owned(),
+        }
+    }
+
+    /// Go `plannererrors.ErrViewSelectVariable`.
+    #[must_use]
+    pub fn view_select_variable() -> Self {
+        Self {
+            kind: PlanErrorKind::ViewSelectVariable,
+            message: "View's SELECT contains a variable or parameter".to_owned(),
+        }
+    }
+
+    /// Go `plannererrors.ErrViewSelectTemporaryTable`.
+    #[must_use]
+    pub fn view_select_temporary_table(table: &str) -> Self {
+        Self {
+            kind: PlanErrorKind::ViewSelectTemporaryTable(table.to_owned()),
+            message: format!("View's SELECT refers to a temporary table '{table}'"),
         }
     }
 

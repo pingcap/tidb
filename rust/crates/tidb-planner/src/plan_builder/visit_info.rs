@@ -73,4 +73,15 @@ pub trait PrivilegeVerifier {
         column: &str,
         privilege: PrivilegeType,
     ) -> bool;
+
+    /// Go `privilege.Manager.RequestVerification(activeRoles, ...)`: whether
+    /// the session's own account, with its active roles, holds `privilege`
+    /// on `database`.`table`.
+    fn request_verification(
+        &self,
+        database: &str,
+        table: &str,
+        column: &str,
+        privilege: PrivilegeType,
+    ) -> bool;
 }

@@ -99,8 +99,7 @@ impl Session {
         let target = bound.as_ref().unwrap_or(target);
         // EXPLAIN follows the same resolved privilege boundary as execution;
         // ANALYZE can write, and plain EXPLAIN still exposes the target plan.
-        self.require_statement_table_privileges(target)?;
-        self.require_explain_view_privileges(target)?;
+        self.require_explain_statement_privileges(target)?;
         // Go's preprocessor walks the statement INSIDE the EXPLAIN, so its
         // `checkSelectNoopFuncs` refuses (or warns about) `LOCK IN SHARE MODE`
         // and `SQL_CALC_FOUND_ROWS` exactly as it does for the bare SELECT.
@@ -378,68 +377,5 @@ impl Session {
         let (columns, rows) = rendered?;
         self.found_in_plan_cache = execution.cache_hit();
         Ok(Some(StmtOutput::Rows { columns, rows }))
-    }
-
-    /// Go `BuildDataSourceFromView` under `InExplainStmt`: a view nested in
-    /// another needs SELECT on itself, refused while its parent is built,
-    /// and every view the EXPLAIN expands adds a SHOW VIEW `visitInfo`; both
-    /// fail with `ErrViewNoExplain` (1345).
-    fn require_explain_view_privileges(&self, target: &Stmt) -> Result<(), DriverError> {
-        if self.privilege_context().is_none() {
-            return Ok(());
-        }
-        let mut views = Vec::new();
-        {
-            let catalog = self.lock_catalog()?;
-            collect_expanded_views(target, &self.current_db, &catalog, 0, &mut views);
-        }
-        let denied = || {
-            DriverError::Mysql(tidb_executor::MysqlError::new(
-                1345,
-                "EXPLAIN/SHOW can not be issued; lacking privileges for underlying table",
-            ))
-        };
-        for (database, view, depth) in &views {
-            if *depth > 0
-                && !self.has_scoped_privilege(database, view, crate::privilege::GlobalPriv::Select)
-            {
-                return Err(denied());
-            }
-        }
-        for (database, view, _) in &views {
-            if !self.has_scoped_privilege(database, view, crate::privilege::GlobalPriv::ShowView) {
-                return Err(denied());
-            }
-        }
-        Ok(())
-    }
-}
-
-/// The views `stmt` expands, depth first as Go builds them, each with its
-/// nesting depth (Go `StmtCtx.ViewDepth`): 0 for a view the statement names.
-fn collect_expanded_views(
-    stmt: &Stmt,
-    current_db: &str,
-    catalog: &tidb_executor::Catalog,
-    depth: usize,
-    views: &mut Vec<(String, String, usize)>,
-) {
-    for path in crate::binding::collect_physical_table_refs(stmt) {
-        let (database, name) = match path.as_slice() {
-            [name] => (current_db, name.as_str()),
-            [database, name] => (database.as_str(), name.as_str()),
-            _ => continue,
-        };
-        let Some(tidb_executor::TableEntry::View(view)) = catalog.table_in(database, name) else {
-            continue;
-        };
-        // A view cannot reach itself (CREATE VIEW refuses the cycle); the
-        // depth cap only bounds a corrupt definition.
-        if depth < 64 {
-            if let Ok(body) = tidb_parser::parse(&view.select_sql) {
-                collect_expanded_views(&body, database, catalog, depth + 1, views);
-            }
-        }
-        views.push((database.to_owned(), name.to_owned(), depth));
     }
 }
