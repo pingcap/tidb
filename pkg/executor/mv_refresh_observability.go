@@ -29,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -238,7 +239,6 @@ type RefreshMaterializedViewDryRunExec struct {
 	exec.BaseExecutor
 
 	stmt *ast.RefreshMaterializedViewStmt
-	is   infoschema.InfoSchema
 
 	rows   []string
 	cursor int
@@ -566,14 +566,9 @@ func (e *RefreshMaterializedViewDryRunExec) renderPlanRowsForInternalStmt(ctx co
 		defer restoreInternalSQLScanUserTable()
 	}
 
-	is := e.is
-	if is == nil {
-		var ok bool
-		is, ok = e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
-		if !ok {
-			return nil, errors.New("dry run refresh materialized view: invalid infoschema")
-		}
-	}
+	// The MDL table cache and related-table map must belong to the same session's
+	// transaction. Reusing the outer session's schema can register a table twice.
+	is := sessiontxn.GetTxnManager(internalSctx).GetTxnInfoSchema()
 	nodeW := resolve.NewNodeW(stmt)
 	plan, _, err := plannercore.OptimizeAstNode(ctx, internalSctx, nodeW, is)
 	if err != nil {

@@ -1376,7 +1376,6 @@ func (b *executorBuilder) buildDryRunRefreshMaterializedView(v *plannercore.DryR
 	return &RefreshMaterializedViewDryRunExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		stmt:         v.Statement,
-		is:           b.is,
 	}
 }
 
