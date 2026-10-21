@@ -15,7 +15,9 @@
 package ddl
 
 import (
+	"context"
 	"slices"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -24,8 +26,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
 )
+
+const leftoverGlobalIndexRetryCnt = 3
 
 // cleanupLeftoverGlobalIndexes drops the global index copies left behind by REORGANIZE PARTITION
 // jobs cancelled on older versions. It runs once when this node becomes the DDL owner and only
@@ -41,15 +46,53 @@ func (s *jobScheduler) cleanupLeftoverGlobalIndexes() {
 			continue
 		}
 		for _, tblInfo := range db.TableInfos {
+			if s.schCtx.Err() != nil {
+				return
+			}
 			if len(leftoverGlobalIndexes(tblInfo)) == 0 {
 				continue
 			}
-			if err := s.dropLeftoverGlobalIndexes(dbInfo.ID, tblInfo.ID); err != nil {
+			var err error
+			for i := range leftoverGlobalIndexRetryCnt {
+				if i > 0 {
+					select {
+					case <-s.schCtx.Done():
+						return
+					case <-time.After(time.Duration(i) * 100 * time.Millisecond):
+					}
+				}
+				if err = s.dropLeftoverGlobalIndexes(dbInfo.ID, tblInfo.ID); err == nil {
+					break
+				}
+			}
+			if err != nil {
 				logutil.DDLLogger().Warn("failed to drop leftover global indexes",
 					zap.String("db", db.DBName.O), zap.String("table", tblInfo.Name.O), zap.Error(err))
 			}
 		}
 	}
+}
+
+// dropLeftoverGlobalIndexes holds the schema version lock while editing the table, so the edit is
+// serialized with the DDL job steps on this owner.
+func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
+	sctx, err := s.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer s.sessPool.Put(sctx)
+	s.schemaVerMgr.schemaVersionMu.Lock()
+	indexIDs, ver, err := CleanupLeftoverIndexes(s.schCtx, sctx, dbID, tableID)
+	s.schemaVerMgr.schemaVersionMu.Unlock()
+	if err != nil || len(indexIDs) == 0 {
+		return errors.Trace(err)
+	}
+	logutil.DDLLogger().Info("dropped leftover global indexes", zap.Int64("tableID", tableID),
+		zap.Int("indexCount", len(indexIDs)), zap.Int64("schemaVersion", ver))
+	if err = s.schemaVerSyncer.OwnerUpdateGlobalVersion(s.schCtx, ver); err != nil {
+		logutil.DDLLogger().Warn("failed to update global schema version", zap.Int64("schemaVersion", ver), zap.Error(err))
+	}
+	return nil
 }
 
 // leftoverGlobalIndexes returns the non-public global indexes of a table that is not being
@@ -78,19 +121,16 @@ func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	return leftovers
 }
 
-// dropLeftoverGlobalIndexes removes the leftover copies from the table meta and queues their data
-// for delete range in one transaction. The copies are never read, and their columns, key flags
-// and hidden columns are shared with the public index, so they are removed directly.
-func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
-	sctx, err := s.sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer s.sessPool.Put(sctx)
+// CleanupLeftoverIndexes removes the leftover global index copies of a table from its meta and
+// queues their data for delete range, in one transaction with a new schema version and schema
+// diff. The copies are never read, and their columns, key flags and hidden columns are shared with
+// the public index, so they are removed directly. It returns the dropped index IDs and the new
+// schema version, or no IDs when the table has no leftovers.
+func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, tableID int64) (indexIDs []int64, schemaVersion int64, err error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	se := sess.NewSession(sctx)
-	ctx := kv.WithInternalSourceType(s.schCtx, kv.InternalTxnDDL)
 	if err = se.Begin(ctx); err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	committed := false
 	defer func() {
@@ -100,50 +140,50 @@ func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
 	}()
 	txn, err := se.Txn()
 	if err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	m := meta.NewMutator(txn)
 	tblInfo, err := m.GetTable(dbID, tableID)
 	if err != nil || tblInfo == nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	leftovers := leftoverGlobalIndexes(tblInfo)
 	if len(leftovers) == 0 {
-		return nil
+		return nil, 0, nil
 	}
-	indexIDs := make([]int64, 0, len(leftovers))
+	indexIDs = make([]int64, 0, len(leftovers))
 	for _, idx := range leftovers {
 		removeIndexInfo(tblInfo, idx)
 		indexIDs = append(indexIDs, idx.ID)
 	}
 	if err = m.UpdateTable(dbID, tblInfo); err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	ver, err := m.GenSchemaVersion()
 	if err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	if err = m.SetSchemaDiff(&model.SchemaDiff{Version: ver, Type: model.ActionDropIndex, SchemaID: dbID, TableID: tableID}); err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	// The delete range rows are keyed by a job ID, use a fresh global ID so they do not clash with real jobs.
 	delRangeID, err := m.GenGlobalID()
 	if err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	wrapper := newDelRangeExecWrapper(sctx)
 	if err = wrapper.UpdateTSOForJob(); err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	var ea elementIDAlloc
 	if err = doBatchDeleteIndiceRange(ctx, wrapper, delRangeID, tableID, indexIDs, &ea, "leftover global index copies"); err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	if err = se.Commit(ctx); err != nil {
-		return errors.Trace(err)
+		return nil, 0, errors.Trace(err)
 	}
 	committed = true
-	logutil.DDLLogger().Info("dropped leftover global indexes", zap.Int64("tableID", tableID),
+	logutil.DDLLogger().Info("dropped leftover global indexes from table meta", zap.Int64("tableID", tableID),
 		zap.Int64s("indexIDs", indexIDs), zap.Int64("schemaVersion", ver), zap.Int64("delRangeID", delRangeID))
-	return errors.Trace(s.schemaVerSyncer.OwnerUpdateGlobalVersion(ctx, ver))
+	return indexIDs, ver, nil
 }
