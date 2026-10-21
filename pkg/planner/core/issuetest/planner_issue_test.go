@@ -446,7 +446,7 @@ func TestIssue71480ClusteredPKIndexMergeInSubquery(t *testing.T) {
 	tk.MustExec("create unique index idx_tab2_1 on tab2 (col4)")
 	tk.MustExec("create index idx_tab2_4 on tab2 (col1 desc, col3 desc)")
 	tk.MustExec("insert into tab2 values (0, 22, 43.96, 0, 80.14)")
-	tk.MustQuery(`select pk
+	query := `select pk
 from tab2
 where col4 in (
   select col1
@@ -461,5 +461,7 @@ where col4 in (
          and col3 > 78
        )
      )
-)`).Check(testkit.Rows())
+     )`
+	tk.MustQuery("explain format='brief' " + query).MultiCheckContain([]string{"IndexMerge"})
+	tk.MustQuery(query).Check(testkit.Rows())
 }
