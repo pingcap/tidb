@@ -1061,6 +1061,9 @@ type Experimental struct {
 	AllowEnableForeignKeyCheckInSharedLock bool `toml:"allow-enable-foreign-key-check-in-shared-lock" json:"allow-enable-foreign-key-check-in-shared-lock"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+	// Whether the DDL owner drops the global index copies left behind by cancelled
+	// REORGANIZE PARTITION jobs when it is elected.
+	CleanupLeftoverGlobalIndexes bool `toml:"cleanup-leftover-global-indexes" json:"cleanup-leftover-global-indexes"`
 }
 
 // HostedEmbedding is the config for the TiDB Cloud hosted embedding provider

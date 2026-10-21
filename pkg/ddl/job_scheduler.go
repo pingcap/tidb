@@ -191,6 +191,7 @@ func (s *jobScheduler) start() {
 		s.bgJobWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(backgroundWorker), 20, 20, 0), jobTypeReorg)
 	}
 	s.wg.RunWithLog(s.scheduleLoop)
+	s.wg.RunWithLog(s.cleanupLeftoverGlobalIndexes)
 	s.wg.RunWithLog(func() {
 		s.schemaVerSyncer.SyncJobSchemaVerLoop(s.schCtx)
 	})
