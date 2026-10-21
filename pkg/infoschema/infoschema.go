@@ -401,8 +401,8 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]
 	return tables, nil
 }
 
-// IterSchemaTableInfos implements context.SchemaTableIterator.
-func (is *infoSchema) IterSchemaTableInfos(
+// iterSchemaTableInfos makes one streaming pass over all table infos in the schema.
+func (is *infoSchema) iterSchemaTableInfos(
 	ctx stdctx.Context,
 	schema ast.CIStr,
 	visit func(*model.TableInfo) error,
@@ -1380,16 +1380,4 @@ func getTableInfo(tbl table.Table) *model.TableInfo {
 		return nil
 	}
 	return tbl.Meta()
-}
-
-func getTableInfoList(tables []table.Table) []*model.TableInfo {
-	if tables == nil {
-		return nil
-	}
-
-	infoLost := make([]*model.TableInfo, 0, len(tables))
-	for _, tbl := range tables {
-		infoLost = append(infoLost, tbl.Meta())
-	}
-	return infoLost
 }

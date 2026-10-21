@@ -114,14 +114,14 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, tables[0], tblInfos[0])
 
 	var iteratedTableIDs []int64
-	err = is.IterSchemaTableInfos(context.Background(), schemaName, func(tblInfo *model.TableInfo) error {
+	err = is.iterSchemaTableInfos(context.Background(), schemaName, func(tblInfo *model.TableInfo) error {
 		iteratedTableIDs = append(iteratedTableIDs, tblInfo.ID)
 		return nil
 	})
 	require.NoError(t, err)
 	require.Equal(t, []int64{tblInfo.ID}, iteratedTableIDs)
 
-	err = is.IterSchemaTableInfos(context.Background(), schemaName, func(*model.TableInfo) error {
+	err = is.iterSchemaTableInfos(context.Background(), schemaName, func(*model.TableInfo) error {
 		return context.Canceled
 	})
 	require.ErrorIs(t, err, context.Canceled)
@@ -300,6 +300,7 @@ func TestMisc(t *testing.T) {
 func TestBundles(t *testing.T) {
 	t.Run("drop schema streams table IDs", testDropSchemaStreamsTableIDs)
 	t.Run("collect physical table IDs propagates iteration errors", testCollectPhysicalTableIDsPropagatesIterationErrors)
+	t.Run("retry flashback in progress", testRetryOnFlashbackInProgress)
 
 	r := internal.CreateAutoIDRequirement(t)
 	defer func() {
@@ -518,6 +519,50 @@ func testCollectPhysicalTableIDsPropagatesIterationErrors(t *testing.T) {
 	})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, tableIDs)
+}
+
+type flashbackInProgressTestError struct{}
+
+func (flashbackInProgressTestError) Error() string {
+	return "is in flashback progress"
+}
+
+func testRetryOnFlashbackInProgress(t *testing.T) {
+	t.Run("retries", func(t *testing.T) {
+		attempts := 0
+		result, err := retryOnFlashbackInProgress(context.Background(), func() (int, error) {
+			attempts++
+			if attempts == 1 {
+				return 0, flashbackInProgressTestError{}
+			}
+			return attempts, nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 2, result)
+		require.Equal(t, 2, attempts)
+	})
+
+	t.Run("does not retry other errors", func(t *testing.T) {
+		attempts := 0
+		_, err := retryOnFlashbackInProgress(context.Background(), func() (int, error) {
+			attempts++
+			return 0, context.Canceled
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, attempts)
+	})
+
+	t.Run("stops on cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		attempts := 0
+		_, err := retryOnFlashbackInProgress(ctx, func() (int, error) {
+			attempts++
+			return 0, flashbackInProgressTestError{}
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, attempts)
+	})
 }
 
 func TestReferredFKInfo(t *testing.T) {

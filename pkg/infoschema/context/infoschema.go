@@ -122,12 +122,6 @@ type SchemaAndTable interface {
 	SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableInfo, error)
 }
 
-// SchemaTableIterator is an optional extension to SchemaAndTable for streaming table infos.
-type SchemaTableIterator interface {
-	// IterSchemaTableInfos iterates over all table infos in the schema without retaining them.
-	IterSchemaTableInfos(ctx stdctx.Context, schema ast.CIStr, visit func(*model.TableInfo) error) error
-}
-
 // Misc contains the methods that are not closely related to InfoSchema.
 type Misc interface {
 	PolicyByName(name ast.CIStr) (*model.PolicyInfo, bool)

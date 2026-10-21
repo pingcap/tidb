@@ -1084,21 +1084,41 @@ func (is *infoschemaV2) keepAlive() {
 	}
 }
 
-// SchemaTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
-	var tableInfos []*model.TableInfo
-	err := is.IterSchemaTableInfos(ctx, schema, func(tableInfo *model.TableInfo) error {
-		tableInfos = append(tableInfos, tableInfo)
-		return nil
-	})
-	if err != nil {
-		return nil, err
+// retryOnFlashbackInProgress retries fn while table metadata cannot be read during flashback.
+// fn must return a fresh result for each attempt so a partial attempt is never reused.
+func retryOnFlashbackInProgress[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	const flashbackRetryInterval = 200 * time.Millisecond
+	for {
+		result, err := fn()
+		if err == nil || !strings.Contains(err.Error(), "in flashback progress") {
+			return result, err
+		}
+
+		select {
+		case <-time.After(flashbackRetryInterval):
+		case <-ctx.Done():
+			var zero T
+			return zero, ctx.Err()
+		}
 	}
-	return tableInfos, nil
 }
 
-// IterSchemaTableInfos implements context.SchemaTableIterator.
-func (is *infoschemaV2) IterSchemaTableInfos(
+// SchemaTableInfos implements MetaOnlyInfoSchema.
+func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
+	return retryOnFlashbackInProgress(ctx, func() ([]*model.TableInfo, error) {
+		var tableInfos []*model.TableInfo
+		if err := is.iterSchemaTableInfos(ctx, schema, func(tableInfo *model.TableInfo) error {
+			tableInfos = append(tableInfos, tableInfo)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		return tableInfos, nil
+	})
+}
+
+// iterSchemaTableInfos makes one streaming pass over all table infos in the schema.
+func (is *infoschemaV2) iterSchemaTableInfos(
 	ctx context.Context,
 	schema ast.CIStr,
 	visit func(*model.TableInfo) error,
@@ -1121,7 +1141,6 @@ func (is *infoschemaV2) IterSchemaTableInfos(
 	}
 
 	is.keepAlive()
-retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
 		return nil
@@ -1131,42 +1150,15 @@ retry:
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewReader(snapshot)
-	var (
-		visitErr error
-		visited  bool
-	)
 	err := m.IterTables(dbInfo.ID, func(tableInfo *model.TableInfo) error {
-		visited = true
 		if err := ctx.Err(); err != nil {
-			visitErr = err
 			return err
 		}
-		if err := visit(tableInfo); err != nil {
-			visitErr = err
-			return err
-		}
-		return nil
+		return visit(tableInfo)
 	})
-	if visitErr != nil {
-		return visitErr
-	}
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil
-		}
-		// Flashback statement could cause such kind of error.
-		// In theory that error should be handled in the lower layer, like client-go.
-		// But it's not done, so we retry here.
-		if strings.Contains(err.Error(), "in flashback progress") {
-			if visited {
-				return errors.Trace(err)
-			}
-			select {
-			case <-time.After(200 * time.Millisecond):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			goto retry
 		}
 		return errors.Trace(err)
 	}
@@ -1440,23 +1432,16 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 	})
 	// Try to avoid repeated concurrency loading.
 	res, err, _ := loadTableSF.Do(fmt.Sprintf("%d-%d-%d", dbID, tblID, schemaVersion), func() (any, error) {
-	retry:
-		snapshot := is.r.Store().GetSnapshot(kv.NewVersion(ts))
-		// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-		// the meta region leader is slow.
-		snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-		m := meta.NewReader(snapshot)
-
-		tblInfo, err := m.GetTable(dbID, tblID)
+		// Keep retry independent of an individual singleflight caller's cancellation.
+		tblInfo, err := retryOnFlashbackInProgress(context.Background(), func() (*model.TableInfo, error) {
+			snapshot := is.r.Store().GetSnapshot(kv.NewVersion(ts))
+			// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+			// the meta region leader is slow.
+			snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+			m := meta.NewReader(snapshot)
+			return m.GetTable(dbID, tblID)
+		})
 		if err != nil {
-			// Flashback statement could cause such kind of error.
-			// In theory that error should be handled in the lower layer, like client-go.
-			// But it's not done, so we retry here.
-			if strings.Contains(err.Error(), "in flashback progress") {
-				time.Sleep(200 * time.Millisecond)
-				goto retry
-			}
-
 			return nil, errors.Trace(err)
 		}
 
@@ -1653,8 +1638,10 @@ func (b *Builder) applyDropSchemaV2(diff *model.SchemaDiff) ([]int64, error) {
 		return nil, nil
 	}
 
-	tableIDs, err := collectPhysicalTableIDs(func(visit func(*model.TableInfo) error) error {
-		return b.infoschemaV2.IterSchemaTableInfos(context.Background(), di.Name, visit)
+	tableIDs, err := retryOnFlashbackInProgress(context.Background(), func() ([]int64, error) {
+		return collectPhysicalTableIDs(func(visit func(*model.TableInfo) error) error {
+			return b.infoschemaV2.iterSchemaTableInfos(context.Background(), di.Name, visit)
+		})
 	})
 	if err != nil {
 		return nil, err
