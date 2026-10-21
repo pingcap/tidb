@@ -15,6 +15,7 @@
 package partition
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
@@ -57,7 +58,7 @@ func TestReorgPartitionCancelNonUniqueGlobalIndex(t *testing.T) {
 	var cancelState model.SchemaState
 	var lastRollbackStates []model.SchemaState
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if job.Type != model.ActionReorganizePartition {
+		if job.Type != model.ActionReorganizePartition && job.Type != model.ActionAlterTablePartitioning {
 			return
 		}
 		if job.IsRollingback() {
@@ -77,28 +78,69 @@ func TestReorgPartitionCancelNonUniqueGlobalIndex(t *testing.T) {
 		tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 	})
 
-	for _, state := range []model.SchemaState{
-		model.StateDeleteOnly,
-		model.StateWriteOnly,
-		model.StateWriteReorganization,
-		model.StateDeleteReorganization,
+	for _, ddl := range []string{
+		"alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (maxvalue))",
+		"alter table t partition by range (ct) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30), partition pMax values less than (maxvalue))",
 	} {
-		cancelState = state
-		lastRollbackStates = nil
-		tk.MustGetErrCode("alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (maxvalue))", errno.ErrCancelledDDLJob)
-		tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
-		// The copies must be delete only in the step that removes them.
-		require.NotEmpty(t, lastRollbackStates, "cancel at %s", state)
-		for _, s := range lastRollbackStates {
-			require.Equal(t, model.StateDeleteOnly, s, "cancel at %s", state)
+		for _, state := range []model.SchemaState{
+			model.StateDeleteOnly,
+			model.StateWriteOnly,
+			model.StateWriteReorganization,
+			model.StateDeleteReorganization,
+		} {
+			cancelState = state
+			lastRollbackStates = nil
+			tk.MustGetErrCode(ddl, errno.ErrCancelledDDLJob)
+			tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+			// The copies must be delete only in the step that removes them.
+			require.NotEmpty(t, lastRollbackStates, "%s, cancel at %s", ddl, state)
+			for _, s := range lastRollbackStates {
+				require.Equal(t, model.StateDeleteOnly, s, "%s, cancel at %s", ddl, state)
+			}
+			require.Len(t, tblInfo.Indices, baseIndices, "%s, cancel at %s", ddl, state)
+			for _, idx := range tblInfo.Indices {
+				require.Equal(t, model.StatePublic, idx.State, "%s, cancel at %s, index %s", ddl, state, idx.Name.O)
+			}
+			require.Equal(t, baseMutations, countUpdateMutations(t, tk), "%s, cancel at %s", ddl, state)
+			tk.MustExec("admin check table t")
 		}
-		require.Len(t, tblInfo.Indices, baseIndices, "cancel at %s", state)
-		for _, idx := range tblInfo.Indices {
-			require.Equal(t, model.StatePublic, idx.State, "cancel at %s, index %s", state, idx.Name.O)
-		}
-		require.Equal(t, baseMutations, countUpdateMutations(t, tk), "cancel at %s", state)
-		tk.MustExec("admin check table t")
 	}
+}
+
+func TestReorgPartitionRollbackResumeAfterOwnerChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(leftoverIndexTableSQL)
+	tk.MustExec("insert into t values (1, 0, 1, 5), (2, 0, 1, 15), (3, 0, 1, 25), (4, 0, 1, 35)")
+	baseIndices := len(external.GetTableByName(t, tk, "test", "t").Meta().Indices)
+	baseMutations := countUpdateMutations(t, tk)
+
+	cancelled, resigned := false, false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionReorganizePartition {
+			return
+		}
+		if !cancelled && job.SchemaState == model.StateWriteReorganization {
+			cancelled = true
+			testkit.NewTestKit(t, store).MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+			return
+		}
+		// Change the owner between the rollback steps, the new owner must resume the rollback.
+		if job.IsRollingback() && !resigned {
+			resigned = true
+			require.NoError(t, dom.DDL().OwnerManager().ResignOwner(context.Background()))
+		}
+	})
+	tk.MustGetErrCode("alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (maxvalue))", errno.ErrCancelledDDLJob)
+	require.True(t, resigned)
+	tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Len(t, tblInfo.Indices, baseIndices)
+	for _, idx := range tblInfo.Indices {
+		require.Equal(t, model.StatePublic, idx.State, idx.Name.O)
+	}
+	require.Equal(t, baseMutations, countUpdateMutations(t, tk))
+	tk.MustExec("admin check table t")
 }
 
 func TestReorgPartitionGlobalIndexCopySharedColumns(t *testing.T) {
