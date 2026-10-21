@@ -2147,6 +2147,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 		return ver, errors.Trace(err)
 	}
 	// Like DROP INDEX, index copies stop taking writes for one schema version before being removed.
+	// convertReorgPartitionJob2RollbackJob has moved every copy that is not delete only to write only.
 	stopWrites := false
 	for _, indexInfo := range tblInfo.Indices {
 		if indexInfo.State == model.StateWriteOnly {
