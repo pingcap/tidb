@@ -116,6 +116,22 @@ pub enum LockKeysOutcome {
     TransactionError(LockSqlError),
 }
 
+/// What a lock taken DURING execution (Go `PointGetExecutor.getAndLock`)
+/// left for the statement owner: the executor sees only a storage error, so
+/// the outcome Go's `handlePessimisticLockError` acts on is kept here.
+#[derive(Debug)]
+pub enum StatementLockFailure {
+    /// Re-execute the statement reading at this advanced `for_update_ts`.
+    Retry {
+        /// The advanced statement timestamp the retry reads at.
+        for_update_ts: u64,
+    },
+    /// The statement fails with this error; the transaction stays open.
+    Statement(LockSqlError),
+    /// The transaction itself is no longer usable.
+    Transaction(LockSqlError),
+}
+
 /// Failure while executing one restricted SQL statement in a pessimistic
 /// transaction.
 #[derive(Debug)]
@@ -627,6 +643,10 @@ where
     /// with the physical tables the commit writes (Go
     /// `SetOptionsBeforeCommit`, `base.go:560-616`).
     schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
+    /// The outcome of a lock a statement handle took during execution,
+    /// shared with every handle of this transaction and taken by the
+    /// statement owner when the statement fails.
+    statement_lock_failure: Arc<Mutex<Option<StatementLockFailure>>>,
 }
 
 /// Go TxnCtx's transaction cache and CurrentStmtPessimisticLockCache.
@@ -828,6 +848,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: false,
             fair_locking: false,
             schema_lease_checker: None,
+            statement_lock_failure: Arc::default(),
         })
     }
 
@@ -853,6 +874,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: false,
             fair_locking: false,
             schema_lease_checker: None,
+            statement_lock_failure: Arc::default(),
         })
     }
 
@@ -879,6 +901,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: true,
             fair_locking: false,
             schema_lease_checker: None,
+            statement_lock_failure: Arc::default(),
         })
     }
 
@@ -908,6 +931,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             pessimistic: true,
             fair_locking: false,
             schema_lease_checker: None,
+            statement_lock_failure: Arc::default(),
         })
     }
 
@@ -1089,15 +1113,56 @@ impl<S: StoreClient> SessionTransaction<S> {
     /// Go's `e.lock`, which is what admits the pessimistic lock cache
     /// (`pkg/executor/point_get.go:677`).
     pub fn snapshot_for(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
-        Ok(Box::new(SessionSnapshot {
+        Ok(Box::new(self.session_snapshot(None, locking, false)))
+    }
+
+    /// One pessimistic statement's handle whose for-update timestamp is
+    /// decided by what the statement does first, Go's
+    /// `AdviseOptimizeWithPlan` -> `optimizeForNotFetchingLatestTS`: a plan
+    /// whose first act is a locking point read
+    /// ([`ClusterSnapshot::lock_keys_for_read`]) does not fetch a new
+    /// for-update timestamp -- the lock answers the latest row -- while any
+    /// other first read advances it (`GetStmtForUpdateTS`) and reads there.
+    pub fn deferred_statement_snapshot(
+        &self,
+        locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, StorageError> {
+        if !self.pessimistic {
+            return Err(StorageError::Backend(
+                "only a pessimistic transaction advances its locking snapshot".to_owned(),
+            ));
+        }
+        Ok(Box::new(self.session_snapshot(None, locking, true)))
+    }
+
+    fn session_snapshot(
+        &self,
+        read_ts: Option<u64>,
+        locking: bool,
+        advance_on_first_read: bool,
+    ) -> SessionSnapshot<S> {
+        SessionSnapshot {
             state: Arc::clone(&self.state),
             cancellation: UnaryCancellation::new(),
             start_ts: self.start_ts,
             timeout: self.timeout,
-            read_ts: None,
+            read_ts,
+            deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
+            advance_on_first_read: std::sync::atomic::AtomicBool::new(advance_on_first_read),
             read_options: Default::default(),
             locking,
-        }))
+            fair_locking: self.fair_locking,
+            statement_lock_failure: Arc::clone(&self.statement_lock_failure),
+        }
+    }
+
+    /// Takes the outcome of a lock this transaction's statement took during
+    /// execution and the statement failed on (see [`StatementLockFailure`]).
+    pub fn take_statement_lock_failure(&self) -> Option<StatementLockFailure> {
+        self.statement_lock_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     /// A read handle whose reads happen at `read_ts` instead of `start_ts`:
@@ -1122,15 +1187,11 @@ impl<S: StoreClient> SessionTransaction<S> {
                 "only a pessimistic transaction reads at a statement timestamp".to_owned(),
             ));
         }
-        Ok(Box::new(SessionSnapshot {
-            state: Arc::clone(&self.state),
-            cancellation: UnaryCancellation::new(),
-            start_ts: self.start_ts,
-            timeout: self.timeout,
-            read_ts: Some(read_ts),
-            read_options: Default::default(),
+        Ok(Box::new(self.session_snapshot(
+            Some(read_ts),
             locking,
-        }))
+            false,
+        )))
     }
 
     /// Publishes every staged write of the transaction at its own `start_ts`.
@@ -1618,9 +1679,53 @@ struct SessionSnapshot<S: StoreClient> {
     /// pessimistic retry's advanced `for_update_ts`. `None` reads at
     /// `start_ts`.
     read_ts: Option<u64>,
+    /// The for-update timestamp a deferred handle advanced to at its first
+    /// read; zero until then (see
+    /// [`SessionTransaction::deferred_statement_snapshot`]).
+    deferred_read_ts: std::sync::atomic::AtomicU64,
+    /// Whether the first read still decides the read timestamp.
+    advance_on_first_read: std::sync::atomic::AtomicBool,
     /// Whether this statement may use rows returned with pessimistic locks.
     locking: bool,
     read_options: tidb_txnkv::SnapshotReadOptions,
+    /// `@@tidb_pessimistic_txn_fair_locking` as the transaction captured it.
+    fair_locking: bool,
+    /// See [`SessionTransaction::take_statement_lock_failure`].
+    statement_lock_failure: Arc<Mutex<Option<StatementLockFailure>>>,
+}
+
+impl<S: StoreClient> SessionSnapshot<S> {
+    /// The timestamp this statement reads at. A deferred handle's first read
+    /// advances the for-update timestamp (Go `GetStmtForUpdateTS`) unless a
+    /// locking point read came first.
+    fn statement_read_ts(&self) -> Result<u64, StorageError> {
+        use std::sync::atomic::Ordering;
+        if let Some(read_ts) = self.read_ts {
+            return Ok(read_ts);
+        }
+        if self.advance_on_first_read.swap(false, Ordering::AcqRel) {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            arm_fair_locking(&mut state, self.fair_locking);
+            let advanced = match &mut *state {
+                SessionTransactionState::Pessimistic { transaction, .. } => transaction
+                    .advance_for_update_ts()
+                    .map_err(|error| StorageError::Backend(error.to_string()))?,
+                _ => {
+                    return Err(StorageError::Backend(
+                        "only a pessimistic transaction advances its locking snapshot".to_owned(),
+                    ))
+                }
+            };
+            self.deferred_read_ts.store(advanced, Ordering::Release);
+        }
+        match self.deferred_read_ts.load(Ordering::Acquire) {
+            0 => Ok(self.start_ts),
+            advanced => Ok(advanced),
+        }
+    }
 }
 
 impl<S: StoreClient> fmt::Debug for SessionSnapshot<S> {
@@ -1670,7 +1775,7 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         // BatchCommands boundary. Keep the borrowed key through dispatch so
         // a point read does not allocate a copy merely for lock-cache lookup.
         let bytes = key.as_bytes();
-        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let read_ts = self.statement_read_ts()?;
         let call = UnaryCallContext::with_deadline(
             Instant::now() + self.timeout,
             self.cancellation.clone(),
@@ -1708,7 +1813,7 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
 
     fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
         let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
-        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let read_ts = self.statement_read_ts()?;
         let call = UnaryCallContext::with_deadline(
             Instant::now() + self.timeout,
             self.cancellation.clone(),
@@ -1759,7 +1864,7 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         end: &Key,
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
-        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let read_ts = self.statement_read_ts()?;
         let call = UnaryCallContext::with_deadline(
             Instant::now() + self.timeout,
             self.cancellation.clone(),
@@ -1786,7 +1891,7 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         end: &Key,
         limit: Option<usize>,
     ) -> Result<SnapshotPairs, StorageError> {
-        let read_ts = self.read_ts.unwrap_or(self.start_ts);
+        let read_ts = self.statement_read_ts()?;
         let call = UnaryCallContext::with_deadline(
             Instant::now() + self.timeout,
             self.cancellation.clone(),
@@ -1816,8 +1921,90 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         // advanced `for_update_ts` would read one statement at two
         // timestamps. Go re-executes a retried pessimistic statement wholly
         // at `forUpdateTS` (`handlePessimisticDML` -> `UpdateForUpdateTS`),
-        // pushdown included.
-        self.read_ts.unwrap_or(self.start_ts)
+        // pushdown included. `0` is the trait's "no MVCC timestamp" answer
+        // when a deferred advance fails; the read that follows reports it.
+        self.statement_read_ts().unwrap_or(0)
+    }
+
+    /// Go `PointGetExecutor.lockKeyIfNeeded` / `BatchPointGetExec`'s
+    /// `LockKeys` with `InitReturnValues`: lock the record keys at the
+    /// transaction's for-update timestamp and cache the rows the locks
+    /// return, which this statement's reads of those keys then answer from.
+    /// The outcome Go's `handlePessimisticLockError` acts on is kept for the
+    /// statement owner (see [`StatementLockFailure`]).
+    fn lock_keys_for_read(&mut self, keys: &[Key], wait: LockWaitTime) -> Result<(), StorageError> {
+        use std::sync::atomic::Ordering;
+        if keys.is_empty() {
+            return Ok(());
+        }
+        // Go `optimizeForNotFetchingLatestTS`: a plan that starts with a
+        // locking point read keeps the current for-update timestamp.
+        if self.deferred_read_ts.load(Ordering::Acquire) == 0 {
+            self.advance_on_first_read.store(false, Ordering::Release);
+        }
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !matches!(&*state, SessionTransactionState::Pessimistic { .. }) {
+            return Ok(());
+        }
+        // Go `PointGetExecutor.get`: a locking read answers from the lock
+        // cache (`e.lock`), whichever statement shape opened this handle.
+        self.locking = true;
+        arm_fair_locking(&mut state, self.fair_locking);
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        let lock_started = std::time::Instant::now();
+        let SessionTransactionState::Pessimistic {
+            transaction,
+            lock_values,
+            ..
+        } = &mut *state
+        else {
+            unreachable!("checked pessimistic above");
+        };
+        let outcome = acquire_statement_locks(
+            transaction,
+            lock_values,
+            &keys,
+            &BTreeSet::new(),
+            &BTreeMap::new(),
+            true,
+            wait,
+            &call,
+        );
+        let lock_elapsed = lock_started.elapsed();
+        if !matches!(outcome, LockKeysOutcome::TransactionError(_)) {
+            accumulate_lock_observation(keys.len() as u64, lock_elapsed);
+            tidb_txnkv::client_go_metrics::observe_pessimistic_lock_keys_duration(
+                lock_elapsed.as_secs_f64(),
+            );
+        }
+        let failure = match outcome {
+            LockKeysOutcome::Locked { .. } => return Ok(()),
+            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+                StatementLockFailure::Retry { for_update_ts }
+            }
+            LockKeysOutcome::StatementError(error) => StatementLockFailure::Statement(error),
+            LockKeysOutcome::TransactionError(error) => {
+                let _ = finish_session_transaction(&mut state);
+                StatementLockFailure::Transaction(error)
+            }
+        };
+        let message = match &failure {
+            StatementLockFailure::Retry { for_update_ts } => {
+                format!("pessimistic lock conflict: the statement retries at {for_update_ts}")
+            }
+            StatementLockFailure::Statement(error) | StatementLockFailure::Transaction(error) => {
+                error.message.clone()
+            }
+        };
+        *self
+            .statement_lock_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(failure);
+        Err(StorageError::Backend(message))
     }
 }
 
@@ -2097,8 +2284,12 @@ mod tests {
             start_ts: 10,
             timeout: Duration::from_secs(1),
             read_ts: None,
+            deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
+            advance_on_first_read: std::sync::atomic::AtomicBool::new(false),
             read_options: Default::default(),
             locking: false,
+            fair_locking: false,
+            statement_lock_failure: Arc::default(),
         };
         assert_eq!(ClusterSnapshot::start_ts(&snapshot), 10);
         snapshot.read_ts = Some(20);
@@ -2274,8 +2465,12 @@ mod tests {
             start_ts: 100,
             timeout: Duration::from_secs(1),
             read_ts: None,
+            deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
+            advance_on_first_read: std::sync::atomic::AtomicBool::new(false),
             read_options: Default::default(),
             locking: false,
+            fair_locking: false,
+            statement_lock_failure: Arc::default(),
         };
         assert_eq!(
             at_transaction.start_ts(),
@@ -2289,8 +2484,12 @@ mod tests {
             start_ts: 100,
             timeout: Duration::from_secs(1),
             read_ts: Some(200),
+            deferred_read_ts: std::sync::atomic::AtomicU64::new(0),
+            advance_on_first_read: std::sync::atomic::AtomicBool::new(false),
             read_options: Default::default(),
             locking: false,
+            fair_locking: false,
+            statement_lock_failure: Arc::default(),
         };
         assert_eq!(
             retried.start_ts(),

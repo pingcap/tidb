@@ -214,6 +214,10 @@ pub struct Dispatch<Req: KvRequest> {
     /// Task-scoped execution-detail trace sink captured before this dispatch
     /// may move into a fan-out task.
     pub(crate) execution_details_trace_handler: Option<crate::trace::ExecutionDetailsTraceHandler>,
+    /// Client span scope captured with the execution-detail handler, so a
+    /// shard sent from a spawned task still reports under the span that was
+    /// current when this request was built.
+    pub(crate) client_span_context: Option<crate::trace::ClientSpanContext>,
     /// Source request context captured before this dispatch may move into a
     /// fan-out task. It supplies client events and TiKV trace metadata.
     pub(crate) trace_context: crate::trace::TraceContext,
@@ -334,6 +338,23 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 self.predicted_read_bytes,
             )
         });
+        let async_first_send = crate::trace::take_async_first_send();
+        if let (Some(region), false) = (self.region_with_leader.as_ref(), async_first_send) {
+            // client-go `sendReqState.next`, once per attempt on a region.
+            crate::trace::client_span_event(|| {
+                let address = if self.forwarded_host.is_empty() {
+                    self.target.as_str()
+                } else {
+                    self.forwarded_host.as_str()
+                };
+                format!(
+                    "send {} request to region {} at {}",
+                    request_command_name(request.label()),
+                    region.id(),
+                    address
+                )
+            });
+        }
         if crate::trace::is_category_enabled(crate::trace::Category::KvRequest) {
             crate::trace::trace_event(
                 &self.trace_context,
@@ -369,10 +390,13 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             .or_else(crate::trace::current_execution_details_trace_handler);
         let next = Arc::new(|| {
             Box::pin(async {
-                let dispatch = client.dispatch_with_timeout_and_forwarded_host(
-                    &request,
-                    self.request_timeout,
-                    &self.forwarded_host,
+                let dispatch = crate::trace::with_rpc_send_async(
+                    async_first_send,
+                    client.dispatch_with_timeout_and_forwarded_host(
+                        &request,
+                        self.request_timeout,
+                        &self.forwarded_host,
+                    ),
                 );
                 match execution_details_trace_handler.clone() {
                     Some(handler) => crate::trace::with_trace_exec_details(handler, dispatch).await,
@@ -740,6 +764,12 @@ pub(crate) trait RegionRetryState: Clone + Send + Sync + 'static {
     fn snapshot_retry_owner(&self) -> Option<Arc<Mutex<RetryBackoffer>>> {
         None
     }
+
+    /// client-go `bo.GetCtx()`'s span slot, for states backed by a
+    /// client-go Backoffer.
+    async fn client_span_slot(&self) -> Option<crate::trace::BoSpanSlot> {
+        None
+    }
 }
 
 #[async_trait]
@@ -900,6 +930,10 @@ impl RegionRetryState for SnapshotRegionBackoff {
     fn snapshot_retry_owner(&self) -> Option<Arc<Mutex<RetryBackoffer>>> {
         Some(self.owner())
     }
+
+    async fn client_span_slot(&self) -> Option<crate::trace::BoSpanSlot> {
+        Some(self.backoff.lock().await.client_span_slot())
+    }
 }
 
 /// Snapshot lock waits use a source-shaped cumulative backoffer. client-go
@@ -1033,6 +1067,10 @@ impl RegionRetryState for RetryBackoffer {
     fn is_cancelled(&self) -> bool {
         RetryBackoffer::is_cancelled(self)
     }
+
+    async fn client_span_slot(&self) -> Option<crate::trace::BoSpanSlot> {
+        Some(RetryBackoffer::client_span_slot(self))
+    }
 }
 
 /// client-go's `Backoffer` as `RegionRequestSender.SendReq` uses it: the
@@ -1085,6 +1123,10 @@ impl RegionRetryState for SenderBackoffer {
 
     fn is_cancelled(&self) -> bool {
         self.cancellation.is_cancelled()
+    }
+
+    async fn client_span_slot(&self) -> Option<crate::trace::BoSpanSlot> {
+        Some(self.owner.lock().await.client_span_slot())
     }
 }
 
@@ -1139,6 +1181,19 @@ fn into_multi_region_shard_error<T>(result: Result<Vec<Result<T>>>) -> Error {
             .find_map(Result::err)
             .expect("selected failing shard must contain an error"),
     }
+}
+
+/// What one client-go `RegionRequestSender.SendReqCtx` call hands back to
+/// its caller.
+enum SendReqOutcome<P, T, R> {
+    Done(Result<T>, R),
+    /// A terminal region miss. The caller backs off on `region_miss`, when
+    /// set, and re-splits the request after the sender's span has finished.
+    Resplit {
+        plan: P,
+        backoff: R,
+        region_miss: Option<(RetryConfig, String, Error)>,
+    },
 }
 
 #[allow(private_bounds)]
@@ -1216,6 +1271,7 @@ where
                 permits,
                 preserve_region_results,
                 one_region,
+                false,
             )
             .await;
         }
@@ -1253,7 +1309,7 @@ where
             }
             let permits = permits.clone();
             join_set.spawn(crate::async_util::inherit_background_rpc_context(
-                async move {
+                crate::trace::inherit_client_spans(async move {
                     (
                         idx,
                         Self::traced_single_shard_handler(
@@ -1264,10 +1320,11 @@ where
                             permits,
                             preserve_region_results,
                             one_region,
+                            record_async_batch_get_metric,
                         )
                         .await,
                     )
-                },
+                }),
             ));
         }
 
@@ -1354,6 +1411,21 @@ where
         }
     }
 
+    /// client-go's `bo` ctx for this request: the retry state's own
+    /// Backoffer, else the Backoffer of the enclosing client-go code in this
+    /// task, else a Backoffer made from the current (or build-time) ctx.
+    async fn bo_span_slot(backoff: &R, plan: &P) -> crate::trace::BoSpanSlot {
+        match backoff.client_span_slot().await {
+            Some(slot) => slot,
+            None => crate::trace::current_bo_slot().unwrap_or_else(|| {
+                crate::trace::BoSpanSlot::new(
+                    crate::trace::current_client_span_context()
+                        .or_else(|| plan.client_span_context()),
+                )
+            }),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     async fn traced_single_shard_handler(
         pd_client: Arc<PdC>,
@@ -1363,21 +1435,58 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
         one_region: Option<bool>,
+        async_send: bool,
     ) -> (Result<<Self as Plan>::Result>, R) {
         let trace = plan.transaction_batch_trace(region.id());
         if let Some(trace) = &trace {
             trace.emit_start();
         }
-        let result = Self::single_shard_handler(
-            pd_client,
+        // client-go `RegionRequestSender.SendReqCtx(bo, ...)`: its span opens
+        // under the Backoffer's ctx and becomes that ctx. The callback
+        // BatchGet path sends its first attempt with `SendReqAsync`, which
+        // opens no span.
+        let slot = Self::bo_span_slot(&backoff, &plan).await;
+        let shard = Self::single_shard_handler(
+            pd_client.clone(),
             plan,
             region,
             backoff,
-            permits,
+            permits.clone(),
             preserve_region_results,
             one_region,
-        )
-        .await;
+        );
+        let outcome = if async_send {
+            crate::trace::send_req_ctx(
+                slot.clone(),
+                false,
+                crate::trace::with_async_first_send(shard),
+            )
+            .await
+        } else {
+            crate::trace::send_req_ctx(slot.clone(), true, shard).await
+        };
+        let result = match outcome {
+            SendReqOutcome::Done(result, backoff) => (result, backoff),
+            SendReqOutcome::Resplit {
+                plan,
+                backoff,
+                region_miss,
+            } => {
+                crate::trace::with_bo_span_slot(
+                    slot,
+                    Self::resplit(
+                        pd_client,
+                        plan,
+                        backoff,
+                        region_miss,
+                        permits,
+                        preserve_region_results,
+                        one_region,
+                    ),
+                )
+                .await
+            }
+        };
         if let Some(trace) = &trace {
             let response_error = result
                 .0
@@ -1392,6 +1501,39 @@ where
         result
     }
 
+    /// The caller's side of a terminal region miss from one `SendReqCtx`:
+    /// back off on it, unless the sender already did, then re-split the
+    /// request against fresh regions.
+    #[allow(clippy::too_many_arguments)]
+    async fn resplit(
+        pd_client: Arc<PdC>,
+        mut plan: P,
+        mut backoff: R,
+        region_miss: Option<(RetryConfig, String, Error)>,
+        permits: Arc<Semaphore>,
+        preserve_region_results: bool,
+        one_region: Option<bool>,
+    ) -> (Result<<Self as Plan>::Result>, R) {
+        if let Some((config, reason, error)) = region_miss {
+            match backoff.backoff(config, reason).await {
+                Ok(true) => plan.mark_retry_request(),
+                Ok(false) => return (Err(error), backoff),
+                Err(backoff_error) => return (Err(backoff_error), backoff),
+            }
+        }
+        Self::single_plan_handler(
+            pd_client,
+            plan,
+            backoff,
+            permits,
+            preserve_region_results,
+            one_region,
+            None,
+            false,
+        )
+        .await
+    }
+
     #[async_recursion]
     async fn single_shard_handler(
         pd_client: Arc<PdC>,
@@ -1401,9 +1543,9 @@ where
         permits: Arc<Semaphore>,
         preserve_region_results: bool,
         one_region: Option<bool>,
-    ) -> (Result<<Self as Plan>::Result>, R) {
+    ) -> SendReqOutcome<P, <Self as Plan>::Result, R> {
         if backoff.is_cancelled() {
-            return (Err(Error::ContextCanceled), backoff);
+            return SendReqOutcome::Done(Err(Error::ContextCanceled), backoff);
         }
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
@@ -1443,39 +1585,26 @@ where
                 }));
                 // Nothing was sent, so re-sharding is always safe; source
                 // callers back off `BoRegionMiss` and retry on this answer.
-                return match backoff
-                    .backoff(
+                return SendReqOutcome::Resplit {
+                    plan,
+                    backoff,
+                    region_miss: Some((
                         BO_REGION_MISS,
                         format!("region missing in cache: {region_ver_id:?}"),
-                    )
-                    .await
-                {
-                    Ok(true) => {
-                        plan.mark_retry_request();
-                        Self::single_plan_handler(
-                            pd_client,
-                            plan,
-                            backoff,
-                            permits,
-                            preserve_region_results,
-                            one_region,
-                            None,
-                            false,
-                        )
-                        .await
-                    }
-                    Ok(false) => (Err(error), backoff),
-                    Err(backoff_error) => (Err(backoff_error), backoff),
+                        error,
+                    )),
                 };
             }
             Err(err) if is_selector_exhausted_error(&err) => {
                 if let Some((config, reason)) = plan.largest_pending_backoff() {
                     match backoff.backoff(config, reason).await {
                         Ok(_) => {}
-                        Err(backoff_error) => return (Err(backoff_error), backoff),
+                        Err(backoff_error) => {
+                            return SendReqOutcome::Done(Err(backoff_error), backoff)
+                        }
                     }
                 }
-                return (Err(err), backoff);
+                return SendReqOutcome::Done(Err(err), backoff);
             }
             Err(err) => {
                 debug!("single_shard_handler::sharding, error: {:?}", err);
@@ -1525,8 +1654,10 @@ where
             if let Some((config, reason)) = plan.take_pending_backoff(store_id) {
                 match backoff.backoff(config, reason.clone()).await {
                     Ok(true) => {}
-                    Ok(false) => return (Err(Error::StringError(reason)), backoff),
-                    Err(error) => return (Err(error), backoff),
+                    Ok(false) => {
+                        return SendReqOutcome::Done(Err(Error::StringError(reason)), backoff)
+                    }
+                    Err(error) => return SendReqOutcome::Done(Err(error), backoff),
                 }
             }
         }
@@ -1587,14 +1718,18 @@ where
             }
             Err(e) => {
                 debug!("single_shard_handler:execute: error: {:?}", e);
-                return (Err(e), backoff);
+                return SendReqOutcome::Done(Err(e), backoff);
             }
         };
 
         if let Some(e) = resp.key_errors() {
             debug!("single_shard_handler:execute: key errors: {:?}", e);
-            (Ok(vec![Err(Error::MultipleKeyErrors(e))]), backoff)
+            SendReqOutcome::Done(Ok(vec![Err(Error::MultipleKeyErrors(e))]), backoff)
         } else if let Some(e) = resp.region_error() {
+            // client-go `RegionRequestSender.onRegionError`: its span becomes
+            // the Backoffer's ctx, so its backoff, its cache loads and the
+            // retry that follows report under it.
+            let on_region_error_span = crate::trace::start_bo_client_span("tikv.onRegionError");
             debug!(
                 "single_shard_handler:execute: region error: {:?}, region: {:?}",
                 e, region_ver_id
@@ -1624,7 +1759,7 @@ where
             // RawKV's generic region-miss retry resend a possibly committed
             // write when a malformed response also carries another field.
             if e.undetermined_result.is_some() {
-                return (Err(Error::RegionError(Box::new(e))), backoff);
+                return SendReqOutcome::Done(Err(Error::RegionError(Box::new(e))), backoff);
             }
             if source_configurable_server_busy_timeout(&plan, &e) {
                 if let Some(peer) = region_store.target_peer.as_ref() {
@@ -1635,6 +1770,7 @@ where
                     e
                 );
                 plan.mark_retry_request();
+                drop(on_region_error_span);
                 return Self::single_shard_handler(
                     pd_client,
                     plan,
@@ -1659,7 +1795,7 @@ where
                     // a batched Cop response to its task owner. Retrying it as
                     // a single replica request would manufacture region misses.
                     pd_client.record_server_load(target_peer.store_id, busy.estimated_wait_ms);
-                    return (Ok(vec![Ok(resp)]), backoff);
+                    return SendReqOutcome::Done(Ok(vec![Ok(resp)]), backoff);
                 }
             }
             if e.data_is_not_ready.is_some() {
@@ -1764,29 +1900,20 @@ where
                     if matches!(error, Error::RegionError(_))
                         && backoff.retries_terminal_region_errors() =>
                 {
-                    match backoff
-                        .backoff(BO_REGION_MISS, format!("raw region error: {error:?}"))
-                        .await
-                    {
-                        Ok(true) => {
-                            plan.mark_retry_request();
-                            return Self::single_plan_handler(
-                                pd_client,
-                                plan,
-                                backoff,
-                                permits,
-                                preserve_region_results,
-                                one_region,
-                                None,
-                                false,
-                            )
-                            .await;
-                        }
-                        Ok(false) => return (Err(error), backoff),
-                        Err(backoff_error) => return (Err(backoff_error), backoff),
-                    }
+                    // client-go's sender returns the region error; its
+                    // caller backs off `BoRegionMiss` and re-splits.
+                    drop(on_region_error_span);
+                    return SendReqOutcome::Resplit {
+                        plan,
+                        backoff,
+                        region_miss: Some((
+                            BO_REGION_MISS,
+                            format!("raw region error: {error:?}"),
+                            error,
+                        )),
+                    };
                 }
-                Err(error) => return (Err(error), backoff),
+                Err(error) => return SendReqOutcome::Done(Err(error), backoff),
             };
             if source_fast_selector_retry(&e, fast_server_busy_retry)
                 && matches!(
@@ -1809,6 +1936,7 @@ where
                     // on the current stack. Source loops are iterative, so
                     // force a scheduler boundary before a zero-delay retry.
                     tokio::task::yield_now().await;
+                    drop(on_region_error_span);
                     return Self::single_shard_handler(
                         pd_client,
                         plan,
@@ -1830,6 +1958,7 @@ where
                             // before the next `replicaSelector.next`, without
                             // rebuilding the original key-to-region shard.
                             plan.mark_retry_request();
+                            drop(on_region_error_span);
                             return Self::single_shard_handler(
                                 pd_client,
                                 plan,
@@ -1846,9 +1975,12 @@ where
                                 "giving up after exhausting retries on region error, region: {:?}",
                                 region_ver_id
                             );
-                            return (Err(Error::RegionError(Box::new(e))), backoff);
+                            return SendReqOutcome::Done(
+                                Err(Error::RegionError(Box::new(e))),
+                                backoff,
+                            );
                         }
-                        Err(error) => return (Err(error), backoff),
+                        Err(error) => return SendReqOutcome::Done(Err(error), backoff),
                     }
                 }
                 RegionErrorRetry::BackoffPreservingRegionError(config) => {
@@ -1858,6 +1990,7 @@ where
                     {
                         Ok(true) => {
                             plan.mark_retry_request();
+                            drop(on_region_error_span);
                             return Self::single_shard_handler(
                                 pd_client,
                                 plan,
@@ -1870,7 +2003,10 @@ where
                             .await;
                         }
                         Ok(false) | Err(_) => {
-                            return (Err(Error::RegionError(Box::new(e))), backoff);
+                            return SendReqOutcome::Done(
+                                Err(Error::RegionError(Box::new(e))),
+                                backoff,
+                            );
                         }
                     }
                 }
@@ -1879,8 +2015,13 @@ where
                         .backoff(config, format!("region error: {e:?}"))
                         .await
                     {
-                        Ok(_) => return (Err(Error::RegionError(Box::new(e))), backoff),
-                        Err(error) => return (Err(error), backoff),
+                        Ok(_) => {
+                            return SendReqOutcome::Done(
+                                Err(Error::RegionError(Box::new(e))),
+                                backoff,
+                            )
+                        }
+                        Err(error) => return SendReqOutcome::Done(Err(error), backoff),
                     }
                 }
             }
@@ -1910,7 +2051,7 @@ where
                     );
                 }
             }
-            (Ok(vec![Ok(resp)]), backoff)
+            SendReqOutcome::Done(Ok(vec![Ok(resp)]), backoff)
         }
     }
 
@@ -1926,17 +2067,21 @@ where
         preserve_region_results: bool,
         one_region: Option<bool>,
         e: Error,
-    ) -> (Result<<Self as Plan>::Result>, R) {
+    ) -> SendReqOutcome<P, <Self as Plan>::Result, R> {
         debug!("handle_other_error: {:?}", e);
+        // client-go `RegionRequestSender.onSendFail`: its span becomes the
+        // Backoffer's ctx, so the TiKV-RPC backoff below and everything the
+        // request reports afterwards hang under it.
+        let on_send_fail_span = crate::trace::start_bo_client_span("regionRequest.onSendFail");
         // A cancelled caller does not say anything about TiKV liveness. The
         // source returns immediately without invalidating store/region state
         // or charging a transport backoff.
         if is_request_cancelled_error(&e, backoff.is_cancelled()) {
-            return (Err(e), backoff);
+            return SendReqOutcome::Done(Err(e), backoff);
         }
         if let Some(error) = source_shutting_down_error(crate::region_request::load_shutting_down())
         {
-            return (Err(error), backoff);
+            return SendReqOutcome::Done(Err(error), backoff);
         }
         let invalidate_region = pd_client.clone().on_send_failure(route.as_ref()).await;
         let transport_backoff = source_transport_backoff_config(route.as_ref());
@@ -1965,7 +2110,9 @@ where
             rpc_context.as_ref(),
             "try next peer later",
         );
-        match backoff.backoff(transport_backoff, transport_reason).await {
+        let backoff_result = backoff.backoff(transport_backoff, transport_reason).await;
+        drop(on_send_fail_span);
+        match backoff_result {
             Ok(true) => {
                 plan.mark_retry_request();
                 if let Some(region) = retained_region {
@@ -1983,21 +2130,17 @@ where
                     )
                     .await
                 } else {
-                    Self::single_plan_handler(
-                        pd_client,
+                    // The invalidated region leaves the sender without a
+                    // route; client-go's caller re-splits the request.
+                    SendReqOutcome::Resplit {
                         plan,
                         backoff,
-                        permits,
-                        preserve_region_results,
-                        one_region,
-                        None,
-                        false,
-                    )
-                    .await
+                        region_miss: None,
+                    }
                 }
             }
-            Ok(false) => (Err(e), backoff),
-            Err(error) => (Err(error), backoff),
+            Ok(false) => SendReqOutcome::Done(Err(e), backoff),
+            Err(error) => SendReqOutcome::Done(Err(error), backoff),
         }
     }
 }
@@ -2464,15 +2607,22 @@ where
             self.concurrency.max(1)
         };
         let concurrency_permits = Arc::new(Semaphore::new(concurrency));
-        let (result, backoff) = Self::single_plan_handler(
-            self.pd_client.clone(),
-            self.inner.clone(),
-            self.backoff.clone(),
-            concurrency_permits.clone(),
-            self.preserve_region_results,
-            self.one_region,
-            self.snapshot_region_scope,
-            self.snapshot_async_batch_get,
+        let backoff = self.backoff.clone();
+        // Region location and every send below run with client-go's
+        // `bo.GetCtx()`.
+        let slot = Self::bo_span_slot(&backoff, &self.inner).await;
+        let (result, backoff) = crate::trace::with_bo_span_slot(
+            slot,
+            Self::single_plan_handler(
+                self.pd_client.clone(),
+                self.inner.clone(),
+                backoff,
+                concurrency_permits.clone(),
+                self.preserve_region_results,
+                self.one_region,
+                self.snapshot_region_scope,
+                self.snapshot_async_batch_get,
+            ),
         )
         .await;
         backoff.record_stats().await;
@@ -2531,12 +2681,12 @@ where
             let backoff = self.backoff.clone();
             let concurrency_permits = concurrency_permits.clone();
             join_set.spawn(crate::async_util::inherit_background_rpc_context(
-                async move {
+                crate::trace::inherit_client_spans(async move {
                     (
                         idx,
                         Self::single_store_handler(clone, backoff, concurrency_permits).await,
                     )
-                },
+                }),
             ));
         }
 
@@ -2880,6 +3030,9 @@ where
                 }
                 return Ok(result);
             }
+            // client-go's `SendReqCtx` returns the locked response; its caller
+            // loop resolves the locks and sends again on the same Backoffer.
+            crate::trace::finish_send_req_span();
             // client-go consumes a configurable snapshot read timeout on the
             // first physical send only. Any resend after observing a lock is
             // a retry request and uses the normal short/medium deadline.
@@ -3100,6 +3253,8 @@ impl<P: Plan, PdC: PdClient> ResolveLock<P, PdC> {
 
 impl<P: Plan + Shardable, PdC: PdClient> ResolveLock<P, PdC> {
     async fn execute_inner_retry(&mut self) -> Result<(P::Result, Option<ReadLockHintsInRequest>)> {
+        // A new client-go `SendReqCtx` on the caller loop's Backoffer.
+        crate::trace::restart_send_req_span();
         self.inner.mark_retry_request();
         if let Some(region) = self.inner.lock_retry_region() {
             let ver_id = region.ver_id();

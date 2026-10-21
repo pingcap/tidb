@@ -287,11 +287,18 @@ impl BuildState {
                     .and_then(|source| source.for_executor(plan_id))
             })
             .flatten();
+        let (open_region, next_event) = if next_region.is_some() {
+            go_executor_open_trace(plan)
+        } else {
+            (None, None)
+        };
         executor = Box::new(SqlKillerCheckExec {
             child: executor,
             memory,
             runtime_stats,
             next_region,
+            open_region,
+            next_event,
         });
         let Some(counters) = self.runtime_counters.as_mut() else {
             return executor;
@@ -348,6 +355,41 @@ struct SqlKillerCheckExec {
     /// Go `exec.Next`'s `tracing.StartRegionEx(ctx, <type>.Next)` for the
     /// executor Go builds for the node.
     next_region: Option<&'static str>,
+    /// The region the Go executor's own `Open` opens: its name and whether
+    /// the children's opens run under it (`StartRegionEx`).
+    open_region: Option<(&'static str, bool)>,
+    /// The `logutil.Eventf` the Go executor's `Next` logs on every call,
+    /// built only for a traced statement.
+    next_event: Option<String>,
+}
+
+/// The trace a node's Go executor adds to its own `Open` and `Next`:
+/// `TableReaderExecutor.Open` and the reader's per-call `table scan table:
+/// <name>, range: <ranges>` event (`%v` of its `[]*ranger.Range`),
+/// `UnionScanExec.Open`, and `TableSampleExecutor.Open`.
+fn go_executor_open_trace(plan: &PhysicalPlan) -> (Option<(&'static str, bool)>, Option<String>) {
+    match plan {
+        PhysicalPlan::TableReader(reader) => {
+            let event = tidb_util::tracing::current_span()
+                .and_then(|_| reader.table_scan_plan())
+                .map(|scan| {
+                    let ranges = scan
+                        .ranges
+                        .iter()
+                        .map(tidb_planner::ranger::types::Range::to_display_string)
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    format!(
+                        "table scan table: {}, range: [{ranges}]",
+                        scan.table_name.to_lowercase()
+                    )
+                });
+            (Some(("TableReaderExecutor.Open", true)), event)
+        }
+        PhysicalPlan::UnionScan(_) => (Some(("UnionScanExec.Open", true)), None),
+        PhysicalPlan::TableSample(_) => (Some(("TableSampleExecutor.Open", false)), None),
+        _ => (None, None),
+    }
 }
 
 /// Go `reflect.TypeOf(e).String() + ".Next"` for the executor
@@ -401,11 +443,20 @@ fn checked_executor_with_stats(
         memory,
         runtime_stats,
         next_region: None,
+        open_region: None,
+        next_event: None,
     })
 }
 
 impl Executor for SqlKillerCheckExec {
     fn open(&mut self) -> Result<(), crate::ExecError> {
+        let _region = self.open_region.map(|(name, enter)| {
+            if enter {
+                tidb_util::tracing::start_thread_region_ex(name)
+            } else {
+                tidb_util::tracing::start_thread_region(name)
+            }
+        });
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
         let result = crate::sort_util::recover_executor_panic(|| self.child.open());
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
@@ -418,6 +469,9 @@ impl Executor for SqlKillerCheckExec {
         let _region = self
             .next_region
             .map(tidb_util::tracing::start_thread_region_ex);
+        if let Some(event) = &self.next_event {
+            tidb_util::tracing::thread_event(|| event.clone());
+        }
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
         let result = crate::sort_util::recover_executor_panic(|| {
             self.memory.check()?;
@@ -4524,6 +4578,35 @@ fn with_select_lock(
     Ok(Box::new(ProjectionExec::new(restored, expressions, locked, ctx.clone())))
 }
 
+/// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock`: the wait a locking
+/// point plan locks its record keys with inside `Next`, before reading them.
+/// `None` outside a pessimistic transaction's statement (which has no
+/// selected-lock owner), under read committed, and for a plan that does not
+/// lock. A locking SELECT's own `NOWAIT` / `WAIT n` choose the wait.
+fn point_lock_wait(
+    lock: bool,
+    select_lock: Option<(tidb_planner::logical::SelectLockType, u64)>,
+    ctx: &crate::StmtContext,
+) -> Option<tidb_txnkv::transaction::LockWaitTime> {
+    use tidb_planner::logical::SelectLockType;
+    use tidb_txnkv::transaction::LockWaitTime;
+    if !lock {
+        return None;
+    }
+    let selected = ctx.selected_lock_keys()?;
+    let select_wait = match select_lock {
+        None => None,
+        Some((SelectLockType::ForUpdate, _)) => None,
+        Some((SelectLockType::ForUpdateNoWait, _)) => Some(LockWaitTime::NoWait),
+        Some((SelectLockType::ForUpdateWaitN, wait_sec)) => Some(LockWaitTime::Timeout(
+            std::time::Duration::from_secs(wait_sec),
+        )),
+        // Shared locks are taken by the statement's lock step, when at all.
+        Some(_) => return None,
+    };
+    selected.point_lock_wait(select_wait)
+}
+
 fn build_point_get(
     plan: &PhysicalPlan,
     point: &PhysicalPointGet,
@@ -4585,13 +4668,16 @@ fn build_point_get(
             "a physical PointGet does not retain exactly one key",
         ));
     }
-    let child = Box::new(HandleSourceExec::new_point_mapped_with_context(
-        executor_meta,
-        (*table).clone(),
-        handles.into_iter().next().expect("checked one handle"),
-        output_columns,
-        RowDecodeContext::for_query(ctx),
-    ));
+    let child = Box::new(
+        HandleSourceExec::new_point_mapped_with_context(
+            executor_meta,
+            (*table).clone(),
+            handles.into_iter().next().expect("checked one handle"),
+            output_columns,
+            RowDecodeContext::for_query(ctx),
+        )
+        .with_lock_before_read(point_lock_wait(point.lock, point.select_lock, ctx)),
+    );
     Ok(wrap_point_index_usage(
         child,
         std::sync::Arc::unwrap_or_clone(table),
@@ -4689,7 +4775,8 @@ fn build_batch_point_get(
             output_columns,
             RowDecodeContext::for_query(ctx),
         )
-        .with_partition_ids(partition_ids),
+        .with_partition_ids(partition_ids)
+        .with_lock_before_read(point_lock_wait(batch.lock, batch.select_lock, ctx)),
     );
     Ok(wrap_point_index_usage(
         child,

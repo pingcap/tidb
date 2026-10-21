@@ -1469,6 +1469,7 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
             &table_info,
             &column_types,
             Some(resident.as_ref()),
+            std::time::Duration::from_secs(3),
         )
         .expect("cache update")
         .expect("stats_meta exists");
@@ -1500,6 +1501,7 @@ fn cache_update_preserves_and_refreshes_resident_histogram_payload() {
             &table_info,
             &column_types,
             Some(resident.as_ref()),
+            std::time::Duration::from_secs(3),
         )
         .expect("cache refresh")
         .expect("stats_meta exists");

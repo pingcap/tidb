@@ -306,7 +306,6 @@ where
                 shared,
                 &located,
                 stats_lease.slow_save_interval(),
-                stats_lease == crate::node_config::StatsLease::Zero,
                 Vec::new(),
             ) {
                 Ok(true) => Ok(StatsReloadReadResult::Updated),

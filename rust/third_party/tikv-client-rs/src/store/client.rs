@@ -1156,6 +1156,147 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rpc_spans_carry_the_batch_receive_log_and_execution_details() {
+        use crate::proto::tikvpb;
+        use tikvpb::batch_commands_response::response::Cmd;
+
+        let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
+            .await
+            .unwrap();
+        server.set_batch_commands_handler(Some(Arc::new(|request| {
+            Ok(tikvpb::BatchCommandsResponse {
+                responses: request
+                    .requests
+                    .iter()
+                    .map(|_| tikvpb::batch_commands_response::Response {
+                        cmd: Some(Cmd::Get(kvrpcpb::GetResponse {
+                            exec_details_v2: Some(kvrpcpb::ExecDetailsV2 {
+                                time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
+                                    total_rpc_wall_time_ns: 1_000_000,
+                                    wait_wall_time_ns: 100_000,
+                                    ..Default::default()
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        })),
+                    })
+                    .collect(),
+                request_ids: request.request_ids,
+                ..Default::default()
+            })
+        })));
+        let address = server.addr().unwrap();
+        let client = KvRpcClient::new(
+            vec![TikvClient::connect(format!("http://{address}"))
+                .await
+                .unwrap()],
+            Duration::from_secs(1),
+        )
+        .with_batch_worker(&crate::config::TiKvClient::default());
+        let request = kvrpcpb::GetRequest {
+            context: Some(kvrpcpb::Context {
+                region_id: 3,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let (handler, recorded) = crate::trace::client_span_testing::recorder();
+        crate::trace::with_client_spans(
+            handler,
+            crate::trace::client_span("regionRequest.SendReqCtx", async {
+                client.dispatch(&request).await.unwrap();
+            }),
+        )
+        .await;
+        let lines = crate::trace::client_span_testing::render(&recorded);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert_eq!(
+            lines[..2],
+            [
+                "regionRequest.SendReqCtx",
+                "  rpcClient.SendRequest, region ID: 3, type: Get"
+            ]
+        );
+        assert!(
+            lines[2].starts_with(
+                "    - receive *tikvpb.BatchCommandsResponse_Response_Get response with other 1 batched requests from "
+            ),
+            "{lines:?}"
+        );
+
+        // With execution details enabled, client-go adds TiKV's reconstructed
+        // spans under the RPC span, at their historical offsets.
+        let (handler, recorded) = crate::trace::client_span_testing::recorder();
+        crate::trace::with_client_spans(
+            handler,
+            crate::trace::with_trace_exec_details(Arc::new(|_, _| {}), async {
+                client.dispatch(&request).await.unwrap();
+            }),
+        )
+        .await;
+        let lines = crate::trace::client_span_testing::render(&recorded);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert_eq!(lines[0], "rpcClient.SendRequest, region ID: 3, type: Get");
+        assert_eq!(lines[2..], ["  tikv.RPC", "    tikv.Wait"]);
+        let events = recorded.lock().unwrap().clone();
+        let starts = events
+            .iter()
+            .filter_map(|event| match event {
+                crate::trace::ClientSpanEvent::Start { name, at, .. } => Some((name.clone(), *at)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let finish_of = |wanted: &str| {
+            let id = events
+                .iter()
+                .find_map(|event| match event {
+                    crate::trace::ClientSpanEvent::Start { id, name, .. } if name == wanted => {
+                        Some(*id)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            events
+                .iter()
+                .find_map(|event| match event {
+                    crate::trace::ClientSpanEvent::Finish { id: finished, at }
+                        if *finished == id =>
+                    {
+                        Some(*at)
+                    }
+                    _ => None,
+                })
+                .unwrap()
+        };
+        // client-go's callback BatchGet sends its first attempt through
+        // `RPCClient.SendRequestAsync`.
+        let (handler, recorded) = crate::trace::client_span_testing::recorder();
+        crate::trace::with_client_spans(
+            handler,
+            crate::trace::with_rpc_send_async(true, async {
+                client.dispatch(&request).await.unwrap();
+            }),
+        )
+        .await;
+        assert_eq!(
+            crate::trace::client_span_testing::render(&recorded)[0],
+            "rpcClient.SendRequestAsync, region ID: 3, type: Get"
+        );
+        assert_eq!(
+            finish_of("tikv.RPC") - starts["tikv.RPC"],
+            Duration::from_millis(1)
+        );
+        assert_eq!(
+            finish_of("tikv.Wait") - starts["tikv.Wait"],
+            Duration::from_micros(100)
+        );
+        assert_eq!(starts["tikv.Wait"], starts["tikv.RPC"]);
+        client.close();
+        server.stop().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn source_test_send_request_async_basic() {
         let (mut server, _) = crate::store::mockserver::start_mock_tikv_service()
             .await
@@ -1659,6 +1800,34 @@ impl KvRpcClient {
     }
 
     async fn dispatch_uncollapsed(
+        &self,
+        request: &dyn Request,
+        timeout: Option<Duration>,
+        forwarded_host: &str,
+    ) -> Result<Box<dyn Any>> {
+        // client-go `RPCClient.sendRequest` opens this span under the ctx span;
+        // the batch receive log and the TiKV execution-detail spans hang under it.
+        crate::trace::client_span_named(
+            || {
+                let region_id = request
+                    .tikv_context()
+                    .map_or(0, |context| context.region_id);
+                let command = crate::store::CommandType::from_request_label(request.label())
+                    .map_or("Unknown", crate::store::CommandType::name);
+                // client-go's callback path goes through `SendRequestAsync`.
+                let method = if crate::trace::rpc_send_async() {
+                    "SendRequestAsync"
+                } else {
+                    "SendRequest"
+                };
+                format!("rpcClient.{method}, region ID: {region_id}, type: {command}").into()
+            },
+            self.send_request(request, timeout, forwarded_host),
+        )
+        .await
+    }
+
+    async fn send_request(
         &self,
         request: &dyn Request,
         timeout: Option<Duration>,

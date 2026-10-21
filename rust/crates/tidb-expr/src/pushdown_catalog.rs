@@ -990,6 +990,50 @@ const REGEXP_REPLACE_TYPES_6: &[EvalType] = &[
     EvalType::String,
 ];
 
+// Go `compareFunctionClass.generateCmpSigs` builds every comparison over two
+// arguments already coerced to the comparison type (`newBaseBuiltinFuncWithTp`
+// with `tp, tp`), so each comparison row selects on that shared type.
+const CMP_INT_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Int),
+    ArgPattern::eval(EvalType::Int),
+];
+const CMP_INT_TYPES: &[EvalType] = &[EvalType::Int, EvalType::Int];
+const CMP_REAL_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Real),
+    ArgPattern::eval(EvalType::Real),
+];
+const CMP_REAL_TYPES: &[EvalType] = &[EvalType::Real, EvalType::Real];
+const CMP_DECIMAL_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Decimal),
+    ArgPattern::eval(EvalType::Decimal),
+];
+const CMP_DECIMAL_TYPES: &[EvalType] = &[EvalType::Decimal, EvalType::Decimal];
+const CMP_STRING_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::String),
+    ArgPattern::eval(EvalType::String),
+];
+const CMP_STRING_TYPES: &[EvalType] = &[EvalType::String, EvalType::String];
+const CMP_DATETIME_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Datetime),
+    ArgPattern::eval(EvalType::Datetime),
+];
+const CMP_DATETIME_TYPES: &[EvalType] = &[EvalType::Datetime, EvalType::Datetime];
+const CMP_TIMESTAMP_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Timestamp),
+    ArgPattern::eval(EvalType::Timestamp),
+];
+const CMP_TIMESTAMP_TYPES: &[EvalType] = &[EvalType::Timestamp, EvalType::Timestamp];
+const CMP_DATETIME_TIMESTAMP_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Datetime),
+    ArgPattern::eval(EvalType::Timestamp),
+];
+const CMP_DATETIME_TIMESTAMP_TYPES: &[EvalType] = &[EvalType::Datetime, EvalType::Timestamp];
+const CMP_TIMESTAMP_DATETIME_PAIR: &[ArgPattern] = &[
+    ArgPattern::eval(EvalType::Timestamp),
+    ArgPattern::eval(EvalType::Datetime),
+];
+const CMP_TIMESTAMP_DATETIME_TYPES: &[EvalType] = &[EvalType::Timestamp, EvalType::Datetime];
+
 /// The catalog, in Go's own per-family order.
 ///
 /// Only signatures `infer_pushdown.go`'s `scalarExprSupportedByTiKV` admits are
@@ -1566,26 +1610,392 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::PlusInt,
         false,
     ),
+    // Go `compareFunctionClass.generateCmpSigs`: one signature per
+    // comparison type, `ETDatetime` and `ETTimestamp` sharing the `*Time`
+    // family. `NullEQ` and the Duration/JSON families are absent because
+    // `pb_to_expr` (Go `getSignatureByPB`) does not decode them here yet.
+    signature(
+        "lt",
+        CMP_INT_PAIR,
+        CMP_INT_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtInt,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_INT_PAIR,
+        CMP_INT_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeInt,
+        false,
+    ),
     signature(
         "gt",
-        &[
-            ArgPattern::eval(EvalType::Int),
-            ArgPattern::eval(EvalType::Int),
-        ],
-        &[EvalType::Int, EvalType::Int],
+        CMP_INT_PAIR,
+        CMP_INT_TYPES,
         EvalType::Int,
         ScalarFuncSig::GtInt,
         false,
     ),
     signature(
+        "ge",
+        CMP_INT_PAIR,
+        CMP_INT_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeInt,
+        false,
+    ),
+    signature(
         "eq",
-        &[
-            ArgPattern::eval(EvalType::Int),
-            ArgPattern::eval(EvalType::Int),
-        ],
-        &[EvalType::Int, EvalType::Int],
+        CMP_INT_PAIR,
+        CMP_INT_TYPES,
         EvalType::Int,
         ScalarFuncSig::EqInt,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_INT_PAIR,
+        CMP_INT_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeInt,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_REAL_PAIR,
+        CMP_REAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtReal,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_REAL_PAIR,
+        CMP_REAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeReal,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_REAL_PAIR,
+        CMP_REAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtReal,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_REAL_PAIR,
+        CMP_REAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeReal,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_REAL_PAIR,
+        CMP_REAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqReal,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_REAL_PAIR,
+        CMP_REAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeReal,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_DECIMAL_PAIR,
+        CMP_DECIMAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtDecimal,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_DECIMAL_PAIR,
+        CMP_DECIMAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeDecimal,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_DECIMAL_PAIR,
+        CMP_DECIMAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtDecimal,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_DECIMAL_PAIR,
+        CMP_DECIMAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeDecimal,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_DECIMAL_PAIR,
+        CMP_DECIMAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqDecimal,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_DECIMAL_PAIR,
+        CMP_DECIMAL_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeDecimal,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_STRING_PAIR,
+        CMP_STRING_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtString,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_STRING_PAIR,
+        CMP_STRING_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeString,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_STRING_PAIR,
+        CMP_STRING_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtString,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_STRING_PAIR,
+        CMP_STRING_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeString,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_STRING_PAIR,
+        CMP_STRING_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqString,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_STRING_PAIR,
+        CMP_STRING_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeString,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_DATETIME_PAIR,
+        CMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtTime,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_DATETIME_PAIR,
+        CMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeTime,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_DATETIME_PAIR,
+        CMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtTime,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_DATETIME_PAIR,
+        CMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeTime,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_DATETIME_PAIR,
+        CMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqTime,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_DATETIME_PAIR,
+        CMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeTime,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_TIMESTAMP_PAIR,
+        CMP_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtTime,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_TIMESTAMP_PAIR,
+        CMP_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeTime,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_TIMESTAMP_PAIR,
+        CMP_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtTime,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_TIMESTAMP_PAIR,
+        CMP_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeTime,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_TIMESTAMP_PAIR,
+        CMP_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqTime,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_TIMESTAMP_PAIR,
+        CMP_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeTime,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_DATETIME_TIMESTAMP_PAIR,
+        CMP_DATETIME_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtTime,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_DATETIME_TIMESTAMP_PAIR,
+        CMP_DATETIME_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeTime,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_DATETIME_TIMESTAMP_PAIR,
+        CMP_DATETIME_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtTime,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_DATETIME_TIMESTAMP_PAIR,
+        CMP_DATETIME_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeTime,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_DATETIME_TIMESTAMP_PAIR,
+        CMP_DATETIME_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqTime,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_DATETIME_TIMESTAMP_PAIR,
+        CMP_DATETIME_TIMESTAMP_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeTime,
+        false,
+    ),
+    signature(
+        "lt",
+        CMP_TIMESTAMP_DATETIME_PAIR,
+        CMP_TIMESTAMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LtTime,
+        false,
+    ),
+    signature(
+        "le",
+        CMP_TIMESTAMP_DATETIME_PAIR,
+        CMP_TIMESTAMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::LeTime,
+        false,
+    ),
+    signature(
+        "gt",
+        CMP_TIMESTAMP_DATETIME_PAIR,
+        CMP_TIMESTAMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GtTime,
+        false,
+    ),
+    signature(
+        "ge",
+        CMP_TIMESTAMP_DATETIME_PAIR,
+        CMP_TIMESTAMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::GeTime,
+        false,
+    ),
+    signature(
+        "eq",
+        CMP_TIMESTAMP_DATETIME_PAIR,
+        CMP_TIMESTAMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::EqTime,
+        false,
+    ),
+    signature(
+        "ne",
+        CMP_TIMESTAMP_DATETIME_PAIR,
+        CMP_TIMESTAMP_DATETIME_TYPES,
+        EvalType::Int,
+        ScalarFuncSig::NeTime,
         false,
     ),
     signature(
@@ -4749,6 +5159,108 @@ mod tests {
         // A miss in the positional slots is a refusal, never a guess.
         assert!(resolve("regexp_substr", &[string(), string(), string()]).is_none());
         assert!(resolve("regexp_replace", &[string(), string()]).is_none());
+    }
+
+    /// Go `compareFunctionClass.generateCmpSigs`: a comparison over operands
+    /// already coerced to its comparison type resolves that type's signature.
+    /// A strict `UPDATE t SET v = 9 WHERE int_col = 'abc'` plans the Selection
+    /// `eq(cast(int_col, double), cast("abc", double))` in `cop[tikv]`, and Go
+    /// sends it whole: TiKV's truncation error is then the statement's error
+    /// (`Truncated incorrect INTEGER value: 'abc'`, captured against TiKV).
+    #[test]
+    fn comparisons_resolve_their_comparison_type_signature() {
+        let cast = |arg: PbScalar, signature, code| PbScalar::Cast {
+            signature,
+            arg: Box::new(arg),
+            field_type: FieldType::new(code),
+        };
+        let call = build_call(
+            "eq",
+            vec![
+                cast(
+                    column(FieldTypeCode::LongLong),
+                    ScalarFuncSig::CastIntAsReal,
+                    FieldTypeCode::Double,
+                ),
+                cast(
+                    PbScalar::StringLiteral {
+                        value: b"abc".to_vec(),
+                        field_type: FieldType::new(FieldTypeCode::VarString),
+                    },
+                    ScalarFuncSig::CastStringAsReal,
+                    FieldTypeCode::Double,
+                ),
+            ],
+        )
+        .unwrap();
+        let pb = lower(&call).expect("a Real comparison lowers");
+        assert_eq!(pb.sig, Some(ScalarFuncSig::EqReal as i32));
+        assert_eq!(
+            pb.children
+                .iter()
+                .map(|child| child.sig)
+                .collect::<Vec<_>>(),
+            [
+                Some(ScalarFuncSig::CastIntAsReal as i32),
+                Some(ScalarFuncSig::CastStringAsReal as i32),
+            ]
+        );
+
+        for (name, left, right, signature) in [
+            (
+                "lt",
+                FieldTypeCode::LongLong,
+                FieldTypeCode::LongLong,
+                ScalarFuncSig::LtInt,
+            ),
+            (
+                "le",
+                FieldTypeCode::Double,
+                FieldTypeCode::Double,
+                ScalarFuncSig::LeReal,
+            ),
+            (
+                "gt",
+                FieldTypeCode::NewDecimal,
+                FieldTypeCode::NewDecimal,
+                ScalarFuncSig::GtDecimal,
+            ),
+            (
+                "ge",
+                FieldTypeCode::VarString,
+                FieldTypeCode::VarString,
+                ScalarFuncSig::GeString,
+            ),
+            (
+                "ne",
+                FieldTypeCode::Datetime,
+                FieldTypeCode::Date,
+                ScalarFuncSig::NeTime,
+            ),
+            (
+                "eq",
+                FieldTypeCode::Timestamp,
+                FieldTypeCode::Datetime,
+                ScalarFuncSig::EqTime,
+            ),
+        ] {
+            let call = build_call(name, vec![column(left), column(right)])
+                .unwrap_or_else(|| panic!("{name}({left:?}, {right:?}) resolves"));
+            let PbScalar::Call { signature: row, .. } = &call else {
+                panic!("a comparison is a call");
+            };
+            assert_eq!(row.sig, signature, "{name}({left:?}, {right:?})");
+        }
+        // Go only compares operands of one comparison type; mixed operands
+        // were already wrapped in casts by the planner.
+        assert!(build_call(
+            "eq",
+            vec![
+                column(FieldTypeCode::LongLong),
+                column(FieldTypeCode::Double)
+            ],
+        )
+        .is_none());
     }
 
     /// Every row of the table is well-formed: the selector and the coerced

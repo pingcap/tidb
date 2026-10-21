@@ -42,6 +42,39 @@ impl Parser {
         Ok(hint)
     }
 
+    /// Go `hp.next()` of an unexpected argument token, then
+    /// `hp.skipToCloseParen(); return nil`: the hint is dropped with no
+    /// warning. Consumes the token and everything through the `)` that closes
+    /// the hint (a `)` taken as the unexpected token itself does not count),
+    /// and answers the [`DROPPED_HINT`] marker.
+    fn drop_hint_to_close_paren(&mut self) -> crate::ParseError {
+        if !self.at_eof() {
+            self.bump();
+        }
+        let mut depth = 1;
+        while depth > 0 && !self.at_eof() {
+            if self.is_op("(") {
+                depth += 1;
+            } else if self.is_op(")") {
+                depth -= 1;
+            }
+            self.bump();
+        }
+        crate::ParseError {
+            message: DROPPED_HINT.to_owned(),
+            offset: self.peek().end_offset,
+            near_offset: self.peek().offset,
+            errno: None,
+        }
+    }
+
+    /// Go's hint lexer: an identifier is the hint keyword `kw` when
+    /// `strings.ToUpper` of its text is (`hintTokenMap[strings.ToUpper(lit)]`).
+    fn is_hint_kw(&self, kw: &str) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident | TokenKind::Keyword)
+            && tidb_mysql::to_uppercase(&self.peek().text) == kw
+    }
+
     /// The production for the hint named `name` (uppercase), whose name
     /// token is already consumed.
     fn parse_named_hint(&mut self, name: String) -> PResult<Hint> {
@@ -257,14 +290,14 @@ impl Parser {
                 } else {
                     None
                 };
-                let value = if self.is_kw("TRUE") {
+                let value = if self.is_hint_kw("TRUE") {
                     self.bump();
                     true
-                } else if self.is_kw("FALSE") {
+                } else if self.is_hint_kw("FALSE") {
                     self.bump();
                     false
                 } else {
-                    return Err(self.err_here("expected TRUE or FALSE"));
+                    return Err(self.drop_hint_to_close_paren());
                 };
                 self.expect_op(")")?;
                 Ok(Hint {
@@ -282,14 +315,14 @@ impl Parser {
                     });
                 }
                 self.bump();
-                let value = if self.is_kw("TRUE") {
+                let value = if self.is_hint_kw("TRUE") {
                     self.bump();
                     true
-                } else if self.is_kw("FALSE") {
+                } else if self.is_hint_kw("FALSE") {
                     self.bump();
                     false
                 } else {
-                    return Err(self.err_here("expected TRUE or FALSE"));
+                    return Err(self.drop_hint_to_close_paren());
                 };
                 self.expect_op(")")?;
                 Ok(Hint {
@@ -333,12 +366,11 @@ impl Parser {
                 } else {
                     None
                 };
-                if !self.peek().text.eq_ignore_ascii_case("OLAP")
-                    && !self.peek().text.eq_ignore_ascii_case("OLTP")
-                {
-                    return Err(self.err_here("expected OLAP or OLTP"));
+                if !self.is_hint_kw("OLAP") && !self.is_hint_kw("OLTP") {
+                    return Err(self.drop_hint_to_close_paren());
                 }
-                let value = self.bump().text.to_ascii_uppercase();
+                // Go keeps the type as written (`ast.NewCIStr(tok.ident)`).
+                let value = self.bump().text;
                 self.expect_op(")")?;
                 Ok(Hint {
                     name,
@@ -354,21 +386,21 @@ impl Parser {
                     None
                 };
                 if self.peek().kind != TokenKind::IntLit {
-                    return Err(self.err_here("expected memory quota integer"));
+                    return Err(self.drop_hint_to_close_paren());
                 }
                 let value = self
                     .bump()
                     .text
                     .parse::<u64>()
                     .map_err(|_| self.err_here("invalid memory quota"))?;
-                let multiplier = if self.peek().text.eq_ignore_ascii_case("MB") {
+                let multiplier = if self.is_hint_kw("MB") {
                     self.bump();
                     1_048_576_u64
-                } else if self.peek().text.eq_ignore_ascii_case("GB") {
+                } else if self.is_hint_kw("GB") {
                     self.bump();
                     1_073_741_824_u64
                 } else {
-                    return Err(self.err_here("expected MB or GB"));
+                    return Err(self.drop_hint_to_close_paren());
                 };
                 let bytes = value
                     .checked_mul(multiplier)
@@ -498,8 +530,12 @@ impl Parser {
                     if !matches!(self.peek().kind, TokenKind::Ident | TokenKind::Keyword) {
                         return Err(self.err_here("expected TIKV or TIFLASH"));
                     }
-                    let store = self.bump().text.to_ascii_uppercase();
-                    if store != "TIKV" && store != "TIFLASH" {
+                    // Go finds the store's token by `strings.ToUpper` and
+                    // keeps the name as written (`ast.NewCIStr(storeTok.ident)`);
+                    // `ParsePlanHints` then switches on its `.L`.
+                    let store = self.bump().text;
+                    let token = tidb_mysql::to_uppercase(&store);
+                    if token != "TIKV" && token != "TIFLASH" {
                         while !self.at_eof() && !self.is_op(")") {
                             self.bump();
                         }
@@ -897,6 +933,8 @@ fn parse_standalone_hint_occurrence(
             }));
         }
         Ok(hint) => hints.push(hint),
+        // Go dropped the hint silently and is already past its `)`.
+        Err(error) if error.message == DROPPED_HINT => {}
         Err(error) => {
             if matches!(
                 error.message.as_str(),
@@ -946,6 +984,10 @@ fn parse_standalone_hint_occurrence(
         }
     }
 }
+
+/// The marker [`Parser::drop_hint_to_close_paren`] answers: not an error, a
+/// hint Go's parser drops without a warning.
+const DROPPED_HINT: &str = "\u{0}dropped optimizer hint";
 
 fn hint_syntax_diagnostic(initial_line: usize) -> HintDiagnostic {
     HintDiagnostic {

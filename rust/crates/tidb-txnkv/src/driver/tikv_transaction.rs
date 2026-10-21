@@ -168,6 +168,23 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         &mut self.transaction
     }
 
+    /// Runs one client transaction call to completion with Go's `ctx`: the
+    /// calling thread's span, under which a traced statement's client spans
+    /// (`tikvSnapshot.get`, `tikvTxn.Commit`, ...) report
+    /// ([`crate::rpc::trace::with_span_ctx`]).
+    pub fn run<'a, F, T>(
+        &'a mut self,
+        operation: impl FnOnce(&'a mut Transaction<PdC>) -> F,
+    ) -> tikv_client::Result<T>
+    where
+        F: std::future::Future<Output = tikv_client::Result<T>> + 'a,
+    {
+        let span = tidb_util::tracing::current_span();
+        self.transaction.block_on(move |transaction| {
+            crate::rpc::trace::with_span_ctx(span, operation(transaction))
+        })
+    }
+
     /// The transaction's start timestamp, as Go `KVTxn.StartTS`.
     #[must_use]
     pub const fn start_ts(&self) -> u64 {
@@ -211,7 +228,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
             Err(TikvMemBufferError::NotFound) => {}
             Err(error) => return Err(error.into()),
         }
-        Ok(self.transaction.get(key.as_bytes().to_vec())?)
+        Ok(self.run(|transaction| transaction.get(key.as_bytes().to_vec()))?)
     }
 
     /// Snapshot range read, as Go `Snapshot.Iter`: committed data only, with
@@ -224,8 +241,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     ) -> Result<Vec<(Key, Vec<u8>)>, TikvTransactionError> {
         let range = start.as_bytes().to_vec()..end.as_bytes().to_vec();
         Ok(self
-            .transaction
-            .scan(range, limit)?
+            .run(|transaction| transaction.scan(range, limit))?
             .map(|pair| (Key::from(Vec::<u8>::from(pair.0)), pair.1))
             .collect())
     }
@@ -285,8 +301,9 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// Acquires pessimistic locks at statement time, as Go `KVTxn.LockKeys`
     /// does for `SELECT ... FOR UPDATE` and for pessimistic DML.
     pub fn lock_keys(&mut self, keys: &[Key]) -> Result<(), TikvTransactionError> {
-        self.transaction
-            .lock_keys(keys.iter().map(|key| key.as_bytes().to_vec()))?;
+        self.run(|transaction| {
+            transaction.lock_keys(keys.iter().map(|key| key.as_bytes().to_vec()))
+        })?;
         Ok(())
     }
 
@@ -294,8 +311,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// commit timestamp for a transaction that wrote anything.
     pub fn commit(&mut self) -> Result<Option<u64>, TikvTransactionError> {
         Ok(self
-            .transaction
-            .commit()?
+            .run(|transaction| transaction.commit())?
             .map(|timestamp| timestamp.version()))
     }
 
@@ -306,7 +322,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// way client-go does. Callers that do not know which they hold should use
     /// [`Self::finish_without_writes`].
     pub fn rollback(&mut self) -> Result<(), TikvTransactionError> {
-        self.transaction.rollback()?;
+        self.run(|transaction| transaction.rollback())?;
         Ok(())
     }
 
@@ -641,7 +657,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// Reads one key under a statement-time pessimistic lock, as Go
     /// `KVTxn.LockKeys` followed by the read for `SELECT ... FOR UPDATE`.
     pub fn get_for_update(&mut self, key: &Key) -> Result<Option<Vec<u8>>, TikvTransactionError> {
-        Ok(self.transaction.get_for_update(key.as_bytes().to_vec())?)
+        Ok(self.run(|transaction| transaction.get_for_update(key.as_bytes().to_vec()))?)
     }
 
     /// Reads several keys under statement-time pessimistic locks.
@@ -650,8 +666,9 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         keys: &[Key],
     ) -> Result<Vec<(Key, Vec<u8>)>, TikvTransactionError> {
         Ok(self
-            .transaction
-            .batch_get_for_update(keys.iter().map(|key| key.as_bytes().to_vec()))?
+            .run(|transaction| {
+                transaction.batch_get_for_update(keys.iter().map(|key| key.as_bytes().to_vec()))
+            })?
             .into_iter()
             .map(|pair| (Key::from(Vec::<u8>::from(pair.0)), pair.1))
             .collect())
@@ -711,23 +728,20 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
     /// already holds that are still wanted. This is the facade's
     /// `advance_for_update_ts`.
     pub fn retry_statement_locking(&mut self) -> Result<(), TikvTransactionError> {
-        self.transaction
-            .block_on(|transaction| transaction.retry_aggressive_locking())?;
+        self.run(|transaction| transaction.retry_aggressive_locking())?;
         Ok(())
     }
 
     /// Rolls the statement back, releasing the locks it took and nothing else.
     /// This is the facade's `release_statement_locks`/`pessimistic_rollback`.
     pub fn cancel_statement_locking(&mut self) -> Result<(), TikvTransactionError> {
-        self.transaction
-            .block_on(|transaction| transaction.cancel_aggressive_locking())?;
+        self.run(|transaction| transaction.cancel_aggressive_locking())?;
         Ok(())
     }
 
     /// Closes the statement scope, keeping its locks for the transaction.
     pub fn done_statement_locking(&mut self) -> Result<(), TikvTransactionError> {
-        self.transaction
-            .block_on(|transaction| transaction.done_aggressive_locking())?;
+        self.run(|transaction| transaction.done_aggressive_locking())?;
         Ok(())
     }
 }
@@ -856,7 +870,7 @@ impl<PdC: PdClient> TikvTransactionDriver<PdC> {
         }
         context.lock_expired = lock_expired;
         let raw: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
-        self.transaction.block_on(|transaction| {
+        self.run(|transaction| {
             let context = &mut context;
             let raw = raw.clone();
             async move { transaction.lock_keys_with_context(context, raw).await }

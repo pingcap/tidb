@@ -287,13 +287,19 @@ impl<'a> PessimisticPrelock<'a> {
 
     /// Resolve only the key predicate after the session refreshed its catalog
     /// and captured transaction isolation. A refusal keeps normal execution.
+    ///
+    /// `statement` carries the statement's class and type flags, under which
+    /// Go's fast plan converts the key constants (`getNameValuePairs`,
+    /// `newBatchPointGetPlan`); a constant that conversion refuses has no
+    /// point plan and so no pre-lock. Its warnings are not the statement's:
+    /// the statement's own planning reports them.
     #[must_use]
     pub fn bind_keys(
         &self,
         params: &[Datum],
         catalog: &crate::driver::Catalog,
         current_db: &str,
-        zone: &tidb_datatype::SessionTimeZone,
+        statement: &crate::StmtContext,
     ) -> Vec<Vec<u8>> {
         let Some(table) = single_table_entry(self.table, catalog, current_db) else {
             return Vec::new();
@@ -315,7 +321,7 @@ impl<'a> PessimisticPrelock<'a> {
                 &bound
             };
             if let Ok(Some(batch)) = crate::driver::access::primary_batch_point_lookup(
-                predicate, self.table, table, zone,
+                predicate, self.table, table, statement,
             ) {
                 return batch
                     .into_iter()
@@ -328,7 +334,7 @@ impl<'a> PessimisticPrelock<'a> {
                     .collect();
             }
         }
-        crate::driver::access::point_write_prelock_keys(table, self.predicate, params, zone)
+        crate::driver::access::point_write_prelock_keys(table, self.predicate, params, statement)
     }
 }
 
@@ -608,14 +614,14 @@ mod common_handle_shape_tests {
         catalog.register_kv_in("test", "t", table).unwrap();
         let marker = tidb_parser::parse("SELECT v FROM t WHERE k = ? FOR UPDATE").unwrap();
         let literal = tidb_parser::parse("SELECT v FROM t WHERE k = 'x' FOR UPDATE").unwrap();
-        let zone = tidb_datatype::SessionTimeZone::utc();
+        let statement = crate::StmtContext::for_query();
 
         let marker_keys = PessimisticPrelock::from_statement(&marker)
             .unwrap()
-            .bind_keys(&[Datum::Bytes(b"x".to_vec())], &catalog, "test", &zone);
+            .bind_keys(&[Datum::Bytes(b"x".to_vec())], &catalog, "test", &statement);
         let literal_keys = PessimisticPrelock::from_statement(&literal)
             .unwrap()
-            .bind_keys(&[], &catalog, "test", &zone);
+            .bind_keys(&[], &catalog, "test", &statement);
 
         assert!(!marker_keys.is_empty());
         assert_eq!(marker_keys, literal_keys);
@@ -660,7 +666,8 @@ mod common_handle_shape_tests {
         catalog.register_kv_in("test", "t", table).unwrap();
         let marker = tidb_parser::parse("UPDATE t SET v = ? WHERE k = ?").unwrap();
         let literal = tidb_parser::parse("UPDATE t SET v = 5 WHERE k = 'x'").unwrap();
-        let zone = tidb_datatype::SessionTimeZone::utc();
+        let statement = crate::StmtContext::for_dml(true, true, false)
+            .with_statement_class(crate::StatementClass::Update);
 
         let marker_keys = PessimisticPrelock::from_statement(&marker)
             .unwrap()
@@ -668,11 +675,11 @@ mod common_handle_shape_tests {
                 &[Datum::Int(5), Datum::Bytes(b"x".to_vec())],
                 &catalog,
                 "test",
-                &zone,
+                &statement,
             );
         let literal_keys = PessimisticPrelock::from_statement(&literal)
             .unwrap()
-            .bind_keys(&[], &catalog, "test", &zone);
+            .bind_keys(&[], &catalog, "test", &statement);
 
         assert!(!marker_keys.is_empty());
         assert_eq!(marker_keys, literal_keys);
@@ -691,7 +698,8 @@ mod common_handle_shape_tests {
             &mut catalog,
         )
         .unwrap();
-        let zone = tidb_datatype::SessionTimeZone::utc();
+        let statement = crate::StmtContext::for_dml(true, true, false)
+            .with_statement_class(crate::StatementClass::Update);
         let keys = |sql: &str, params: &[Datum], batch: bool| {
             let stmt = tidb_parser::parse(sql).unwrap();
             let prelock = PessimisticPrelock::from_statement(&stmt).unwrap();
@@ -700,7 +708,12 @@ mod common_handle_shape_tests {
             } else {
                 prelock.without_batch_lookup()
             };
-            prelock.bind_keys(params, &catalog, crate::driver::DEFAULT_DATABASE, &zone)
+            prelock.bind_keys(
+                params,
+                &catalog,
+                crate::driver::DEFAULT_DATABASE,
+                &statement,
+            )
         };
 
         assert_eq!(
@@ -721,6 +734,56 @@ mod common_handle_shape_tests {
         assert!(keys("UPDATE t SET v = 1 WHERE id IN (1, 2)", &[], false).is_empty());
         // The single-row point arm does not depend on the batch arm.
         assert_eq!(keys("UPDATE t SET v = 1 WHERE id = 1", &[], false).len(), 1);
+    }
+
+    /// Go converts a point write's key constants under the statement's type
+    /// context (`getNameValuePairs`, `newBatchPointGetPlan`). A strict
+    /// `UPDATE`/`DELETE` whose `id = 'abc'` fails that conversion has no
+    /// point plan: its scan reports `Truncated incorrect INTEGER value: 'abc'`
+    /// at once (captured live against the Go server on TiKV, with another
+    /// transaction holding key 0) and nothing is locked first. With
+    /// truncation as a warning (`UPDATE IGNORE`, or a non-strict mode) the
+    /// constant converts to 0 and Go's point plan locks key 0.
+    #[test]
+    fn a_strict_point_write_whose_key_conversion_fails_binds_no_key() {
+        let mut catalog = crate::driver::Catalog::default();
+        crate::run_create_table_on(
+            "CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)",
+            &mut catalog,
+        )
+        .unwrap();
+        let keys = |sql: &str, statement: &crate::StmtContext| {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            PessimisticPrelock::from_statement(&stmt)
+                .unwrap()
+                .bind_keys(&[], &catalog, crate::driver::DEFAULT_DATABASE, statement)
+        };
+        let strict_update = crate::StmtContext::for_dml(true, true, false)
+            .with_statement_class(crate::StatementClass::Update);
+        let strict_delete = crate::StmtContext::for_dml(true, true, false)
+            .with_statement_class(crate::StatementClass::Delete);
+        assert!(keys("UPDATE t SET v = 9 WHERE id = 'abc'", &strict_update).is_empty());
+        assert!(keys("UPDATE t SET v = 9 WHERE id IN ('a', 'b')", &strict_update).is_empty());
+        assert!(keys("DELETE FROM t WHERE id = 'abc'", &strict_delete).is_empty());
+        assert!(keys("DELETE FROM t WHERE id IN ('a', 'b')", &strict_delete).is_empty());
+        assert!(keys("UPDATE t SET v = 9 WHERE id = '1x'", &strict_update).is_empty());
+        // A constant that converts cleanly still pins its row.
+        assert_eq!(
+            keys("UPDATE t SET v = 9 WHERE id = '1'", &strict_update).len(),
+            1
+        );
+
+        let ignore_update = crate::StmtContext::for_dml(true, true, true)
+            .with_statement_class(crate::StatementClass::Update);
+        assert_eq!(
+            keys("UPDATE IGNORE t SET v = 9 WHERE id = 'abc'", &ignore_update),
+            keys("UPDATE t SET v = 9 WHERE id = 0", &strict_update)
+        );
+        assert!(!keys(
+            "UPDATE IGNORE t SET v = 9 WHERE id IN ('a', 'b')",
+            &ignore_update
+        )
+        .is_empty());
     }
 
     #[test]
@@ -944,6 +1007,10 @@ pub struct HandleSourceExec {
     /// source has to write it -- the same contract
     /// [`crate::kv_table::table_scan`] has for a scan.
     extra_handle_slot: Option<usize>,
+    /// Go `PointGetExecutor.lock` / `BatchPointGetExec.lock` in a
+    /// repeatable-read pessimistic transaction: the record keys are locked
+    /// with this wait before the first read, inside `Next`.
+    lock_wait: Option<tidb_txnkv::transaction::LockWaitTime>,
 }
 
 impl HandleSourceExec {
@@ -971,7 +1038,18 @@ impl HandleSourceExec {
             extra_handle_slot: None,
             single_point_get: false,
             partition_ids: None,
+            lock_wait: None,
         }
+    }
+
+    /// Locks the record keys before reading them (see
+    /// [`HandleSourceExec::lock_wait`]).
+    pub(crate) fn with_lock_before_read(
+        mut self,
+        wait: Option<tidb_txnkv::transaction::LockWaitTime>,
+    ) -> Self {
+        self.lock_wait = wait;
+        self
     }
 
     /// Builds the final table reader for a retained physical plan whose
@@ -1028,6 +1106,14 @@ impl HandleSourceExec {
     }
 
     fn initialize(&mut self) -> Result<(), ExecError> {
+        // Go `PointGetExecutor.getAndLock` / `BatchPointGetExec.initialize`:
+        // "Lock the key before get in RR isolation, then get will get the
+        // value from the cache."
+        if let Some(wait) = self.lock_wait {
+            self.table
+                .lock_records_for_read(&self.handles, wait)
+                .map_err(ExecError::from)?;
+        }
         if let Some(statement) = &self.table_statement {
             let keep = self.output_columns.as_ref().map_or_else(
                 || (0..self.table.visible_column_count()).collect::<Vec<_>>(),
@@ -6371,9 +6457,13 @@ impl IndexJoinLookupExec {
         if self.covering {
             if let Some(remote) = self.remote_handles.as_mut() {
                 if self.emit_extra_handle {
-                    return Err(ExecError::unsupported(
-                        "a remote covering index-join reader cannot report the row handle",
-                    ));
+                    let next = remote
+                        .next_projected_row_with_handle()
+                        .map_err(ExecError::from)?;
+                    return Ok(next.map(|(handle, row)| {
+                        self.current_handle = Some(handle);
+                        row
+                    }));
                 }
                 return remote.next_projected_row().map_err(ExecError::from);
             }

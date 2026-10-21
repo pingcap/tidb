@@ -98,7 +98,7 @@ impl CommandType {
     /// command identity. Native-only or currently unsupported commands remain
     /// `None` and are reported as `Unknown`, matching `CmdType.String`'s
     /// fallback.
-    pub(crate) fn from_request_label(label: &str) -> Option<Self> {
+    pub fn from_request_label(label: &str) -> Option<Self> {
         match label {
             "kv_get" => Some(Self::Get),
             "kv_scan" => Some(Self::Scan),
@@ -564,9 +564,21 @@ impl BatchPendingResponses {
         id: u64,
         response: Result<BatchCommandResponse>,
     ) -> BatchResponseDisposition {
+        self.complete_result_observed(id, response, |_| {})
+    }
+
+    /// [`Self::complete_result`], first showing the retired entry to
+    /// `observe` (client-go's receive loop logs on `entry.ctx` there).
+    pub(crate) fn complete_result_observed(
+        &self,
+        id: u64,
+        response: Result<BatchCommandResponse>,
+        observe: impl FnOnce(&BatchRequestTelemetry),
+    ) -> BatchResponseDisposition {
         match self.entries.lock().unwrap().remove(&id) {
             Some(entry) => {
                 entry.telemetry.mark_received(std::time::Instant::now());
+                observe(&entry.telemetry);
                 if let Some(metrics) = entry.stream_metrics.as_ref() {
                     metrics.increment(BatchStreamRequestCounter::Completed);
                     metrics.increment(BatchStreamRequestCounter::Retired);
@@ -974,6 +986,65 @@ impl BatchCommandResponse {
             GetHealthFeedback,
             BroadcastTxnStatus
         )
+    }
+
+    /// Go's `%T` of `BatchCommandsResponse_Response.GetCmd()`, as client-go's
+    /// batch receive loop logs it: `<nil>` for an absent command.
+    pub(crate) fn go_cmd_type(
+        cmd: Option<&tikvpb::batch_commands_response::response::Cmd>,
+    ) -> &'static str {
+        use tikvpb::batch_commands_response::response::Cmd;
+
+        let Some(cmd) = cmd else {
+            return "<nil>";
+        };
+        match cmd {
+            Cmd::Get(_) => "*tikvpb.BatchCommandsResponse_Response_Get",
+            Cmd::Scan(_) => "*tikvpb.BatchCommandsResponse_Response_Scan",
+            Cmd::Prewrite(_) => "*tikvpb.BatchCommandsResponse_Response_Prewrite",
+            Cmd::Commit(_) => "*tikvpb.BatchCommandsResponse_Response_Commit",
+            Cmd::Import(_) => "*tikvpb.BatchCommandsResponse_Response_Import",
+            Cmd::Cleanup(_) => "*tikvpb.BatchCommandsResponse_Response_Cleanup",
+            Cmd::BatchGet(_) => "*tikvpb.BatchCommandsResponse_Response_BatchGet",
+            Cmd::BatchRollback(_) => "*tikvpb.BatchCommandsResponse_Response_BatchRollback",
+            Cmd::ScanLock(_) => "*tikvpb.BatchCommandsResponse_Response_ScanLock",
+            Cmd::ResolveLock(_) => "*tikvpb.BatchCommandsResponse_Response_ResolveLock",
+            Cmd::Gc(_) => "*tikvpb.BatchCommandsResponse_Response_GC",
+            Cmd::DeleteRange(_) => "*tikvpb.BatchCommandsResponse_Response_DeleteRange",
+            Cmd::RawGet(_) => "*tikvpb.BatchCommandsResponse_Response_RawGet",
+            Cmd::RawBatchGet(_) => "*tikvpb.BatchCommandsResponse_Response_RawBatchGet",
+            Cmd::RawPut(_) => "*tikvpb.BatchCommandsResponse_Response_RawPut",
+            Cmd::RawBatchPut(_) => "*tikvpb.BatchCommandsResponse_Response_RawBatchPut",
+            Cmd::RawDelete(_) => "*tikvpb.BatchCommandsResponse_Response_RawDelete",
+            Cmd::RawBatchDelete(_) => "*tikvpb.BatchCommandsResponse_Response_RawBatchDelete",
+            Cmd::RawScan(_) => "*tikvpb.BatchCommandsResponse_Response_RawScan",
+            Cmd::RawDeleteRange(_) => "*tikvpb.BatchCommandsResponse_Response_RawDeleteRange",
+            Cmd::RawBatchScan(_) => "*tikvpb.BatchCommandsResponse_Response_RawBatchScan",
+            Cmd::Coprocessor(_) => "*tikvpb.BatchCommandsResponse_Response_Coprocessor",
+            Cmd::PessimisticLock(_) => "*tikvpb.BatchCommandsResponse_Response_PessimisticLock",
+            Cmd::PessimisticRollback(_) => {
+                "*tikvpb.BatchCommandsResponse_Response_PessimisticRollback"
+            }
+            Cmd::CheckTxnStatus(_) => "*tikvpb.BatchCommandsResponse_Response_CheckTxnStatus",
+            Cmd::TxnHeartBeat(_) => "*tikvpb.BatchCommandsResponse_Response_TxnHeartBeat",
+            Cmd::CheckSecondaryLocks(_) => {
+                "*tikvpb.BatchCommandsResponse_Response_CheckSecondaryLocks"
+            }
+            Cmd::RawCoprocessor(_) => "*tikvpb.BatchCommandsResponse_Response_RawCoprocessor",
+            Cmd::FlashbackToVersion(_) => {
+                "*tikvpb.BatchCommandsResponse_Response_FlashbackToVersion"
+            }
+            Cmd::PrepareFlashbackToVersion(_) => {
+                "*tikvpb.BatchCommandsResponse_Response_PrepareFlashbackToVersion"
+            }
+            Cmd::Flush(_) => "*tikvpb.BatchCommandsResponse_Response_Flush",
+            Cmd::BufferBatchGet(_) => "*tikvpb.BatchCommandsResponse_Response_BufferBatchGet",
+            Cmd::GetHealthFeedback(_) => "*tikvpb.BatchCommandsResponse_Response_GetHealthFeedback",
+            Cmd::BroadcastTxnStatus(_) => {
+                "*tikvpb.BatchCommandsResponse_Response_BroadcastTxnStatus"
+            }
+            Cmd::Empty(_) => "*tikvpb.BatchCommandsResponse_Response_Empty",
+        }
     }
 
     /// Decode one generated response entry, rejecting an absent command as

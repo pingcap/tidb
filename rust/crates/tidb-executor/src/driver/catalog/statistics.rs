@@ -23,6 +23,31 @@ use crate::access_cost::TableStatistics;
 pub trait StatisticsSource: Send + Sync {
     /// Missing or pseudo statistics return `None`.
     fn table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>>;
+
+    /// Go `Handle.GetPhysicalTableStats(physicalID, tblInfo)`: [`Self::table`],
+    /// where a cache miss also caches Go's `PseudoTable` for `table` when Go
+    /// would. `None` still stands for that `PseudoTable`.
+    fn get_physical_table_stats(
+        &self,
+        physical_id: i64,
+        table: &PseudoStatsTable,
+    ) -> Option<Arc<tidb_stats::Table>> {
+        let _ = table;
+        self.table(physical_id)
+    }
+}
+
+/// The `TableInfo` facts Go `Handle.getStatsByPhysicalID` reads on a cache
+/// miss.
+#[derive(Debug, PartialEq, Eq)]
+pub struct PseudoStatsTable {
+    /// The schema `PseudoTable(tblInfo, false, true)` is built from.
+    pub info: tidb_stats::PseudoTableInfo,
+    /// `tblInfo.GetPartitionInfo() != nil`.
+    pub partitioned: bool,
+    /// Neither a temporary table nor a table of a system schema, the two
+    /// kinds Go never caches a `PseudoTable` for.
+    pub cacheable: bool,
 }
 
 /// Only the schema metadata used when converting canonical statistics.
@@ -30,6 +55,7 @@ pub trait StatisticsSource: Send + Sync {
 pub(super) struct StatisticsSchema {
     pub columns: Vec<(i64, bool)>,
     pub indexes: Vec<(i64, usize, bool)>,
+    pub pseudo: PseudoStatsTable,
 }
 
 struct ConvertedTable {
@@ -67,7 +93,10 @@ impl StatisticsView {
         physical_id: i64,
         schema: &Arc<StatisticsSchema>,
     ) -> Option<Arc<TableStatistics>> {
-        let Some(source) = self.source.table(physical_id) else {
+        let Some(source) = self
+            .source
+            .get_physical_table_stats(physical_id, &schema.pseudo)
+        else {
             self.converted
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)

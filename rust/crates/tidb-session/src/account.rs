@@ -671,7 +671,7 @@ impl Session {
     ) -> Result<(), DriverError> {
         if tidb_util::sem_v2::is_enabled()
             && privileges.iter().any(|privilege| {
-                tidb_util::sem_v2::is_restricted_privilege(&privilege.name.to_ascii_uppercase())
+                tidb_util::sem_v2::is_restricted_privilege(&tidb_hack::go_to_upper(&privilege.name))
             })
             && !self.has_dynamic_privilege("RESTRICTED_PRIV_ADMIN", false)
         {
@@ -1816,7 +1816,7 @@ impl Session {
                 .privileges
                 .iter()
                 .filter(|privilege| privilege.dynamic)
-                .map(|privilege| privilege.name.to_ascii_uppercase())
+                .map(|privilege| tidb_hack::go_to_upper(&privilege.name))
                 .collect();
             if !dynamic.is_empty() {
                 return Err(DriverError::IllegalPrivilegeLevel(dynamic.join(",")));
@@ -2179,7 +2179,7 @@ impl Session {
                         privilege.name.clone(),
                     ));
                 }
-                dynamic.push(privilege.name.to_ascii_uppercase());
+                dynamic.push(tidb_hack::go_to_upper(&privilege.name));
                 continue;
             }
             if privilege.name == "USAGE" {

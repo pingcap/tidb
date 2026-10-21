@@ -2252,6 +2252,87 @@ pub fn build_partition_metadata(
     )))
 }
 
+/// Go `TableFromMeta` -> `newPartitionedTable` over a `PartitionInfo` read
+/// back from meta JSON: every stored string of the partitioning -- the
+/// expression, the column list and each definition's `LessThan` / `InValues`
+/// bound text -- has each byte that is not UTF-8 replaced by U+FFFD, and the
+/// routing is rebuilt from those strings, so a latin1 client's bound `'x\xE9'`
+/// routes as `'x\u{FFFD}'` (the stored text this tier renders from the
+/// folded bound already reads that way; the routing built from the statement
+/// still held the raw byte). `None` for a table that is not partitioned.
+/// `names` / `types` are the table's visible columns as reloaded.
+///
+/// # Errors
+///
+/// What [`partition_spec_from_metadata`] raises for the reloaded strings.
+pub(crate) fn reload_partition_spec_from_meta_json(
+    spec: &PartitionSpec,
+    names: &[String],
+    types: &[FieldType],
+) -> Option<Result<PartitionSpec, DriverError>> {
+    use crate::kv_table::table_meta::go_json_text_round_trip;
+    let reloaded = |text: &str| {
+        let mut text = text.to_owned();
+        go_json_text_round_trip(&mut text);
+        text
+    };
+    let kind = match spec.kind {
+        PartitionKind::Range { .. } | PartitionKind::RangeColumns { .. } => PartitionType::RANGE,
+        PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => PartitionType::LIST,
+        PartitionKind::Hash => PartitionType::HASH,
+        PartitionKind::Key => PartitionType::KEY,
+        PartitionKind::None => return None,
+    };
+    // Go stores `pi.Expr` for a written expression and `pi.Columns` for a
+    // written column list (`stored_partition_metadata`).
+    let columns = match spec.kind {
+        PartitionKind::RangeColumns { .. }
+        | PartitionKind::ListColumns { .. }
+        | PartitionKind::Key => spec
+            .dependencies
+            .iter()
+            .map(|name| reloaded(name))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let expr_text = if columns.is_empty() {
+        reloaded(&spec.expr_text)
+    } else {
+        String::new()
+    };
+    let definitions = spec
+        .definitions
+        .iter()
+        .map(|definition| StoredPartitionDefinition {
+            id: definition.id,
+            name: reloaded(&definition.name),
+            less_than: definition
+                .less_than
+                .iter()
+                .map(|bound| reloaded(bound))
+                .collect(),
+            in_values: definition
+                .in_values
+                .iter()
+                .map(|tuple| tuple.iter().map(|value| reloaded(value)).collect())
+                .collect(),
+            comment: reloaded(&definition.comment),
+            placement_policy: definition.placement_policy.clone(),
+            storage_class: definition.storage_class.clone(),
+        })
+        .collect::<Vec<_>>();
+    Some(partition_spec_from_metadata(
+        kind,
+        &expr_text,
+        &columns,
+        spec.is_empty_columns,
+        &definitions,
+        &spec.overlapping_dropping_partition_indices,
+        names,
+        types,
+    ))
+}
+
 /// The STORED partition metadata a partitioning clause and the routing spec
 /// it built describe (Go `buildTablePartitionInfo` and
 /// `buildPartitionDefinitionsInfo`), the definition ids left at zero.

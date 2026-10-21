@@ -466,7 +466,12 @@ pub fn check_and_build_index_condition_string(
         ));
     }
     check_index_condition(column, condition, connection)?;
-    Ok(condition.restore_with_flags(crate::generated_column::generated_restore_flags()))
+    // The condition's plain string literals carry the connection charset Go's
+    // parser typed them with.
+    Ok(condition.restore_with_flags_and_string_charset(
+        crate::generated_column::generated_restore_flags(),
+        connection.0,
+    ))
 }
 
 /// The in-process table's `checkIndexCondition`.
@@ -647,6 +652,7 @@ pub(super) fn build_index_definition(
         &types,
         &ctx.session_zone(),
         ctx.like_default_escape(),
+        ctx.connection_charset_info().0,
     )?;
     check_expression_index_auto_increment(
         index_name,

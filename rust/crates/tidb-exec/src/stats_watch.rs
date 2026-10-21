@@ -185,6 +185,58 @@ impl SharedStats {
         }
     }
 
+    /// Go `StatsCache.Get`: the canonical cache object, which may be the
+    /// `PseudoTable` a cache miss cached (see
+    /// [`Self::get_physical_table_stats`]).
+    #[must_use]
+    pub fn get(&self, table_id: i64) -> Option<Arc<Table>> {
+        self.cache.get(table_id)
+    }
+
+    /// Go `Handle.getStatsByPhysicalID` with a `TableInfo`: the published
+    /// table, or on a cache miss Go's `PseudoTable`, which Go also caches
+    /// (`UpdateStatsCache`) unless `cacheable` is false (a temporary table or
+    /// a system schema's) or the table is partitioned and the cache already
+    /// holds 64 tables.
+    ///
+    /// The cached `PseudoTable` stays out of the statement-facing index,
+    /// where a table without loaded statistics already reads as Go's
+    /// `PseudoTable`; `None` is that answer. What the cached object changes
+    /// is the next `StatsCacheImpl.Update`: as Go's `TableStatsFromStorage`
+    /// copies it, the columns and indexes it holds stay in the table, and
+    /// an ANALYZE then turns them into evicted metadata items. Without it,
+    /// a stats pass that read the table before any histogram row existed
+    /// cached a table holding none, and every later pass kept them out.
+    pub fn get_physical_table_stats(
+        &self,
+        physical_id: i64,
+        partitioned: bool,
+        cacheable: bool,
+        pseudo_table: impl FnOnce() -> Table,
+    ) -> Option<Arc<Table>> {
+        if let Some(table) = self
+            .load()
+            .get(&physical_id)
+            .and_then(TableStatsState::loaded)
+        {
+            return Some(Arc::clone(table));
+        }
+        if self.cache.get(physical_id).is_some()
+            || (partitioned && self.cache.len() >= 64)
+            || !cacheable
+        {
+            return None;
+        }
+        let mut table = pseudo_table();
+        table.hist_coll.physical_id = physical_id;
+        self.cache.update_stats_cache(CacheUpdate {
+            updated: vec![Arc::new(table)],
+            deleted: Vec::new(),
+            options: UpdateOptions::default(),
+        });
+        None
+    }
+
     /// Go `StatsHandle.GetNextCheckVersionWithOffset` over the canonical
     /// cache owned by this shared statistics image.
     #[must_use]
@@ -231,11 +283,7 @@ impl SharedStats {
         let mut next = guard.as_ref().clone();
         next.retain(|table_id, state| tracked.contains(table_id) || state.loaded().is_some());
         for table_id in tracked_ids {
-            let state = self
-                .cache
-                .get(*table_id)
-                .map_or(TableStatsState::Pseudo, TableStatsState::Loaded);
-            next.insert(*table_id, state);
+            next.insert(*table_id, published_state(self.cache.get(*table_id)));
         }
         let changed = snapshots_differ_by_object(guard.as_ref(), &next);
         if changed {
@@ -407,7 +455,7 @@ impl SharedStats {
             options: UpdateOptions::default(),
         });
         let mut snapshot = guard.as_ref().clone();
-        snapshot.insert(table_id, TableStatsState::Loaded(table));
+        snapshot.insert(table_id, published_state(Some(table)));
         *guard = Arc::new(snapshot);
         true
     }
@@ -419,7 +467,7 @@ impl SharedStats {
                     .cache
                     .get(*table_id)
                     .expect("a published loaded table must remain in the statistics cache");
-                *state = TableStatsState::Loaded(table);
+                *state = published_state(Some(table));
             }
         }
         snapshot
@@ -466,15 +514,23 @@ impl SharedStats {
         let mut next = guard.as_ref().clone();
         for (table_id, state) in &mut next {
             if matches!(state, TableStatsState::Loaded(_)) {
-                *state = self
-                    .cache
-                    .get(*table_id)
-                    .map_or(TableStatsState::Pseudo, TableStatsState::Loaded);
+                *state = published_state(self.cache.get(*table_id));
             }
         }
         if snapshots_differ_by_object(guard.as_ref(), &next) {
             *guard = Arc::new(next);
         }
+    }
+}
+
+/// The statement-facing state of a canonical cache object. Go's cached
+/// `PseudoTable` (see [`SharedStats::get_physical_table_stats`]) indexes as
+/// [`TableStatsState::Pseudo`], the state statements already read as that
+/// table, as does a table the cache does not hold.
+fn published_state(table: Option<Arc<Table>>) -> TableStatsState {
+    match table {
+        Some(table) if !table.hist_coll.pseudo => TableStatsState::Loaded(table),
+        _ => TableStatsState::Pseudo,
     }
 }
 
@@ -1606,5 +1662,74 @@ mod tests {
         drop(reloader);
         while receiver.recv_timeout(Duration::from_millis(200)).is_ok() {}
         assert!(receiver.recv_timeout(Duration::from_millis(200)).is_err());
+    }
+
+    /// Go `Handle.getStatsByPhysicalID`: a miss caches `PseudoTable` under
+    /// the physical ID -- never for a temporary or system table, nor for a
+    /// partitioned table once the cache holds 64 -- and the statement index
+    /// keeps reading the table as pseudo, also after a pass over it.
+    #[test]
+    fn a_stats_miss_caches_go_pseudo_table_outside_the_statement_index() {
+        let info = tidb_stats::PseudoTableInfo {
+            id: 1,
+            pk_is_handle: false,
+            columns: vec![tidb_stats::PseudoColumnInfo {
+                info: tidb_stats::ColumnInfo {
+                    id: 1,
+                    name: "a".to_owned(),
+                    primary_key: false,
+                },
+                public: true,
+                hidden: false,
+            }],
+            indices: Vec::new(),
+        };
+        let pseudo = || tidb_stats::pseudo_table(&info, false, true);
+
+        let shared = shared_stats(StatsSnapshot::new());
+        assert!(shared
+            .get_physical_table_stats(5, false, false, pseudo)
+            .is_none());
+        assert!(shared.get(5).is_none());
+        assert!(shared
+            .get_physical_table_stats(5, false, true, pseudo)
+            .is_none());
+        let cached = shared.get(5).expect("the miss caches PseudoTable");
+        assert!(cached.hist_coll.pseudo);
+        assert_eq!(cached.hist_coll.physical_id, 5);
+        assert!(cached.hist_coll.get_column(1).is_some());
+        assert!(shared.load().get(&5).is_none());
+        // A later miss finds the cached object and caches nothing new.
+        assert!(shared
+            .get_physical_table_stats(5, false, true, pseudo)
+            .is_none());
+        assert!(Arc::ptr_eq(&shared.get(5).unwrap(), &cached));
+
+        // A pass that finds no `stats_meta` row publishes the tracked table
+        // as pseudo, not as the cached PseudoTable object.
+        let source = RefreshSource {
+            rows: Vec::new(),
+            loaded: cached.clone(),
+            loads: Mutex::new(0),
+        };
+        shared
+            .update_from_source(&source, Vec::new(), &[5], || false)
+            .unwrap();
+        assert!(matches!(
+            shared.load().get(&5),
+            Some(TableStatsState::Pseudo)
+        ));
+
+        let full = shared_stats(StatsSnapshot::from_iter(
+            (100..164).map(|table_id| loaded_at(table_id, 1)),
+        ));
+        assert!(full
+            .get_physical_table_stats(7, true, true, pseudo)
+            .is_none());
+        assert!(full.get(7).is_none());
+        assert!(full
+            .get_physical_table_stats(7, false, true, pseudo)
+            .is_none());
+        assert!(full.get(7).is_some());
     }
 }

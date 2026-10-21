@@ -482,7 +482,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
     let mut transaction = opener
         .begin_read_only()
         .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
-    let (table, partition_ids, partition_names, realtime_counts, saved) = {
+    let (table, partition_ids, partition_names, saved) = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         let catalog = load_cluster_catalog(&mut snapshot)
             .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
@@ -501,27 +501,6 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
                     .collect::<HashMap<_, _>>()
             })
             .unwrap_or_default();
-        // go `getAdjustedSampleRate` reads `GetPhysicalTableStats`: the
-        // stats CACHE's table, whose RealtimeCount is the `stats_meta.count`
-        // its last load saw -- a never-analyzed table is there too, loaded
-        // from the histogram rows its DDL inserted -- and on a cache miss
-        // `PseudoTable`, whose RealtimeCount is PseudoRowCount=10000 (with
-        // `stats-lease = 0` nothing loads a new table before its first
-        // ANALYZE, which is why Go's integration recordings answer
-        // `use min(1, 110000/10000)` there).
-        let snapshot_stats = stats.load();
-        let realtime_counts = std::iter::once(table.id)
-            .chain(partition_ids.iter().copied())
-            .map(|physical_id| {
-                let count = snapshot_stats
-                    .get(&physical_id)
-                    .and_then(crate::stats_watch::TableStatsState::loaded)
-                    .map_or(tidb_stats::PSEUDO_ROW_COUNT, |table| {
-                        table.hist_coll.realtime_count
-                    });
-                (physical_id, count)
-            })
-            .collect::<HashMap<_, _>>();
         let mut saved = std::collections::HashMap::new();
         if statement.persist_options {
             for physical_id in std::iter::once(table.id).chain(partition_ids.iter().copied()) {
@@ -533,13 +512,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
                 }
             }
         }
-        (
-            table.clone(),
-            partition_ids,
-            partition_names,
-            realtime_counts,
-            saved,
-        )
+        (table.clone(), partition_ids, partition_names, saved)
     };
     transaction
         .finish_without_writes()
@@ -557,14 +530,36 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         statement.dynamic_partition_prune,
     );
     let mut sample_rate_notes = Vec::new();
+    let pseudo_info = crate::cluster_stats_load::StatsTableSchema::of_table_info(&table)
+        .pseudo_table_info(table.id);
+    // Go `Handle.isSystemTable`: `filter.IsSystemSchema(db.Name.L)`.
+    let pseudo_cacheable = table.temp_table_type == tidb_model::TempTableType::NONE
+        && !tidb_util::filter::is_system_schema(&tidb_hack::go_to_lower(&statement.schema));
     for options in &mut resolution.physical {
         options.columns = final_column_choice(&table, &options.columns)?;
         if options.effective.num_samples == 0 && options.effective.sample_rate.is_none() {
             let partition = partition_names
                 .get(&options.physical_id)
                 .map_or("", String::as_str);
+            // go `getAdjustedSampleRate` reads `GetPhysicalTableStats`: the
+            // stats CACHE's table, whose RealtimeCount is the
+            // `stats_meta.count` its last load saw, and on a cache miss
+            // `PseudoTable`, whose RealtimeCount is PseudoRowCount=10000 and
+            // which that miss caches (with `stats-lease = 0` nothing loads a
+            // new table before its first ANALYZE, which is why Go's
+            // integration recordings answer `use min(1, 110000/10000)`).
+            let realtime_count = stats
+                .get_physical_table_stats(
+                    options.physical_id,
+                    table.partition.is_some(),
+                    pseudo_cacheable,
+                    || tidb_stats::pseudo_table(&pseudo_info, false, true),
+                )
+                .map_or(tidb_stats::PSEUDO_ROW_COUNT, |cached| {
+                    cached.hist_coll.realtime_count
+                });
             let (rate, reason) = automatic_sample_rate(
-                realtime_counts.get(&options.physical_id).copied(),
+                Some(realtime_count),
                 approximate_counts,
                 resource_group,
                 options.physical_id,

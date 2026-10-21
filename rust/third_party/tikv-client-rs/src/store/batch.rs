@@ -448,6 +448,8 @@ pub(crate) struct BatchRequestTelemetry {
     published_state: Mutex<Option<BatchRequestPublishedState>>,
     received_after_arrival_ns: AtomicU64,
     terminal: AtomicBool,
+    /// Client span scope of the submitting task, client-go's `entry.ctx`.
+    client_spans: Option<crate::trace::ClientSpanContext>,
 }
 
 impl BatchRequestTelemetry {
@@ -460,7 +462,12 @@ impl BatchRequestTelemetry {
             published_state: Mutex::new(None),
             received_after_arrival_ns: AtomicU64::new(0),
             terminal: AtomicBool::new(false),
+            client_spans: None,
         }
+    }
+
+    pub(crate) fn client_spans(&self) -> Option<&crate::trace::ClientSpanContext> {
+        self.client_spans.as_ref()
     }
 
     fn elapsed_ns(&self, now: Instant) -> u64 {
@@ -1259,6 +1266,7 @@ fn claim_batch_recovery_epoch(epoch: &AtomicU64, observed_epoch: &mut u64) -> bo
 fn receive_batch_response(
     pending: &BatchPendingResponses,
     response: tikvpb::BatchCommandsResponse,
+    target: &str,
 ) -> std::result::Result<BatchReceiveSummary, BatchReceiveError> {
     let request_id_count = response.request_ids.len();
     let response_count = response.responses.len();
@@ -1279,7 +1287,19 @@ fn receive_batch_response(
             });
         };
         summary.highest_request_id = Some(summary.highest_request_id.map_or(id, |max| max.max(id)));
-        match pending.complete_result(id, BatchCommandResponse::from_proto(response)) {
+        let cmd_type = BatchCommandResponse::go_cmd_type(response.cmd.as_ref());
+        let disposition = pending.complete_result_observed(
+            id,
+            BatchCommandResponse::from_proto(response),
+            |telemetry| {
+                if let Some(context) = telemetry.client_spans() {
+                    context.log(format!(
+                        "receive {cmd_type} response with other {response_count} batched requests from {target}"
+                    ));
+                }
+            },
+        );
+        match disposition {
             BatchResponseDisposition::Delivered => summary.delivered += 1,
             BatchResponseDisposition::Cancelled => summary.cancelled += 1,
             BatchResponseDisposition::Outdated => summary.outdated += 1,
@@ -1393,7 +1413,7 @@ where
                         listener.on_health_feedback(feedback);
                     }
                 }
-                let result = receive_batch_response(pending, response);
+                let result = receive_batch_response(pending, response, target);
                 if let Ok(summary) = &result {
                     if let Some(highest_request_id) = summary.highest_request_id {
                         progress.observe_response_ids(&[highest_request_id]);
@@ -2272,7 +2292,9 @@ impl BatchCommandsBuilder {
         let cancellation = Arc::new(AtomicBool::new(false));
         let (response_sender, response) = oneshot::channel();
         let arrived_at = Instant::now();
-        let telemetry = Arc::new(BatchRequestTelemetry::new(request.store_id(), arrived_at));
+        let mut telemetry = BatchRequestTelemetry::new(request.store_id(), arrived_at);
+        telemetry.client_spans = crate::trace::current_client_span_context();
+        let telemetry = Arc::new(telemetry);
         let entry = BatchCommandEntry {
             request: Some(request),
             priority,
@@ -3339,6 +3361,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
+            "",
         )
         .expect("well-formed batch response");
         assert_eq!(
@@ -3368,6 +3391,7 @@ mod tests {
                 responses: vec![tikvpb::batch_commands_response::Response { cmd: None }],
                 ..Default::default()
             },
+            "",
         )
         .expect("the response itself was well formed");
         assert_eq!(summary.delivered, 1);
@@ -3394,6 +3418,7 @@ mod tests {
                 }],
                 ..Default::default()
             },
+            "",
         )
         .unwrap_err();
         assert_eq!(
@@ -3733,6 +3758,7 @@ mod tests {
                 }],
                 ..Default::default()
             },
+            "",
         )
         .unwrap();
         assert_eq!(summary.cancelled, 1);

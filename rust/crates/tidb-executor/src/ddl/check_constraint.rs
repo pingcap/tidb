@@ -289,7 +289,12 @@ pub fn build_constraint_infos(
                 .into(),
             enforced: check.definition.enforced,
             in_column: check.in_column.is_some(),
-            expr_string: check.definition.expression.restore_with_flags(flags),
+            // Go `buildConstraintInfo` restores the AST the session parsed,
+            // whose plain string literals carry `character_set_connection`.
+            expr_string: check
+                .definition
+                .expression
+                .restore_with_flags_and_string_charset(flags, context.connection_charset_info().0),
             state,
         });
     }

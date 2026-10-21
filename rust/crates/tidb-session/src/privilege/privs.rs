@@ -597,7 +597,7 @@ pub const DYNAMIC_PRIVS: &[&str] = &[
 /// registered DYNAMIC privilege.
 #[must_use]
 pub fn is_dynamic_privilege(name: &str) -> bool {
-    DYNAMIC_PRIVS
-        .iter()
-        .any(|registered| registered.eq_ignore_ascii_case(name))
+    // Go `strings.ToUpper(privName) == priv`.
+    let upper = tidb_hack::go_to_upper(name);
+    DYNAMIC_PRIVS.iter().any(|registered| *registered == upper)
 }

@@ -1473,6 +1473,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             };
             return match loaded {
                 Ok(region) => {
+                    crate::trace::client_span_event(|| {
+                        format!("load region {} from pd, due to need-reload", region.id())
+                    });
                     self.add_region(region.clone()).await;
                     Ok(region)
                 }
@@ -1616,6 +1619,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             };
             return match loaded {
                 Ok(region) => {
+                    crate::trace::client_span_event(|| {
+                        format!("load region {} from pd, due to need-reload", region.id())
+                    });
                     self.add_region(region.clone()).await;
                     Ok(region)
                 }
@@ -1659,8 +1665,11 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
                     }
                     let old_region = region.region.clone();
                     drop(region_cache_guard);
-                    let loaded = pd_region_meta_call(
-                        self.inner_client.clone().get_region_by_id_with_buckets(id),
+                    let loaded = crate::trace::detached_client_span(
+                        "loadRegionByID",
+                        pd_region_meta_call(
+                            self.inner_client.clone().get_region_by_id_with_buckets(id),
+                        ),
                     )
                     .await;
                     let loaded = match loaded {
@@ -1782,6 +1791,9 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             .query_region_with_backoff(&key, previous, false, backoffer)
             .await?;
         let region = self.prepare_region_from_pd(region).await?;
+        crate::trace::client_span_event(|| {
+            format!("load region {} from pd, due to cache-miss", region.id())
+        });
         if self.add_region(region.clone()).await {
             return Ok(region);
         }
@@ -1796,6 +1808,22 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
     }
 
     async fn query_region_with_backoff(
+        &self,
+        key: &Key,
+        previous: bool,
+        leader_only: bool,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<RegionWithLeader> {
+        // client-go `RegionCache.loadRegion`: its derived ctx reaches only PD
+        // calls, which open no spans; its backoffs report to the caller's span.
+        crate::trace::detached_client_span(
+            "loadRegion",
+            self.load_region(key, previous, leader_only, backoffer),
+        )
+        .await
+    }
+
+    async fn load_region(
         &self,
         key: &Key,
         previous: bool,
@@ -1945,6 +1973,21 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         if count == 0 {
             return Ok(Vec::new());
         }
+        // client-go `RegionCache.scanRegions`, a span as `loadRegion`'s.
+        crate::trace::detached_client_span(
+            "scanRegions",
+            self.scan_regions_from_pd(start_key, end_key, count, backoffer),
+        )
+        .await
+    }
+
+    async fn scan_regions_from_pd(
+        &self,
+        start_key: Key,
+        end_key: Key,
+        count: usize,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
         let ranges = [pdpb::KeyRange {
             start_key: start_key.clone().into(),
             end_key: end_key.clone().into(),
@@ -2080,6 +2123,28 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
         if count == 0 || ranges.is_empty() {
             return Ok(Vec::new());
         }
+        // client-go `RegionCache.batchScanRegions`, a span as `loadRegion`'s.
+        crate::trace::detached_client_span(
+            "batchScanRegions",
+            self.batch_scan_regions_from_pd(
+                ranges,
+                count,
+                need_buckets,
+                need_region_has_leader,
+                backoffer,
+            ),
+        )
+        .await
+    }
+
+    async fn batch_scan_regions_from_pd(
+        &self,
+        ranges: &[pdpb::KeyRange],
+        count: usize,
+        need_buckets: bool,
+        need_region_has_leader: bool,
+        backoffer: &mut RetryBackoffer,
+    ) -> Result<Vec<RegionWithLeader>> {
         let mut allow_follower = true;
         loop {
             let scan_started = Instant::now();
@@ -2477,8 +2542,12 @@ impl<C: RetryClientTrait + Send + Sync> RegionCache<C> {
             region_cache_guard.on_my_way_id.insert(id, notify.clone());
         }
 
-        let loaded =
-            pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id)).await;
+        // client-go `RegionCache.loadRegionByID`.
+        let loaded = crate::trace::detached_client_span(
+            "loadRegionByID",
+            pd_region_meta_call(self.inner_client.clone().get_region_by_id_with_buckets(id)),
+        )
+        .await;
         let result = match loaded {
             Ok(region) => self.prepare_region_from_pd(region).await,
             Err(error) => Err(error),
@@ -4446,6 +4515,48 @@ mod test {
             matches!(error, Error::RegionLookupRetry(ref error) if matches!(error.as_ref(), crate::retry::RetryError::Cancelled { .. }))
         );
         assert_eq!(client.get_region_count.load(SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_cache_miss_reports_load_region_and_its_event() -> Result<()> {
+        let retry_client = Arc::new(MockRetryClient::default());
+        let cache = RegionCache::new(retry_client.clone());
+        retry_client.regions.lock().await.insert(
+            7,
+            RegionWithLeader {
+                region: metapb::Region {
+                    id: 7,
+                    region_epoch: Some(RegionEpoch {
+                        conf_ver: 0,
+                        version: 0,
+                    }),
+                    peers: vec![metapb::Peer {
+                        id: 1,
+                        store_id: 1,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+                leader: Some(metapb::Peer {
+                    id: 1,
+                    store_id: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        );
+        let (handler, recorded) = crate::trace::client_span_testing::recorder();
+        crate::trace::with_client_spans(handler, async {
+            cache.get_region_by_key(&vec![5].into()).await?;
+            // A cache hit loads nothing.
+            cache.get_region_by_key(&vec![6].into()).await
+        })
+        .await?;
+        assert_eq!(
+            crate::trace::client_span_testing::render(&recorded),
+            ["loadRegion", "- load region 7 from pd, due to cache-miss"]
+        );
+        Ok(())
     }
 
     #[tokio::test]

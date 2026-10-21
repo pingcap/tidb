@@ -446,3 +446,81 @@ fn alter_table_names_fold_like_go() {
          (`ÉX`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 }
+
+/// Go's hint lexer finds every keyword argument by `strings.ToUpper`
+/// (`hintTokenMap`), keeps a storage type as written and lets
+/// `ParsePlanHints` switch on its `.L`; an argument of the wrong kind is
+/// dropped silently (`skipToCloseParen`). Captured from a Go TiDB:
+/// `TIFLA\u{17F}H[t2]` and `T\u{131}KV[t2]` name no store (no warning, no
+/// effect), `FAL\u{17F}E` is FALSE, and `1 \u{1D0D}b` (no uppercase mapping)
+/// drops MEMORY_QUOTA without a warning.
+#[test]
+fn hint_keyword_arguments_fold_with_go_to_upper() {
+    let mut session = folding_session();
+    session.run("CREATE TABLE t2 (a INT, KEY ia(a))").unwrap();
+    session
+        .run("EXPLAIN FORMAT='brief' SELECT /*+ read_from_storage(TIFLA\u{17F}H[t2]) */ * FROM t2")
+        .unwrap();
+    assert_eq!(warnings_of(&session), vec![]);
+    session
+        .run(
+            "EXPLAIN FORMAT='brief' SELECT /*+ read_from_storage(T\u{131}KV[t2], tiflash[t2]) */ \
+             * FROM t2",
+        )
+        .unwrap();
+    let warnings = warnings_of(&session);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].0, 1815);
+    assert!(
+        warnings[0]
+            .1
+            .starts_with("No available path for table test.t2 with the store type tiflash"),
+        "{warnings:?}"
+    );
+    session
+        .run("SELECT /*+ use_toja(FAL\u{17F}E) memory_quota(1 \u{1D0D}b) */ 1")
+        .unwrap();
+    assert_eq!(warnings_of(&session), vec![]);
+}
+
+/// Go's point-get fast path (`buildSchemaFromFields`, `getNameValuePairs`)
+/// never reads a column's schema qualifier: captured from a Go TiDB,
+/// `SELECT nosuch.pk.a ... WHERE id = 1` and `... WHERE id IN (1, 2)` answer,
+/// while a range read refuses the qualifier with 1054.
+#[test]
+fn point_get_fast_path_ignores_schema_qualifiers() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE pk (id INT PRIMARY KEY, a INT, b INT, UNIQUE KEY ub(b))")
+        .unwrap();
+    session
+        .run("INSERT INTO pk VALUES (1, 10, 100), (2, 20, 200)")
+        .unwrap();
+    for (sql, expected) in [
+        ("SELECT nosuch.pk.a FROM pk WHERE id = 1", vec![vec!["10"]]),
+        (
+            "SELECT nosuch.pk.* FROM pk WHERE id = 1",
+            vec![vec!["1", "10", "100"]],
+        ),
+        ("SELECT a FROM pk WHERE nosuch.pk.id = 1", vec![vec!["10"]]),
+        ("SELECT a FROM pk WHERE nosuch.pk.b = 200", vec![vec!["20"]]),
+        (
+            "SELECT nosuch.pk.a FROM pk WHERE id IN (1, 2)",
+            vec![vec!["10"], vec!["20"]],
+        ),
+    ] {
+        let rows = row_text(session.run(sql));
+        let expected = expected
+            .into_iter()
+            .map(|row| row.into_iter().map(str::to_owned).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        assert_eq!(rows, expected, "{sql}");
+    }
+    assert_eq!(
+        error_of(&mut session, "SELECT nosuch.pk.a FROM pk WHERE id > 0"),
+        (
+            1054,
+            "Unknown column 'nosuch.pk.a' in 'field list'".to_owned()
+        )
+    );
+}

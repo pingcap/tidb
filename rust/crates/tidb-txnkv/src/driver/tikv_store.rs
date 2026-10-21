@@ -241,12 +241,20 @@ impl<PdC: PdClient> TikvStore<PdC> {
     /// coprocessor's worker threads, the session's statement thread. A
     /// caller already on a multi-thread runtime hands its worker back while it
     /// waits; one on a current-thread runtime waits on a scoped thread.
+    ///
+    /// The calling thread's span is the operation's Go `ctx` span: under a
+    /// traced statement the client spans it opens report under it
+    /// ([`crate::rpc::trace::with_span_ctx`]).
     pub fn block_on<F>(&self, operation: F) -> F::Output
     where
         F: std::future::Future + Send,
         F::Output: Send,
     {
-        block_on_runtime(&self.runtime, operation)
+        let span = tidb_util::tracing::current_span();
+        block_on_runtime(
+            &self.runtime,
+            crate::rpc::trace::with_span_ctx(span, operation),
+        )
     }
 
     /// client-go `KVStore.CheckVisibility`.

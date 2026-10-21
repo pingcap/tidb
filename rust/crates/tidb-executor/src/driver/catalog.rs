@@ -61,7 +61,7 @@ impl CatalogTableKey {
 pub(crate) mod sync_load;
 pub use sync_load::StatisticsLoadWorkers;
 mod statistics;
-pub use statistics::{StatisticsSource, StatisticsView};
+pub use statistics::{PseudoStatsTable, StatisticsSource, StatisticsView};
 mod pessimistic_locks;
 pub use pessimistic_locks::{LockAcquire, PessimisticLockGuard, PessimisticLocks};
 
@@ -133,6 +133,49 @@ fn same_table_definition(left: &crate::KvTable, right: &crate::KvTable) -> bool 
     left.table_id == right.table_id
         && Arc::ptr_eq(&left.columns, &right.columns)
         && left.indexes().as_ptr() == right.indexes().as_ptr()
+}
+
+/// Go `PseudoTable`'s schema inputs from a catalog table, whose columns and
+/// indexes are all public; a column past the visible ones is hidden.
+fn pseudo_table_info(table: &crate::KvTable) -> tidb_stats::PseudoTableInfo {
+    tidb_stats::PseudoTableInfo {
+        id: table.table_id,
+        pk_is_handle: table.pk_handle_offset().is_some(),
+        columns: table
+            .columns()
+            .iter()
+            .enumerate()
+            .map(|(offset, column)| tidb_stats::PseudoColumnInfo {
+                info: tidb_stats::ColumnInfo {
+                    id: column.id,
+                    name: column.name.go_to_lower(),
+                    primary_key: column
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                },
+                public: true,
+                hidden: table.is_hidden(offset),
+            })
+            .collect(),
+        indices: table
+            .indexes()
+            .iter()
+            .map(|index| tidb_stats::PseudoIndexInfo {
+                info: tidb_stats::IndexInfo {
+                    id: index.id,
+                    name: index.name.go_to_lower(),
+                    columns: index
+                        .column_offsets
+                        .iter()
+                        .filter_map(|offset| table.columns().get(*offset))
+                        .map(|column| column.name.go_to_lower())
+                        .collect(),
+                    mv_index: table.mv_key_part_source(index.id).is_some(),
+                },
+                public: true,
+            })
+            .collect(),
+    }
 }
 
 /// One schema: Go `model.DBInfo`, reduced to the metadata this catalog serves.
@@ -3608,6 +3651,9 @@ impl Catalog {
             let schemas = self.statistics_schemas.get_or_init(|| {
                 let mut schemas = HashMap::new();
                 for database in self.databases.values() {
+                    // Go `Handle.isSystemTable`: `filter.IsSystemSchema(db.Name.L)`.
+                    let system_schema =
+                        tidb_util::filter::is_system_schema(&database.name.go_to_lower());
                     for entry in database.tables.values() {
                         let TableEntry::Kv(table) = entry.as_ref() else {
                             continue;
@@ -3623,6 +3669,13 @@ impl Catalog {
                                 .iter()
                                 .map(|index| (index.id, index.column_offsets.len(), index.unique))
                                 .collect(),
+                            pseudo: statistics::PseudoStatsTable {
+                                info: pseudo_table_info(table),
+                                partitioned: table.partition().is_some(),
+                                cacheable: table.temp_table_type()
+                                    == tidb_model::TempTableType::NONE
+                                    && !system_schema,
+                            },
                         });
                         if let Some(partition) = table.partition() {
                             for definition in &partition.definitions {

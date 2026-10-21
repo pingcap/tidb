@@ -111,6 +111,7 @@ pub(super) fn build(
                 &types,
                 &ctx.session_zone(),
                 ctx.like_default_escape(),
+                ctx.connection_charset_info().0,
             )
             .map_err(super::generated_column_error)?,
         )

@@ -167,13 +167,13 @@ fn static_global_index_point_lookup(
         || select.fields.fields().is_empty()
         || !select.fields.fields().iter().all(|field| match field {
             tidb_ast::SelectField::Wildcard(names) => {
-                table_wildcard_matches(names, table_ref, db_name, table_name)
+                table_wildcard_matches(names, table_ref, table_name)
             }
             tidb_ast::SelectField::Expr {
                 expr: tidb_ast::Expr::Column(names),
                 alias: None,
             } => {
-                table_column_matches(names, table_ref, db_name, table_name)
+                table_column_matches(names, table_ref, table_name)
                     && names.last().is_some_and(|column_name| {
                         table
                             .columns
@@ -235,7 +235,7 @@ fn static_global_index_point_lookup(
             }
             _ => return false,
         };
-    if !table_column_matches(column_names, table_ref, db_name, table_name) {
+    if !table_column_matches(column_names, table_ref, table_name) {
         return false;
     }
 
@@ -263,17 +263,18 @@ fn static_global_index_point_lookup(
     })
 }
 
+// Go's fast path compares only `Name.Table` / `WildCard.Table` with the
+// table (`buildSchemaFromFields`, `getNameValuePairs`); a schema qualifier is
+// never read, whatever it names.
 fn table_column_matches(
     names: &[String],
     table_ref: &tidb_ast::TableRef,
-    db_name: &str,
     table_name: &str,
 ) -> bool {
     let relation = table_ref.alias.as_deref().unwrap_or(table_name);
     match names {
         [_column] => true,
-        [name, _column] => name.go_lower_eq(relation),
-        [schema, name, _column] => schema.go_lower_eq(db_name) && name.go_lower_eq(relation),
+        [name, _column] | [_, name, _column] => name.go_lower_eq(relation),
         _ => false,
     }
 }
@@ -281,14 +282,12 @@ fn table_column_matches(
 fn table_wildcard_matches(
     names: &[String],
     table_ref: &tidb_ast::TableRef,
-    db_name: &str,
     table_name: &str,
 ) -> bool {
     let relation = table_ref.alias.as_deref().unwrap_or(table_name);
     match names {
         [] => true,
-        [name] => name.go_lower_eq(relation),
-        [schema, name] => schema.go_lower_eq(db_name) && name.go_lower_eq(relation),
+        [name] | [_, name] => name.go_lower_eq(relation),
         _ => false,
     }
 }
@@ -937,9 +936,11 @@ pub fn update_privilege_tables(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, String)>, super::DriverError> {
+    // Go appends a visitInfo of `name.DBName.L` and `name.OrigTblName.L` per
+    // assignment; repeats of the same lowered pair check nothing new.
     let mut tables = Vec::new();
     for (database, table, _) in update_target_columns(update, catalog, current_db, ctx)? {
-        let target = (database, table);
+        let target = (database.go_to_lower(), table.go_to_lower());
         if !tables.contains(&target) {
             tables.push(target);
         }
@@ -1048,8 +1049,11 @@ pub(super) fn update_target_columns(
             }
             let (database, original) = split_table_path(&table.name, current_db)?;
             let visible = table.alias.as_deref().unwrap_or(original);
+            // Go `updatableTableListResolver.Leave` lists an aliased table
+            // under its alias with `Schema` blanked, and `buildUpdateLists`
+            // skips the schema check for a blank one.
             if !visible.go_lower_eq(&name.table.original)
-                || !database.go_lower_eq(&name.database.original)
+                || (table.alias.is_none() && !database.go_lower_eq(&name.database.original))
             {
                 continue;
             }
@@ -1069,7 +1073,15 @@ pub(super) fn update_target_columns(
             table: name.table.original.clone(),
             statement: "UPDATE",
         })?;
-        if !targets.contains(&target) {
+        // One write target per table column, compared as Go's `.L` names.
+        if !targets
+            .iter()
+            .any(|(database, table, column): &(String, String, String)| {
+                database.go_lower_eq(&target.0)
+                    && table.go_lower_eq(&target.1)
+                    && column.go_lower_eq(&target.2)
+            })
+        {
             targets.push(target);
         }
     }

@@ -1377,13 +1377,13 @@ pub fn build_prepared_point_get_plan(
                 order,
                 literal,
             } => {
-                let Some((offset, _, _)) = resolver.resolve(&path) else {
+                let Some((offset, _, _)) = resolver.resolve(point_get_column_path(&path)) else {
                     return None;
                 };
                 resolved.push((offset, PreparedPointPredicate::Eq(order, literal)));
             }
             PreparedPointConjunct::IsNull { path } => {
-                let Some((offset, _, _)) = resolver.resolve(&path) else {
+                let Some((offset, _, _)) = resolver.resolve(point_get_column_path(&path)) else {
                     return None;
                 };
                 resolved.push((offset, PreparedPointPredicate::IsNull));
@@ -2677,6 +2677,16 @@ fn fast_dml_point_output(table: &KvTable) -> FastPointOutput {
     }
 }
 
+/// The part of a column name Go's point-get fast path reads:
+/// `buildSchemaFromFields` / `getNameValuePairs` check only `Name.Table`
+/// against the table and look the column up by `Name.Name`, never reading
+/// `Name.Schema` -- so `SELECT nosuch.t.a FROM t WHERE id = 1` is a point get
+/// that answers, where the ordinary planner would refuse the qualifier
+/// (1054).
+fn point_get_column_path(path: &[String]) -> &[String] {
+    &path[path.len().saturating_sub(2)..]
+}
+
 fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option<FastPointOutput> {
     let resolver = ScopeResolver { scope };
     let mut offsets = Vec::new();
@@ -2687,7 +2697,7 @@ fn fast_point_output(select: &tidb_ast::SelectStmt, scope: &FromScope) -> Option
                 expr: expr @ tidb_ast::Expr::Column(path),
                 alias,
             } => {
-                let (offset, field_type, _) = resolver.resolve(path)?;
+                let (offset, field_type, _) = resolver.resolve(point_get_column_path(path))?;
                 let name = alias.clone().unwrap_or_else(|| {
                     default_field_display_name(&select.fields, field_index, expr)
                 });
@@ -2986,15 +2996,25 @@ pub(crate) fn primary_batch_point_lookup(
     predicate: &tidb_ast::Expr,
     table_ref: &tidb_ast::TableRef,
     table: &KvTable,
-    zone: &tidb_datatype::SessionTimeZone,
+    statement: &crate::StmtContext,
 ) -> Result<Option<Vec<TableHandle>>, DriverError> {
-    let statement = PointPlanStmt::of_write(Some(predicate), &[], None, table_ref);
+    let zone = &statement.session_zone();
+    let point_stmt = PointPlanStmt::of_write(Some(predicate), &[], None, table_ref);
     let columns = table
         .columns
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect::<Vec<_>>();
-    let Some(batch) = try_batch_point_get_stmt(&statement, table, &columns, zone, None)? else {
+    // Go `newBatchPointGetPlan` converts each element under the statement's
+    // type context (see [`batch_key_value`]).
+    let Some(batch) = try_batch_point_get_stmt(
+        &point_stmt,
+        table,
+        &columns,
+        zone,
+        Some(statement as &dyn tidb_expr::Columns),
+    )?
+    else {
         return Ok(None);
     };
     if batch.index.is_some() {
@@ -3980,16 +4000,20 @@ pub(crate) fn try_point_get(
 /// statement accepted here reads at most the rows its pinned keys name, so
 /// pre-locking them can never miss a row the statement would have read
 /// unlocked. Refusing merely costs the extra round trip the fold removes.
+///
+/// Each pair is converted as Go's `getNameValuePairs` converts it while the
+/// fast plan is built: under `statement`'s type context. A strict `UPDATE`
+/// or `DELETE` whose `id = 'abc'` fails that conversion has no point plan in
+/// Go and therefore locks nothing before its scan reports the error; an
+/// overflowing constant is Go's `TableDual`, which locks nothing either.
+/// `statement` is a context of the statement's class and flags whose
+/// warnings are discarded: the statement's own planning reports them.
 pub(crate) fn point_write_prelock_keys(
     table: &KvTable,
     where_clause: &tidb_ast::Expr,
     params: &[Datum],
-    zone: &tidb_datatype::SessionTimeZone,
+    statement: &crate::StmtContext,
 ) -> Vec<Vec<u8>> {
-    let mut pairs = Vec::new();
-    if !point_equal_pairs(where_clause, &mut pairs, zone, params) || pairs.is_empty() {
-        return Vec::new();
-    }
     // The column list is the table's own (all columns, in order), because the
     // domain conversion and the handle offsets below both index into it --
     // the same list [`super::access_path`] builds for a write's own read-path
@@ -3997,12 +4021,29 @@ pub(crate) fn point_write_prelock_keys(
     // per point write, and cloning every name and type per statement was a
     // measurable share of a cached point UPDATE.
     let columns = &table.columns;
-    if !convert_pairs_to_column_domain_by(&mut pairs, |name| {
-        columns
+    let zone = statement.session_zone();
+    let mut pairs = Vec::new();
+    let walked = point_equal_pairs_visiting(where_clause, &mut pairs, &zone, params, &mut |pair| {
+        let Some(column) = columns
             .iter()
-            .find(|column| column.name.go_lower_eq(name))
-            .map(|column| &column.field_type)
-    }) {
+            .find(|column| column.name.go_lower_eq(&pair.column))
+        else {
+            return false;
+        };
+        match tidb_planner::point_get_value::name_value_pair_value(
+            statement,
+            &column.field_type,
+            &pair.value,
+        ) {
+            tidb_planner::point_get_value::NameValuePairValue::Key(value) => {
+                pair.value = value;
+                true
+            }
+            tidb_planner::point_get_value::NameValuePairValue::TableDual
+            | tidb_planner::point_get_value::NameValuePairValue::Decline => false,
+        }
+    });
+    if !walked || pairs.is_empty() {
         return Vec::new();
     }
     let handle = if let Some(handle_offset) = table.pk_handle_offset() {
@@ -4041,7 +4082,7 @@ pub(crate) fn point_write_prelock_keys(
             };
             values.push(pair.value.clone());
         }
-        let Ok(encoded) = tidb_codec::encode_key_in_timezone(zone, &values) else {
+        let Ok(encoded) = tidb_codec::encode_key_in_timezone(&zone, &values) else {
             return Vec::new();
         };
         Some(TableHandle::Common(encoded))

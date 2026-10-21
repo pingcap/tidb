@@ -372,6 +372,7 @@ pub use alter_table::{
 pub use placement_policy::{
     run_alter_placement_policy, run_create_placement_policy, run_drop_placement_policy,
 };
+pub(crate) use table_partition::reload_partition_spec_from_meta_json;
 pub use table_partition::{
     append_partition_defs, build_partition_metadata, escape_identifier,
     linear_partitioning_warning, partition_placement_text, partition_spec_from_metadata,
@@ -1756,6 +1757,7 @@ fn create_table_in(
         &ctx.session_zone(),
         ctx.like_default_escape(),
         ctx.auto_increment_in_generated(),
+        ctx.connection_charset_info().0,
     )
     .map_err(generated_column_error)?;
     // Go `ErrUnsupportedOnGeneratedColumn`: a VIRTUAL generated column cannot

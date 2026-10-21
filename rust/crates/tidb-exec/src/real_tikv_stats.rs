@@ -525,9 +525,8 @@ struct ClusterStatsRefreshSource<'a, S: StoreClient> {
     timeout: Duration,
     loader: &'a ClusterStatsLoader,
     targets: BTreeMap<i64, &'a StatsTarget>,
-    current: Arc<StatsSnapshot>,
+    shared: &'a SharedStats,
     lease: Duration,
-    load_all: bool,
 }
 
 impl<S> StatsRefreshSource for ClusterStatsRefreshSource<'_, S>
@@ -583,22 +582,17 @@ where
             .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
         let loaded = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            if self.load_all {
-                self.loader
-                    .load_table(&mut snapshot, physical_id, &target.column_types)?
-                    .map(|stats| stats.to_statistics_table(&target.table))
-            } else {
-                self.loader.load_statistics_table_for_update(
-                    &mut snapshot,
-                    physical_id,
-                    &target.table,
-                    &target.column_types,
-                    self.current
-                        .get(&physical_id)
-                        .and_then(TableStatsState::loaded)
-                        .map(Arc::as_ref),
-                )?
-            }
+            // Go's `statsReadWriter.TableStatsFromStorage` reads the cached
+            // table (`statsHandler.Get`), a cached `PseudoTable` included,
+            // when it loads, under the handle's lease.
+            self.loader.load_statistics_table_for_update(
+                &mut snapshot,
+                physical_id,
+                &target.table,
+                &target.column_types,
+                self.shared.get(physical_id).as_deref(),
+                self.lease,
+            )?
         };
         transaction
             .finish_without_writes()
@@ -619,10 +613,8 @@ pub fn update_stats_cache_from_cluster<S: StoreClient>(
     shared: &SharedStats,
     loader: &ClusterStatsLoader,
     lease: Duration,
-    load_all: bool,
     physical_ids: Vec<i64>,
 ) -> Result<bool, SystemTableError> {
-    let current = shared.load();
     let targets = tables
         .iter()
         .map(|target| (target.physical_id, target))
@@ -636,9 +628,8 @@ pub fn update_stats_cache_from_cluster<S: StoreClient>(
         timeout,
         loader,
         targets,
-        current,
+        shared,
         lease,
-        load_all,
     };
     shared
         .update_from_source(&source, physical_ids, &tracked_ids, || false)

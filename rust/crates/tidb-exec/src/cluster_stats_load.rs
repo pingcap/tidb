@@ -549,6 +549,33 @@ impl StatsTableSchema {
         }
     }
 
+    /// Go `PseudoTable`'s schema inputs: a column not both public and
+    /// unhidden, or an index not public, gets no pseudo item.
+    #[must_use]
+    pub fn pseudo_table_info(&self, table_id: i64) -> tidb_stats::PseudoTableInfo {
+        tidb_stats::PseudoTableInfo {
+            id: table_id,
+            pk_is_handle: self.pk_is_handle,
+            columns: self
+                .columns
+                .iter()
+                .map(|column| tidb_stats::PseudoColumnInfo {
+                    info: column.info.clone(),
+                    public: column.visible,
+                    hidden: false,
+                })
+                .collect(),
+            indices: self
+                .indexes
+                .iter()
+                .map(|index| tidb_stats::PseudoIndexInfo {
+                    info: index.info.clone(),
+                    public: index.public,
+                })
+                .collect(),
+        }
+    }
+
     /// The schema of an in-process table, whose columns and indexes are all
     /// public and which keeps no `UpdateTS`.
     #[must_use]
@@ -1092,10 +1119,15 @@ impl ClusterStatsLoader {
         ))
     }
 
-    /// Pinned Go `TableStatsFromStorage(..., loadAll=false)` during a cache
-    /// update. Metadata-only refreshes preserve resident payload, while a
-    /// newer histogram is reloaded in full only when its old item was already
-    /// resident. Items that were evicted remain metadata-only.
+    /// Pinned Go `TableStatsFromStorage(sctx, 0, tableInfo, physicalID,
+    /// false, lease, cached)` as `StatsCacheImpl.Update` calls it: a copy of
+    /// the cached table (`current`, possibly the `PseudoTable` a cache miss
+    /// cached), or a new table holding no item when nothing is cached, with
+    /// each `stats_histograms` row applied by `columnStatsFromStorage` /
+    /// `indexStatsFromStorage`. Under a positive `lease`, an item with no
+    /// in-memory copy stays out and an unloaded one becomes metadata only;
+    /// otherwise a new or newer item is loaded in full and a current one is
+    /// kept.
     pub fn load_statistics_table_for_update<S: MetaSnapshot>(
         &self,
         snapshot: &mut S,
@@ -1103,109 +1135,107 @@ impl ClusterStatsLoader {
         table_info: &TableInfo,
         column_types: &BTreeMap<i64, FieldType>,
         current: Option<&Table>,
+        lease: std::time::Duration,
     ) -> Result<Option<Arc<Table>>, SystemTableError> {
         let table_id = physical_id;
         let Some(lite) = self.load_table_lite(snapshot, table_id, column_types)? else {
             return Ok(None);
         };
-        let Some(current) = current else {
-            return Ok(Some(Arc::new(lite.to_updated_statistics_table_for_schema(
-                &StatsTableSchema::of_table_info(table_info),
-            ))));
+        let no_rows = lite.columns.is_empty() && lite.indexes.is_empty();
+        let mut updated = match current {
+            Some(current) => current.copy_as(if no_rows {
+                tidb_stats::CopyIntent::MetaOnly
+            } else {
+                tidb_stats::CopyIntent::BothMapsWritable
+            }),
+            None => Table {
+                existence_map: Some(Arc::new(RwLock::new(ColAndIdxExistenceMap::new(
+                    table_info.cols().len(),
+                    table_info.indices.len(),
+                )))),
+                hist_coll: HistColl::new(table_id, 0, 0, 4, 4),
+                version: 0,
+                last_analyze_version: 0,
+                last_stats_hist_version: 0,
+                table_info_update_ts: 0,
+                is_pk_handle: false,
+            },
         };
-
-        let mut updated = current.copy_as(tidb_stats::CopyIntent::BothMapsWritable);
-        updated.version = lite.version;
+        updated.hist_coll.pseudo = false;
         updated.hist_coll.realtime_count = stats_meta_count_as_go_int64(lite.row_count);
         updated.hist_coll.modify_count = lite.modify_count;
-        updated.last_analyze_version =
-            lite.refresh_last_analyze_version(current.last_analyze_version);
+        updated.version = lite.version;
+        updated.last_analyze_version = lite
+            .refresh_last_analyze_version(current.map_or(0, |table| table.last_analyze_version));
         updated.last_stats_hist_version = lite.last_stats_hist_version;
         updated.table_info_update_ts = table_info.update_ts;
+        if no_rows {
+            return Ok(Some(Arc::new(updated)));
+        }
 
+        let schema = StatsTableSchema::of_table_info(table_info);
+        let lease_positive = !lease.is_zero();
+        let lite_init_stats = tidb_config::config_tree::config::get_global_config()
+            .performance
+            .lite_init_stats;
         for metadata in lite.columns.into_iter().chain(lite.indexes) {
+            let hist_version = metadata.histogram.last_update_version;
+            // All the objects of a table share one stats version, set before
+            // the row is matched against the schema.
+            if metadata.stats_ver != 0 {
+                updated.hist_coll.stats_version =
+                    i32::try_from(metadata.stats_ver).unwrap_or(i32::MAX);
+            }
             if metadata.is_index {
-                let current_item = current.hist_coll.get_index(metadata.id);
-                let replacement = match current_item {
-                    Some(item)
-                        if {
-                            let item = item
-                                .read()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            item.histogram.last_update_version
-                                >= metadata.histogram.last_update_version
-                                && item.is_full_load()
-                        } =>
-                    {
-                        Some(
-                            item.read()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .clone(),
-                        )
-                    }
-                    Some(item)
-                        if item
-                            .read()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .is_full_load() =>
-                    {
-                        self.load_item(snapshot, table_id, true, metadata.id, None, true)?
-                            .and_then(|item| item.to_index(table_id, table_info))
-                    }
-                    Some(_) => metadata.to_index(table_id, table_info),
-                    None => None,
-                };
+                if !schema
+                    .indexes
+                    .iter()
+                    .any(|index| index.info.id == metadata.id)
+                {
+                    continue;
+                }
                 if let Some(existence) = &updated.existence_map {
                     existence
                         .write()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .insert_index(metadata.id, metadata.stats_ver != 0);
                 }
-                if metadata.stats_ver != 0 {
-                    updated.hist_coll.stats_version =
-                        i32::try_from(metadata.stats_ver).unwrap_or(i32::MAX);
-                }
+                let current_item = updated.hist_coll.get_index(metadata.id).map(|item| {
+                    let item = item
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    (
+                        item.stats_loaded_status.stats_initialized(),
+                        item.is_all_evicted(),
+                        item.histogram.last_update_version,
+                    )
+                });
+                let not_need_load = lease_positive
+                    && current_item.is_none_or(|(initialized, all_evicted, version)| {
+                        (!initialized || all_evicted) && version < hist_version
+                    })
+                    && lite_init_stats;
+                let replacement = if not_need_load {
+                    if current_item.is_none() {
+                        continue;
+                    }
+                    metadata.to_index_for_schema(table_id, &schema)
+                } else if current_item.is_none_or(|(_, _, version)| version < hist_version) {
+                    self.load_item(snapshot, table_id, true, metadata.id, None, true)?
+                        .and_then(|item| item.to_index_for_schema(table_id, &schema))
+                } else {
+                    None
+                };
                 if let Some(replacement) = replacement {
                     updated.hist_coll.set_index(metadata.id, replacement);
                 }
             } else {
-                let current_item = current.hist_coll.get_column(metadata.id);
-                let replacement = match current_item {
-                    Some(item)
-                        if {
-                            let item = item
-                                .read()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            item.histogram.last_update_version
-                                >= metadata.histogram.last_update_version
-                                && item.is_full_load()
-                        } =>
-                    {
-                        let mut item = item
-                            .read()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .clone();
-                        item.histogram.tot_col_size = metadata.histogram.tot_col_size;
-                        Some(item)
-                    }
-                    Some(item)
-                        if item
-                            .read()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .is_full_load() =>
-                    {
-                        self.load_item(
-                            snapshot,
-                            table_id,
-                            false,
-                            metadata.id,
-                            column_types.get(&metadata.id),
-                            true,
-                        )?
-                        .and_then(|item| item.to_column(table_id, table_info))
-                    }
-                    Some(_) => metadata.to_column(table_id, table_info),
-                    None => None,
+                let Some(column) = schema
+                    .columns
+                    .iter()
+                    .find(|column| column.info.id == metadata.id)
+                else {
+                    continue;
                 };
                 if let Some(existence) = &updated.existence_map {
                     existence
@@ -1218,13 +1248,76 @@ impl ClusterStatsLoader {
                                 || metadata.histogram.null_count > 0,
                         );
                 }
-                if metadata.stats_ver != 0 {
-                    updated.hist_coll.stats_version =
-                        i32::try_from(metadata.stats_ver).unwrap_or(i32::MAX);
-                }
+                let is_handle = schema.pk_is_handle && column.info.primary_key;
+                let current_item = updated.hist_coll.get_column(metadata.id);
+                let current_state = current_item.as_ref().map(|item| {
+                    let item = item
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    (
+                        item.is_stats_initialized(),
+                        item.is_all_evicted(),
+                        item.histogram.last_update_version,
+                        item.histogram.tot_col_size,
+                    )
+                });
+                let not_need_load = lease_positive
+                    && (!is_handle || lite_init_stats)
+                    && current_state.is_none_or(|(initialized, all_evicted, version, _)| {
+                        (!initialized || all_evicted) && version < hist_version
+                    });
+                let replacement = if not_need_load {
+                    if current_state.is_none() {
+                        continue;
+                    }
+                    metadata.to_column_for_schema(table_id, &schema)
+                } else if current_state.is_none_or(|(_, _, version, _)| version < hist_version) {
+                    self.load_item(
+                        snapshot,
+                        table_id,
+                        false,
+                        metadata.id,
+                        column_types.get(&metadata.id),
+                        true,
+                    )?
+                    .and_then(|item| item.to_column_for_schema(table_id, &schema))
+                } else {
+                    current_item
+                        .zip(current_state)
+                        .filter(|(_, (_, _, _, tot_col_size))| {
+                            *tot_col_size != metadata.histogram.tot_col_size
+                        })
+                        .map(|(item, _)| {
+                            let mut item = item
+                                .read()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .clone();
+                            item.histogram.tot_col_size = metadata.histogram.tot_col_size;
+                            item
+                        })
+                };
                 if let Some(replacement) = replacement {
                     updated.hist_coll.set_column(metadata.id, replacement);
                 }
+            }
+        }
+        // If DROP STATS executes, the stats version resets to 0 -- only when
+        // the table holds items and none of them is analyzed.
+        if updated.hist_coll.stats_version != 0 {
+            let mut has_stats = false;
+            let mut all_zero = true;
+            updated.hist_coll.for_each_column(|_, column| {
+                has_stats = true;
+                all_zero &= !column.is_analyzed();
+                !all_zero
+            });
+            updated.hist_coll.for_each_index(|_, index| {
+                has_stats = true;
+                all_zero &= !index.is_analyzed();
+                !all_zero
+            });
+            if has_stats && all_zero {
+                updated.hist_coll.stats_version = 0;
             }
         }
         Ok(Some(Arc::new(updated)))

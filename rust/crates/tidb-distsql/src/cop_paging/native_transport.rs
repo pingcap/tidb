@@ -316,7 +316,6 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             cluster_id: self.store.cluster_id(),
             trace: self.config.trace.clone(),
             trace_parent,
-            trace_backoffers: Vec::new(),
             event_callback: self.event_callback.clone(),
             cancellation,
             call,
@@ -374,14 +373,10 @@ pub struct NativeCopResponse<S: ?Sized> {
     store: Arc<S>,
     cluster_id: u64,
     trace: Option<tidb_txnkv::TraceInfo>,
-    /// A traced statement's `distsql.Select` span, the parent of the
-    /// request's first `regionRequest.SendReqCtx` on each backoffer.
+    /// A traced statement's `distsql.Select` span: Go's copr workers run
+    /// with its ctx, and each task's backoffer takes it as its `bo.ctx`, so
+    /// the client spans of the request's sends report under it.
     trace_parent: Option<tidb_util::tracing::Span>,
-    /// Each traced backoffer's span (Go `bo.GetCtx()`'s): client-go's
-    /// `SendReqCtx` puts its span there with `bo.SetCtx`, so a later send on
-    /// the same backoffer nests under it and its RPCs open their spans under
-    /// it.
-    trace_backoffers: Vec<(CopBackoffer, tidb_txnkv::rpc::trace::RpcTraceParent)>,
     event_callback: Option<tidb_txnkv::EventCallback>,
     cancellation: Arc<CancelHandle>,
     call: UnaryCallContext,
@@ -443,8 +438,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
 
     fn backoffer(&mut self, logical_task_id: u64) -> CopBackoffer {
         let counter = self.kv_exec_counter.clone();
-        let traced = self.trace_parent.is_some();
-        let trace_backoffers = &mut self.trace_backoffers;
+        let trace_parent = self.trace_parent.clone();
         Arc::clone(self.backoffers.entry(logical_task_id).or_insert_with(|| {
             // Go `distsql.WithSQLKvExecCounterInterceptor` on the request's
             // ctx: TopSQL's counter sees every RPC the task's sends issue,
@@ -464,31 +458,29 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
                         >
                 },
             ));
-            // A traced statement's RPCs open client-go's
-            // `rpcClient.SendRequest` spans under the backoffer's span.
-            let trace_span = traced.then(tidb_txnkv::rpc::trace::RpcTraceParent::default);
-            if let Some(trace_span) = &trace_span {
-                interceptors.link(tidb_txnkv::rpc::trace::rpc_trace_interceptor(
-                    Arc::clone(trace_span),
-                    true,
-                ));
-            }
-            let backoffer = Arc::new(tokio::sync::Mutex::new(
+            // Go `backoff.NewBackofferWithVars(ctx, ...)` on the worker's
+            // ctx: the backoffer's `bo.ctx` is `distsql.Select`'s span.
+            let backoffer = tidb_txnkv::rpc::trace::build_in_span_ctx(trace_parent, || {
                 tikv_client::tikv::Backoffer::new(
                     tikv_client::async_util::Cancellation::default(),
                     COP_NEXT_MAX_BACKOFF_MS,
                 )
-                .with_rpc_interceptor(interceptors),
-            ));
-            if let Some(trace_span) = trace_span {
-                trace_backoffers.push((Arc::clone(&backoffer), trace_span));
-            }
-            backoffer
+                .with_rpc_interceptor(interceptors)
+            });
+            Arc::new(tokio::sync::Mutex::new(backoffer))
         }))
     }
 
     /// Go `copIteratorWorker.handleTaskOnce` for the task's active attempt.
     fn dispatch(&mut self, logical_task_id: u64, attempt_id: u64) -> Result<(), NativeCopError> {
+        // The worker runs the task with `distsql.Select`'s ctx, whichever
+        // thread it is on: the store calls below report their client spans
+        // under that span (or the backoffer's ctx) and bring back execution
+        // details.
+        let _ctx = self
+            .trace_parent
+            .clone()
+            .map(|span| tidb_util::tracing::with_thread_span(Some(span)));
         self.check_active()?;
         let prepared = self.runtime.activate_attempt(attempt_id)?;
         let task = prepared.task();
@@ -516,34 +508,13 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             .map_err(|error| error.to_string())?;
         wire.context = Some(request.context.clone());
         let backoffer = self.backoffer(logical_task_id);
-        // client-go `RegionRequestSender.SendReqCtx`'s span, opened under
-        // the backoffer's ctx span and stored back into it.
-        let send_span = self.trace_parent.as_ref().and_then(|select| {
-            let (_, bo_span) = self
-                .trace_backoffers
-                .iter()
-                .find(|(traced, _)| Arc::ptr_eq(traced, &backoffer))?;
-            let mut bo_span = bo_span
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let parent = bo_span.as_ref().unwrap_or(select);
-            let span = parent
-                .tracer()
-                .start_span_child_of("regionRequest.SendReqCtx", parent.context());
-            *bo_span = Some(span.clone());
-            Some(span)
-        });
         let sent = self.store.send(
             &backoffer,
             &wire.encode_to_vec(),
             region,
             self.timeout.min(self.call.timeout()),
             &self.kv_context,
-        );
-        if let Some(send_span) = send_span {
-            send_span.finish();
-        }
-        let sent = sent?;
+        )?;
         let (encoded, address) = match sent {
             NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
             NativeCopSend::RegionError(error) => {
@@ -1015,7 +986,6 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                 cluster_id: self.cluster_id,
                 trace: self.trace.clone(),
                 trace_parent: self.trace_parent.clone(),
-                trace_backoffers: Vec::new(),
                 event_callback: self.event_callback.clone(),
                 cancellation: Arc::clone(&self.cancellation),
                 call: self.call.clone(),

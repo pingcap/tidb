@@ -155,6 +155,10 @@ macro_rules! impl_inner_shardable {
         ) -> Option<$crate::trace::TransactionBatchTrace> {
             self.inner.transaction_batch_trace(region_id)
         }
+
+        fn client_span_context(&self) -> Option<$crate::trace::ClientSpanContext> {
+            self.inner.client_span_context()
+        }
     };
 }
 
@@ -281,6 +285,13 @@ pub trait Shardable {
         None
     }
 
+    /// Client span scope captured when the request was built, for shards
+    /// that run in a task spawned outside that scope.
+    #[doc(hidden)]
+    fn client_span_context(&self) -> Option<crate::trace::ClientSpanContext> {
+        None
+    }
+
     /// Bind snapshot region and lock retries to one source Backoffer owner.
     #[doc(hidden)]
     fn set_snapshot_retry_owner(
@@ -390,6 +401,10 @@ pub trait NextBatch {
 impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
     type Shard = Req::Shard;
 
+    fn client_span_context(&self) -> Option<crate::trace::ClientSpanContext> {
+        self.client_span_context.clone()
+    }
+
     fn request_source(&self) -> &str {
         self.request
             .tikv_context()
@@ -465,6 +480,7 @@ impl<Req: KvRequest + Shardable> Shardable for Dispatch<Req> {
             request_replica_read: self.request_replica_read,
             interceptor: self.interceptor.clone(),
             execution_details_trace_handler: self.execution_details_trace_handler.clone(),
+            client_span_context: self.client_span_context.clone(),
             trace_context: self.trace_context.clone(),
             network_traffic_details: self.network_traffic_details.clone(),
             network_stale_read: self.network_stale_read,
@@ -701,6 +717,10 @@ impl<Req: KvRequest + NextBatch> NextBatch for Dispatch<Req> {
 
 impl<P: Plan + Shardable> Shardable for PreserveShard<P> {
     type Shard = P::Shard;
+
+    fn client_span_context(&self) -> Option<crate::trace::ClientSpanContext> {
+        self.inner.client_span_context()
+    }
 
     fn request_source(&self) -> &str {
         self.inner.request_source()
@@ -1149,6 +1169,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            client_span_context: None,
             trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,
@@ -1221,6 +1242,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            client_span_context: None,
             trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,
@@ -1290,6 +1312,7 @@ mod test {
             request_replica_read: false,
             interceptor: None,
             execution_details_trace_handler: None,
+            client_span_context: None,
             trace_context: crate::trace::TraceContext::new(),
             network_traffic_details: None,
             network_stale_read: false,

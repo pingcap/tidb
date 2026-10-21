@@ -93,6 +93,17 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
         (0, 0)
     }
 
+    /// See [`TableStorage::lock_keys_for_read`]. Only a locking statement
+    /// handle of a pessimistic transaction locks; every other snapshot
+    /// answers `Ok(())`.
+    fn lock_keys_for_read(
+        &mut self,
+        _keys: &[Key],
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
     /// Starts any asynchronous work needed by an ordinary statement snapshot.
     /// The first read still owns error delivery and timestamp publication.
     fn prepare(&mut self) -> Result<(), StorageError> {
@@ -203,64 +214,6 @@ pub struct BufferCheckpoint {
 enum StatementChange {
     /// A presumption mark newly added for this key.
     Presume { key: Key },
-}
-
-/// Raw snapshot keys actually consumed by the current statement.
-///
-/// A pessimistic locking read must lock rows after the executor has applied
-/// its predicates and limits. Tracking at the storage seam records precisely
-/// those point gets and iterator rows, while leaving ordinary statements on
-/// the zero-work disabled path.
-#[derive(Clone, Debug, Default)]
-pub struct StatementReadKeys {
-    state: Arc<Mutex<StatementReadKeyState>>,
-}
-
-#[derive(Debug, Default)]
-struct StatementReadKeyState {
-    enabled: bool,
-    keys: BTreeSet<Vec<u8>>,
-}
-
-impl StatementReadKeys {
-    /// Starts a new statement and discards any prior statement's keys.
-    pub fn begin(&self) {
-        let mut state = self.lock();
-        state.keys.clear();
-        state.enabled = true;
-    }
-
-    /// Ends the statement and returns its keys in encoded-key order.
-    #[must_use]
-    pub fn finish(&self) -> Vec<Vec<u8>> {
-        let mut state = self.lock();
-        state.enabled = false;
-        std::mem::take(&mut state.keys).into_iter().collect()
-    }
-
-    /// Ends a failed statement without returning its partial read set.
-    pub fn cancel(&self) {
-        let mut state = self.lock();
-        state.enabled = false;
-        state.keys.clear();
-    }
-
-    fn record(&self, key: &Key) {
-        let mut state = self.lock();
-        if state.enabled {
-            state.keys.insert(key.as_bytes().to_vec());
-        }
-    }
-
-    fn is_enabled(&self) -> bool {
-        self.lock().enabled
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, StatementReadKeyState> {
-        self.state
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-    }
 }
 
 /// Borrows the store transaction's authoritative MemDB under its own lock.
@@ -931,6 +884,14 @@ impl ClusterSnapshot for SwappableSnapshot {
             .map_or((0, 0), |snapshot| snapshot.point_rpc_counts())
     }
 
+    fn lock_keys_for_read(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        self.snapshot()?.lock_keys_for_read(keys, wait)
+    }
+
     fn prepare(&mut self) -> Result<(), StorageError> {
         self.snapshot()?.prepare()
     }
@@ -984,7 +945,6 @@ impl ClusterSnapshot for SwappableSnapshot {
 pub struct ClusterTableStorage {
     buffer: MutationBuffer,
     snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-    read_keys: StatementReadKeys,
     /// Whether THIS table handle was truncated (see [`Self::check_usable`]).
     ///
     /// Deliberately a plain `bool` and not shared: the buffer and the snapshot
@@ -1006,7 +966,6 @@ impl ClusterTableStorage {
         ClusterTableStorage {
             buffer,
             snapshot,
-            read_keys: StatementReadKeys::default(),
             truncated: false,
             scanner: None,
         }
@@ -1038,12 +997,6 @@ impl ClusterTableStorage {
     #[must_use]
     pub fn buffer(&self) -> MutationBuffer {
         self.buffer.clone()
-    }
-
-    /// The per-statement raw-key collector shared by every table clone.
-    #[must_use]
-    pub fn read_keys(&self) -> StatementReadKeys {
-        self.read_keys.clone()
     }
 
     fn check_usable(&self) -> Result<(), StorageError> {
@@ -1083,6 +1036,18 @@ impl TableStorage for ClusterTableStorage {
             .point_rpc_counts()
     }
 
+    fn lock_keys_for_read(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        self.check_usable()?;
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .lock_keys_for_read(keys, wait)
+    }
+
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         self.check_usable()?;
         // Counted at the SEAM, as the in-process backend counts it, so the
@@ -1095,10 +1060,7 @@ impl TableStorage for ClusterTableStorage {
             Some(Some(value)) => Ok(value),
             Some(None) => Err(StorageError::NotFound),
             None => match self.snapshot_get(key)? {
-                Some(value) => {
-                    self.read_keys.record(key);
-                    Ok(value)
-                }
+                Some(value) => Ok(value),
                 None => Err(StorageError::NotFound),
             },
         }
@@ -1148,9 +1110,7 @@ impl TableStorage for ClusterTableStorage {
                 .unwrap_or_else(|poison| poison.into_inner())
                 .batch_get(&missing)?;
             for (key, value) in snapshot_values {
-                let key = Key::from_bytes(key);
-                self.read_keys.record(&key);
-                values.insert(key, value);
+                values.insert(Key::from_bytes(key), value);
             }
         }
         Ok(values)
@@ -1223,7 +1183,6 @@ impl TableStorage for ClusterTableStorage {
         let staged = self.buffer.range(start, end);
         Ok(Box::new(MergedIterator::open(
             Arc::clone(&self.snapshot),
-            self.read_keys.clone(),
             start.clone(),
             end.clone(),
             staged,
@@ -1295,9 +1254,6 @@ impl TableStorage for ClusterTableStorage {
         request: &PushdownScanRequest,
     ) -> Option<Result<PushdownScan, StorageError>> {
         let scanner = self.scanner.as_ref()?;
-        if self.read_keys.is_enabled() {
-            return None;
-        }
         if let Err(error) = self.check_usable() {
             return Some(Err(error));
         }
@@ -1400,7 +1356,6 @@ const SNAPSHOT_BATCH: usize = 256;
 #[derive(Debug)]
 struct MergedIterator {
     snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-    read_keys: StatementReadKeys,
     /// Where the next refill starts, or `None` once the snapshot half of the
     /// range is drained.
     cursor: Option<Key>,
@@ -1409,6 +1364,9 @@ struct MergedIterator {
     batch_position: usize,
     staged: Vec<(Key, Option<Vec<u8>>)>,
     staged_position: usize,
+    /// Snapshot pairs emitted or shadowed by a staged write so far: the keys
+    /// a coprocessor scan of the same range would have processed.
+    snapshot_consumed: u64,
     /// The pair `key`/`value` report, which the seam hands out as borrows.
     current: Option<(Key, Vec<u8>)>,
     empty_key: Key,
@@ -1419,7 +1377,6 @@ impl MergedIterator {
     /// one snapshot batch to find it.
     fn open(
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
-        read_keys: StatementReadKeys,
         start: Key,
         end: Key,
         staged: Vec<(Key, Option<Vec<u8>>)>,
@@ -1427,13 +1384,13 @@ impl MergedIterator {
         let empty = end <= start;
         let mut iterator = MergedIterator {
             snapshot,
-            read_keys,
             cursor: (!empty).then_some(start),
             end,
             batch: Vec::new(),
             batch_position: 0,
             staged: if empty { Vec::new() } else { staged },
             staged_position: 0,
+            snapshot_consumed: 0,
             current: None,
             empty_key: Key::default(),
         };
@@ -1492,7 +1449,7 @@ impl MergedIterator {
             if order != std::cmp::Ordering::Greater {
                 let (key, value) = self.batch[self.batch_position].clone();
                 self.batch_position += 1;
-                self.read_keys.record(&Key::from_bytes(key.clone()));
+                self.snapshot_consumed += 1;
                 if order == std::cmp::Ordering::Less {
                     self.current = Some((Key::from_bytes(key), value));
                     return Ok(());
@@ -1534,6 +1491,10 @@ impl StorageIterator for MergedIterator {
             return Err(StorageError::InvalidIterator);
         }
         self.advance()
+    }
+
+    fn snapshot_entries_consumed(&self) -> Option<u64> {
+        Some(self.snapshot_consumed)
     }
 
     fn close(&mut self) {

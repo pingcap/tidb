@@ -171,7 +171,6 @@ where
             &self.stats,
             &loader,
             self.stats_lease,
-            self.stats_lease.is_zero(),
             physical_ids,
         ) {
             Ok(_) => {

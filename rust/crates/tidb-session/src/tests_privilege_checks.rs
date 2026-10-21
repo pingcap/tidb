@@ -317,3 +317,46 @@ fn set_checks_every_global_privilege_before_applying_any() {
         denied
     );
 }
+
+/// Go `buildUpdateLists` / `buildDelete` append each write target's
+/// visitInfo as `DBName.L` and `TableName.L`. An UPDATE's visitInfo carries
+/// no error, so a denial is `ErrPrivilegeCheckFail` (8121); DELETE's carries
+/// `ErrTableaccessDenied` naming `TableName.L`, `t` however the statement
+/// spelled it.
+#[test]
+fn write_privilege_errors_name_the_lowered_table() {
+    let (registry, mut root) = setup();
+    root.run("create user foo").unwrap();
+    root.run("create table test.t (x int)").unwrap();
+    root.run("grant select on test.* to foo").unwrap();
+    let mut foo = session_as(&registry, root.shared_catalog(), "foo", "%");
+    foo.run("use test").unwrap();
+    assert_eq!(
+        error_of(&mut foo, "update T set x = 1"),
+        (8121, "privilege check for 'Update' fail".to_owned())
+    );
+    assert_eq!(
+        error_of(&mut foo, "delete from T"),
+        (
+            1142,
+            "DELETE command denied to user 'foo'@'%' for table 't'".to_owned()
+        )
+    );
+}
+
+/// Go `IsDynamicPrivilege` and the grant writers compare
+/// `strings.ToUpper(name)`: `backup_adm\u{131}n` (dotless `\u{131}` uppercases
+/// to `I`) is BACKUP_ADMIN.
+#[test]
+fn dynamic_privilege_names_fold_with_go_to_upper() {
+    let (_registry, mut root) = setup();
+    root.run("create user foo").unwrap();
+    root.run("grant backup_adm\u{131}n on *.* to foo").unwrap();
+    assert_eq!(
+        row_text(root.run("show grants for foo")),
+        vec![
+            vec!["GRANT USAGE ON *.* TO 'foo'@'%'".to_owned()],
+            vec!["GRANT BACKUP_ADMIN ON *.* TO 'foo'@'%'".to_owned()]
+        ]
+    );
+}

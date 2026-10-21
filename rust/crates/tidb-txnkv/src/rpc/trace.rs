@@ -12,215 +12,125 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! client-go `RPCClient.sendRequest`'s trace span for a traced statement:
-//! every physical RPC opens `rpcClient.SendRequest, region ID: N, type: T`
-//! under the span its call runs in, and, as `util.TraceExecDetailsEnabled`
-//! holds under `TRACE`, hangs the `tikv.*` tree `buildSpanInfoFromResp`
-//! builds from the response's execution details under it (`spanInfo.addTo`).
-//! The span is recorded whether the RPC succeeds, fails or comes back
-//! without execution details.
+//! client-go's opentracing spans under a traced statement.
 //!
-//! The RPCs run inside client-rust's request plans, so the span is opened
-//! by an RPC interceptor around the dispatch, the counterpart of the
-//! interceptors client-go runs around `client.SendRequest`, and the
-//! execution details reach it through client-rust's per-task
-//! `with_trace_exec_details` handler scoped to that one dispatch.
+//! Go TiDB hands client-go a `ctx` whose span is the statement's current
+//! one, and client-go opens its spans (`regionRequest.SendReqCtx`,
+//! `rpcClient.SendRequest, region ID: N, type: T`, `tikvSnapshot.get`,
+//! `tikvTxn.Commit`, `twoPhaseCommitter.*`, `tikv.backoff.*`, the `tikv.*`
+//! execution-detail tree, ...) as its children on TiDB's tracer. client-rust
+//! reports the same spans to a task-scoped hook; this module is the `ctx`:
+//! [`with_span_ctx`] runs a client call with the span as the hook's parent
+//! and maps every reported event onto TiDB's recording tracer, and, as
+//! `TraceExec` also sets `util.ContextWithTraceExecDetails`, asks for the
+//! execution details the client hangs under each RPC's span.
 
+use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Instant, SystemTime};
 
-use futures::future::BoxFuture;
-use tidb_util::tracing::Span;
-use tikv_client::tikv::Request;
-use tikv_client::trace::ExecutionDetailSpan;
-use tikv_client::{RpcDispatchResult, RpcNext};
+use tidb_util::tracing::{Span, TRACE_EVENT_KEY};
+use tikv_client::trace::{ClientSpanEvent, ClientSpanHandler};
 
-/// The span the RPCs of a call open their `rpcClient.SendRequest` spans
-/// under (Go's span in the call's `ctx`), `None` while the call is untraced.
-pub type RpcTraceParent = Arc<Mutex<Option<Span>>>;
-
-/// client-go `tikvrpc.CmdType.String()` for a client-rust request label.
+/// Go's opentracing tracer as client-go reaches it through `ctx`: every
+/// client span starts as a child of the span its event names, or of `root`
+/// (the span of the `ctx` the client call was made with) when it names
+/// none, at the instant the client measured; a log is `logutil.Eventf`'s
+/// `event` field on its span and a tag `span.SetTag`. A span stays
+/// addressable after it finishes, as a Backoffer's ctx outlives its spans;
+/// like Go's recorder, a finished span takes no more logs or tags.
 #[must_use]
-pub fn cmd_type_name(label: &str) -> &'static str {
-    match label {
-        "kv_get" => "Get",
-        "kv_scan" => "Scan",
-        "kv_prewrite" => "Prewrite",
-        "kv_commit" => "Commit",
-        "kv_cleanup" => "Cleanup",
-        "kv_batch_get" => "BatchGet",
-        "kv_batch_rollback" => "BatchRollback",
-        "kv_scan_lock" => "ScanLock",
-        "kv_resolve_lock" => "ResolveLock",
-        "kv_gc" => "GC",
-        "kv_delete_range" => "DeleteRange",
-        "kv_pessimistic_lock" => "PessimisticLock",
-        "kv_pessimistic_rollback" => "PessimisticRollback",
-        "kv_txn_heart_beat" => "TxnHeartBeat",
-        "kv_check_txn_status" => "CheckTxnStatus",
-        "kv_check_secondary_locks_request" => "CheckSecondaryLocks",
-        "kv_flashback_to_version" => "FlashbackToVersion",
-        "kv_prepare_flashback_to_version" => "PrepareFlashbackToVersion",
-        "kv_flush" => "Flush",
-        "kv_buffer_batch_get" => "BufferBatchGet",
-        "raw_get" => "RawGet",
-        "raw_batch_get" => "RawBatchGet",
-        "raw_put" => "RawPut",
-        "raw_batch_put" => "RawBatchPut",
-        "raw_delete" => "RawDelete",
-        "raw_batch_delete" => "RawBatchDelete",
-        "raw_delete_range" => "RawDeleteRange",
-        "raw_scan" => "RawScan",
-        "raw_get_key_ttl" => "RawGetKeyTTL",
-        "raw_compare_and_swap" => "RawCompareAndSwap",
-        "raw_checksum" => "RawChecksum",
-        "unsafe_destroy_range" => "UnsafeDestroyRange",
-        "register_lock_observer" => "RegisterLockObserver",
-        "check_lock_observer" => "CheckLockObserver",
-        "remove_lock_observer" => "RemoveLockObserver",
-        "physical_scan_lock" => "PhysicalScanLock",
-        "store_safe_ts" => "StoreSafeTS",
-        "get_lock_wait_info" => "LockWaitInfo",
-        "get_health_feedback" => "GetHealthFeedback",
-        "broadcast_txn_status" => "BroadcastTxnStatus",
-        "coprocessor" => "Cop",
-        "coprocessor_stream" => "CopStream",
-        "batch_coprocessor" => "BatchCop",
-        "dispatch_mpp_task" => "DispatchMPPTask",
-        "establish_mpp_connection" => "EstablishMPPConnection",
-        "cancel_mpp_task" => "CancelMPPTask",
-        "is_alive" => "MPPAlive",
-        "mvcc_get_by_key" => "MvccGetByKey",
-        "mvcc_get_by_start_ts" => "MvccGetByStartTS",
-        "split_region" => "SplitRegion",
-        "debug_get_region_properties" => "DebugGetRegionProperties",
-        "compact" => "Compact",
-        "get_tiflash_system_table" => "GetTiFlashSystemTable",
-        _ => "Unknown",
-    }
-}
-
-/// client-go `spanInfo.calcDur`: a node without a reported duration lasts
-/// as long as its synchronous children.
-fn exec_detail_duration(span: &ExecutionDetailSpan) -> std::time::Duration {
-    if !span.duration.is_zero() {
-        return span.duration;
-    }
-    span.children
-        .iter()
-        .filter(|child| !child.asynchronous)
-        .map(exec_detail_duration)
-        .sum()
-}
-
-/// client-go `spanInfo.addTo`: `detail` under `parent` from `start`, its
-/// children laid end to end, a zero-length node left out; returns where the
-/// next sibling starts (an asynchronous node, tagged `async`, does not
-/// advance it).
-pub fn add_exec_detail_span(
-    detail: &ExecutionDetailSpan,
-    parent: &Span,
-    start: SystemTime,
-) -> SystemTime {
-    let duration = exec_detail_duration(detail);
-    if duration.is_zero() {
-        return start;
-    }
-    let end = start + duration;
-    let span = parent
-        .tracer()
-        .start_span_child_of_at(detail.name, parent.context(), start);
-    let mut cursor = start;
-    for child in &detail.children {
-        cursor = add_exec_detail_span(child, &span, cursor);
-    }
-    span.finish_at(end);
-    if detail.asynchronous {
-        // Go sets the tag after `FinishWithOptions`, when the recorder has
-        // already taken the span; a finished span here takes no more tags
-        // either.
-        span.set_tag("async", "true");
-        start
-    } else {
-        end
-    }
-}
-
-/// client-go `RPCClient.sendRequest` under a traced call: opens
-/// `rpcClient.SendRequest, region ID: N, type: T` under `parent` around the
-/// dispatch `next`, and when the response carries execution details adds
-/// their tree from the physical send's start. `send_event` also logs Go's
-/// `sendReqToRegion` event (`send <type> request to region <id> at <addr>`)
-/// on `parent`, which is then the call's `regionRequest.SendReqCtx` span.
-pub fn trace_rpc<'a>(
-    parent: Span,
-    send_event: bool,
-    target: &'a str,
-    request: &'a dyn Request,
-    next: RpcNext<'a>,
-) -> BoxFuture<'a, RpcDispatchResult> {
-    Box::pin(async move {
-        let region_id = request
-            .tikv_context()
-            .map_or(0, |context| context.region_id);
-        let cmd = cmd_type_name(request.label());
-        if send_event {
-            parent.log_event(&format!(
-                "send {cmd} request to region {region_id} at {target}"
-            ));
+pub fn client_span_handler(root: Span) -> ClientSpanHandler {
+    let spans = Mutex::new(HashMap::<u64, Span>::new());
+    Arc::new(move |event| {
+        let mut spans = spans.lock().unwrap_or_else(PoisonError::into_inner);
+        match event {
+            ClientSpanEvent::Start {
+                id,
+                parent,
+                name,
+                at,
+            } => {
+                let parent = parent
+                    .and_then(|parent| spans.get(&parent))
+                    .unwrap_or(&root);
+                let tracer = parent.tracer();
+                let span = tracer.start_span_child_of_at(
+                    &name,
+                    parent.context(),
+                    tracer.system_time_of(at),
+                );
+                spans.insert(id, span);
+            }
+            ClientSpanEvent::Finish { id, at } => {
+                if let Some(span) = spans.get(&id) {
+                    span.finish_at(span.tracer().system_time_of(at));
+                }
+            }
+            ClientSpanEvent::Log { id, at, event } => {
+                let span = id.and_then(|id| spans.get(&id)).unwrap_or(&root);
+                span.log_fields_at(
+                    vec![(TRACE_EVENT_KEY.to_owned(), event)],
+                    span.tracer().system_time_of(at),
+                );
+            }
+            ClientSpanEvent::Tag { id, key, value } => {
+                id.and_then(|id| spans.get(&id))
+                    .unwrap_or(&root)
+                    .set_tag(&key, &value);
+            }
         }
-        let span = parent.tracer().start_span_child_of(
-            &format!("rpcClient.SendRequest, region ID: {region_id}, type: {cmd}"),
-            parent.context(),
-        );
-        let details = Arc::new(Mutex::new(None::<(Instant, ExecutionDetailSpan)>));
-        let recorded = Arc::clone(&details);
-        let handler: tikv_client::trace::ExecutionDetailsTraceHandler =
-            Arc::new(move |started_at, detail| {
-                *recorded.lock().unwrap_or_else(PoisonError::into_inner) =
-                    Some((started_at, detail.clone()));
-            });
-        let result = tikv_client::trace::with_trace_exec_details(handler, next()).await;
-        let detail = details
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some((started_at, detail)) = detail {
-            add_exec_detail_span(
-                &detail,
-                &span,
-                span.tracer().system_time_of(started_at),
-            );
-        }
-        span.finish();
-        result
     })
 }
 
-/// The RPC interceptor that opens [`trace_rpc`]'s spans under the span
-/// `parent` holds at each RPC; it passes RPCs through while it holds none.
-#[must_use]
-pub fn rpc_trace_interceptor(
-    parent: RpcTraceParent,
-    send_event: bool,
-) -> tikv_client::RpcInterceptorHandle {
-    tikv_client::new_rpc_interceptor("tidb-trace-rpc", move |target, request, next| {
-        let span = parent
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        match span {
-            Some(span) => trace_rpc(span, send_event, target, request, next),
-            None => Box::pin(next()),
+/// Go `opentracing.ContextWithSpan(ctx, span)` with
+/// `util.ContextWithTraceExecDetails(ctx)` for one client call: `future`
+/// reports client-go's spans under `span` and the `tikv.*` tree of every
+/// RPC it sends; `None` (an untraced statement) runs it unchanged. Pass the
+/// span of the code making the call (`tidb_util::tracing::current_span()`
+/// on the calling thread), taken before the future moves elsewhere.
+///
+/// The future moves to the heap as soon as it is made: the client's futures
+/// (a commit's is the largest) are big, and every frame that hands one on
+/// by value -- this scope, the blocking wrapper, the runtime's `block_on` --
+/// would otherwise hold another copy on the calling thread's stack.
+pub fn with_span_ctx<F: Future>(span: Option<Span>, future: F) -> impl Future<Output = F::Output> {
+    let future = Box::pin(future);
+    match span {
+        Some(span) => {
+            // The client places the tree under each `rpcClient.SendRequest`
+            // span itself; the handler only turns details on.
+            let details: tikv_client::trace::ExecutionDetailsTraceHandler = Arc::new(|_, _| {});
+            futures::future::Either::Right(tikv_client::trace::with_client_spans(
+                client_span_handler(span),
+                tikv_client::trace::with_trace_exec_details(details, future),
+            ))
         }
-    })
+        None => futures::future::Either::Left(future),
+    }
+}
+
+/// Go `NewBackoffer(ctx)` for a `ctx` carrying `span`: `build` runs where
+/// client-rust's `RetryBackoffer` takes the span as its `bo.ctx`, so the
+/// client spans of every send on it report under `span` (and, after
+/// `bo.SetCtx`, under the spans those sends opened).
+pub fn build_in_span_ctx<T>(span: Option<Span>, build: impl FnOnce() -> T) -> T {
+    match span {
+        Some(span) => futures::executor::block_on(tikv_client::trace::with_client_spans(
+            client_span_handler(span),
+            async move { build() },
+        )),
+        None => build(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+    use std::time::{Duration, Instant};
+
     use super::*;
     use tidb_util::tracing::{RawSpan, Tracer};
-    use tikv_client::proto::kvrpcpb;
 
     fn recording_root() -> (Span, Arc<Mutex<Vec<RawSpan>>>) {
         let spans = Arc::new(Mutex::new(Vec::new()));
@@ -231,30 +141,69 @@ mod tests {
         (tracer.start_span("trace"), spans)
     }
 
-    /// client-go `addTo` over a write's details: the asynchronous
-    /// `tikv.PersistLog` does not advance its siblings, and
-    /// zero-length nodes are left out.
+    fn start(id: u64, parent: Option<u64>, name: &'static str, at: Instant) -> ClientSpanEvent {
+        ClientSpanEvent::Start {
+            id,
+            parent,
+            name: Cow::Borrowed(name),
+            at,
+        }
+    }
+
+    /// client-go's spans land on TiDB's tracer as Go's do: a span naming no
+    /// parent is a child of the call's ctx span, its times are the client's,
+    /// a child or log may name a span that already finished (the Backoffer
+    /// ctx outlives it) and a tag set while the span is open is recorded.
     #[test]
-    fn exec_details_become_client_gos_span_tree() {
+    fn client_spans_become_children_of_the_ctx_span() {
         let (root, spans) = recording_root();
-        let detail = tikv_client::trace::build_execution_detail_span(&kvrpcpb::ExecDetailsV2 {
-            time_detail_v2: Some(kvrpcpb::TimeDetailV2 {
-                total_rpc_wall_time_ns: 9_000,
-                wait_wall_time_ns: 1_000,
-                process_wall_time_ns: 2_000,
-                ..Default::default()
-            }),
-            write_detail: Some(kvrpcpb::WriteDetail {
-                store_batch_wait_nanos: 100,
-                persist_log_nanos: 500,
-                commit_log_nanos: 300,
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-        .unwrap();
-        let start = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1);
-        add_exec_detail_span(&detail, &root, start);
+        let handler = client_span_handler(root.clone());
+        let at = Instant::now();
+        let micros = |n| at + Duration::from_micros(n);
+        handler(start(11, None, "regionRequest.SendReqCtx", micros(1)));
+        handler(ClientSpanEvent::Log {
+            id: Some(11),
+            at: micros(2),
+            event: "send Get request to region 7 at store-1:20160".to_owned(),
+        });
+        handler(start(
+            12,
+            Some(11),
+            "rpcClient.SendRequest, region ID: 7, type: Get",
+            micros(3),
+        ));
+        handler(ClientSpanEvent::Tag {
+            id: Some(12),
+            key: Cow::Borrowed("async"),
+            value: "true".to_owned(),
+        });
+        handler(ClientSpanEvent::Finish {
+            id: 12,
+            at: micros(10),
+        });
+        handler(ClientSpanEvent::Finish {
+            id: 11,
+            at: micros(11),
+        });
+        // Under the finished `regionRequest.SendReqCtx`: the child records,
+        // the late log does not.
+        handler(start(13, Some(11), "tikv.backoff.regionMiss", micros(12)));
+        handler(ClientSpanEvent::Finish {
+            id: 13,
+            at: micros(13),
+        });
+        handler(ClientSpanEvent::Log {
+            id: Some(11),
+            at: micros(14),
+            event: "late".to_owned(),
+        });
+        handler(ClientSpanEvent::Tag {
+            id: None,
+            key: Cow::Borrowed("commitTs"),
+            value: "42".to_owned(),
+        });
+        root.finish();
+
         let spans = spans.lock().unwrap();
         let named = |name: &str| spans.iter().find(|span| span.operation == name).unwrap();
         let names = spans
@@ -264,78 +213,62 @@ mod tests {
         assert_eq!(
             names,
             [
-                "tikv.Wait",
-                "tikv.Process",
-                "tikv.StoreBatchWait",
-                "tikv.PersistLog",
-                "tikv.CommitLog",
-                "tikv.AsyncWrite",
-                "tikv.RPC"
+                "rpcClient.SendRequest, region ID: 7, type: Get",
+                "regionRequest.SendReqCtx",
+                "tikv.backoff.regionMiss",
+                "trace"
             ]
         );
-        let at = |span: &RawSpan| span.start.duration_since(start).unwrap().as_nanos();
-        assert_eq!(at(named("tikv.Process")), 1_000);
-        let (persist, commit) = (named("tikv.PersistLog"), named("tikv.CommitLog"));
-        assert_eq!((at(persist), at(commit)), (3_100, 3_100));
-        // Go tags the span after finishing it, so appdash's recorder,
-        // which reads the tags at the finish, never sees the tag.
-        assert!(persist.tags.is_empty());
-        assert_eq!(named("tikv.RPC").duration.as_nanos(), 9_000);
-        let rpc_id = named("tikv.RPC").context.span_id;
-        assert_eq!(named("tikv.AsyncWrite").parent_span_id, rpc_id);
-    }
-
-    /// client-go opens `rpcClient.SendRequest` before the send and finishes
-    /// it however the RPC ends: a failed RPC, which brings back no execution
-    /// details, still records its span, and `sendReqToRegion`'s event lands
-    /// on the parent (the `regionRequest.SendReqCtx` span).
-    #[test]
-    fn a_failed_rpc_still_records_its_span() {
-        let (root, spans) = recording_root();
-        let request = kvrpcpb::GetRequest {
-            context: Some(kvrpcpb::Context {
-                region_id: 7,
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let next: RpcNext<'_> = Arc::new(|| {
-            Box::pin(async { Err(tikv_client::Error::StringError("unreachable".to_owned())) })
-        });
-        let result = futures::executor::block_on(trace_rpc(
-            root.clone(),
-            true,
-            "store-1:20160",
-            &request,
-            next,
-        ));
-        assert!(result.is_err());
-        root.finish();
-        let spans = spans.lock().unwrap();
-        let names = spans
-            .iter()
-            .map(|span| span.operation.as_str())
-            .collect::<Vec<_>>();
+        let send = named("regionRequest.SendReqCtx");
+        let rpc = named("rpcClient.SendRequest, region ID: 7, type: Get");
+        let backoff = named("tikv.backoff.regionMiss");
+        assert_eq!(send.parent_span_id, root.context().span_id);
+        assert_eq!(rpc.parent_span_id, send.context.span_id);
+        assert_eq!(backoff.parent_span_id, send.context.span_id);
+        let offset = |span: &RawSpan| span.start.duration_since(send.start).unwrap();
+        assert_eq!(offset(rpc), Duration::from_micros(2));
+        assert_eq!(rpc.duration, Duration::from_micros(7));
+        assert_eq!(send.duration, Duration::from_micros(10));
         assert_eq!(
-            names,
-            ["rpcClient.SendRequest, region ID: 7, type: Get", "trace"]
-        );
-        assert_eq!(spans[0].parent_span_id, spans[1].context.span_id);
-        assert_eq!(
-            spans[1].logs[0].fields,
-            [(
-                tidb_util::tracing::TRACE_EVENT_KEY.to_owned(),
+            send.logs
+                .iter()
+                .map(|log| log.fields.clone())
+                .collect::<Vec<_>>(),
+            [vec![(
+                TRACE_EVENT_KEY.to_owned(),
                 "send Get request to region 7 at store-1:20160".to_owned()
-            )]
+            )]]
+        );
+        assert_eq!(
+            send.logs[0].timestamp.duration_since(send.start).unwrap(),
+            Duration::from_micros(1)
+        );
+        assert_eq!(rpc.tags.get("async").map(String::as_str), Some("true"));
+        assert_eq!(
+            named("trace").tags.get("commitTs").map(String::as_str),
+            Some("42")
         );
     }
 
+    /// Outside a traced statement the call runs unchanged and opens no
+    /// client span scope.
     #[test]
-    fn labels_render_as_client_go_command_types() {
-        assert_eq!(cmd_type_name("kv_get"), "Get");
-        assert_eq!(cmd_type_name("kv_batch_get"), "BatchGet");
-        assert_eq!(cmd_type_name("coprocessor"), "Cop");
-        assert_eq!(cmd_type_name("kv_pessimistic_lock"), "PessimisticLock");
-        assert_eq!(cmd_type_name("no_such_label"), "Unknown");
+    fn an_untraced_call_runs_without_a_scope() {
+        let enabled = futures::executor::block_on(with_span_ctx(None, async {
+            tikv_client::trace::client_spans_enabled()
+        }));
+        assert!(!enabled);
+        let (root, _spans) = recording_root();
+        let (spans, details) = futures::executor::block_on(with_span_ctx(Some(root), async {
+            (
+                tikv_client::trace::client_spans_enabled(),
+                tikv_client::trace::trace_exec_details_enabled(),
+            )
+        }));
+        assert!(spans && details);
+        assert!(!build_in_span_ctx(
+            None,
+            tikv_client::trace::client_spans_enabled
+        ));
     }
 }

@@ -471,8 +471,7 @@ impl<S: PdClient> ClientTransaction<S> {
         let before = self.snapshot_point_rpc_counts().0;
         let value = self
             .engine
-            .transaction_mut()
-            .get(key.to_vec())
+            .run(|transaction| transaction.get(key.to_vec()))
             .map_err(Self::client_read_error)?;
         // The store checks the read against its txn safe point after it
         // returns (client-go `KVSnapshot.Get`'s `CheckVisibility`).
@@ -500,8 +499,7 @@ impl<S: PdClient> ClientTransaction<S> {
         self.prepare_read(read_ts, call);
         let values = self
             .engine
-            .transaction_mut()
-            .block_on(|transaction| transaction.batch_get_with_options(keys.iter().cloned(), &[]))
+            .run(|transaction| transaction.batch_get_with_options(keys.iter().cloned(), &[]))
             .map_err(Self::client_read_error)?
             .into_iter()
             .map(|(key, entry)| (Vec::from(key), entry.value))
@@ -542,11 +540,12 @@ impl<S: PdClient> ClientTransaction<S> {
         );
         let values = self
             .engine
-            .transaction_mut()
-            .scan(
-                range,
-                limit.unwrap_or(u32::MAX as usize).min(u32::MAX as usize) as u32,
-            )
+            .run(|transaction| {
+                transaction.scan(
+                    range,
+                    limit.unwrap_or(u32::MAX as usize).min(u32::MAX as usize) as u32,
+                )
+            })
             .map_err(Self::client_read_error)?
             .map(|pair| (Vec::from(pair.0), pair.1))
             .collect();
@@ -600,11 +599,12 @@ impl<S: PdClient> ClientTransaction<S> {
         let mut committed =
             TikvTransactionDriver::new_read_only(transaction, Arc::clone(self.store.runtime()));
         let values = committed
-            .transaction_mut()
-            .scan(
-                range,
-                limit.unwrap_or(u32::MAX as usize).min(u32::MAX as usize) as u32,
-            )
+            .run(|transaction| {
+                transaction.scan(
+                    range,
+                    limit.unwrap_or(u32::MAX as usize).min(u32::MAX as usize) as u32,
+                )
+            })
             .map_err(Self::client_read_error)?
             .map(|pair| (Vec::from(pair.0), pair.1))
             .collect();
@@ -660,8 +660,6 @@ impl<S: PdClient> ClientTransaction<S> {
     ) -> Result<OptimisticCommitOutcome, OptimisticCoordinatorError> {
         self.finish_statement(true).map_err(Self::read_error)?;
         self.stage_mutations(mutations)?;
-        // client-go `KVTxn.Commit`'s span, opened as the commit begins.
-        let _commit = tidb_util::tracing::start_thread_region_ex("tikvTxn.Commit");
         self.calls.set(call);
         self.apply_statement_kv_context();
         let mut outcome = self
@@ -974,8 +972,7 @@ impl<S: PdClient> ClientTransaction<S> {
             .cloned()
             .collect();
         self.engine
-            .transaction_mut()
-            .block_on(|transaction| {
+            .run(|transaction| {
                 let context = &mut context;
                 async move {
                     transaction

@@ -1259,7 +1259,7 @@ impl PrivilegeRegistry {
         self.lock_dynamic()
             .entry((user.to_owned(), host.to_owned()))
             .or_default()
-            .insert(name.to_ascii_uppercase(), with_grant);
+            .insert(go_to_upper(name), with_grant);
     }
 
     /// Go's `revokeDynamicPriv`: a `DELETE FROM mysql.global_grants` for the
@@ -1271,7 +1271,7 @@ impl PrivilegeRegistry {
             .lock_dynamic()
             .get_mut(&(user.to_owned(), host.to_owned()))
         {
-            privs.remove(&name.to_ascii_uppercase());
+            privs.remove(&go_to_upper(name));
         }
     }
 
@@ -1298,7 +1298,7 @@ impl PrivilegeRegistry {
     ) -> bool {
         self.lock_dynamic()
             .get(&(user.to_owned(), host.to_owned()))
-            .and_then(|privs| privs.get(&name.to_ascii_uppercase()))
+            .and_then(|privs| privs.get(&go_to_upper(name)))
             .is_some_and(|grantable| !with_grant || *grantable)
     }
 
@@ -1316,7 +1316,7 @@ impl PrivilegeRegistry {
     /// and the SUPER fallback additionally requires `GRANT OPTION`.
     #[must_use]
     pub fn has_dynamic_priv(&self, user: &str, host: &str, name: &str, with_grant: bool) -> bool {
-        let name = name.to_ascii_uppercase();
+        let name = go_to_upper(name);
         if self.has_explicit_dynamic_priv(user, host, &name, with_grant) {
             return true;
         }
@@ -1368,7 +1368,7 @@ impl PrivilegeRegistry {
         if let Some(account) = self.matching_account(user, host) {
             identities.extend(self.effective_roles(&account, &defaults));
         }
-        let name = name.to_ascii_uppercase();
+        let name = go_to_upper(name);
         {
             let grants = self.lock_dynamic();
             if identities.iter().any(|(user, host)| {

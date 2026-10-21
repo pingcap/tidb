@@ -385,7 +385,7 @@ impl Tracer {
     }
 
     /// The moment a monotonic instant was, on the tracer's clock: what a
-    /// span measured elsewhere (an RPC's send) starts at.
+    /// span measured elsewhere (a client span) starts at.
     pub fn system_time_of(&self, instant: Instant) -> SystemTime {
         match instant.checked_duration_since(self.epoch.1) {
             Some(after) => self.epoch.0 + after,
@@ -429,7 +429,7 @@ impl Tracer {
 
     /// Go `Tracer.StartSpan(operation, opentracing.ChildOf(parent),
     /// opentracing.StartTime(start))`: a span whose start was measured
-    /// elsewhere, as client-go's `spanInfo.addTo` opens TiKV's detail spans.
+    /// elsewhere, as the client spans client-rust reports carry their start.
     pub fn start_span_child_of_at(
         self: &Arc<Self>,
         operation: &str,
@@ -565,6 +565,13 @@ impl Span {
 
     /// Go `Span.LogFields(fields...)` at the current time.
     pub fn log_fields(&self, fields: Vec<(String, String)>) {
+        self.log_fields_at(fields, self.tracer.now().0);
+    }
+
+    /// Go `Span.LogFields(fields...)` for a record whose time was measured
+    /// elsewhere (`opentracing.LogRecord.Timestamp`), as the client's span
+    /// events arrive with theirs.
+    pub fn log_fields_at(&self, fields: Vec<(String, String)>, timestamp: SystemTime) {
         if self.is_noop() {
             return;
         }
@@ -572,10 +579,7 @@ impl Span {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .logs
-            .push(LogRecord {
-                timestamp: self.tracer.now().0,
-                fields,
-            });
+            .push(LogRecord { timestamp, fields });
     }
 
     /// Go `logutil.Eventf(ctx, ...)` on this span: a log record whose only

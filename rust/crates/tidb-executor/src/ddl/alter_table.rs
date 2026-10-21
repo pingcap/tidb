@@ -5088,6 +5088,7 @@ pub(super) fn prepare_add_column(
                     &types,
                     zone,
                     ctx.like_default_escape(),
+                    ctx.connection_charset_info().0,
                 )
                 .map_err(crate::ddl::generated_column_error)?;
             // Go `checkAutoIncrementRef` (`add_column.go:233`), named by the

@@ -605,10 +605,21 @@ pub fn build_hidden_columns(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(usize, HiddenIndexColumn)>, DriverError> {
-    build_hidden_columns_with_like_default_escape(index_name, parts, names, types, zone, b'\\')
+    build_hidden_columns_with_like_default_escape(
+        index_name,
+        parts,
+        names,
+        types,
+        zone,
+        b'\\',
+        tidb_mysql::DefaultCharset,
+    )
 }
 
-/// Statement-aware form of [`build_hidden_columns`].
+/// Statement-aware form of [`build_hidden_columns`]. `connection_charset` is
+/// the DDL session's `character_set_connection`: Go's parser gave each plain
+/// string literal of the key part that charset, so the hidden column's
+/// stored expression writes it as the `_charset` introducer.
 pub fn build_hidden_columns_with_like_default_escape(
     index_name: &str,
     parts: &[IndexPart],
@@ -616,6 +627,7 @@ pub fn build_hidden_columns_with_like_default_escape(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    connection_charset: &str,
 ) -> Result<Vec<(usize, HiddenIndexColumn)>, DriverError> {
     let mut built = Vec::new();
     for (position, part) in parts.iter().enumerate() {
@@ -712,7 +724,8 @@ pub fn build_hidden_columns_with_like_default_escape(
             field_type.set_charset_name("binary");
             field_type.set_collation_name("binary");
         }
-        let expr_text = expr.restore_with_flags(hidden_restore_flags());
+        let expr_text =
+            expr.restore_with_flags_and_string_charset(hidden_restore_flags(), connection_charset);
         // Go `pkg/ddl/index.go`'s `checkIndexColumn`, which `buildIndexColumns`
         // runs over EVERY non-columnar key part including this hidden one.
         // Reported against the EXPRESSION, which is what `col.Hidden` selects

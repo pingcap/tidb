@@ -1504,10 +1504,13 @@ impl Session {
             statement.saved = Some(std::mem::replace(&mut txn.working, view));
             statement.view_base = Some(view_base);
         }
-        self.selected_lock_keys = Some(tidb_executor::select_lock::SelectedLockKeys::new(
-            tidb_txnkv::transaction::LockWaitTime::Timeout(self.lock_wait_timeout()),
-            self.vars().shared_lock_promotion_enabled(),
-        ));
+        self.selected_lock_keys = Some(
+            tidb_executor::select_lock::SelectedLockKeys::new(
+                tidb_txnkv::transaction::LockWaitTime::Timeout(self.lock_wait_timeout()),
+                self.vars().shared_lock_promotion_enabled(),
+            )
+            .with_read_committed(self.read_committed_locking()),
+        );
         self.transaction_statement = Some(statement);
         Ok(())
     }

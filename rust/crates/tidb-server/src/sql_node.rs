@@ -1700,13 +1700,15 @@ impl ConnectionLease {
 
 impl Drop for ConnectionLease {
     fn drop(&mut self) {
-        let previous = self.tracker.active.fetch_sub(1, Ordering::AcqRel);
-        debug_assert!(previous > 0, "connection count underflow");
+        // `active` falls last: a drain that waits for it to reach zero must
+        // find this connection's outcome and released id already recorded.
         self.tracker.completed.fetch_add(1, Ordering::AcqRel);
         if self.failed {
             self.tracker.failed.fetch_add(1, Ordering::AcqRel);
         }
         self.tracker.connection_ids.release(self.id);
+        let previous = self.tracker.active.fetch_sub(1, Ordering::AcqRel);
+        debug_assert!(previous > 0, "connection count underflow");
     }
 }
 

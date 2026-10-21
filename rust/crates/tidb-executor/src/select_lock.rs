@@ -32,6 +32,10 @@ pub struct SelectedLockKeys {
     state: Arc<Mutex<SelectedLocks>>,
     default_wait: LockWaitTime,
     shared_lock_promotion: bool,
+    /// Go `IsPessimisticReadConsistency`: a read-committed transaction's
+    /// locking point reads read first and lock only the rows they found,
+    /// which this statement's lock step does after execution.
+    read_committed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -53,7 +57,23 @@ impl SelectedLockKeys {
             state: Arc::default(),
             default_wait,
             shared_lock_promotion,
+            read_committed: false,
         }
+    }
+
+    /// Records the transaction's read-committed isolation.
+    #[must_use]
+    pub fn with_read_committed(mut self, read_committed: bool) -> Self {
+        self.read_committed = read_committed;
+        self
+    }
+
+    /// The wait a repeatable-read locking point read locks its keys with
+    /// before reading them (Go `PointGetExecutor.getAndLock`), or `None`
+    /// under read committed, whose point reads lock after reading.
+    #[must_use]
+    pub fn point_lock_wait(&self, select_wait: Option<LockWaitTime>) -> Option<LockWaitTime> {
+        (!self.read_committed).then(|| select_wait.unwrap_or(self.default_wait))
     }
 
     /// Whether FOR SHARE is promoted to a real lock instead of Go's no-op.

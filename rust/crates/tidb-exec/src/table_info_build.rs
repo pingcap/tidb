@@ -1021,6 +1021,7 @@ fn check_generated_columns(
         &context.session_zone(),
         context.like_default_escape(),
         context.auto_increment_in_generated(),
+        context.connection_charset_info().0,
     )
     .map_err(generated_column_admission_error)?;
     for (column, generated) in declared.iter().zip(built) {
@@ -1438,6 +1439,7 @@ fn synthesize_expression_index_columns(
                 &types,
                 &context.session_zone(),
                 context.like_default_escape(),
+                context.connection_charset_info().0,
             )
             .map_err(default_admission_error)?;
         for (position, hidden) in hidden {
@@ -2246,9 +2248,11 @@ fn build_column(
                         ));
                     }
                     GeneratedColumns::Deferred { schema, table, .. } => {
-                        info.generated_expr_string = expression.restore_with_flags(
-                            tidb_executor::generated_column::generated_restore_flags(),
-                        );
+                        info.generated_expr_string = expression
+                            .restore_with_flags_and_string_charset(
+                                tidb_executor::generated_column::generated_restore_flags(),
+                                context.connection_charset_info().0,
+                            );
                         info.generated_stored = *stored;
                         let (_, dependences) =
                             tidb_executor::generated_column::find_depended_column_names(
@@ -2261,8 +2265,11 @@ fn build_column(
                         continue;
                     }
                     GeneratedColumns::Modify => {
-                        info.generated_expr_string =
-                            expression.restore_with_flags(modify_generated_restore_flags());
+                        info.generated_expr_string = expression
+                            .restore_with_flags_and_string_charset(
+                                modify_generated_restore_flags(),
+                                context.connection_charset_info().0,
+                            );
                         info.generated_stored = *stored;
                         // Go `FindColumnNamesInExpr`, keyed by `Name.L`: no
                         // qualifier check here (rule 4 makes it).
@@ -2294,6 +2301,7 @@ fn build_column(
                     &types,
                     &context.session_zone(),
                     context.like_default_escape(),
+                    context.connection_charset_info().0,
                 )
                 .map_err(generated_column_admission_error)?;
                 info.generated_expr_string = generated.expr_text;

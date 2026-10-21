@@ -73,8 +73,22 @@ pub fn write_privilege_tables(
         tidb_ast::DmlStmt::Update(update) => {
             update_privilege_tables(update, catalog, current_database, ctx)
         }
+        // Go `buildDelete` appends a visitInfo of `DBInfo.Name.L`,
+        // `TableInfo.Name.L` per target.
         tidb_ast::DmlStmt::Delete(delete) => {
-            delete_privilege_tables(delete, catalog, current_database, ctx)
+            let mut tables = Vec::new();
+            for (database, table) in
+                delete_privilege_tables(delete, catalog, current_database, ctx)?
+            {
+                let target = (
+                    tidb_hack::go_to_lower(&database),
+                    tidb_hack::go_to_lower(&table),
+                );
+                if !tables.contains(&target) {
+                    tables.push(target);
+                }
+            }
+            Ok(tables)
         }
         _ => Err(DriverError::unsupported(
             "write target resolution requires UPDATE or DELETE",

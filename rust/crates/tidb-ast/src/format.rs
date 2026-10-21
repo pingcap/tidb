@@ -542,6 +542,11 @@ pub struct RestoreContext {
     parent: Option<(RestoreParentOp, RestoreParentSide)>,
     /// Go `InUnaryOperation`.
     in_unary: bool,
+    /// The charset a plain string literal carries: Go's parser types every
+    /// `ValueExpr` string with the session's `character_set_connection`
+    /// (`ast.NewValueExpr(lit, parser.charset, parser.collation)`), and
+    /// `ValueExpr.Restore` writes it back as the `_charset` introducer.
+    string_charset: Arc<str>,
 }
 
 impl Default for RestoreContext {
@@ -559,7 +564,22 @@ impl RestoreContext {
             cte_names: Arc::new(Vec::new()),
             parent: None,
             in_unary: false,
+            string_charset: Arc::from("utf8mb4"),
         }
+    }
+
+    /// Returns a context whose plain string literals carry `charset`: the
+    /// `character_set_connection` of the session that parsed the statement.
+    #[must_use]
+    pub fn with_string_charset(mut self, charset: &str) -> Self {
+        self.string_charset = Arc::from(charset);
+        self
+    }
+
+    /// The charset a plain string literal restores with.
+    #[must_use]
+    pub fn string_charset(&self) -> &str {
+        &self.string_charset
     }
 
     /// Go `restoreExprWithBinaryOpParent`: the context a child restores under.
@@ -628,6 +648,7 @@ impl RestoreContext {
             cte_names: Arc::new(names),
             parent: self.parent,
             in_unary: self.in_unary,
+            string_charset: Arc::clone(&self.string_charset),
         }
     }
 
@@ -639,6 +660,7 @@ impl RestoreContext {
             cte_names: Arc::clone(&self.cte_names),
             parent: self.parent,
             in_unary: self.in_unary,
+            string_charset: Arc::clone(&self.string_charset),
         }
     }
 

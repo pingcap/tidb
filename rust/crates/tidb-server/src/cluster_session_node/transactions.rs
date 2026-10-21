@@ -482,6 +482,24 @@ pub trait OpenClusterTransaction: Send {
         Err("only a pessimistic transaction reads at a statement timestamp".to_owned())
     }
 
+    /// A pessimistic statement handle whose for-update timestamp its first
+    /// act decides (Go `optimizeForNotFetchingLatestTS`): a locking point
+    /// read keeps the current one, any other read advances it.
+    fn deferred_statement_snapshot(
+        &self,
+        _locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        Err("only a pessimistic transaction reads at a statement timestamp".to_owned())
+    }
+
+    /// The outcome of a lock the running statement took during execution
+    /// (Go `PointGetExecutor.getAndLock`) when the statement failed on it.
+    fn take_statement_lock_failure(
+        &self,
+    ) -> Option<tidb_exec::cluster_table_storage::StatementLockFailure> {
+        None
+    }
+
     /// A read handle at an explicit statement timestamp -- the pessimistic
     /// retry's advanced `for_update_ts`. Only a pessimistic transaction can
     /// serve one.
@@ -1580,6 +1598,20 @@ where
     fn fresh_statement_snapshot(&self, locking: bool) -> Result<Box<dyn ClusterSnapshot>, String> {
         SessionTransaction::fresh_statement_snapshot(self, locking)
             .map_err(|error| error.to_string())
+    }
+
+    fn deferred_statement_snapshot(
+        &self,
+        locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        SessionTransaction::deferred_statement_snapshot(self, locking)
+            .map_err(|error| error.to_string())
+    }
+
+    fn take_statement_lock_failure(
+        &self,
+    ) -> Option<tidb_exec::cluster_table_storage::StatementLockFailure> {
+        SessionTransaction::take_statement_lock_failure(self)
     }
 
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {

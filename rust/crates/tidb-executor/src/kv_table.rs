@@ -1183,10 +1183,26 @@ pub(crate) struct RowConflict {
 
 /// A reader's range iterator under a statement budget: each entry it moves
 /// past is one key its scan processed, unistore's `tableScanExec` /
-/// `indexScanExec` row count.
+/// `indexScanExec` row count. Over a staged overlay only the snapshot's
+/// entries count (see [`StorageIterator::snapshot_entries_consumed`]): Go's
+/// `UnionScan` merges the transaction's own rows in TiDB, and the coprocessor
+/// under it never processed them.
 struct KeysReadIterator {
     inner: Box<dyn StorageIterator>,
     budget: crate::KeysReadBudget,
+    /// The snapshot entries already charged to `budget`.
+    charged: u64,
+}
+
+impl KeysReadIterator {
+    fn charge_snapshot_entries(&mut self, consumed: u64) -> Result<(), StorageError> {
+        let fresh = consumed.saturating_sub(self.charged);
+        self.charged = self.charged.max(consumed);
+        if fresh > 0 {
+            self.budget.add(fresh)?;
+        }
+        Ok(())
+    }
 }
 
 impl StorageIterator for KeysReadIterator {
@@ -1203,8 +1219,24 @@ impl StorageIterator for KeysReadIterator {
     }
 
     fn next(&mut self) -> Result<(), StorageError> {
-        self.budget.add(1)?;
-        self.inner.next()
+        let Some(consumed) = self.inner.snapshot_entries_consumed() else {
+            self.budget.add(1)?;
+            return self.inner.next();
+        };
+        // The entries up to the one being moved past, then -- once the range
+        // is exhausted -- any the advance consumed behind staged tombstones.
+        self.charge_snapshot_entries(consumed)?;
+        self.inner.next()?;
+        if !self.inner.valid() {
+            if let Some(consumed) = self.inner.snapshot_entries_consumed() {
+                self.charge_snapshot_entries(consumed)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn snapshot_entries_consumed(&self) -> Option<u64> {
+        self.inner.snapshot_entries_consumed()
     }
 
     fn close(&mut self) {
@@ -1379,11 +1411,44 @@ impl KvTable {
                 go_json_text_round_trip(&mut index.comment);
             }
         }
+        if let Some(partition) = self.partition.as_deref() {
+            let (names, types): (Vec<_>, Vec<_>) = self
+                .visible_columns()
+                .iter()
+                .map(|column| (column.name.clone(), column.field_type.clone()))
+                .unzip();
+            // The routing is rebuilt from the reloaded bound text, as Go's
+            // `newPartitionedTable` does; the stored strings themselves stay
+            // as written (reloaded below). A rebuild that no longer resolves
+            // keeps the built routing.
+            if let Some(Ok(rebuilt)) =
+                crate::ddl::reload_partition_spec_from_meta_json(partition, &names, &types)
+            {
+                let partition = self.partition.as_deref_mut().expect("checked above");
+                partition.kind = rebuilt.kind;
+                partition.expr = rebuilt.expr;
+                partition.dependencies = rebuilt.dependencies;
+            }
+        }
         if let Some(partition) = self.partition.as_deref_mut() {
             for definition in &mut partition.definitions {
                 go_json_text_round_trip(&mut definition.name);
                 go_json_text_round_trip(&mut definition.comment);
+                definition
+                    .less_than
+                    .iter_mut()
+                    .for_each(go_json_text_round_trip);
+                definition
+                    .in_values
+                    .iter_mut()
+                    .flatten()
+                    .for_each(go_json_text_round_trip);
             }
+            go_json_text_round_trip(&mut partition.expr_text);
+            partition
+                .dependencies
+                .iter_mut()
+                .for_each(go_json_text_round_trip);
         }
         go_json_text_round_trip(&mut self.comment);
     }
@@ -2150,6 +2215,33 @@ impl KvTable {
         read_stored_record(self.store.as_mut(), physical_ids, handle)
     }
 
+    /// Go `PointGetExecutor.lockKeyIfNeeded` / `BatchPointGetExec`'s
+    /// `LockKeys`: lock the record keys of `handles` before reading them
+    /// (see [`TableStorage::lock_keys_for_read`]). A partitioned table's
+    /// handle names no single record key before pruning; its rows are locked
+    /// by the statement's lock step after execution instead.
+    pub(crate) fn lock_records_for_read(
+        &mut self,
+        handles: &[TableHandle],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), KvTableError> {
+        if self.read_partitions.is_some() || self.partition.is_some() {
+            return Ok(());
+        }
+        let keys = handles
+            .iter()
+            .map(|handle| {
+                Key::from_bytes(encode_row_key_with_handle(
+                    self.table_id,
+                    &handle.record_handle(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        self.store
+            .lock_keys_for_read(&keys, wait)
+            .map_err(KvTableError::from)
+    }
+
     /// [`KvTable::stored_record`] without the bytes.
     fn stored_record_key(&mut self, handle: &TableHandle) -> Result<Option<Key>, KvTableError> {
         Ok(self.stored_record(handle)?.map(|(key, _)| key))
@@ -2406,6 +2498,7 @@ impl KvTable {
             Some(budget) => Box::new(KeysReadIterator {
                 inner: iterator,
                 budget: budget.clone(),
+                charged: 0,
             }),
             None => iterator,
         })
@@ -4527,6 +4620,10 @@ impl KvTable {
         ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
+        // Go `AddRecord(..., table.WithCtx(ctx))`'s region; its index
+        // writes take the caller's ctx (`GetCreateIdxOpt`), so they are its
+        // siblings.
+        let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
             table.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false, Some(ctx))
         })
@@ -4592,6 +4689,7 @@ impl KvTable {
         ctx: &crate::StmtContext,
         lazy_dup_check: bool,
     ) -> Result<TableHandle, KvTableError> {
+        let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
             table.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true, Some(ctx))
         })

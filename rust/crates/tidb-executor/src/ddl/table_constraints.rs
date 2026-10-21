@@ -188,6 +188,7 @@ pub(crate) fn table_indexes(
             &column_types,
             zone,
             ctx.like_default_escape(),
+            ctx.connection_charset_info().0,
         )?;
         let mut offsets = Vec::with_capacity(index.parts.len());
         let mut prefix_lengths = Vec::with_capacity(index.parts.len());

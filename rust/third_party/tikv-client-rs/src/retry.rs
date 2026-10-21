@@ -396,6 +396,10 @@ pub struct RetryBackoffer {
     /// the caller's interceptors, run around every RPC a sender issues for
     /// this backoffer, retries included.
     rpc_interceptor: Option<crate::interceptor::RpcInterceptorChain>,
+    /// client-go `bo.GetCtx()`'s opentracing span: taken from the creating
+    /// task's client span scope, replaced by the spans that `bo.SetCtx`
+    /// themselves, copied by `Clone` and `Fork`.
+    client_spans: crate::trace::BoSpanSlot,
 }
 
 static NEXT_BACKOFFER_ID: AtomicU64 = AtomicU64::new(1);
@@ -428,6 +432,7 @@ impl RetryBackoffer {
             times_by_type: BTreeMap::new(),
             configs: Vec::new(),
             rpc_interceptor: None,
+            client_spans: crate::trace::BoSpanSlot::from_current(),
         }
     }
 
@@ -440,6 +445,18 @@ impl RetryBackoffer {
     ) -> Self {
         self.rpc_interceptor = Some(interceptor);
         self
+    }
+
+    /// client-go `bo.GetCtx()`'s span, shared: spans this Backoffer's
+    /// sends `SetCtx` show up for every later user of the same Backoffer.
+    pub(crate) fn client_span_slot(&self) -> crate::trace::BoSpanSlot {
+        self.client_spans.clone()
+    }
+
+    /// Make this Backoffer use `slot` as its ctx span, as code that already
+    /// holds client-go's Backoffer passes it on.
+    pub(crate) fn share_client_span_slot(&mut self, slot: crate::trace::BoSpanSlot) {
+        self.client_spans = slot;
     }
 
     /// The interceptors [`Self::with_rpc_interceptor`] attached.
@@ -517,8 +534,17 @@ impl RetryBackoffer {
         config: RetryConfig,
         reason: impl Into<String>,
     ) -> Result<(), RetryError> {
-        self.backoff_with_config_and_max_sleep(config, None, reason)
-            .await
+        // client-go `Backoffer.Backoff` opens `tikv.backoff.<cfg>` under
+        // `b.ctx` and discards the derived ctx; the other entry points open
+        // no span.
+        let span = self.client_spans.get().map(|context| {
+            crate::trace::ClientSpan::start(&context, format!("tikv.backoff.{config}").into())
+        });
+        let result = self
+            .backoff_with_config_and_max_sleep(config, None, reason)
+            .await;
+        drop(span);
+        result
     }
 
     /// Source `BackoffWithMaxSleepTxnLockFast`: preserves the class's
@@ -699,6 +725,7 @@ impl RetryBackoffer {
                 times_by_type: self.times_by_type.clone(),
                 configs: self.configs.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
+                client_spans: self.client_spans.copied(),
             },
             cancellation,
         )
@@ -889,6 +916,7 @@ impl Clone for RetryBackoffer {
             times_by_type: self.times_by_type.clone(),
             configs: self.configs.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
+            client_spans: self.client_spans.copied(),
         }
     }
 }

@@ -638,6 +638,16 @@ impl OpenClusterTransaction for MockSessionTransaction {
         self.snapshot_at(self.cluster.timestamp())
     }
 
+    /// The fixture's snapshot takes no locks during execution, so every
+    /// statement reads at a fresh timestamp and its keys are locked by the
+    /// statement's lock step.
+    fn deferred_statement_snapshot(
+        &self,
+        locking: bool,
+    ) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.fresh_statement_snapshot(locking)
+    }
+
     fn snapshot_at(&self, read_ts: u64) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.cluster.live.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSnapshot {

@@ -3765,6 +3765,26 @@ impl RemoteIndexHandleCursor {
             return Ok(None);
         };
         self.note_rows();
+        self.project_row(&row).map(Some)
+    }
+
+    /// [`Self::next_projected_row`] beside the row's handle, which a covering
+    /// index response carries in its trailing handle columns. A DML read
+    /// whose covering inner side names the target table needs it: Go's
+    /// `PhysicalIndexReader` outputs the handle column the write consumes.
+    pub fn next_projected_row_with_handle(
+        &mut self,
+    ) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let Some(row) = self.inner.next_row().map_err(KvTableError::from)? else {
+            self.note_rows();
+            return Ok(None);
+        };
+        self.note_rows();
+        let handle = self.handle_from_row(&row)?;
+        Ok(Some((handle, self.project_row(&row)?)))
+    }
+
+    fn project_row(&self, row: &[Datum]) -> Result<Vec<Datum>, KvTableError> {
         let projected_indices = self.projected_indices.as_ref().ok_or_else(|| {
             KvTableError::Decode("index cursor has no covering projection".to_owned())
         })?;
@@ -3774,7 +3794,7 @@ impl RemoteIndexHandleCursor {
                 KvTableError::Decode("index row omitted a covering column".to_owned())
             })?);
         }
-        Ok(Some(projected))
+        Ok(projected)
     }
 
     /// Whether the remote coprocessor evaluated every requested predicate.
@@ -3896,6 +3916,11 @@ impl RemoteIndexHandleCursor {
             return Ok(None);
         };
         self.note_rows();
+        self.handle_from_row(&row).map(Some)
+    }
+
+    /// The handle one decoded index response row carries.
+    fn handle_from_row(&self, row: &[Datum]) -> Result<TableHandle, KvTableError> {
         if self.common_handle {
             let values = self
                 .handle_indices
@@ -3905,15 +3930,15 @@ impl RemoteIndexHandleCursor {
                 .ok_or_else(|| {
                     KvTableError::Decode("an index row omitted a common handle column".to_owned())
                 })?;
-            return self.common_handle_from_index_values(values).map(Some);
+            return self.common_handle_from_index_values(values);
         }
         match self
             .handle_indices
             .first()
             .and_then(|index| row.get(*index))
         {
-            Some(Datum::Int(value)) => Ok(Some(TableHandle::Int(*value))),
-            Some(Datum::UInt(value)) => Ok(Some(TableHandle::Int(*value as i64))),
+            Some(Datum::Int(value)) => Ok(TableHandle::Int(*value)),
+            Some(Datum::UInt(value)) => Ok(TableHandle::Int(*value as i64)),
             other => Err(KvTableError::Decode(format!(
                 "an index row carried no integer handle, got {other:?}"
             ))),

@@ -214,14 +214,15 @@ impl PrivilegeRegistry {
     ) -> Result<(), DriverError> {
         // Go CREATE excludes only auth-token entries. LDAP is additionally
         // exempt in ALTER/SET's checkPasswordReusePolicy, preserving old rows.
-        let exempt = plugin.eq_ignore_ascii_case(tidb_mysql::consts::AuthTiDBAuthToken)
+        // Go `strings.EqualFold` of the plugin names.
+        let exempt = tidb_mysql::equal_fold(plugin, tidb_mysql::consts::AuthTiDBAuthToken)
             || (!creating
                 && [
                     tidb_mysql::consts::AuthLDAPSASL,
                     tidb_mysql::consts::AuthLDAPSimple,
                 ]
                 .iter()
-                .any(|name| plugin.eq_ignore_ascii_case(name)));
+                .any(|name| tidb_mysql::equal_fold(plugin, name)));
         let instant = self.clock.now_precise();
         let now = instant.timestamp();
         let timestamp = tidb_datatype::Time::new(

@@ -375,6 +375,7 @@ fn builtin_in_estimate_survives_statistics_initialization() {
                         .get(&table_id)
                         .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
                         .map(AsRef::as_ref),
+                    std::time::Duration::from_secs(3),
                 )
                 .unwrap()
                 .unwrap();

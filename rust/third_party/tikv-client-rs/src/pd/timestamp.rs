@@ -34,7 +34,27 @@ const DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL: Duration = Duration::from_secs(
 /// `clients/tso.newTSODispatcher` uses the same deadline channel capacity.
 const DEADLINE_CAPACITY: usize = 64;
 
-type TimestampRequest = oneshot::Sender<Timestamp>;
+/// One pd-client `tsoRequest`: the caller's result channel and, as Go's
+/// `requestCtx`, the client span scope its batch reports to.
+pub(crate) struct TimestampRequest {
+    sender: oneshot::Sender<Timestamp>,
+    client_spans: Option<crate::trace::ClientSpanContext>,
+}
+
+impl TimestampRequest {
+    fn send(self, timestamp: Timestamp) -> std::result::Result<(), Timestamp> {
+        self.sender.send(timestamp)
+    }
+}
+
+impl From<oneshot::Sender<Timestamp>> for TimestampRequest {
+    fn from(sender: oneshot::Sender<Timestamp>) -> Self {
+        Self {
+            sender,
+            client_spans: None,
+        }
+    }
+}
 
 struct OracleInner {
     request_tx: mpsc::Sender<TimestampRequest>,
@@ -145,14 +165,24 @@ impl TimestampOracle {
     }
 
     pub(crate) async fn get_timestamp(self) -> Result<Timestamp> {
-        let (request, response) = oneshot::channel();
+        let (sender, response) = oneshot::channel();
+        let request = TimestampRequest {
+            sender,
+            client_spans: crate::trace::current_client_span_context(),
+        };
         tokio::select! {
             // Retiring a stream must not revoke a batch result already delivered
             // to this request. Go Request waits independently of stream context.
             biased;
             result = async {
-                self.inner.request_tx.send(request).await
-                    .map_err(|_| internal_err!("TimestampRequest channel is closed"))?;
+                // pd-client `GetTSAsync`: its span covers handing the request
+                // to the dispatcher; waiting on the future opens none.
+                crate::trace::detached_client_span(
+                    "pdclient.GetTSAsync",
+                    self.inner.request_tx.send(request),
+                )
+                .await
+                .map_err(|_| internal_err!("TimestampRequest channel is closed"))?;
                 Ok(response.await?)
             } => result,
             _ = self.inner.cancellation.cancelled() => Err(Error::ContextCanceled),
@@ -350,6 +380,10 @@ async fn run_discovered(
                     Ok(()) => {
                         current = Some((route, endpoint));
                         in_flight += 1;
+                        // The batch just sent is the last one published.
+                        if let Some(group) = pending.lock().await.back_mut() {
+                            group.process_spans.clear();
+                        }
                     }
                     Err(_) => {
                         streams.remove(&endpoint);
@@ -372,6 +406,9 @@ struct RequestGroup {
     done: DeadlineDone,
     order: TimestampTracker,
     before_request: Option<TimestampParts>,
+    /// One `pdclient.processRequests` span per traced request, finished once
+    /// the batch has been handed to the stream.
+    process_spans: Vec<crate::trace::ClientSpan>,
 }
 
 // Go keeps each in-flight controller in its batchBufferPool until completion.
@@ -591,6 +628,18 @@ fn request_stream_with_options(
                     .await
                     .ok()??;
                 requests.adjust_best_batch_size();
+                // pd-client `tsoDispatcher.processRequests` opens a span under
+                // every collected request's ctx span.
+                let mut process_spans = Vec::new();
+                requests.iter_collected_requests(|request| {
+                    if let Some(context) = &request.client_spans {
+                        process_spans.push(crate::trace::ClientSpan::start(
+                            context,
+                            std::borrow::Cow::Borrowed("pdclient.processRequests"),
+                        ));
+                    }
+                    true
+                });
                 let stream_cancellation = cancellation.clone();
                 let done = watcher
                     .start(&cancellation, timeout, move || {
@@ -611,6 +660,7 @@ fn request_stream_with_options(
                     _permit: permit,
                     before_request: order.snapshot(),
                     order,
+                    process_spans,
                 });
                 Some(TsoRequest {
                     header: Some(RequestHeader {
@@ -641,9 +691,11 @@ fn allocate_timestamps(
         _permit,
         order,
         before_request,
+        process_spans,
     } = pending_requests
         .pop_front()
         .ok_or_else(|| internal_err!("PD gives more TsoResponse than expected"))?;
+    drop(process_spans);
     // Go completes the deadline on both successful and failed batch callbacks.
     done.complete();
     let batch = TsoBatch::from_response(resp, count).map_err(|error| {

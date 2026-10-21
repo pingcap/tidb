@@ -33,7 +33,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SwappableSnapshot};
-use tidb_model::Job;
+use tidb_model::{ActionType, Job};
 use tidb_txnkv::transaction::StoreClient;
 use tidb_txnkv::transaction::{OptimisticCoordinatorError, RealOptimisticTransactionOpener};
 
@@ -618,6 +618,154 @@ pub trait DdlSchemaSync {
     fn clean_job_versions(&self, ddl_job_id: i64) -> Result<(), String>;
 }
 
+/// Go's `ddlJobDoneChMap`: the done signal of each job this node's executor
+/// submitted, shared with the owner scheduler. The submitter registers a
+/// signal before the job's insert commits (`registerJobDoneChannels`), the
+/// scheduler closes it once the job is done (`jobContext.notifyDone`), and
+/// the waiting session removes it when it returns (`delJobDoneCh`).
+#[derive(Debug, Default)]
+pub struct DdlJobDoneChMap {
+    channels: Mutex<std::collections::HashMap<i64, Arc<JobDoneCh>>>,
+}
+
+impl DdlJobDoneChMap {
+    /// Go `JobSubmitter.registerJobDoneChannels`: a signal per job, and the
+    /// cleanup that drops them when the insert fails.
+    pub fn register_job_done_channels(
+        &self,
+        specs: &[crate::ddl_job_submit::JobSpec],
+    ) -> impl FnOnce() + '_ {
+        let job_ids = specs.iter().map(|spec| spec.job.id).collect::<Vec<_>>();
+        {
+            let mut channels = self
+                .channels
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for job_id in &job_ids {
+                channels.insert(*job_id, Arc::new(JobDoneCh::default()));
+            }
+        }
+        move || {
+            let mut channels = self
+                .channels
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for job_id in &job_ids {
+                channels.remove(job_id);
+            }
+        }
+    }
+
+    /// Go `ddlJobDoneChMap.Load`.
+    #[must_use]
+    pub fn load(&self, job_id: i64) -> Option<Arc<JobDoneCh>> {
+        self.channels
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&job_id)
+            .cloned()
+    }
+
+    /// Go `executor.delJobDoneCh`.
+    pub fn delete(&self, job_id: i64) {
+        self.channels
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&job_id);
+    }
+}
+
+/// One job's done signal: Go's `chan struct{}`, which `notifyDone` closes.
+#[derive(Debug, Default)]
+pub struct JobDoneCh {
+    closed: Mutex<bool>,
+    condvar: std::sync::Condvar,
+}
+
+impl JobDoneCh {
+    /// Go `jobContext.notifyDone`: `close(notifyCh)`.
+    pub fn notify_done(&self) {
+        *self
+            .closed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        self.condvar.notify_all();
+    }
+
+    /// Waits until the signal is closed or `deadline` passes; true when it
+    /// was closed.
+    pub fn wait_until(&self, deadline: std::time::Instant) -> bool {
+        let mut closed = self
+            .closed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !*closed {
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            closed = self
+                .condvar
+                .wait_timeout(closed, deadline - now)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+        true
+    }
+}
+
+const FAST_DDL_INTERVAL_POLICY: &[Duration] = &[Duration::from_millis(500)];
+const NORMAL_DDL_INTERVAL_POLICY: &[Duration] = &[
+    Duration::from_millis(500),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+];
+const SLOW_DDL_INTERVAL_POLICY: &[Duration] = &[
+    Duration::from_millis(500),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(1),
+    Duration::from_secs(3),
+];
+
+/// Go `getIntervalFromPolicy`.
+fn get_interval_from_policy(policy: &[Duration], i: usize) -> (Duration, bool) {
+    match policy.get(i) {
+        Some(interval) => (*interval, true),
+        None => (policy[policy.len() - 1], false),
+    }
+}
+
+/// Go `getJobCheckInterval`: how often a waiting session re-reads a job's
+/// history, by the job's action and the number of checks so far.
+#[must_use]
+pub fn get_job_check_interval(action: ActionType, i: usize) -> (Duration, bool) {
+    match action {
+        ActionType::ACTION_ADD_INDEX
+        | ActionType::ACTION_ADD_PRIMARY_KEY
+        | ActionType::ACTION_MODIFY_COLUMN
+        | ActionType::ACTION_REORGANIZE_PARTITION
+        | ActionType::ACTION_REMOVE_PARTITIONING
+        | ActionType::ACTION_ALTER_TABLE_PARTITIONING => {
+            get_interval_from_policy(SLOW_DDL_INTERVAL_POLICY, i)
+        }
+        ActionType::ACTION_CREATE_TABLE | ActionType::ACTION_CREATE_SCHEMA => {
+            get_interval_from_policy(FAST_DDL_INTERVAL_POLICY, i)
+        }
+        _ => get_interval_from_policy(NORMAL_DDL_INTERVAL_POLICY, i),
+    }
+}
+
+/// Go `chooseLeaseTime`.
+#[must_use]
+pub fn choose_lease_time(t: Duration, max: Duration) -> Duration {
+    if t.is_zero() || t > max {
+        max
+    } else {
+        t
+    }
+}
+
 /// One step of a persisted job, as Go's owner runs it.
 #[derive(Clone)]
 struct DdlPhase<'worker> {
@@ -759,6 +907,7 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     ddl_job_id: i64,
     timeout: Duration,
+    job_done: Option<&JobDoneCh>,
     notifier: Option<&dyn SchemaVersionNotifier>,
     backfiller: &dyn IndexBackfiller,
     check_constraint_validator: &dyn CheckConstraintValidator,
@@ -839,6 +988,12 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                 }
             }
             DdlPhaseOutcome::Committed(committed) if committed.persisted_job_terminal => {
+                // Go `handleJobDone`: after the history commit, the reorg
+                // handles are cleaned and only then is the submitting
+                // session notified (`jobCtx.notifyDone`); `cleanMDLInfo`
+                // follows in `transitOneJobStepAndWaitSync`.
+                #[cfg(feature = "failpoints")]
+                fail::fail_point!("beforeCleanupDDLReorgHandles");
                 if let Err(error) =
                     add_index_reorg::clean_ddl_reorg_handles(&opener, timeout, ddl_job_id)
                 {
@@ -848,6 +1003,9 @@ pub fn run_persisted_ddl_job<S: StoreClient>(
                         "Failed removing the DDL reorg entry in tidb_ddl_reorg",
                         &[zap_error(error)],
                     );
+                }
+                if let Some(job_done) = job_done {
+                    job_done.notify_done();
                 }
                 if schema_state.mdl_enabled {
                     if let Err(error) = schema_sync.clean_job_versions(ddl_job_id) {
@@ -984,14 +1142,16 @@ where
 ///
 /// Go's submitter and owner scheduler are separate. Exposing the boundary is
 /// what lets a non-owner connection enqueue work and wait while the elected
-/// owner (possibly another server) executes it.
+/// owner (possibly another server) executes it. Answers the job's id and
+/// action.
 pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     statement: &DdlStatement,
     timeout: Duration,
     upgrading: bool,
     min_job_id: i64,
-) -> Result<i64, ClusterDdlError> {
+    done_channels: Option<&DdlJobDoneChMap>,
+) -> Result<(i64, ActionType), ClusterDdlError> {
     let preparation = SessionTransaction::begin(
         Arc::clone(&opener),
         timeout,
@@ -1029,19 +1189,21 @@ pub fn submit_check_constraint_job_with_retry<S: StoreClient>(
         .rollback()
         .map_err(ClusterDdlError::NotCommitted)?;
 
+    // Go `BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`.
     gen_global_ids_and_insert_jobs_with_retry(
         opener,
         std::slice::from_mut(&mut spec),
         timeout,
-        |_| Option::<fn()>::None,
+        |specs| done_channels.map(|channels| channels.register_job_done_channels(specs)),
     )?;
-    Ok(spec.job.id)
+    Ok((spec.job.id, spec.job.type_))
 }
 
 /// What submitting an ADD INDEX came to.
 pub enum AddIndexSubmitted {
-    /// The job queued, by id, with the executor's statement warnings.
-    Job(i64, Vec<(DdlWarningLevel, u16, String)>),
+    /// The job queued, by id and action, with the executor's statement
+    /// warnings.
+    Job(i64, ActionType, Vec<(DdlWarningLevel, u16, String)>),
     /// `IF NOT EXISTS` over an existing index: nothing queued.
     AlreadySatisfied(ClusterDdlReport),
 }
@@ -1327,6 +1489,7 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
     min_job_id: i64,
     backfiller: &dyn IndexBackfiller,
     auto_ids: Option<&Arc<crate::auto_id_client::AutoIdClient>>,
+    done_channels: Option<&DdlJobDoneChMap>,
 ) -> Result<AddIndexSubmitted, ClusterDdlError> {
     // Go `CalcMaxNodeCountByStoresNum` reads PD's store list.
     let store_count = opener
@@ -1429,13 +1592,18 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
         })?;
         crate::cluster_ddl::placement_policy::set_placement_policy_id(&spec, policy_id);
     }
+    // Go `BeforeInsertWithAssignedIDs: s.registerJobDoneChannels`.
     gen_global_ids_and_insert_jobs_with_retry(
         opener,
         std::slice::from_mut(&mut spec),
         timeout,
-        |_| Option::<fn()>::None,
+        |specs| done_channels.map(|channels| channels.register_job_done_channels(specs)),
     )?;
-    Ok(AddIndexSubmitted::Job(spec.job.id, warnings))
+    Ok(AddIndexSubmitted::Job(
+        spec.job.id,
+        spec.job.type_,
+        warnings,
+    ))
 }
 
 /// Loads the persisted active DDL queue from a fresh cluster snapshot.

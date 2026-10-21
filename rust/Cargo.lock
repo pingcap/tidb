@@ -3547,6 +3547,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "crossbeam-channel",
+ "fail",
  "futures",
  "hyper-util",
  "prost 0.14.4",

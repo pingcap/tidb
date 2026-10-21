@@ -340,6 +340,22 @@ impl Expr {
         out
     }
 
+    /// [`Expr::restore_with_flags`] for an expression the session parsed
+    /// under `character_set_connection` `string_charset`, which its plain
+    /// string literals carry (Go `ValueExpr`'s type charset).
+    pub fn restore_with_flags_and_string_charset(
+        &self,
+        flags: RestoreFlags,
+        string_charset: &str,
+    ) -> String {
+        let mut out = String::new();
+        self.restore_into_with_context(
+            &mut out,
+            &RestoreContext::new(flags).with_string_charset(string_charset),
+        );
+        out
+    }
+
     /// Fallible restore for source AST shapes whose validity is checked at
     /// restore time rather than parse time.
     pub fn try_restore(&self) -> Result<String, String> {
@@ -382,8 +398,12 @@ impl Expr {
                 out.push('\'');
             }
             Expr::String(v) => {
+                // Go `ValueExpr.Restore`: no introducer under
+                // `RestoreStringWithoutCharset`, nor for the default charset
+                // under `RestoreStringWithoutDefaultCharset`.
                 if context.flags().has_string_without_charset()
-                    || context.flags().has_string_without_default_charset()
+                    || (context.flags().has_string_without_default_charset()
+                        && context.string_charset() == "utf8mb4")
                 {
                     out.push('\'');
                     out.push_str(&escape_string_literal(v));
@@ -397,7 +417,7 @@ impl Expr {
                     // expression with -- which is the spelling `SHOW CREATE TABLE`
                     // prints.
                     out.push('_');
-                    restore_charset_name(out, "utf8mb4", context);
+                    restore_charset_name(out, context.string_charset(), context);
                     out.push('\'');
                     out.push_str(&escape_string_literal(v));
                     out.push('\'');

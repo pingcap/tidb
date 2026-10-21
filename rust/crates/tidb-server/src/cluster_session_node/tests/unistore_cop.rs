@@ -10294,6 +10294,132 @@ fn a_text_point_update_locks_its_row_before_reading_it() {
     );
 }
 
+/// A strict pessimistic `UPDATE`/`DELETE` whose key constant fails Go's
+/// fast-plan conversion (`getNameValuePairs` under the statement's type
+/// context) has no point plan, so it locks nothing before its scan reports
+/// the conversion error. Captured live against the Go server on TiKV: with
+/// another transaction holding key 0, `UPDATE t SET v = 9 WHERE id = 'abc'`
+/// fails at once with 1292 instead of waiting out the lock (1205).
+///
+/// The truncation is raised by the store evaluating the pushed Selection.
+/// This in-process store still answers an evaluation error as a request
+/// error (1105) where Go's unistore and TiKV put it in
+/// `SelectResponse.error` (1292), so only the lock half is asserted here.
+#[test]
+fn a_strict_point_write_whose_key_does_not_convert_takes_no_prelock() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory
+        .open_session(session_context(99))
+        .expect("session opens");
+    rows(
+        &mut holder,
+        "CREATE TABLE test.noprelock (id int primary key, v int)",
+    );
+    rows(
+        &mut holder,
+        "INSERT INTO test.noprelock VALUES (0, 0), (1, 1)",
+    );
+    holder
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin holder");
+    rows(
+        &mut holder,
+        "SELECT * FROM test.noprelock WHERE id = 0 FOR UPDATE",
+    );
+
+    let mut writer = factory
+        .open_session(session_context(100))
+        .expect("session opens");
+    writer
+        .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
+        .expect("set lock wait");
+    for sql in [
+        "UPDATE test.noprelock SET v = 9 WHERE id = 'abc'",
+        "UPDATE test.noprelock SET v = 9 WHERE id IN ('a', 'b')",
+        "DELETE FROM test.noprelock WHERE id = 'abc'",
+        "DELETE FROM test.noprelock WHERE id IN ('a', 'b')",
+    ] {
+        writer
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin writer");
+        let error = writer
+            .execute_write(sql)
+            .expect_err("the conversion fails the statement");
+        assert_ne!(error.code, 1205, "{sql} waited on the held key 0");
+        assert!(
+            error
+                .message
+                .contains("Truncated incorrect DOUBLE value: 'a"),
+            "{sql}: {}",
+            error.message
+        );
+        writer.control_transaction("ROLLBACK").expect("rollback");
+    }
+    holder
+        .control_transaction("ROLLBACK")
+        .expect("rollback holder");
+}
+
+/// Go takes a pessimistic point lock inside execution (compile -> build the
+/// executor -> `PointGetExecutor.Next` -> `getAndLock`), so a point write
+/// that fails to compile never reaches a lock. Captured live against the Go
+/// server on TiKV with another transaction holding key 1: each statement
+/// fails at once with its compile error instead of waiting out the lock.
+#[test]
+fn a_point_write_that_fails_to_compile_takes_no_lock() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory
+        .open_session(session_context(101))
+        .expect("session opens");
+    rows(
+        &mut holder,
+        "CREATE TABLE test.compilelock (id int primary key, v int)",
+    );
+    rows(&mut holder, "INSERT INTO test.compilelock VALUES (1, 1)");
+    holder
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin holder");
+    rows(
+        &mut holder,
+        "SELECT * FROM test.compilelock WHERE id = 1 FOR UPDATE",
+    );
+
+    let mut writer = factory
+        .open_session(session_context(102))
+        .expect("session opens");
+    writer
+        .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
+        .expect("set lock wait");
+    for (sql, message) in [
+        (
+            "UPDATE test.compilelock SET nosuch = 1 WHERE id = 1",
+            "Unknown column 'nosuch' in 'field list'",
+        ),
+        (
+            "DELETE FROM test.compilelock WHERE id = 1 AND nosuch = 1",
+            "Unknown column 'nosuch' in 'where clause'",
+        ),
+    ] {
+        writer
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin writer");
+        let error = writer
+            .execute_write(sql)
+            .expect_err("the statement does not compile");
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1054, message),
+            "{sql}"
+        );
+        writer.control_transaction("ROLLBACK").expect("rollback");
+    }
+    holder
+        .control_transaction("ROLLBACK")
+        .expect("rollback holder");
+}
+
 /// Go's `SELECT ... FOR UPDATE` on one clustered handle-pinned row folds its
 /// read INTO its lock (`TryFastPlan` -> `PointGetPlan(Lock=true)` ->
 /// `getAndLock`). The text path classifies the same shape: the locking read's
@@ -11245,9 +11371,29 @@ fn generated_read_policy_reaches_cluster_point_and_scan_readers() {
 
 #[test]
 fn analyze_preserves_generated_execution_error() {
+    assert_analyze_preserves_generated_execution_error(None);
+}
+
+/// The same statements while the stats worker passes every 5ms, so a pass
+/// always caches the table between its first `stats_meta` row (the failing
+/// ANALYZE's delta flush) and the second ANALYZE's own refresh -- the order
+/// a 3s worker reached only under load. Go's `SELECT b` cached a
+/// `PseudoTable` holding `a` (`Handle.getStatsByPhysicalID`), which that pass
+/// copies; without it the pass cached a table holding no column, and
+/// ANALYZE's histograms never became visible.
+#[test]
+fn analyze_preserves_generated_execution_error_under_stats_worker_passes() {
+    assert_analyze_preserves_generated_execution_error(Some(
+        crate::node_config::StatsLease::Positive(std::time::Duration::from_millis(5)),
+    ));
+}
+
+fn assert_analyze_preserves_generated_execution_error(
+    stats_lease: Option<crate::node_config::StatsLease>,
+) {
     use crate::resultset_source::ResultSetSource;
 
-    let (stack, _users) = cop_backed_stack();
+    let (stack, _users) = cop_backed_stack_with_stats_lease(stats_lease);
     let mut session = stack.factory.open_session(session_context(992)).unwrap();
     rows(&mut session, "USE test");
     rows(&mut session, "CREATE TABLE analyze_error (a DOUBLE)");
@@ -17562,6 +17708,82 @@ fn statement_summary_records_cop_task_details_like_go() {
     );
 }
 
+/// Go plans an `UPDATE`/`DELETE` read like a SELECT and reads it through the
+/// same coprocessor `TableReader`, so its responses reach `StmtCtx.ExecDetails`
+/// exactly as a query's do; a point write never reaches the coprocessor.
+/// Expected values: the Go server on TiKV (same statements, `nn_dml.ct`),
+/// whose cop task counts and processed keys this in-process store reports
+/// alike (TiKV's MVCC `total_keys` are TiKV's own and are not compared).
+#[test]
+fn a_dml_read_reaches_the_coprocessor_like_a_select() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1135)).unwrap();
+    session
+        .execute_write("CREATE DATABASE IF NOT EXISTS ss_dml")
+        .unwrap();
+    session.execute_write("USE ss_dml").unwrap();
+    for statement in [
+        "CREATE TABLE ct (a INT PRIMARY KEY, b INT, c INT, KEY ib (b))",
+        "INSERT INTO ct VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)",
+        "ANALYZE TABLE ct",
+        "UPDATE ct SET c = c + 1 WHERE c > 1",
+        "DELETE FROM ct WHERE c = 3",
+        "UPDATE ct SET c = 0 WHERE a = 1",
+    ] {
+        session.execute_write(statement).unwrap();
+    }
+    let summary = displayed(rows(
+        &mut session,
+        "SELECT digest_text, sum_cop_task_num, avg_processed_keys, max_processed_keys, \
+         avg_affected_rows FROM information_schema.statements_summary \
+         WHERE schema_name = 'ss_dml' AND (digest_text LIKE 'update%' \
+         OR digest_text LIKE 'delete%') ORDER BY digest_text",
+    ));
+    assert_eq!(
+        summary,
+        [
+            ["delete from `ct` where `c` = ?", "1", "5", "5", "1"],
+            ["update `ct` set `c` = ? where `a` = ?", "0", "0", "0", "1"],
+            [
+                "update `ct` set `c` = `c` + ? where `c` > ?",
+                "1",
+                "5",
+                "5",
+                "4"
+            ],
+        ]
+    );
+}
+
+/// A multi-table `UPDATE` whose index-join inner side is a covering
+/// `IndexReader` over the target table reads that side through the
+/// coprocessor like a SELECT, and the write still needs each inner row's
+/// handle, which the covering index response carries. Expected rows:
+/// `tests/integrationtest/r/executor/write.result` (Go).
+#[test]
+fn a_covering_index_join_update_reads_its_target_handle_from_the_coprocessor() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1136)).unwrap();
+    session
+        .execute_write("CREATE DATABASE IF NOT EXISTS ij_dml")
+        .unwrap();
+    session.execute_write("USE ij_dml").unwrap();
+    for statement in [
+        "CREATE TABLE t (a VARCHAR(1), INDEX idx(a))",
+        "CREATE TABLE t1 (a VARCHAR(5), INDEX idx(a))",
+        "INSERT INTO t VALUES ('a'), ('b')",
+        "INSERT INTO t1 VALUES ('a'), ('bbbbb')",
+        "UPDATE /*+ INL_JOIN(t) */ t, t1 SET t.a = 'a' WHERE t.a = t1.a",
+        "UPDATE /*+ INL_HASH_JOIN(t) */ t, t1 SET t.a = 'a' WHERE t.a = t1.a",
+    ] {
+        session.execute_write(statement).unwrap();
+    }
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT * FROM t ORDER BY a")),
+        [["a"], ["b"]]
+    );
+}
+
 /// `CREATE BINDING FROM HISTORY USING PLAN DIGEST` builds each binding from the
 /// statement the summary recorded under that plan digest and the plan hint it
 /// captured (Go `constructSQLBindOPFromPlanDigest`). Expected rows: Go 1.27 on
@@ -22385,12 +22607,13 @@ fn trace_tree(session: &mut ClusterServerSession, sql: &str) -> Vec<String> {
 
 /// `TRACE` records the spans the statement's run opens -- Go's regions in
 /// the session, planner, executors (one `exec.Next` span per call) and
-/// coprocessor client, and client-go's `rpcClient.SendRequest` per RPC --
-/// so the trees are Go's for the same statements (the Go server's answers
-/// on a TiKV cluster, for the spans this node opens; the embedded store
-/// reports no execution details, so no `tikv.*` nodes). Go's client-go
-/// spans inside client-rust's request plans (`regionRequest.SendReqCtx` of
-/// a KV request, `tikvSnapshot.get`, `twoPhaseCommitter.*`) are not opened.
+/// coprocessor client, and the client-go spans client-rust reports
+/// (`tikvSnapshot.get`, `regionRequest.SendReqCtx`, `tikvTxn.Commit`,
+/// `twoPhaseCommitter.*`, ...) -- so the trees are Go's for the same
+/// statements. The embedded store is client-go's unistore `RPCClient`,
+/// which sends without `rpcClient.SendRequest` and reports no execution
+/// details, so neither that span nor the `tikv.*` nodes appear, as with Go
+/// over unistore.
 #[test]
 fn trace_records_the_spans_each_statement_opens() {
     let (stack, _users) = cop_backed_stack();
@@ -22410,9 +22633,10 @@ fn trace_records_the_spans_each_statement_opens() {
         "  │ │ └─planner.Optimize",
     ];
     // The coprocessor read: `distsql.Select` under `session.runStmt` (the
-    // reader's Open), its send outliving it, and the record set drained
-    // under the trace span after `ExecuteStmt` returned: HashAgg reads its
-    // child to the end in its first call.
+    // reader's Open), its send -- on a backoffer whose ctx is the select's
+    // span -- outliving it, and the record set drained under the trace span
+    // after `ExecuteStmt` returned: HashAgg reads its child to the end in
+    // its first call.
     let mut expected = vec!["trace"];
     expected.extend(compile);
     expected.extend([
@@ -22420,7 +22644,6 @@ fn trace_records_the_spans_each_statement_opens() {
         "  │   └─distsql.Select",
         "  │     ├─copr.buildCopTasks",
         "  │     └─regionRequest.SendReqCtx",
-        "  │       └─rpcClient.SendRequest, region ID: N, type: Cop",
         "  ├─*aggregate.HashAggExec.Next",
         "  │ ├─*executor.IndexReaderExecutor.Next",
         "  │ └─*executor.IndexReaderExecutor.Next",
@@ -22430,24 +22653,28 @@ fn trace_records_the_spans_each_statement_opens() {
         trace_tree(&mut session, "SELECT COUNT(*) FROM test.tr"),
         expected
     );
-    for (sql, executor, cmd) in [
+    // client-go `KVSnapshot.Get` opens `tikvSnapshot.get` and discards its
+    // ctx, so the send is its sibling; the BatchGet send is the snapshot's
+    // own `SendReqCtx`.
+    for (sql, executor, client) in [
         (
             "SELECT * FROM test.tr WHERE id = 5",
             "*executor.PointGetExecutor.Next",
-            "Get",
+            &["  │ ├─tikvSnapshot.get", "  │ └─regionRequest.SendReqCtx"][..],
         ),
         (
             "SELECT * FROM test.tr WHERE id IN (1, 2, 3)",
             "*executor.BatchPointGetExec.Next",
-            "BatchGet",
+            &["  │ └─regionRequest.SendReqCtx"][..],
         ),
     ] {
         let data_call = format!("  ├─{executor}");
-        let rpc = format!("  │ └─rpcClient.SendRequest, region ID: N, type: {cmd}");
         let end_call = format!("  └─{executor}");
         let mut expected = vec!["trace"];
         expected.extend(compile);
-        expected.extend(["  │ └─session.runStmt", &data_call, &rpc, &end_call]);
+        expected.extend(["  │ └─session.runStmt", &data_call]);
+        expected.extend(client);
+        expected.push(&end_call);
         assert_eq!(trace_tree(&mut session, sql), expected, "{sql}");
     }
     // An autocommit UPDATE: the executor runs under `handleNoDelayExecutor`
@@ -22462,7 +22689,8 @@ fn trace_records_the_spans_each_statement_opens() {
         "      ├─executor.handleNoDelayExecutor",
         "      │ └─*executor.UpdateExec.Next",
         "      │   ├─*executor.PointGetExecutor.Next",
-        "      │   │ └─rpcClient.SendRequest, region ID: N, type: Get",
+        "      │   │ ├─tikvSnapshot.get",
+        "      │   │ └─regionRequest.SendReqCtx",
         "      │   ├─*executor.PointGetExecutor.Next",
         "      │   └─executor.updateRecord",
         "      └─session.CommitTxn",
@@ -22472,14 +22700,165 @@ fn trace_records_the_spans_each_statement_opens() {
         trace_tree(&mut session, "UPDATE test.tr SET v = v WHERE id = 5"),
         update
     );
+    // client-go's commit: `tikvTxn.Commit` over the prewrite, the commit-ts
+    // fetch and the commit, each phase's send under its own span.
     let mut expected = update.to_vec();
     expected.extend([
         "          └─tikvTxn.Commit",
-        "            ├─rpcClient.SendRequest, region ID: N, type: Prewrite",
-        "            └─rpcClient.SendRequest, region ID: N, type: Commit",
+        "            ├─twoPhaseCommitter.prewriteMutations",
+        "            │ └─regionRequest.SendReqCtx",
+        "            ├─TiKVStore.getTimestampWithRetry",
+        "            └─twoPhaseCommitter.commitMutations",
+        "              └─regionRequest.SendReqCtx",
     ]);
     assert_eq!(
         trace_tree(&mut session, "UPDATE test.tr SET v = v + 1 WHERE id = 5"),
         expected
     );
+    // The log form carries client-go's span events and tags: the sender's
+    // `send <cmd> request to region` event and the commit's `commitTs` tag
+    // on `tikvTxn.Commit`'s events.
+    let logged = displayed(rows(
+        &mut session,
+        "TRACE FORMAT = 'log' UPDATE test.tr SET v = v + 1 WHERE id = 5",
+    ));
+    let event = |prefix: &str| {
+        logged
+            .iter()
+            .find(|row| row[1].starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix:?} event in {logged:#?}"))
+            .clone()
+    };
+    let send = event("send Commit request to region ");
+    assert_eq!(
+        (send[2].as_str(), send[3].as_str()),
+        ("", "regionRequest.SendReqCtx")
+    );
+    let commit_ts = event("start get commit ts");
+    assert!(commit_ts[2].starts_with("map[commitTs:"), "{commit_ts:?}");
+    assert_eq!(commit_ts[3], "tikvTxn.Commit");
+}
+
+/// The regions Go's executors and session open around the client spans: a
+/// table reader's `TableReaderExecutor.Open` and the `table scan` event of
+/// its every `Next`, an INSERT's event and its `table.AddRecord` /
+/// `index.Create` per row (siblings: the index writes take the executor's
+/// ctx), and COMMIT / ROLLBACK compiled and run as any statement --
+/// `SimpleExec` under `handleNoDelayExecutor`, then `finishStmt`'s
+/// `session.CommitTxn`, whose `doCommitWithRetry` runs only over a valid
+/// transaction.
+#[test]
+fn trace_records_go_executor_and_transaction_regions() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(155)).unwrap();
+    rows(
+        &mut session,
+        "CREATE TABLE test.tr (id INT PRIMARY KEY, k INT, v INT, KEY ik (k))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.tr VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3), (5, 5, 6)",
+    );
+    let compile = [
+        "trace",
+        "  └─session.ExecuteStmt",
+        "    ├─executor.Compile",
+        "    │ ├─planner.Preprocess",
+        "    │ └─planner.Optimize",
+        "    └─session.runStmt",
+    ];
+    let tree = trace_tree(
+        &mut session,
+        "SELECT * FROM test.tr IGNORE INDEX (ik) WHERE v > 1",
+    );
+    assert_eq!(
+        tree[5..9],
+        [
+            "  │ └─session.runStmt",
+            "  │   └─TableReaderExecutor.Open",
+            "  │     └─distsql.Select",
+            "  │       ├─copr.buildCopTasks",
+        ],
+        "{tree:#?}"
+    );
+    let logged = displayed(rows(
+        &mut session,
+        "TRACE FORMAT = 'log' SELECT * FROM test.tr IGNORE INDEX (ik) WHERE v > 1",
+    ));
+    let scans = logged
+        .iter()
+        .filter(|row| row[1].starts_with("table scan "))
+        .map(|row| (row[1].as_str(), row[3].as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scans,
+        [
+            (
+                "table scan table: tr, range: [[-inf,+inf]]",
+                "*executor.TableReaderExecutor.Next"
+            ),
+            (
+                "table scan table: tr, range: [[-inf,+inf]]",
+                "*executor.TableReaderExecutor.Next"
+            ),
+        ]
+    );
+
+    let tree = trace_tree(
+        &mut session,
+        "INSERT INTO test.tr VALUES (7, 7, 7), (8, 8, 8)",
+    );
+    let mut expected = compile.to_vec();
+    expected.extend([
+        "      ├─executor.handleNoDelayExecutor",
+        "      │ └─*executor.InsertExec.Next",
+        "      │   ├─table.AddRecord",
+        "      │   ├─index.Create",
+        "      │   ├─table.AddRecord",
+        "      │   └─index.Create",
+        "      └─session.CommitTxn",
+    ]);
+    assert_eq!(tree[..expected.len()], expected[..], "{tree:#?}");
+    let logged = displayed(rows(
+        &mut session,
+        "TRACE FORMAT = 'log' INSERT INTO test.tr VALUES (9, 9, 9)",
+    ));
+    assert!(
+        logged
+            .iter()
+            .any(|row| row[1] == "insert 1 rows into table `tr`"
+                && row[3] == "*executor.InsertExec.Next"),
+        "{logged:#?}"
+    );
+
+    let simple = [
+        "      ├─executor.handleNoDelayExecutor",
+        "      │ └─*executor.SimpleExec.Next",
+    ];
+    session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+    session
+        .execute_write("UPDATE test.tr SET v = v + 1 WHERE id = 5")
+        .unwrap();
+    let mut expected = compile.to_vec();
+    expected.extend(simple);
+    expected.extend([
+        "      └─session.CommitTxn",
+        "        └─session.doCommitWithRetry",
+        "          └─tikvTxn.Commit",
+        "            ├─twoPhaseCommitter.prewriteMutations",
+        "            │ └─regionRequest.SendReqCtx",
+        "            ├─TiKVStore.getTimestampWithRetry",
+        "            └─twoPhaseCommitter.commitMutations",
+        "              └─regionRequest.SendReqCtx",
+    ]);
+    assert_eq!(trace_tree(&mut session, "COMMIT"), expected);
+    assert!(!session.session.in_transaction());
+
+    session.control_transaction("BEGIN").unwrap();
+    rows(&mut session, "SELECT * FROM test.tr WHERE id = 1");
+    let mut expected = compile.to_vec();
+    expected.extend(simple);
+    expected.push("      └─session.CommitTxn");
+    assert_eq!(trace_tree(&mut session, "ROLLBACK"), expected);
+    assert!(!session.session.in_transaction());
 }

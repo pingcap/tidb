@@ -9265,6 +9265,7 @@ fn plan_added_index(
                 &types,
                 &context.session_zone(),
                 context.like_default_escape(),
+                context.connection_charset_info().0,
             )
             .map_err(admission)?;
         let auto_increment = info.columns.iter_deref().find_map(|column| {

@@ -2087,63 +2087,67 @@ impl<PdC: PdClient> Transaction<PdC> {
         let max_timestamp_point_get = timestamp.version() == u64::MAX;
 
         self.buffer
-            .get_or_else_with_cache(key, cache_snapshot_read, |key| async move {
-                let mut request = new_get_request(key, timestamp.clone());
-                let resource_group_tag = apply_snapshot_resource_group_tag(
-                    &mut request,
-                    resource_group_tag.as_ref(),
-                    transaction_resource_group_tagger.as_ref(),
-                    resource_group_tagger.as_ref(),
-                    SnapshotRequestType::Get,
-                );
-                let plan = plan_with_keyspace_name(
-                    rpc,
-                    keyspace,
-                    keyspace_name.as_deref(),
-                    rpc_interceptor,
-                    resource_group_name.as_deref(),
-                    resource_control,
-                    ru_details,
-                    replica_read_config.clone(),
-                    request,
-                )
-                .request_source(request_source)
-                .priority(priority)
-                .not_fill_cache(not_fill_cache)
-                .isolation_level(isolation_level)
-                .task_id(task_id)
-                .resource_group_tag(resource_group_tag)
-                .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
-                .validate_read_timestamp(
-                    read_timestamp_validator,
-                    timestamp.version(),
-                    replica_read_config.stale_read,
-                    read_replica_scope,
-                )
-                .resolve_lock_for_read(
-                    timestamp,
-                    retry_options.lock_backoff,
-                    keyspace,
-                    read_lock_context,
-                    lock_resolver_context,
-                    snapshot_runtime_stats.clone(),
-                    snapshot_variables.clone(),
-                )
-                .force_lite_lock_resolution()
-                .max_timestamp_point_get(max_timestamp_point_get)
-                .retry_multi_region_with_snapshot_stats(
-                    DEFAULT_REGION_BACKOFF,
-                    snapshot_runtime_stats.clone(),
-                    snapshot_variables,
-                )
-                .merge(CollectSingle)
-                .post_process_default()
-                .plan();
-                let value = plan.execute().await?;
-                if let Some(validator) = snapshot_visibility_validator {
-                    validator.check_visibility(snapshot_version).await?;
-                }
-                Ok(value)
+            .get_or_else_with_cache(key, cache_snapshot_read, |key| {
+                // client-go `KVSnapshot.get` opens its span after the
+                // snapshot cache misses and discards the derived ctx.
+                crate::trace::detached_client_span("tikvSnapshot.get", async move {
+                    let mut request = new_get_request(key, timestamp.clone());
+                    let resource_group_tag = apply_snapshot_resource_group_tag(
+                        &mut request,
+                        resource_group_tag.as_ref(),
+                        transaction_resource_group_tagger.as_ref(),
+                        resource_group_tagger.as_ref(),
+                        SnapshotRequestType::Get,
+                    );
+                    let plan = plan_with_keyspace_name(
+                        rpc,
+                        keyspace,
+                        keyspace_name.as_deref(),
+                        rpc_interceptor,
+                        resource_group_name.as_deref(),
+                        resource_control,
+                        ru_details,
+                        replica_read_config.clone(),
+                        request,
+                    )
+                    .request_source(request_source)
+                    .priority(priority)
+                    .not_fill_cache(not_fill_cache)
+                    .isolation_level(isolation_level)
+                    .task_id(task_id)
+                    .resource_group_tag(resource_group_tag)
+                    .snapshot_read_timeout(snapshot_read_timeout, SNAPSHOT_READ_TIMEOUT_SHORT)
+                    .validate_read_timestamp(
+                        read_timestamp_validator,
+                        timestamp.version(),
+                        replica_read_config.stale_read,
+                        read_replica_scope,
+                    )
+                    .resolve_lock_for_read(
+                        timestamp,
+                        retry_options.lock_backoff,
+                        keyspace,
+                        read_lock_context,
+                        lock_resolver_context,
+                        snapshot_runtime_stats.clone(),
+                        snapshot_variables.clone(),
+                    )
+                    .force_lite_lock_resolution()
+                    .max_timestamp_point_get(max_timestamp_point_get)
+                    .retry_multi_region_with_snapshot_stats(
+                        DEFAULT_REGION_BACKOFF,
+                        snapshot_runtime_stats.clone(),
+                        snapshot_variables,
+                    )
+                    .merge(CollectSingle)
+                    .post_process_default()
+                    .plan();
+                    let value = plan.execute().await?;
+                    if let Some(validator) = snapshot_visibility_validator {
+                        validator.check_visibility(snapshot_version).await?;
+                    }
+                    Ok(value)
+                })
             })
             .await
     }
@@ -2210,11 +2214,8 @@ impl<PdC: PdClient> Transaction<PdC> {
 
         let entry = self
             .buffer
-            .get_snapshot_entry_or_else(
-                key,
-                return_commit_ts,
-                cache_snapshot_read,
-                |key| async move {
+            .get_snapshot_entry_or_else(key, return_commit_ts, cache_snapshot_read, |key| {
+                crate::trace::detached_client_span("tikvSnapshot.get", async move {
                     let mut request = new_get_request(key, timestamp.clone());
                     request.need_commit_ts = return_commit_ts;
                     let resource_group_tag = apply_snapshot_resource_group_tag(
@@ -2273,8 +2274,8 @@ impl<PdC: PdClient> Transaction<PdC> {
                     let entry = (!response.not_found && !response.value.is_empty())
                         .then(|| ValueEntry::new(response.value, response.commit_ts));
                     Ok(entry)
-                },
-            )
+                })
+            })
             .await?;
         // client-go inserts a successful point-read result into the snapshot
         // cache before enforcing the ReturnCommitTS assertion. BatchGet keeps
@@ -3314,6 +3315,18 @@ impl<PdC: PdClient> Transaction<PdC> {
                 "shared lock is not supported in pipelined transaction".to_owned(),
             ));
         }
+        // client-go `KVTxn.LockKeys` opens a "Shared Lock" span for a shared
+        // lock and runs the rest of the call under it.
+        if context.in_share_mode {
+            crate::trace::client_span("Shared Lock", self.lock_keys_checked(context, keys)).await
+        } else {
+            self.lock_keys_checked(context, keys).await
+        }
+    }
+
+    /// The part of `lock_keys_with_context_inner` after client-go's
+    /// applicability checks, where `LockKeys` has opened its span.
+    async fn lock_keys_checked(&mut self, context: &mut LockContext, keys: Vec<Key>) -> Result<()> {
         let keyspace = self.keyspace;
         let mut keys: Vec<Key> = keys
             .into_iter()
@@ -3734,6 +3747,12 @@ impl<PdC: PdClient> Transaction<PdC> {
     /// # });
     /// ```
     pub async fn commit(&mut self) -> Result<Option<Timestamp>> {
+        crate::trace::client_span("tikvTxn.Commit", self.commit_txn()).await
+    }
+
+    /// The body of client-go `KVTxn.Commit` inside its `tikvTxn.Commit`
+    /// span (Go's `trace.StartRegion(ctx, "CommitTxn")` region).
+    async fn commit_txn(&mut self) -> Result<Option<Timestamp>> {
         debug!(
             "committing transaction, start_ts: {}",
             self.timestamp.version()
@@ -6641,13 +6660,26 @@ impl<PdC: PdClient> Clone for Committer<PdC> {
 }
 
 impl<PdC: PdClient> Committer<PdC> {
-    /// client-go `c.store.getTimestampWithRetry`: a timestamp from the
-    /// store's oracle.
+    /// client-go `c.store.getTimestampWithRetry(bo)` on a Backoffer made from
+    /// the current ctx.
     async fn store_timestamp(&self) -> Result<Timestamp> {
-        self.lock_resolver_context
-            .store_oracle
-            .get_timestamp(&self.rpc)
+        self.store_timestamp_with_bo(&crate::trace::BoSpanSlot::from_current())
             .await
+    }
+
+    /// client-go `c.store.getTimestampWithRetry(bo)`: a timestamp from the
+    /// store's oracle. Its span becomes `bo`'s ctx, under which PD reports.
+    async fn store_timestamp_with_bo(&self, bo: &crate::trace::BoSpanSlot) -> Result<Timestamp> {
+        let span = bo.start_span("TiKVStore.getTimestampWithRetry");
+        let result = crate::trace::with_bo_span_slot(
+            bo.clone(),
+            self.lock_resolver_context
+                .store_oracle
+                .get_timestamp(&self.rpc),
+        )
+        .await;
+        drop(span);
+        result
     }
 
     fn attach_resource_group_name<R: StoreRequest>(&self, request: &mut R) {
@@ -6946,10 +6978,17 @@ impl<PdC: PdClient> Committer<PdC> {
         self.configure_commit_protocols();
         self.min_commit_ts
             .elevate_write_access(WriteAccessLevel::TwoPc);
+        // client-go makes the prewrite Backoffer here and fetches the
+        // linearizability timestamp with it, so `prewriteMutations` reports
+        // under that fetch's span.
+        let prewrite_bo = crate::trace::BoSpanSlot::from_current();
         if (self.options.async_commit || self.options.try_one_pc)
             && (!self.settings.causal_consistency || self.settings.commit_wait_until_tso > 0)
         {
-            let latest = self.get_timestamp_for_commit().await?.version();
+            let latest = self
+                .get_timestamp_for_commit_with_bo(&prewrite_bo)
+                .await?
+                .version();
             self.min_commit_ts
                 .try_update(latest.saturating_add(1), WriteAccessLevel::TwoPc);
         }
@@ -6969,7 +7008,8 @@ impl<PdC: PdClient> Committer<PdC> {
                 None => None,
             }
         };
-        let (prewrite_result, binlog_result) = tokio::join!(self.prewrite(), binlog_prewrite);
+        let (prewrite_result, binlog_result) =
+            tokio::join!(self.prewrite_with_bo(&prewrite_bo), binlog_prewrite);
         if let Some(binlog_result) = binlog_result {
             self.binlog_skipped = binlog_result.skipped();
             if let Some(error) = binlog_result.get_error() {
@@ -8572,8 +8612,18 @@ impl<PdC: PdClient> Committer<PdC> {
         self.tried_one_pc |= self.options.try_one_pc;
     }
 
+    /// client-go `txn.GetTimestampForCommit(NewBackoffer(ctx, ...))`.
     async fn get_timestamp_for_commit(&self) -> Result<Timestamp> {
-        let first = self.store_timestamp().await?;
+        self.get_timestamp_for_commit_with_bo(&crate::trace::BoSpanSlot::from_current())
+            .await
+    }
+
+    /// client-go `txn.GetTimestampForCommit(bo, ...)`.
+    async fn get_timestamp_for_commit_with_bo(
+        &self,
+        bo: &crate::trace::BoSpanSlot,
+    ) -> Result<Timestamp> {
+        let first = self.store_timestamp_with_bo(bo).await?;
         let expected = self.settings.commit_wait_until_tso;
         if expected == 0 || first.version() > expected {
             return Ok(first);
@@ -8604,10 +8654,13 @@ impl<PdC: PdClient> Committer<PdC> {
                 });
             }
 
+            // client-go `bo = retry.NewBackoffer(bo.GetCtx(), maxSleep)`.
             let mut backoffer = RetryBackoffer::new(
                 crate::async_util::Cancellation::default(),
                 timeout.as_millis().try_into().unwrap_or(u64::MAX),
             );
+            backoffer.share_client_span_slot(bo.copied());
+            let lag_bo = backoffer.client_span_slot();
             let mut last = first.clone();
             while last.version() <= expected {
                 if backoffer
@@ -8624,7 +8677,7 @@ impl<PdC: PdClient> Committer<PdC> {
                     });
                 }
                 attempts = attempts.saturating_add(1);
-                last = self.store_timestamp().await?;
+                last = self.store_timestamp_with_bo(&lag_bo).await?;
             }
             Ok(last)
         }
@@ -8723,9 +8776,32 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn prewrite(&mut self) -> Result<Option<Timestamp>> {
+        self.prewrite_with_bo(&crate::trace::BoSpanSlot::from_current())
+            .await
+    }
+
+    /// client-go `twoPhaseCommitter.prewriteMutations(bo, ...)`: its span
+    /// becomes `bo`'s ctx, which the prewrite batches fork.
+    async fn prewrite_with_bo(
+        &mut self,
+        bo: &crate::trace::BoSpanSlot,
+    ) -> Result<Option<Timestamp>> {
         let source_retry_owner =
             self.source_retry_owner(PREWRITE_MAX_BACKOFF.load(atomic::Ordering::Relaxed));
-        self.prewrite_with_retry_owner(source_retry_owner).await
+        if let Some(owner) = &source_retry_owner {
+            owner
+                .try_lock()
+                .expect("a new prewrite Backoffer is idle")
+                .share_client_span_slot(bo.clone());
+        }
+        let span = bo.start_span("twoPhaseCommitter.prewriteMutations");
+        let result = crate::trace::with_bo_span_slot(
+            bo.clone(),
+            self.prewrite_with_retry_owner(source_retry_owner),
+        )
+        .await;
+        drop(span);
+        result
     }
 
     async fn prewrite_with_retry_owner(
@@ -9081,7 +9157,10 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn prepare_primary_commit_timestamp(&self) -> Result<Timestamp> {
+        crate::trace::client_span_event(|| "start get commit ts".to_owned());
         let commit_version = self.get_timestamp_for_commit().await?;
+        crate::trace::client_span_event(|| "finish get commit ts".to_owned());
+        crate::trace::client_span_tag("commitTs", || commit_version.version().to_string());
         // Standard 2PC validates schema before transaction lifetime and the
         // optional commit-TS upper bound. This ordering is observable when
         // more than one check would reject the same timestamp.
@@ -9091,7 +9170,10 @@ impl<PdC: PdClient> Committer<PdC> {
     }
 
     async fn prepare_txn_file_commit_timestamp(&self) -> Result<Timestamp> {
+        crate::trace::client_span_event(|| "start get commit ts".to_owned());
         let commit_version = self.get_timestamp_for_commit().await?;
+        crate::trace::client_span_event(|| "finish get commit ts".to_owned());
+        crate::trace::client_span_tag("commitTs", || commit_version.version().to_string());
         // Txn-file source order is observable: schema rejection prevents both
         // lifetime and upper-bound checks from running.
         self.check_schema_valid(commit_version.version())?;
@@ -9283,9 +9365,47 @@ impl<PdC: PdClient> Committer<PdC> {
     where
         F: FnOnce() + Send,
     {
-        let mut commit_version = self.prepare_primary_commit_timestamp().await?;
+        let commit_version = self.prepare_primary_commit_timestamp().await?;
         let source_retry_owner =
             self.source_retry_owner(COMMIT_MAX_BACKOFF.load(atomic::Ordering::Relaxed));
+        // client-go `commitBo := NewBackofferWithVars(ctx, ...)`; the
+        // `commitMutations` span becomes its ctx.
+        let commit_bo = match &source_retry_owner {
+            Some(owner) => owner
+                .try_lock()
+                .expect("a new commit Backoffer is idle")
+                .client_span_slot(),
+            None => crate::trace::BoSpanSlot::from_current(),
+        };
+        let span = commit_bo.start_span("twoPhaseCommitter.commitMutations");
+        let result = crate::trace::with_bo_span_slot(
+            commit_bo.clone(),
+            self.commit_mutations(
+                commit_version,
+                discard_values,
+                source_retry_owner,
+                &commit_bo,
+            ),
+        )
+        .await;
+        drop(span);
+        result
+    }
+
+    /// client-go `twoPhaseCommitter.commitMutations` on the caller's ctx:
+    /// the primary batch, retried with a fresh commit timestamp on
+    /// `CommitTsExpired`. Secondaries are committed in the background on the
+    /// store's context, outside this span, as client-go does.
+    async fn commit_mutations<F>(
+        &mut self,
+        mut commit_version: Timestamp,
+        discard_values: &mut Option<F>,
+        source_retry_owner: Option<Arc<tokio::sync::Mutex<RetryBackoffer>>>,
+        bo: &crate::trace::BoSpanSlot,
+    ) -> Result<Timestamp>
+    where
+        F: FnOnce() + Send,
+    {
         let mut retained_request = None;
         loop {
             match self
@@ -9326,7 +9446,9 @@ impl<PdC: PdClient> Committer<PdC> {
                             // timestamp and updates CommitVersion in place. The
                             // initial schema, lifetime, and upper-bound checks
                             // are deliberately not repeated at this boundary.
-                            commit_version = self.get_timestamp_for_commit().await?;
+                            // client-go `actionCommit` retries on its batch
+                            // Backoffer, whose ctx the commit's sends set.
+                            commit_version = self.get_timestamp_for_commit_with_bo(bo).await?;
                             continue;
                         } else {
                             return Err(Error::KeyError(key_err));

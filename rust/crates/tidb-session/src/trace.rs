@@ -47,6 +47,9 @@ pub struct Span {
     finished: usize,
     /// The span's id, in the order spans were opened.
     opened: u64,
+    /// Where appdash's `MemoryStore` put the span among its siblings
+    /// ([`appdash_sub_order`]): the JSON form's child order.
+    appdash_rank: usize,
 }
 
 /// Go `TraceExec`'s tracer over one statement: the recorder, its `trace`
@@ -107,6 +110,7 @@ pub fn build_tree(spans: &[RawSpan]) -> (Span, std::time::SystemTime) {
         Ok(after) => i64::try_from(after.as_nanos()).unwrap_or(i64::MAX),
         Err(before) => -i64::try_from(before.duration().as_nanos()).unwrap_or(i64::MAX),
     };
+    let appdash_rank = appdash_sub_order(spans);
     let node = |(finished, raw): (usize, &RawSpan)| {
         let start = offset(raw.start);
         let mut logs = Vec::new();
@@ -132,6 +136,10 @@ pub fn build_tree(spans: &[RawSpan]) -> (Span, std::time::SystemTime) {
             tags: raw.tags.clone(),
             finished,
             opened: raw.context.span_id,
+            appdash_rank: appdash_rank
+                .get(&raw.context.span_id)
+                .copied()
+                .unwrap_or(usize::MAX),
         }
     };
     let mut nodes: Vec<Option<Span>> = spans.iter().enumerate().map(node).map(Some).collect();
@@ -182,8 +190,90 @@ pub fn build_tree(spans: &[RawSpan]) -> (Span, std::time::SystemTime) {
         tags: std::collections::BTreeMap::new(),
         finished: 0,
         opened: 0,
+        appdash_rank: 0,
     });
     (root, started)
+}
+
+/// appdash `MemoryStore.Collect` over the spans in the order the recorder
+/// took them (a span is collected when it finishes): each span's position
+/// in its parent's `Sub`, which `json.Marshal` keeps as is. A span whose
+/// parent has not been collected yet waits as a temporary child of the
+/// (temporary) root, the first span collected until its parent arrives, and
+/// moves under its parent, after the children already there, when that
+/// parent is collected.
+fn appdash_sub_order(spans: &[RawSpan]) -> std::collections::HashMap<u64, usize> {
+    struct Node {
+        id: u64,
+        parent: u64,
+        sub: Vec<usize>,
+    }
+    let mut nodes: Vec<Node> = Vec::new();
+    let mut by_id = std::collections::HashMap::new();
+    let mut root: Option<usize> = None;
+    // appdash `insert`: under the parent when it is collected, else a
+    // temporary child of the root.
+    fn insert(
+        nodes: &mut [Node],
+        by_id: &std::collections::HashMap<u64, usize>,
+        root: usize,
+        t: usize,
+    ) {
+        let target = by_id.get(&nodes[t].parent).copied().unwrap_or(root);
+        nodes[target].sub.push(t);
+    }
+    // appdash `reattachChildren`: `src`'s children whose parent is `dst`
+    // move to `dst`, in order.
+    fn reattach(nodes: &mut [Node], dst: usize, src: usize) {
+        let dst_id = nodes[dst].id;
+        let (moved, kept): (Vec<usize>, Vec<usize>) = std::mem::take(&mut nodes[src].sub)
+            .into_iter()
+            .partition(|child| nodes[*child].parent == dst_id);
+        nodes[src].sub = kept;
+        nodes[dst].sub.extend(moved);
+    }
+    for raw in spans {
+        let id = raw.context.span_id;
+        if by_id.contains_key(&id) {
+            continue;
+        }
+        let s = nodes.len();
+        nodes.push(Node {
+            id,
+            parent: raw.parent_span_id,
+            sub: Vec::new(),
+        });
+        by_id.insert(id, s);
+        let mut current = *root.get_or_insert(s);
+        let is_root = raw.parent_span_id == 0;
+        let is_temp_root_parent = nodes[current].parent == id;
+        if s != current && (is_root || is_temp_root_parent) {
+            let old_root = current;
+            current = s;
+            root = Some(s);
+            reattach(&mut nodes, current, old_root);
+            insert(&mut nodes, &by_id, current, old_root);
+            let old_id = nodes[old_root].id;
+            let (moved, kept): (Vec<usize>, Vec<usize>) = std::mem::take(&mut nodes[old_root].sub)
+                .into_iter()
+                .partition(|child| nodes[*child].parent != old_id);
+            nodes[old_root].sub = kept;
+            nodes[current].sub.extend(moved);
+        }
+        if !is_root && s != current {
+            insert(&mut nodes, &by_id, current, s);
+        }
+        if s != current {
+            reattach(&mut nodes, s, current);
+        }
+    }
+    let mut rank = std::collections::HashMap::new();
+    for node in &nodes {
+        for (position, child) in node.sub.iter().enumerate() {
+            rank.insert(nodes[*child].id, position);
+        }
+    }
+    rank
 }
 
 /// appdash `materializeWithJSON`: a record whose only field is the event
@@ -424,7 +514,8 @@ pub fn json_format(
         ));
         annotations.push(annotation("_schema:Timespan", None));
         let mut children = span.children.iter().collect::<Vec<_>>();
-        children.sort_by_key(|child| child.start);
+        // appdash's `Sub` order; only the row form sorts by start.
+        children.sort_by_key(|child| child.appdash_rank);
         let sub = if children.is_empty() {
             "null".to_owned()
         } else {
@@ -617,6 +708,45 @@ mod tests {
                 "  └─*executor.TableDualExec.Next",
             ]
         );
+
+        // The JSON form keeps appdash's `Sub` order, built as the spans
+        // finish: children waiting for their parent move under it in turn,
+        // so `session.runStmt` precedes `executor.Compile` and
+        // `planner.Optimize` precedes `planner.Preprocess`, as in Go's.
+        let (_, rows) = json_format(&root, started);
+        let json = rows.iter().map(|row| text(&row[0])).collect::<String>();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        fn json_names(node: &serde_json::Value, out: &mut Vec<String>) {
+            let name = node["Annotations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|annotation| annotation["Key"] == "Name")
+                .unwrap()["Value"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            out.push(name);
+            for sub in node["Sub"].as_array().into_iter().flatten() {
+                json_names(sub, out);
+            }
+        }
+        let mut order = Vec::new();
+        json_names(&parsed[0], &mut order);
+        let expected = [
+            "trace",
+            "*executor.TableDualExec.Next",
+            "*executor.TableDualExec.Next",
+            "session.ExecuteStmt",
+            "session.runStmt",
+            "distsql.Select",
+            "copr.buildCopTasks",
+            "executor.Compile",
+            "planner.Optimize",
+            "planner.Preprocess",
+        ]
+        .map(|name| base64(name.as_bytes()));
+        assert_eq!(order, expected);
     }
 
     /// A child recorded after its parent finished (a coprocessor send

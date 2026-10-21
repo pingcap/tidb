@@ -83,3 +83,158 @@ index 620f443..c8949fa 100644
                      .unwrap())
              })
          }
+diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
+--- a/src/pd/timestamp_tests.rs
++++ b/src/pd/timestamp_tests.rs
+@@ -92,7 +92,7 @@
+     B: Body + Send + 'static,
+     B::Error: Into<StdError> + Send + 'static,
+ {
+-    type Response = http::Response<tonic::body::BoxBody>;
++    type Response = http::Response<tonic::body::Body>;
+     type Error = Infallible;
+     type Future = BoxFuture<Self::Response, Self::Error>;
+ 
+@@ -121,7 +121,7 @@
+         let service = self.clone();
+         match request.uri().path() {
+             "/pdpb.PD/GetMinTS" => Box::pin(async move {
+-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
++                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
+                     pdpb::GetMinTsResponse,
+                     pdpb::GetMinTsRequest,
+                 >::default())
+@@ -129,7 +129,7 @@
+                 .await)
+             }),
+             "/pdpb.PD/GetClusterInfo" => Box::pin(async move {
+-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
++                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
+                     pdpb::GetClusterInfoResponse,
+                     pdpb::GetClusterInfoRequest,
+                 >::default())
+@@ -137,7 +137,7 @@
+                 .await)
+             }),
+             "/pdpb.PD/GetMembers" => Box::pin(async move {
+-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
++                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
+                     pdpb::GetMembersResponse,
+                     pdpb::GetMembersRequest,
+                 >::default())
+@@ -145,7 +145,7 @@
+                 .await)
+             }),
+             "/pdpb.PD/GetRegion" => Box::pin(async move {
+-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
++                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
+                     pdpb::GetRegionResponse,
+                     pdpb::GetRegionRequest,
+                 >::default())
+@@ -153,7 +153,7 @@
+                 .await)
+             }),
+             "/pdpb.PD/GetAllStores" => Box::pin(async move {
+-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
++                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
+                     pdpb::GetAllStoresResponse,
+                     pdpb::GetAllStoresRequest,
+                 >::default())
+@@ -161,7 +161,7 @@
+                 .await)
+             }),
+             "/pdpb.PD/GetOperator" => Box::pin(async move {
+-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
++                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
+                     pdpb::GetOperatorResponse,
+                     pdpb::GetOperatorRequest,
+                 >::default())
+@@ -169,7 +169,7 @@
+                 .await)
+             }),
+             "/pdpb.PD/ScanRegions" => Box::pin(async move {
+-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
++                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
+                     pdpb::ScanRegionsResponse,
+                     pdpb::ScanRegionsRequest,
+                 >::default())
+@@ -178,7 +178,7 @@
+             }),
+             "/pdpb.PD/Tso" => Box::pin(async move {
+                 Ok(
+-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                         .streaming(service, request)
+                         .await,
+                 )
+@@ -188,7 +188,7 @@
+                     .status(200)
+                     .header("grpc-status", "12")
+                     .header("content-type", "application/grpc")
+-                    .body(tonic::body::empty_body())
++                    .body(tonic::body::Body::empty())
+                     .unwrap())
+             }),
+         }
+@@ -474,7 +474,7 @@
+     B: Body + Send + 'static,
+     B::Error: Into<StdError> + Send + 'static,
+ {
+-    type Response = http::Response<tonic::body::BoxBody>;
++    type Response = http::Response<tonic::body::Body>;
+     type Error = Infallible;
+     type Future = BoxFuture<Self::Response, Self::Error>;
+     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+@@ -484,7 +484,7 @@
+         let service = self.clone();
+         Box::pin(async move {
+             Ok(
+-                tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                     .unary(service, request)
+                     .await,
+             )
+@@ -1740,7 +1740,7 @@
+     B: Body + Send + 'static,
+     B::Error: Into<StdError> + Send + 'static,
+ {
+-    type Response = http::Response<tonic::body::BoxBody>;
++    type Response = http::Response<tonic::body::Body>;
+     type Error = Infallible;
+     type Future = BoxFuture<Self::Response, Self::Error>;
+     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+@@ -1760,14 +1760,14 @@
+         match request.uri().path() {
+             "/tsopb.TSO/FindGroupByKeyspaceID" => Box::pin(async move {
+                 Ok(
+-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                         .unary(service, request)
+                         .await,
+                 )
+             }),
+             "/tsopb.TSO/Tso" => Box::pin(async move {
+                 Ok(
+-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                         .streaming(service, request)
+                         .await,
+                 )
+@@ -2067,7 +2067,7 @@
+     B: Body + Send + 'static,
+     B::Error: Into<StdError> + Send + 'static,
+ {
+-    type Response = http::Response<tonic::body::BoxBody>;
++    type Response = http::Response<tonic::body::Body>;
+     type Error = Infallible;
+     type Future = BoxFuture<Self::Response, Self::Error>;
+     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
+@@ -2078,7 +2078,7 @@
+         assert_eq!(request.uri().path(), "/keyspacepb.Keyspace/LoadKeyspace");
+         Box::pin(async move {
+             Ok(
+-                tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                     .unary(service, request)
+                     .await,
+             )

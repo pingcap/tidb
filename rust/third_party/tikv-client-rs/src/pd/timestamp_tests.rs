@@ -92,7 +92,7 @@ where
     B: Body + Send + 'static,
     B::Error: Into<StdError> + Send + 'static,
 {
-    type Response = http::Response<tonic::body::BoxBody>;
+    type Response = http::Response<tonic::body::Body>;
     type Error = Infallible;
     type Future = BoxFuture<Self::Response, Self::Error>;
 
@@ -121,7 +121,7 @@ where
         let service = self.clone();
         match request.uri().path() {
             "/pdpb.PD/GetMinTS" => Box::pin(async move {
-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
                     pdpb::GetMinTsResponse,
                     pdpb::GetMinTsRequest,
                 >::default())
@@ -129,7 +129,7 @@ where
                 .await)
             }),
             "/pdpb.PD/GetClusterInfo" => Box::pin(async move {
-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
                     pdpb::GetClusterInfoResponse,
                     pdpb::GetClusterInfoRequest,
                 >::default())
@@ -137,7 +137,7 @@ where
                 .await)
             }),
             "/pdpb.PD/GetMembers" => Box::pin(async move {
-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
                     pdpb::GetMembersResponse,
                     pdpb::GetMembersRequest,
                 >::default())
@@ -145,7 +145,7 @@ where
                 .await)
             }),
             "/pdpb.PD/GetRegion" => Box::pin(async move {
-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
                     pdpb::GetRegionResponse,
                     pdpb::GetRegionRequest,
                 >::default())
@@ -153,7 +153,7 @@ where
                 .await)
             }),
             "/pdpb.PD/GetAllStores" => Box::pin(async move {
-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
                     pdpb::GetAllStoresResponse,
                     pdpb::GetAllStoresRequest,
                 >::default())
@@ -161,7 +161,7 @@ where
                 .await)
             }),
             "/pdpb.PD/GetOperator" => Box::pin(async move {
-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
                     pdpb::GetOperatorResponse,
                     pdpb::GetOperatorRequest,
                 >::default())
@@ -169,7 +169,7 @@ where
                 .await)
             }),
             "/pdpb.PD/ScanRegions" => Box::pin(async move {
-                Ok(tonic::server::Grpc::new(tonic::codec::ProstCodec::<
+                Ok(tonic::server::Grpc::new(tonic_prost::ProstCodec::<
                     pdpb::ScanRegionsResponse,
                     pdpb::ScanRegionsRequest,
                 >::default())
@@ -178,7 +178,7 @@ where
             }),
             "/pdpb.PD/Tso" => Box::pin(async move {
                 Ok(
-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
                         .streaming(service, request)
                         .await,
                 )
@@ -188,7 +188,7 @@ where
                     .status(200)
                     .header("grpc-status", "12")
                     .header("content-type", "application/grpc")
-                    .body(tonic::body::empty_body())
+                    .body(tonic::body::Body::empty())
                     .unwrap())
             }),
         }
@@ -474,7 +474,7 @@ where
     B: Body + Send + 'static,
     B::Error: Into<StdError> + Send + 'static,
 {
-    type Response = http::Response<tonic::body::BoxBody>;
+    type Response = http::Response<tonic::body::Body>;
     type Error = Infallible;
     type Future = BoxFuture<Self::Response, Self::Error>;
     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
@@ -484,7 +484,7 @@ where
         let service = self.clone();
         Box::pin(async move {
             Ok(
-                tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
                     .unary(service, request)
                     .await,
             )
@@ -1063,12 +1063,72 @@ async fn source_connectionctx_release_cancels_retained_pending_stream_and_joins(
 }
 
 #[tokio::test]
+async fn tso_requests_report_get_ts_async_and_process_requests_spans() {
+    let (request_tx, request_rx) = mpsc::channel(1);
+    let oracle = TimestampOracle {
+        inner: Arc::new(OracleInner {
+            request_tx,
+            cancellation: Cancellation::default(),
+            worker: Mutex::new(None),
+            routes: None,
+        }),
+    };
+    let cancellation = Cancellation::default();
+    let watcher = Watcher::new(&cancellation, 64, "client-span-test");
+    let pending = Arc::new(Mutex::new(VecDeque::new()));
+    let stream = request_stream(
+        42,
+        request_rx,
+        pending.clone(),
+        watcher.clone(),
+        Duration::from_secs(10),
+        cancellation,
+    );
+    tokio::pin!(stream);
+    let (handler, recorded) = crate::trace::client_span_testing::recorder();
+    let (timestamp, ()) = crate::trace::with_client_spans(handler, async {
+        tokio::join!(
+            crate::trace::client_span("TiKVStore.getTimestampWithRetry", oracle.get_timestamp()),
+            async {
+                let request = stream.next().await.unwrap();
+                allocate_timestamps(
+                    &TsoResponse {
+                        count: request.count,
+                        timestamp: Some(Timestamp {
+                            physical: 1,
+                            logical: 1,
+                            suffix_bits: 0,
+                        }),
+                        ..Default::default()
+                    },
+                    &mut *pending.lock().await,
+                )
+                .unwrap();
+            }
+        )
+    })
+    .await;
+    assert_eq!(timestamp.unwrap().logical, 1);
+    // pd-client's `GetTSAsync` span is not put into the request ctx, so the
+    // dispatcher's span is its sibling under the caller's span.
+    assert_eq!(
+        crate::trace::client_span_testing::render(&recorded),
+        [
+            "TiKVStore.getTimestampWithRetry",
+            "  pdclient.GetTSAsync",
+            "  pdclient.processRequests",
+        ]
+    );
+    watcher.close().await;
+}
+
+#[tokio::test]
 async fn source_batch_default_tso_collects_twenty_thousand_prequeued_requests() {
     let (tx, rx) = mpsc::channel(20_001);
     let mut responses = Vec::new();
     for _ in 0..20_001 {
         let (request, response) = oneshot::channel();
-        tx.send(request).await.unwrap();
+        tx.send(request.into()).await.unwrap();
         responses.push(response);
     }
     let cancellation = Cancellation::default();
@@ -1126,7 +1186,7 @@ async fn source_batch_default_tso_collects_twenty_thousand_prequeued_requests() 
 async fn source_batch_default_tso_holds_one_rpc_token_until_completion() {
     let (tx, rx) = mpsc::channel(2);
     let (first, _first_response) = oneshot::channel();
-    tx.send(first).await.unwrap();
+    tx.send(first.into()).await.unwrap();
     let cancellation = Cancellation::default();
     let watcher = Watcher::new(&cancellation, 64, "source-token-test");
     let pending = Arc::new(Mutex::new(VecDeque::new()));
@@ -1141,7 +1201,7 @@ async fn source_batch_default_tso_holds_one_rpc_token_until_completion() {
     tokio::pin!(stream);
     assert_eq!(stream.next().await.unwrap().count, 1);
     let (second, _second_response) = oneshot::channel();
-    tx.send(second).await.unwrap();
+    tx.send(second.into()).await.unwrap();
     assert!(
         tokio::time::timeout(Duration::from_millis(20), stream.next())
             .await
@@ -1204,7 +1264,7 @@ async fn source_batch_discard_returns_rpc_token_before_request_completion() {
     };
     let (tx, mut rx) = mpsc::channel(1);
     let (request, response) = oneshot::channel();
-    tx.send(request).await.unwrap();
+    tx.send(request.into()).await.unwrap();
     let permit = requests
         .fetch_pending_requests(&cancellation, &mut rx, Some(&tokens), Duration::ZERO)
         .await
@@ -1221,6 +1281,7 @@ async fn source_batch_discard_returns_rpc_token_before_request_completion() {
         _permit: permit,
         order: TimestampTracker::default(),
         before_request: None,
+        process_spans: Vec::new(),
     });
     assert!(response.await.is_err());
     assert_eq!(tokens.available_permits(), 1);
@@ -1237,7 +1298,7 @@ async fn source_batch_completed_controller_reuses_its_buffer_without_old_senders
     let allocation = batch.get_collected_requests().as_ptr();
     let (tx, mut rx) = mpsc::channel(1);
     let (request, response) = oneshot::channel();
-    tx.send(request).await.unwrap();
+    tx.send(request.into()).await.unwrap();
     batch
         .fetch_pending_requests(&cancellation, &mut rx, None, Duration::ZERO)
         .await
@@ -1300,7 +1361,7 @@ async fn source_pd_error_owner_reports_stream_eof() {
         .unwrap();
     let (tx, rx) = mpsc::channel(1);
     let (request, _response) = oneshot::channel();
-    tx.send(request).await.unwrap();
+    tx.send(request.into()).await.unwrap();
     let error = tokio::time::timeout(
         Duration::from_secs(5),
         run_tso(
@@ -1333,7 +1394,7 @@ async fn source_pd_error_owner_reports_stream_eof() {
 async fn source_pd_error_owner_reports_tso_length() {
     let (tx, rx) = mpsc::channel(1);
     let (request, _response) = oneshot::channel();
-    tx.send(request).await.unwrap();
+    tx.send(request.into()).await.unwrap();
     let cancellation = Cancellation::default();
     let watcher = Watcher::new(&cancellation, 1, "source-errs-test");
     let pending = Arc::new(Mutex::new(VecDeque::new()));
@@ -1679,7 +1740,7 @@ where
     B: Body + Send + 'static,
     B::Error: Into<StdError> + Send + 'static,
 {
-    type Response = http::Response<tonic::body::BoxBody>;
+    type Response = http::Response<tonic::body::Body>;
     type Error = Infallible;
     type Future = BoxFuture<Self::Response, Self::Error>;
     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
@@ -1699,14 +1760,14 @@ where
         match request.uri().path() {
             "/tsopb.TSO/FindGroupByKeyspaceID" => Box::pin(async move {
                 Ok(
-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
                         .unary(service, request)
                         .await,
                 )
             }),
             "/tsopb.TSO/Tso" => Box::pin(async move {
                 Ok(
-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
                         .streaming(service, request)
                         .await,
                 )
@@ -2006,7 +2067,7 @@ where
     B: Body + Send + 'static,
     B::Error: Into<StdError> + Send + 'static,
 {
-    type Response = http::Response<tonic::body::BoxBody>;
+    type Response = http::Response<tonic::body::Body>;
     type Error = Infallible;
     type Future = BoxFuture<Self::Response, Self::Error>;
     fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
@@ -2017,7 +2078,7 @@ where
         assert_eq!(request.uri().path(), "/keyspacepb.Keyspace/LoadKeyspace");
         Box::pin(async move {
             Ok(
-                tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
+                tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
                     .unary(service, request)
                     .await,
             )

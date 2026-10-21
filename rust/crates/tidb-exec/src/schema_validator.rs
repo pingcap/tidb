@@ -293,6 +293,13 @@ impl SchemaValidator {
         }
     }
 
+    /// The schema lease this validator was built with: the domain's
+    /// `schemaLease`, which Go also hands the DDL executor (`e.lease`).
+    #[must_use]
+    pub fn lease(&self) -> Duration {
+        self.read().lease
+    }
+
     /// boundary: Go `vardef.SetMaxDeltaSchemaCount`. Sets how many deltas the
     /// ring retains; a non-positive count makes [`Validator::update`] retain
     /// none.

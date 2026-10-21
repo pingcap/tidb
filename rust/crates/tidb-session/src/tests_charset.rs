@@ -726,6 +726,85 @@ fn latin1_client_identifiers_and_comments_reload_from_stored_json() {
     );
 }
 
+/// Go's parser types a plain string literal with the session's
+/// `character_set_connection`, so the generated expression a latin1 client
+/// wrote restores as `concat(`b`, _latin1'x\u{FFFD}')` (the byte replaced
+/// by the meta JSON reload). Go oracle, the same statements.
+#[test]
+fn latin1_client_generated_text_carries_the_connection_introducer() {
+    let mut session = Session::new();
+    session.run("SET NAMES latin1").unwrap();
+    let sql = client_sql(
+        &session,
+        b"CREATE TABLE g1 (b VARCHAR(10), g VARCHAR(20) AS (CONCAT(b, 'x\xe9')))",
+    );
+    session.run(&sql).unwrap();
+    session.run("SET NAMES utf8mb4").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT HEX(GENERATION_EXPRESSION) FROM information_schema.columns WHERE \
+             table_schema = 'test' AND table_name = 'g1' AND column_name = 'g'"
+        )),
+        [["636F6E636174286062602C205F6C6174696E312778EFBFBD2729"]]
+    );
+}
+
+/// Go reloads a partitioned table's `PartitionInfo` from meta JSON and
+/// rebuilds its routing from the reloaded bound TEXT: a latin1 client's LIST
+/// COLUMNS bound `'x\xE9'` becomes `'x\u{FFFD}'`, so the row `'x\xE9'` no
+/// longer has a partition (1526), and the RANGE COLUMNS bound `'m\xE9'`
+/// routes by `'m\u{FFFD}'`. Go oracle, the same statements.
+#[test]
+fn latin1_client_partition_bounds_route_by_their_reloaded_text() {
+    let mut session = Session::new();
+    session.run("SET NAMES latin1").unwrap();
+    for sql in [
+        &b"CREATE TABLE p1 (a INT, b VARCHAR(10)) CHARSET latin1 PARTITION BY LIST COLUMNS (b) \
+           (PARTITION p0 VALUES IN ('x\xe9', 'q'), PARTITION p1 VALUES IN ('z'))"[..],
+        &b"CREATE TABLE p2 (a INT, b VARCHAR(10)) CHARSET latin1 PARTITION BY RANGE COLUMNS (b) \
+           (PARTITION p0 VALUES LESS THAN ('m\xe9'), PARTITION p1 VALUES LESS THAN (MAXVALUE))"[..],
+    ] {
+        let sql = client_sql(&session, sql);
+        session.run(&sql).unwrap();
+    }
+    session.run("SET NAMES utf8mb4").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT TABLE_NAME, PARTITION_NAME, HEX(PARTITION_DESCRIPTION) FROM \
+             information_schema.partitions WHERE table_schema = 'test' ORDER BY 1, 2"
+        )),
+        [
+            ["p1", "p0", "2778EFBFBD272C277127"],
+            ["p1", "p1", "277A27"],
+            ["p2", "p0", "276DEFBFBD27"],
+            ["p2", "p1", "4D415856414C5545"]
+        ]
+    );
+    session.run("SET NAMES latin1").unwrap();
+    let sql = client_sql(&session, b"INSERT INTO p1 VALUES (1, 'x\xe9')");
+    let error = session.run(&sql).unwrap_err().to_mysql_error();
+    assert_eq!(error.code, 1526, "{}", error.message);
+    session.run("INSERT INTO p1 VALUES (2, 'q')").unwrap();
+    let sql = client_sql(
+        &session,
+        b"INSERT INTO p2 VALUES (1, 'm'), (2, 'm\xe9'), (3, 'n')",
+    );
+    session.run(&sql).unwrap();
+    session.run("SET NAMES utf8mb4").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, HEX(b) FROM p1 PARTITION (p0) ORDER BY a")),
+        [["2", "71"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a, HEX(b) FROM p2 PARTITION (p0) ORDER BY a")),
+        [["1", "6D"], ["2", "6DE9"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a, HEX(b) FROM p2 PARTITION (p1) ORDER BY a")),
+        [["3", "6E"]]
+    );
+}
+
 /// Go parses a statement once, with the client's encodings, and binds a
 /// prepared statement's values onto that tree; nothing re-lexes it in
 /// another encoding. A gbk client's identifier `中` (bytes D6 D0) must name

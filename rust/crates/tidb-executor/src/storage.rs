@@ -104,6 +104,15 @@ pub trait StorageIterator: Send {
     fn next(&mut self) -> Result<(), StorageError>;
     /// Releases the iterator (Go `Iterator.Close`).
     fn close(&mut self);
+    /// How many of the store snapshot's entries this cursor has consumed so
+    /// far, when it merges a transaction's staged writes over that snapshot
+    /// (Go's `UnionScan` over a coprocessor reader). Only those entries are
+    /// keys a coprocessor scan processes (`ScanDetail.ProcessedKeys`); a
+    /// staged row is merged in TiDB. `None` for a cursor with no staged
+    /// overlay, every entry of which is a snapshot entry.
+    fn snapshot_entries_consumed(&self) -> Option<u64> {
+        None
+    }
 }
 
 impl<I> StorageIterator for I
@@ -320,6 +329,21 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         upper_bound: &Key,
     ) -> Result<Option<(Key, Vec<u8>)>, StorageError> {
         self.first(Some(start), Some(upper_bound))
+    }
+
+    /// Go `PointGetExecutor.lockKeyIfNeeded` / `BatchPointGetExec`'s
+    /// `LockKeys` with `InitReturnValues`: a pessimistic transaction's
+    /// locking point read locks its record keys DURING execution, before it
+    /// reads them, and the read is answered from the lock responses
+    /// (`TxnCtx.SetPessimisticLockCache`). A backend whose statement takes no
+    /// pessimistic locks (the in-process store, an optimistic transaction)
+    /// answers `Ok(())` and the read proceeds unlocked.
+    fn lock_keys_for_read(
+        &mut self,
+        _keys: &[Key],
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        Ok(())
     }
 
     /// Optionally serves a base-table scan remotely, with the predicate, the

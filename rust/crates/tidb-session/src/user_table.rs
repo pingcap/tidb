@@ -694,7 +694,7 @@ impl Session {
         if !self.user_table_present() || self.account_storage_delegated {
             return Ok(());
         }
-        let name = name.to_uppercase();
+        let name = tidb_hack::go_to_upper(name);
         match grant_option {
             Some(with_grant) => self.run_user_table_write(&format!(
                 "REPLACE INTO mysql.global_grants (user,host,priv,with_grant_option) VALUES \

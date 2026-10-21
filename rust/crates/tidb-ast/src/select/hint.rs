@@ -300,6 +300,25 @@ pub enum LeadingElement {
     Group(Vec<LeadingElement>),
 }
 
+/// How Go's `RestoreCtx.WriteKeyWord` cases a keyword: `strings.ToUpper` /
+/// `strings.ToLower` under the keyword-case flags, as written otherwise.
+#[derive(Clone, Copy)]
+enum KeywordCase {
+    Upper,
+    Lower,
+    Written,
+}
+
+impl KeywordCase {
+    fn apply(self, keyword: &str) -> String {
+        match self {
+            Self::Upper => tidb_mysql::to_uppercase(keyword),
+            Self::Lower => tidb_mysql::to_lowercase(keyword),
+            Self::Written => keyword.to_owned(),
+        }
+    }
+}
+
 fn restore_leading_elements(out: &mut String, elements: &[LeadingElement]) {
     for (index, element) in elements.iter().enumerate() {
         if index > 0 {
@@ -329,12 +348,12 @@ impl Hint {
     /// name keeps its written case and names are not back-quoted.
     pub fn restore_unflagged(&self) -> String {
         let mut out = String::new();
-        self.restore_into_styled(&mut out, self.written_name(), false);
+        self.restore_into_styled(&mut out, self.written_name(), KeywordCase::Written, false);
         out
     }
 
     pub(crate) fn restore_into(&self, out: &mut String) {
-        self.restore_into_styled(out, &self.name, true);
+        self.restore_into_styled(out, &self.name, KeywordCase::Upper, true);
     }
 
     /// Go `ctx.WriteKeyWord(n.HintName.String())`: the written name unless a
@@ -342,23 +361,30 @@ impl Hint {
     /// keeps `use_index` lowercase.
     pub(crate) fn restore_into_with_context(&self, out: &mut String, context: &RestoreContext) {
         let flags = context.flags();
-        let lowered;
-        let hint_name = if flags.has_keyword_uppercase() {
-            &self.name
+        let case = if flags.has_keyword_uppercase() {
+            KeywordCase::Upper
         } else if flags.has_keyword_lowercase() {
-            lowered = self.written_name().to_lowercase();
-            &lowered
+            KeywordCase::Lower
         } else {
-            self.written_name()
+            KeywordCase::Written
+        };
+        let lowered;
+        let hint_name = match case {
+            KeywordCase::Upper => &self.name,
+            KeywordCase::Lower => {
+                lowered = tidb_mysql::to_lowercase(self.written_name());
+                &lowered
+            }
+            KeywordCase::Written => self.written_name(),
         };
         self.restore_into_styled(
             out,
             hint_name,
+            case,
             flags.contains(crate::RestoreFlags::NAME_BACK_QUOTES),
         );
     }
 
-    /// Go `HintName.O`.
     /// Go `HintName.O` (`HintName.String()`): the name as written.
     pub fn written_name(&self) -> &str {
         self.written_name.as_deref().unwrap_or(&self.name)
@@ -373,7 +399,13 @@ impl Hint {
         tidb_mysql::to_lowercase(self.written_name())
     }
 
-    fn restore_into_styled(&self, out: &mut String, hint_name: &str, back_quote_names: bool) {
+    fn restore_into_styled(
+        &self,
+        out: &mut String,
+        hint_name: &str,
+        keyword_case: KeywordCase,
+        back_quote_names: bool,
+    ) {
         let back_quote = |name: &str| {
             if back_quote_names {
                 back_quote(name)
@@ -399,7 +431,8 @@ impl Hint {
                     out.push_str(&back_quote(qb));
                     out.push(' ');
                 }
-                out.push_str(store);
+                // Go `ctx.WriteKeyWord(n.HintData.(CIStr).String())`.
+                out.push_str(&keyword_case.apply(store));
                 // The brackets themselves are only written when at
                 // least one table is present — confirmed via `godump
                 // restore`: a bare `TIKV` with no list at all restores
@@ -511,7 +544,8 @@ impl Hint {
                     out.push_str(&back_quote(qb_name));
                     out.push(' ');
                 }
-                out.push_str(value);
+                // Go `ctx.WriteKeyWord(n.HintData.(CIStr).String())`.
+                out.push_str(&keyword_case.apply(value));
             }
             HintKind::MemoryQuota { qb_name, bytes } => {
                 if let Some(qb_name) = qb_name {

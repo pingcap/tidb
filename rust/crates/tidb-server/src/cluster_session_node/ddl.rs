@@ -277,6 +277,8 @@ where
     row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
     /// Go `delRange`'s emulator, on a store without delete-range support.
     del_range: Arc<std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>>,
+    /// Go `ddlJobDoneChMap`, shared by this node's submitting sessions.
+    ddl_job_done_ch_map: Arc<tidb_exec::real_tikv_ddl::DdlJobDoneChMap>,
 }
 
 impl<S> PersistedDdlScheduler<S>
@@ -348,6 +350,7 @@ where
         del_range: Arc<
             std::sync::OnceLock<tidb_exec::real_tikv_ddl::delete_range::DelRangeEmulator>,
         >,
+        ddl_job_done_ch_map: Arc<tidb_exec::real_tikv_ddl::DdlJobDoneChMap>,
     ) {
         must_reload_schemas(schema_sync.as_ref(), &stopped, DDL_SCHEDULER_INTERVAL);
         if stop.load(Ordering::Acquire) {
@@ -386,10 +389,14 @@ where
                         let backfiller = KvTableIndexBackfiller {
                             row_ids: row_ids.get().cloned(),
                         };
+                        // Go `getJobRunCtx`: the job context carries the
+                        // submitter's done signal, when this node has one.
+                        let job_done = ddl_job_done_ch_map.load(job.id);
                         match run_persisted_ddl_job(
                             Arc::clone(&opener),
                             job.id,
                             timeout,
+                            job_done.as_deref(),
                             notifier_ref,
                             &backfiller,
                             &KvTableIndexBackfiller::default(),
@@ -509,6 +516,7 @@ where
                 let min_job_id_refresher = Arc::clone(&self.min_job_id_refresher);
                 let row_ids = Arc::clone(&self.row_ids);
                 let del_range = Arc::clone(&self.del_range);
+                let ddl_job_done_ch_map = Arc::clone(&self.ddl_job_done_ch_map);
                 let owner = self
                     .owner
                     .lock()
@@ -531,6 +539,7 @@ where
                         stopped,
                         row_ids,
                         del_range,
+                        ddl_job_done_ch_map,
                     )
                 }
             })
@@ -705,6 +714,7 @@ where
             worker: Mutex::new(None),
             row_ids: Arc::new(std::sync::OnceLock::new()),
             del_range: Arc::new(std::sync::OnceLock::new()),
+            ddl_job_done_ch_map: Arc::default(),
         });
         let owner: Arc<dyn tidb_owner::Manager> = match notifier.as_ref() {
             Some(etcd) => Arc::new(tidb_owner::OwnerManager::new(
@@ -783,8 +793,58 @@ where
         }
     }
 
-    fn wait_persisted_job(&self, ddl_job_id: i64) -> Result<ClusterDdlReport, SqlQueryError> {
+    /// Go `DoDDLJobWrapper`'s wait: the done signal the scheduler closes
+    /// once the job is done and its reorg handles are cleaned, or the check
+    /// ticker (`getJobCheckInterval`, capped by ten leases), then the job's
+    /// history. The signal is dropped when the wait ends (`delJobDoneCh`).
+    fn wait_persisted_job(
+        &self,
+        ddl_job_id: i64,
+        action: tidb_model::ActionType,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        let result = self.wait_persisted_job_done(ddl_job_id, action);
+        self.scheduler.ddl_job_done_ch_map.delete(ddl_job_id);
+        result
+    }
+
+    fn wait_persisted_job_done(
+        &self,
+        ddl_job_id: i64,
+        action: tidb_model::ActionType,
+    ) -> Result<ClusterDdlReport, SqlQueryError> {
+        use tidb_exec::real_tikv_ddl::{choose_lease_time, get_job_check_interval};
+        let lease = self.schema_sync.schema_validator.lease().saturating_mul(10);
+        let mut tick = choose_lease_time(lease, get_job_check_interval(action, 0).0);
+        let mut next_tick = std::time::Instant::now() + tick;
+        let mut checks = 0;
+        let mut notify = self.scheduler.ddl_job_done_ch_map.load(ddl_job_id);
         loop {
+            match notify.as_ref() {
+                // A closed signal is read once; later rounds wait on the
+                // ticker alone.
+                Some(done) if done.wait_until(next_tick) => notify = None,
+                _ => {
+                    if notify.is_none() {
+                        let now = std::time::Instant::now();
+                        if next_tick > now {
+                            std::thread::sleep(next_tick - now);
+                        }
+                    }
+                    checks += 1;
+                    // Go `updateTickerInterval`: a new interval restarts the
+                    // ticker; an unchanged one keeps its period.
+                    let (interval, changed) = get_job_check_interval(action, checks);
+                    let now = std::time::Instant::now();
+                    if changed {
+                        tick = choose_lease_time(lease, interval);
+                        next_tick = now + tick;
+                    } else {
+                        while next_tick <= now {
+                            next_tick += tick;
+                        }
+                    }
+                }
+            }
             if let Some(job) =
                 load_history_persisted_ddl_job(Arc::clone(&self.opener), ddl_job_id, self.timeout)
                     .map_err(cluster_ddl_error)?
@@ -820,18 +880,6 @@ where
                     job.state
                 )));
             }
-
-            let (generation, condvar) = &*self.scheduler.wake;
-            let guard = generation
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let observed = *guard;
-            let (guard, _) = condvar
-                .wait_timeout_while(guard, Duration::from_millis(100), |generation| {
-                    *generation == observed
-                })
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            drop(guard);
         }
     }
 }
@@ -1055,6 +1103,7 @@ mod schema_sync_tests {
                 opener.clone(),
                 job_id,
                 timeout,
+                None,
                 Some(&notifier),
                 &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
@@ -1259,6 +1308,7 @@ mod schema_sync_tests {
                 opener.clone(),
                 id,
                 timeout,
+                None,
                 notifier,
                 &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
@@ -1691,6 +1741,7 @@ mod schema_sync_tests {
                 id,
                 timeout,
                 None,
+                None,
                 &KvTableIndexBackfiller::default(),
                 &KvTableIndexBackfiller::default(),
                 &barrier,
@@ -1817,6 +1868,7 @@ mod schema_sync_tests {
             700,
             timeout,
             None,
+            None,
             &KvTableIndexBackfiller::default(),
             &validator,
             &barrier,
@@ -1858,6 +1910,7 @@ mod schema_sync_tests {
             opener.clone(),
             700,
             timeout,
+            None,
             None,
             &KvTableIndexBackfiller::default(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
@@ -1906,6 +1959,7 @@ mod schema_sync_tests {
             opener.clone(),
             704,
             timeout,
+            None,
             None,
             &KvTableIndexBackfiller::default(),
             &PauseDuringValidation(|_: &MutationBuffer| {}),
@@ -1983,6 +2037,7 @@ mod schema_sync_tests {
             702,
             timeout,
             None,
+            None,
             &KvTableIndexBackfiller::default(),
             &panicking,
             &barrier,
@@ -1997,6 +2052,7 @@ mod schema_sync_tests {
             opener.clone(),
             702,
             timeout,
+            None,
             None,
             &KvTableIndexBackfiller::default(),
             &panicking,
@@ -2072,6 +2128,7 @@ mod schema_sync_tests {
                 703,
                 timeout,
                 None,
+                None,
                 &KvTableIndexBackfiller::default(),
                 &pause_then_panic,
                 &barrier,
@@ -2093,6 +2150,7 @@ mod schema_sync_tests {
                 opener.clone(),
                 703,
                 timeout,
+                None,
                 None,
                 &KvTableIndexBackfiller::default(),
                 &panicking,
@@ -2134,6 +2192,148 @@ mod schema_sync_tests {
             panic_count + 4,
             "record every recovered action panic, including owner loss and a conflicting pause"
         );
+    }
+
+    /// Go `handleJobDone`: after the history commit the reorg handles are
+    /// cleaned, and only then does the submitting session's done signal
+    /// close. A delay injected between the history commit and the cleanup
+    /// widens the window a session woken any earlier would read the job's
+    /// leftover `mysql.tidb_ddl_reorg` row in
+    /// (`add_index_runs_as_a_persisted_job_like_go`).
+    #[test]
+    fn job_done_signal_closes_after_reorg_handles_are_cleaned() {
+        if crate::isolate_process_globals() {
+            return;
+        }
+        tidb_vardef::set_enable_mdl(true);
+        use tidb_exec::ddl_reorg_table::DdlReorgTable;
+        use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
+        use tidb_exec::real_tikv_ddl::{load_history_persisted_ddl_job, JobDoneCh};
+        use tidb_model::{
+            ActionType, CreateSchemaArgs, DBInfo, GoField, GoShared, HistoryInfo, Job, JobState,
+            JobVersion,
+        };
+        use tidb_txnkv::transaction::OptimisticCommitOutcome;
+        struct Synced;
+        impl DdlSchemaSync for Synced {
+            fn owner_id(&self) -> &str {
+                "owner"
+            }
+            fn wait_version_synced(&self, _: i64, _: i64) -> Result<(), String> {
+                Ok(())
+            }
+            fn clean_job_versions(&self, _: i64) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        struct FailpointGuard;
+        impl Drop for FailpointGuard {
+            fn drop(&mut self) {
+                fail::remove("beforeCleanupDDLReorgHandles");
+            }
+        }
+        let (_pd, opener) = crate::unistore_node::in_process_write_stack().unwrap();
+        let opener = Arc::new(opener);
+        let timeout = Duration::from_secs(5);
+        let (outcome, _) = crate::bootstrap_publish::publish_bootstrap(&opener, timeout).unwrap();
+        assert!(matches!(outcome, OptimisticCommitOutcome::Committed(_)));
+        let mut job = Job::default();
+        job.id = 700;
+        job.schema_id = 701;
+        job.schema_name = "done_signal".into();
+        job.type_ = ActionType::ACTION_CREATE_SCHEMA;
+        job.state = JobState::QUEUEING;
+        job.version = JobVersion::V2;
+        job.binlog_info = Some(GoShared::new(HistoryInfo::default()));
+        job.fill_args(Some(GoShared::new(CreateSchemaArgs {
+            db_info: GoField::new(Some(GoShared::new(DBInfo {
+                id: 701,
+                name: tidb_ast::CiString::new("done_signal"),
+                ..Default::default()
+            }))),
+        })));
+        // The job and a reorg handle of its own, as a backfill leaves one.
+        {
+            let mut tx = opener.begin().unwrap();
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            let mut mutations = Vec::new();
+            DdlJobTable::locate(&catalog)
+                .unwrap()
+                .append_insert(&mut job, false, "701", "0", false, &mut mutations)
+                .unwrap();
+            mutations.extend(
+                DdlReorgTable::locate(&catalog)
+                    .unwrap()
+                    .init_mutations(
+                        &[],
+                        job.id,
+                        &tidb_exec::cluster_ddl::add_index::ReorgHandle {
+                            element_id: 1,
+                            element_type: b"_idx_".to_vec(),
+                            start_key: Vec::new(),
+                            end_key: Vec::new(),
+                            physical_id: 701,
+                        },
+                        1,
+                    )
+                    .unwrap(),
+            );
+            assert!(matches!(
+                tx.commit(
+                    mutations,
+                    &tidb_txnkv::UnaryCallContext::with_timeout(timeout)
+                )
+                .unwrap(),
+                OptimisticCommitOutcome::Committed(_)
+            ));
+        }
+        let reorg_rows = move |opener: &Arc<
+            tidb_txnkv::transaction::RealOptimisticTransactionOpener<
+                tidb_unistore::mock::StorePdClient,
+            >,
+        >| {
+            let mut tx = opener.begin().unwrap();
+            let mut snapshot = TransactionMetaSnapshot::new(&mut tx, timeout);
+            let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut snapshot).unwrap();
+            DdlReorgTable::locate(&catalog)
+                .unwrap()
+                .load(&mut snapshot, 700)
+                .unwrap()
+                .len()
+        };
+        assert_eq!(reorg_rows(&opener), 1);
+
+        fail::cfg("beforeCleanupDDLReorgHandles", "sleep(300)").unwrap();
+        let _guard = FailpointGuard;
+        let done = Arc::new(JobDoneCh::default());
+        let waiter = std::thread::spawn({
+            let done = Arc::clone(&done);
+            let opener = Arc::clone(&opener);
+            move || {
+                assert!(done.wait_until(std::time::Instant::now() + Duration::from_secs(30)));
+                (
+                    load_history_persisted_ddl_job(Arc::clone(&opener), 700, timeout)
+                        .unwrap()
+                        .is_some(),
+                    reorg_rows(&opener),
+                )
+            }
+        });
+        let outcome = run_persisted_ddl_job(
+            opener.clone(),
+            700,
+            timeout,
+            Some(&done),
+            None,
+            &KvTableIndexBackfiller::default(),
+            &KvTableIndexBackfiller::default(),
+            &Synced,
+            &|| Ok(()),
+            &|_| panic!("the job must not fail"),
+        );
+        assert!(matches!(outcome, Ok(PersistedDdlJobOutcome::Finished)));
+        assert_eq!(waiter.join().unwrap(), (true, 0));
     }
 
     #[test]
@@ -2397,16 +2597,17 @@ where
                 | DdlStatement::DropCheckConstraint { .. }
                 | DdlStatement::AlterCheckConstraint { .. }
         ) {
-            let ddl_job_id = submit_check_constraint_job_with_retry(
+            let (ddl_job_id, action) = submit_check_constraint_job_with_retry(
                 Arc::clone(&self.opener),
                 statement,
                 self.timeout,
                 self.server_state.is_upgrading_state(),
                 self.min_job_id_refresher.current_min_job_id(),
+                Some(&self.scheduler.ddl_job_done_ch_map),
             )
             .map_err(cluster_ddl_error)?;
             self.notify_new_job_submitted();
-            let report = self.wait_persisted_job(ddl_job_id)?;
+            let report = self.wait_persisted_job(ddl_job_id, action)?;
             self.refresh_catalog();
             return Ok(report);
         }
@@ -2467,15 +2668,20 @@ where
                 self.min_job_id_refresher.current_min_job_id(),
                 &KvTableIndexBackfiller::default(),
                 self.auto_ids.as_ref(),
+                Some(&self.scheduler.ddl_job_done_ch_map),
             )
             .map_err(cluster_ddl_error)?
             {
                 tidb_exec::real_tikv_ddl::AddIndexSubmitted::AlreadySatisfied(report) => {
                     return Ok(report)
                 }
-                tidb_exec::real_tikv_ddl::AddIndexSubmitted::Job(ddl_job_id, executor_warnings) => {
+                tidb_exec::real_tikv_ddl::AddIndexSubmitted::Job(
+                    ddl_job_id,
+                    action,
+                    executor_warnings,
+                ) => {
                     self.notify_new_job_submitted();
-                    let mut report = self.wait_persisted_job(ddl_job_id)?;
+                    let mut report = self.wait_persisted_job(ddl_job_id, action)?;
                     self.refresh_catalog();
                     // The executor's warnings precede the job's.
                     let (ClusterDdlReport::Applied { warnings, .. }

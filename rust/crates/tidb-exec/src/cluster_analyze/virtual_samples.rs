@@ -93,6 +93,7 @@ impl VirtualSamples {
                         &types,
                         &context.time_zone(),
                         context.like_default_escape(),
+                        "utf8mb4",
                     )
                     .map_err(|error| {
                         AnalyzeError::unsupported(format!(

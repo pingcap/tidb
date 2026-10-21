@@ -177,6 +177,8 @@ impl KvTable {
         pessimistic: bool,
         check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
+        // Go `index.create`'s region (the statement's writes pass their ctx).
+        let _create = tidb_util::tracing::start_thread_region("index.Create");
         let kv_index = &index.index;
         let duplicate_value = duplicate_value_text(&self.index_values(kv_index, row));
         for entry in self.index_entry_keys(kv_index, row, handle, physical_id, zone)? {

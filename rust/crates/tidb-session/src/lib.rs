@@ -2759,6 +2759,19 @@ impl Session {
         &mut self.write_sli
     }
 
+    /// Go `ExecStmt.FinishExecuteStmt`'s read-key record: the statement's
+    /// coprocessor processed keys (`ExecDetails.ScanDetail.ProcessedKeys`)
+    /// reach the SLI only for a write statement that affected rows.
+    pub fn add_statement_read_keys(&mut self, affected_rows: u64) {
+        let processed_keys = self
+            .statement_keys_read
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if processed_keys > 0 && affected_rows > 0 {
+            self.write_sli
+                .add_read_keys(i64::try_from(processed_keys).unwrap_or(i64::MAX));
+        }
+    }
+
     /// Go server `addQueryMetrics`' SLI call at the end of one SQL command.
     pub fn finish_txn_write_throughput(&mut self, cost: Duration) {
         let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);

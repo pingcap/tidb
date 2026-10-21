@@ -1792,6 +1792,17 @@ fn run_insert_rows(
     // authoritative `addRecord`/index writes below perform the same one
     // existence check and retain the duplicate error, so probing here would
     // issue a redundant remote read for every row in a batch.
+    // Go `InsertExec.exec`'s event over the rows it inserts (REPLACE and
+    // LOAD DATA run their own executors, which log none).
+    if !insert.replace && load_restrictive.is_none() {
+        tidb_util::tracing::thread_event(|| {
+            format!(
+                "insert {} rows into table `{}`",
+                new_rows.len(),
+                table_name.to_lowercase()
+            )
+        });
+    }
     let resolves_conflicts = insert.replace || has_on_duplicate || insert.ignore;
     // A normal INSERT into a clustered table with no secondary indexes can
     // prove all record keys absent in one BatchGet. Keep the proof narrow: a
@@ -2604,6 +2615,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     optimize.end();
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
+        mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }
@@ -3219,6 +3231,32 @@ fn cached_dml_physical_plan(
     Some((root, true))
 }
 
+/// Go `tryUpdatePointPlan` / `tryDeletePointPlan`: an UPDATE's or DELETE's
+/// point source carries `Lock` in a pessimistic transaction, so its executor
+/// locks the row inside `Next` before reading it (`PointGetExecutor.getAndLock`).
+/// A cached plan is marked per execution, because the transaction mode of the
+/// execution, not of the caching, decides it.
+fn mark_dml_point_source_lock(plan: &mut tidb_planner::physical::PhysicalPlan, pessimistic: bool) {
+    use tidb_planner::physical::PhysicalPlan;
+    match plan {
+        PhysicalPlan::Dml(root) => {
+            if let Some(child) = root.select_plan.as_deref_mut() {
+                mark_dml_point_source_lock(child, pessimistic);
+            }
+        }
+        PhysicalPlan::TableReader(reader) => {
+            if let Some(child) = reader.table_plan.as_deref_mut() {
+                mark_dml_point_source_lock(child, pessimistic);
+            }
+        }
+        PhysicalPlan::PointGet(point) if point.select_lock.is_none() => point.lock = pessimistic,
+        PhysicalPlan::BatchPointGet(batch) if batch.select_lock.is_none() => {
+            batch.lock = pessimistic;
+        }
+        _ => {}
+    }
+}
+
 fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPlan) {
     use tidb_planner::physical::{PhysicalPlan, PhysicalPointGet};
     use tidb_planner::physical_plan_cache::PointRangeRebuild;
@@ -3582,7 +3620,10 @@ fn run_update_with_physical(
             &tidb_planner::plan_base::PlanIdAllocator::new(),
         );
         ctx.truncate_warnings(warning_bookmark);
-        fast.ok().flatten()
+        fast.ok().flatten().map(|mut fast| {
+            mark_dml_point_source_lock(&mut fast, ctx.pessimistic_transaction());
+            fast
+        })
     });
     let mut physical_source = fast_point_source.as_mut().or(physical_source);
     let partition_ids = match catalog.get_in(&database, &name) {
@@ -3938,6 +3979,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     optimize.end();
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
+        mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
     }

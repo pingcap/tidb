@@ -618,11 +618,22 @@ pub fn build_generated_columns(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<Option<GeneratedColumn>>, GeneratedDdlError> {
-    build_generated_columns_with_like_default_escape(defs, names, types, zone, b'\\', false)
+    build_generated_columns_with_like_default_escape(
+        defs,
+        names,
+        types,
+        zone,
+        b'\\',
+        false,
+        tidb_mysql::DefaultCharset,
+    )
 }
 
 /// Statement-aware generated-column builder. The implicit `LIKE` escape is
-/// captured with the DDL statement and retained by its expression cache.
+/// captured with the DDL statement and retained by its expression cache;
+/// `connection_charset` is the DDL session's `character_set_connection`,
+/// which Go's parser gave every plain string literal of the expression and
+/// which its restored text therefore writes as the `_charset` introducer.
 pub fn build_generated_columns_with_like_default_escape(
     defs: &[tidb_ast::ColumnDef],
     names: &[String],
@@ -630,6 +641,7 @@ pub fn build_generated_columns_with_like_default_escape(
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
     auto_increment_in_generated: bool,
+    connection_charset: &str,
 ) -> Result<Vec<Option<GeneratedColumn>>, GeneratedDdlError> {
     // Which columns are generated has to be known before any expression is
     // validated, because the 3107 check asks about the column it READS.
@@ -677,7 +689,10 @@ pub fn build_generated_columns_with_like_default_escape(
         }
         dependencies_at.push((position, resolver.dependencies()));
         built.push(Some(GeneratedColumn {
-            expr_text: expression.restore_with_flags(generated_restore_flags()),
+            expr_text: expression.restore_with_flags_and_string_charset(
+                generated_restore_flags(),
+                connection_charset,
+            ),
             stored: *stored,
             expr,
             dependencies: resolver.dependency_names(),
@@ -743,11 +758,21 @@ pub fn build_added_generated_column(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
     build_added_generated_column_with_like_default_escape(
-        name, expression, stored, names, types, zone, b'\\',
+        name,
+        expression,
+        stored,
+        names,
+        types,
+        zone,
+        b'\\',
+        tidb_mysql::DefaultCharset,
     )
 }
 
-/// Statement-aware form of [`build_added_generated_column`].
+/// Statement-aware form of [`build_added_generated_column`];
+/// `connection_charset` as for
+/// [`build_generated_columns_with_like_default_escape`].
+#[allow(clippy::too_many_arguments)]
 pub fn build_added_generated_column_with_like_default_escape(
     name: &str,
     expression: &tidb_ast::Expr,
@@ -756,6 +781,7 @@ pub fn build_added_generated_column_with_like_default_escape(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
+    connection_charset: &str,
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
     crate::expression_index::check_illegal_fn_4_generated(
         &tidb_hack::go_to_lower(name),
@@ -763,7 +789,11 @@ pub fn build_added_generated_column_with_like_default_escape(
         expression,
     )
     .map_err(GeneratedDdlError::IllegalFunction)?;
-    resolve_generated_expr(expression, stored, names, types, zone, like_default_escape)
+    let mut generated =
+        resolve_generated_expr(expression, stored, names, types, zone, like_default_escape)?;
+    generated.expr_text = expression
+        .restore_with_flags_and_string_charset(generated_restore_flags(), connection_charset);
+    Ok(generated)
 }
 
 /// Go `buildGeneratedExpr` (`pkg/table/tables/tables.go`), which

@@ -101,6 +101,7 @@ tidb-config = { path = "../tidb-config" }
 toml.workspace = true
 
 [dev-dependencies]
+tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
 tidb-util = { path = "../tidb-util", features = ["failpoints"] }
 fail = { version = "0.4", features = ["failpoints"] }
 prost.workspace = true
@@ -133,6 +134,7 @@ diagnostics = []
 default = ["jemalloc"]
 failpoints = [
     "tidb-ddl-serverstate/failpoints",
+    "tidb-exec/failpoints",
     "tidb-resourcemanager/failpoints",
     "tidb-stats-handle-cache/failpoints",
     "tidb-util/failpoints",

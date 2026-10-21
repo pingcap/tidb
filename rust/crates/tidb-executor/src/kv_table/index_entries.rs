@@ -707,6 +707,8 @@ impl KvTable {
         pessimistic: bool,
         check_in_prewrite: bool,
     ) -> Result<(), KvTableError> {
+        // Go `index.create`'s region (the statement's writes pass their ctx).
+        let _create = tidb_util::tracing::start_thread_region("index.Create");
         // Go `addIndices` composes the message from the row's (cut) values
         // before any multi-valued expansion, which is why a duplicate element
         // reports the whole array (`'["y"]'`).

@@ -13,7 +13,11 @@ mod request_source;
 mod ru;
 mod ts_set;
 
-pub use crate::trace::{trace_exec_details_enabled, with_trace_exec_details};
+pub use crate::trace::{
+    client_spans_enabled, current_client_span_context, trace_exec_details_enabled,
+    with_client_span_context, with_client_spans, with_trace_exec_details, ClientSpanContext,
+    ClientSpanEvent, ClientSpanHandler,
+};
 pub use dns::{wrap_with_domain, CustomDnsDialer};
 pub use duration::format_duration;
 pub use execdetails::*;

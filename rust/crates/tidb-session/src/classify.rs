@@ -430,16 +430,29 @@ impl Session {
             }
             prelock = prelock.without_batch_lookup();
         }
+        // Go converts the key constants under the statement's own type
+        // context while it builds the fast plan (`ResetUpdateStmtCtx`,
+        // `ResetDeleteStmtCtx`, or a SELECT's), so the same class and
+        // `IGNORE` decide which constants pin a key here.
+        let statement = match stmt {
+            Stmt::Dml(dml) => match dml.as_ref() {
+                DmlStmt::Update(update) => self
+                    .statement_context_for_update_read(update.ignore)
+                    .with_statement_class(tidb_executor::StatementClass::Update),
+                DmlStmt::Delete(delete) => self
+                    .statement_context_for_update_read(delete.ignore)
+                    .with_statement_class(tidb_executor::StatementClass::Delete),
+                _ => return Vec::new(),
+            },
+            _ => self
+                .statement_context(false)
+                .with_statement_class(tidb_executor::StatementClass::Select),
+        };
         let catalog = self
             .catalog
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        prelock.bind_keys(
-            params,
-            &catalog,
-            self.current_database(),
-            &self.session_time_zone(),
-        )
+        prelock.bind_keys(params, &catalog, self.current_database(), &statement)
     }
 
     /// Classifies a statement by parsing alone (no execution), so a caller can

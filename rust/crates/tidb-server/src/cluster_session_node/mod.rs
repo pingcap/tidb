@@ -213,7 +213,7 @@ use tidb_session::{
 };
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 
-use tidb_exec::cluster_table_storage::LockKeysOutcome;
+use tidb_exec::cluster_table_storage::{LockKeysOutcome, StatementLockFailure};
 use tidb_stats_handle_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId};
 
 use crate::cluster_account_seam::ClusterAccountWriter;
@@ -488,6 +488,17 @@ impl tidb_executor::driver::StatisticsSource for ClusterStatisticsSource {
             .get(&physical_id)
             .and_then(tidb_exec::stats_watch::TableStatsState::loaded)
             .cloned()
+    }
+
+    fn get_physical_table_stats(
+        &self,
+        physical_id: i64,
+        table: &tidb_executor::driver::PseudoStatsTable,
+    ) -> Option<Arc<tidb_stats::Table>> {
+        self.0
+            .get_physical_table_stats(physical_id, table.partitioned, table.cacheable, || {
+                tidb_stats::pseudo_table(&table.info, false, true)
+            })
     }
 }
 
@@ -5092,6 +5103,60 @@ impl Drop for ClusterServerSession {
     }
 }
 
+/// Go `executor.Compile` of a transaction statement's `Simple` plan
+/// (`planner.Preprocess`, `planner.Optimize`) handing over to
+/// `session.runStmt`, which logs the statement's text. Nothing on an
+/// untraced thread.
+fn compile_simple_statement(sql: &str) {
+    if tidb_util::tracing::current_span().is_none() {
+        return;
+    }
+    tidb_util::tracing::begin_thread_region("executor.Compile", Some(sql.to_owned()));
+    tidb_util::tracing::start_thread_region("planner.Preprocess").end();
+    tidb_util::tracing::start_thread_region("planner.Optimize").end();
+    tidb_executor::driver::begin_run_stmt_region();
+}
+
+/// Go `ExecStmt.handleNoDelayExecutor` and, under it, `*executor.SimpleExec`'s
+/// `exec.Next` region; both end when the value drops.
+struct SimpleExecRegions {
+    // Dropped in declaration order: the executor's call ends first.
+    _next: tidb_util::tracing::ThreadRegion,
+    _handle: tidb_util::tracing::ThreadRegion,
+}
+
+impl SimpleExecRegions {
+    fn begin() -> Self {
+        let handle = tidb_util::tracing::start_thread_region_ex("executor.handleNoDelayExecutor");
+        let next = tidb_util::tracing::start_thread_region_ex("*executor.SimpleExec.Next");
+        Self {
+            _next: next,
+            _handle: handle,
+        }
+    }
+}
+
+/// Go `session.CommitTxn` and, over a valid transaction, the
+/// `session.doCommitWithRetry` it calls; the commit runs under both until
+/// the value drops.
+struct CommitTxnRegions {
+    // Dropped in declaration order: the inner region ends first.
+    _do_commit: Option<tidb_util::tracing::ThreadRegion>,
+    _commit_txn: tidb_util::tracing::ThreadRegion,
+}
+
+impl CommitTxnRegions {
+    fn begin(valid: bool) -> Self {
+        let commit_txn = tidb_util::tracing::start_thread_region_ex("session.CommitTxn");
+        let do_commit =
+            valid.then(|| tidb_util::tracing::start_thread_region_ex("session.doCommitWithRetry"));
+        Self {
+            _do_commit: do_commit,
+            _commit_txn: commit_txn,
+        }
+    }
+}
+
 impl ClusterServerSession {
     /// Go `TiDBContext.ExecuteStmt` (`pkg/server/driver_tidb.go:376`): every
     /// error `session.ExecuteStmt` returns is appended to the statement
@@ -5124,6 +5189,10 @@ impl ClusterServerSession {
         if control.is_some() {
             self.session.restore_statement_variables();
         }
+        // Go `ExecStmt.handleNoDelayExecutor` -> `SimpleExec.Next`: the
+        // statement's own work. The commit a COMMIT or ROLLBACK leaves to
+        // `runStmt`'s `finishStmt` runs after it (`session.CommitTxn`).
+        let mut simple_exec = control.is_some().then(SimpleExecRegions::begin);
         // Refused BEFORE the driver session is touched, which is the whole
         // point: `Session::control_transaction` sets `in_transaction` for any
         // BEGIN spelling, so honoring the refusal afterwards would leave the
@@ -5174,6 +5243,9 @@ impl ClusterServerSession {
             // back); the staged writes must go with it rather than wait for
             // the next statement's leftover-transaction commit to publish
             // them.
+            // Go `executeBegin` -> `NewTxn`: `session.CommitTxn` of the open
+            // transaction, inside the `SimpleExec`.
+            let _commit_txn = CommitTxnRegions::begin(true);
             if let Err(error) = self.session.control_transaction("COMMIT") {
                 self.discard_explicit()?;
                 return Err(map_error(error));
@@ -5206,8 +5278,23 @@ impl ClusterServerSession {
             return Ok(None);
         };
         match control {
-            Some(TransactionControl::Commit) => self.commit_explicit()?,
-            Some(TransactionControl::Rollback) => self.discard_explicit()?,
+            Some(TransactionControl::Commit) => {
+                // Go `executeCommit` only leaves the transaction; `finishStmt`
+                // then commits it under `session.CommitTxn`, and
+                // `doCommitWithRetry` opens its region only over a valid
+                // transaction.
+                drop(simple_exec.take());
+                let _commit_txn = CommitTxnRegions::begin(self.explicit.is_some());
+                self.commit_explicit()?;
+            }
+            Some(TransactionControl::Rollback) => {
+                // Go `executeRollback` rolls the transaction back in the
+                // `SimpleExec`; `finishStmt`'s `CommitTxn` then finds no
+                // valid transaction.
+                self.discard_explicit()?;
+                drop(simple_exec.take());
+                let _commit_txn = CommitTxnRegions::begin(false);
+            }
             // A BEGIN drops the staged writes too: a leftover buffer at that
             // point could only come from a statement outside any transaction
             // whose autocommit already published it. Then it takes the one
@@ -5239,6 +5326,7 @@ impl ClusterServerSession {
             // Refused above, before the session was touched.
             Some(TransactionControl::Unsupported(_)) | None => {}
         }
+        drop(simple_exec);
         // The control path bypasses the ordinary statement pipeline's finish
         // publish, so the process row still carried the previous statement's
         // status (`in transaction; autocommit` after a `ROLLBACK`). Refresh it
@@ -5254,55 +5342,35 @@ impl ClusterServerSession {
     ) -> Result<WriteOutcome, SqlQueryError> {
         let owned = sql.to_owned();
         let resource_group = self.session.statement_resource_group(stmt).into_owned();
-        let prelock_keys = self.session.statement_prelock_keys(stmt, &[]);
         // A write declares nothing. Its read-before-write reaches the snapshot
         // as the same `get` a point-get SELECT issues, which is exactly why the
         // declaration is made from the statement rather than from the read.
         //
-        // Go's pessimistic point write also folds its row read INTO its lock
-        // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:612-624`)
-        // -- and the text protocol carries that fold too, because a client-side
-        // prepared driver (Connector/J without `useServerPrepStmts`) sends the
-        // very statements the prepared path folds as plain COM_QUERY. The
-        // classified keys are locked WITH their rows before any read exists;
-        // the statement's read then answers from the lock response exactly as
-        // in [`Self::execute_general`]'s prepared arm.
-        let read_keys = self.storage.read_keys();
-        let attempt_read_keys = read_keys.clone();
+        // Go's pessimistic point write folds its row read INTO its lock inside
+        // execution (`PointGetExecutor.getAndLock`,
+        // `pkg/executor/point_get.go:612-624`): the executor locks the keys its
+        // plan names through `TableStorage::lock_keys_for_read`, so nothing is
+        // classified or locked here before the statement compiles.
         self.activate_statement_txn = self.activates_txn_at_build(stmt);
         let attempt = self.with_prelocked_statement(
             StatementReadShape::Unknown,
-            |_session| prelock_keys.clone(),
+            |_session| Vec::new(),
             &resource_group,
             true,
-            move |session| {
-                attempt_read_keys.begin();
-                match session
-                    .run_parsed(stmt.clone(), &owned)
-                    .map_err(map_error)?
-                {
-                    StmtResult::Affected(count) => Ok(count),
-                    StmtResult::Done(_) => Ok(0),
-                    StmtResult::Rows(_) => Err(SqlQueryError::unknown(
-                        "a write statement unexpectedly produced rows",
-                    )),
-                }
+            move |session| match session
+                .run_parsed(stmt.clone(), &owned)
+                .map_err(map_error)?
+            {
+                StmtResult::Affected(count) => Ok(count),
+                StmtResult::Done(_) => Ok(0),
+                StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                    "a write statement unexpectedly produced rows",
+                )),
             },
         );
         self.activate_statement_txn = false;
-        let affected_rows = match attempt {
-            Ok(affected_rows) => affected_rows,
-            Err(error) => {
-                read_keys.cancel();
-                return Err(error);
-            }
-        };
-        let processed_keys = read_keys.finish().len() as i64;
-        if affected_rows > 0 && processed_keys > 0 {
-            self.session
-                .txn_write_throughput_sli()
-                .add_read_keys(processed_keys);
-        }
+        let affected_rows = attempt?;
+        self.session.add_statement_read_keys(affected_rows);
         Ok(WriteOutcome {
             affected_rows,
             last_insert_id: self.session.statement_insert_id(),
@@ -5377,7 +5445,19 @@ impl ClusterServerSession {
         // Go `executeChild`: `ExecuteStmt`, then `drainRecordSet` pulls the
         // record set it returned under the same span.
         let mut affected = 0_u64;
-        match QuerySession::execute_write_parsed(self, &inner_sql, &inner) {
+        // A transaction statement runs as the connection runs it.
+        let outcome = if classify_transaction_control_stmt(&inner).is_some() {
+            self.control_transaction_parsed(&inner_sql, &inner)
+                .map(|_| {
+                    Some(WriteOutcome {
+                        affected_rows: 0,
+                        last_insert_id: 0,
+                    })
+                })
+        } else {
+            QuerySession::execute_write_parsed(self, &inner_sql, &inner)
+        };
+        match outcome {
             Ok(Some(outcome)) => affected = outcome.affected_rows,
             Ok(None) => match self.execute_parsed(&inner_sql, &inner) {
                 Ok(mut result) => {
@@ -5491,15 +5571,12 @@ impl ClusterServerSession {
         shape: StatementReadShape,
         bind_prelock_keys: impl FnOnce(&Session) -> Vec<Vec<u8>>,
     ) -> Vec<Vec<u8>> {
-        // Bind against the statement's refreshed catalog and transaction,
-        // including a transaction opened lazily by autocommit=0. Computing
-        // keys at the protocol door used to miss that first statement.
-        if self
-            .explicit
-            .as_ref()
-            .is_some_and(|txn| txn.is_pessimistic())
-            || (self.explicit.is_none() && shape == StatementReadShape::AutocommitWrite)
-        {
+        // An explicit pessimistic transaction's locking point reads lock
+        // inside execution, as Go's `PointGetExecutor.getAndLock` does (see
+        // `TableStorage::lock_keys_for_read`). Only an autocommit write still
+        // hands its point keys to the write transaction it opens at its first
+        // read.
+        if self.explicit.is_none() && shape == StatementReadShape::AutocommitWrite {
             bind_prelock_keys(&self.session)
         } else {
             Vec::new()
@@ -5563,6 +5640,7 @@ impl ClusterServerSession {
                         ),
                         self.session.vars().shared_lock_promotion_enabled(),
                     )
+                    .with_read_committed(self.session.is_read_committed())
                 }),
         );
         let delta_savepoint = self.session.table_delta_savepoint();
@@ -5753,65 +5831,8 @@ impl ClusterServerSession {
             // Selected rows belong to this execution attempt, not an earlier
             // plan or a partially executed failed read.
             self.session.take_selected_lock_keys();
-            // Go's pessimistic point write takes its row lock DURING execution
-            // (`PointGetExecutor.getAndLock`, `pkg/executor/point_get.go:549`),
-            // asking TiKV to answer the row WITH the lock (`InitReturnValues`,
-            // line 614) so the executor's one read costs no separate get. This
-            // is that fold's session half: lock the classified keys BEFORE any
-            // read exists, and the statement's row read is served from the
-            // lock response through the transaction's value cache.
-            // Every round re-attempts until the lock stands: a fair-locking
-            // conflict keeps its locks (the next attempt here is answered
-            // without an RPC by the worker's held-key filter), while a rolled-
-            // back conflict genuinely needs the fresh acquisition at the new
-            // `for_update_ts`.
-            if !prelock_keys.is_empty() {
-                self.session.notify_before_executor_first_run();
-                let outcome = match self.explicit.as_ref() {
-                    Some(transaction) => {
-                        self.session.publish_transaction_lock_waiting(true);
-                        let outcome = transaction.lock_staged_keys_with_values(
-                            prelock_keys.to_vec(),
-                            tidb_txnkv::transaction::LockWaitTime::Timeout(
-                                self.session.lock_wait_timeout(),
-                            ),
-                        );
-                        self.session.publish_transaction_lock_waiting(false);
-                        Some(outcome)
-                    }
-                    None => None,
-                };
-                match outcome {
-                    None => {}
-                    Some(Ok(LockKeysOutcome::Locked { .. })) => {}
-                    Some(Ok(LockKeysOutcome::RetryStatement { for_update_ts, .. })) => {
-                        // Fair locking's retained locks stay owned by this
-                        // statement until it ends, whichever way it ends.
-                        if let Err(error) = retries.retry() {
-                            break Err(transactions::sql_error(error));
-                        }
-                        self.session.record_statement_retry();
-                        // Nothing is staged yet -- this round never ran -- so
-                        // only the read timestamp moves; the next round's lock
-                        // attempt re-runs at it.
-                        retry_read_ts = Some(for_update_ts);
-                        tidb_util::breakpoint::inject(
-                            &self.session,
-                            "lockErrorAndThenOnStmtRetryCalled",
-                        );
-                        continue;
-                    }
-                    // Statement-scoped 1205/1213 family and transaction-fatal
-                    // errors surface exactly as they do from the post-run lock
-                    // step; nothing needs rolling back, nothing was staged.
-                    Some(Ok(LockKeysOutcome::StatementError(error))) => {
-                        break Err(transactions::sql_error(error))
-                    }
-                    Some(Ok(LockKeysOutcome::TransactionError(error))) => {
-                        break Err(transactions::sql_error(error))
-                    }
-                    Some(Err(error)) => break Err(SqlQueryError::unknown(error)),
-                }
+            if let Some(transaction) = self.explicit.as_ref() {
+                let _ = transaction.take_statement_lock_failure();
             }
             let snapshot =
                 if self.explicit.is_none() && shape == StatementReadShape::AutocommitWrite {
@@ -5863,7 +5884,6 @@ impl ClusterServerSession {
                 } else {
                     match self.open_read_snapshot(
                         shape,
-                        prelock_keys,
                         retry_read_ts,
                         read_ts,
                         resource_group,
@@ -5964,7 +5984,37 @@ impl ClusterServerSession {
                     }
                 }
                 Err(error) => {
-                    break Err(error);
+                    // A locking point read locked during execution (Go
+                    // `PointGetExecutor.getAndLock`) and the statement failed
+                    // on that lock: act on the lock's outcome as
+                    // `handlePessimisticLockError` does.
+                    let failure = self
+                        .explicit
+                        .as_ref()
+                        .and_then(|transaction| transaction.take_statement_lock_failure());
+                    match failure {
+                        None => break Err(error),
+                        Some(StatementLockFailure::Retry { for_update_ts }) => {
+                            if let Err(error) = retries.retry() {
+                                break Err(transactions::sql_error(error));
+                            }
+                            self.session.record_statement_retry();
+                            // The statement's writes go back; its locks stay,
+                            // and the replay reads at the timestamp that sees
+                            // the version that beat it.
+                            self.buffer.restore(savepoint.clone());
+                            retry_read_ts = Some(for_update_ts);
+                            tidb_util::breakpoint::inject(
+                                &self.session,
+                                "lockErrorAndThenOnStmtRetryCalled",
+                            );
+                            continue;
+                        }
+                        Some(
+                            StatementLockFailure::Statement(error)
+                            | StatementLockFailure::Transaction(error),
+                        ) => break Err(transactions::sql_error(error)),
+                    }
                 }
             }
         };
@@ -8147,7 +8197,12 @@ impl QuerySession for ClusterServerSession {
         stmt: &Stmt,
     ) -> Result<Option<bool>, SqlQueryError> {
         let observed = classify_transaction_control_stmt(stmt).is_some();
+        // Go runs a transaction statement as any other: `session.ExecuteStmt`
+        // compiles its `Simple` plan and `runStmt` drives the `SimpleExec`.
+        let _execute_stmt =
+            observed.then(|| tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt"));
         if observed {
+            compile_simple_statement(sql);
             self.session.begin_routed_statement_observation(sql, stmt);
         }
         let result = self
@@ -8549,17 +8604,12 @@ impl QuerySession for ClusterServerSession {
         // Go's pessimistic point write folds its row read INTO its lock
         // (`PointGetExecutor.getAndLock` asks TiKV to answer the row with the
         // lock, `pkg/executor/point_get.go:612-624`, and caches it in
-        // `TxnCtx.SetPessimisticLockCache`). Classify this statement once,
-        // from whichever tree the fast paths left: a bound one carries
-        // constants, an unbound template resolves its `?` markers against the
-        // execute parameters -- the same walker reads both. Empty output (a
-        // scan-shaped WHERE, a non-pessimistic or autocommit statement) keeps
-        // today's read-then-lock order untouched.
-        // Both pre-lock arms, write and locking read: `SELECT ... FOR UPDATE`
-        // on a fully pinned clustered handle folds exactly like a point write
-        // (go's `SelectLockExec` locks the rows as they are read), while a
-        // plain point SELECT must NOT lock -- the read arm's own guards
-        // (LockKind::Update, default wait, no ORDER BY/LIMIT) draw that line.
+        // `TxnCtx.SetPessimisticLockCache`). Inside an explicit transaction
+        // the executor takes that lock itself; only an autocommit write hands
+        // its point keys, classified from whichever tree the fast paths left
+        // (a bound one carries constants, an unbound template resolves its `?`
+        // markers against the execute parameters), to the write transaction
+        // its first read opens.
         let bind_prelock_keys = |session: &Session| {
             if let Some(bound) = bound_template.as_ref() {
                 session.statement_prelock_keys(bound, &[])
@@ -8623,8 +8673,6 @@ impl QuerySession for ClusterServerSession {
                 None => result,
             }));
         }
-        let write_read_keys = is_write.then(|| self.storage.read_keys());
-        let attempt_read_keys = write_read_keys.clone();
         // Session finishes its scratch execution inside the durable storage
         // attempt. Retain one observation until commit/retry has completed.
         let observed_write = is_write && effective.is_some();
@@ -8641,9 +8689,6 @@ impl QuerySession for ClusterServerSession {
             &resource_group,
             is_write,
             |session| {
-                if let Some(read_keys) = attempt_read_keys.as_ref() {
-                    read_keys.begin();
-                }
                 if direct_dml {
                     let cached = cached_dml
                         .as_ref()
@@ -8685,26 +8730,13 @@ impl QuerySession for ClusterServerSession {
                 attempt.as_ref().err().map(|error| error.message.clone()),
             );
         }
-        let output = match attempt {
-            Ok(output) => output,
-            Err(error) => {
-                if let Some(read_keys) = write_read_keys {
-                    read_keys.cancel();
-                }
-                return Err(error);
-            }
-        };
-        if let Some(read_keys) = write_read_keys {
+        let output = attempt?;
+        if is_write {
             let affected_rows = match &output {
                 StmtOutput::Affected(count) => *count,
                 StmtOutput::Rows { .. } | StmtOutput::Done(_) => 0,
             };
-            let processed_keys = read_keys.finish().len() as i64;
-            if affected_rows > 0 && processed_keys > 0 {
-                self.session
-                    .txn_write_throughput_sli()
-                    .add_read_keys(processed_keys);
-            }
+            self.session.add_statement_read_keys(affected_rows);
         }
         let result_authority = matches!(&output, StmtOutput::Rows { .. })
             .then(|| self.session.result_materialization_authority());

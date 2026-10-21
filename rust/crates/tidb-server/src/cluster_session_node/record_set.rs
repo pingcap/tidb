@@ -42,7 +42,6 @@ impl ClusterServerSession {
     pub(super) fn open_read_snapshot(
         &self,
         shape: StatementReadShape,
-        prelock_keys: &[Vec<u8>],
         retry_read_ts: Option<u64>,
         read_ts: &transactions::StatementReadTs,
         resource_group: &str,
@@ -55,7 +54,7 @@ impl ClusterServerSession {
                 .map_err(SqlQueryError::unknown);
         }
         if let Some(transaction) = &self.explicit {
-            let locking = shape == StatementReadShape::LockingRead || !prelock_keys.is_empty();
+            let locking = shape == StatementReadShape::LockingRead;
             let snapshot = match retry_read_ts {
                 Some(ts) => transaction.snapshot_at_for(ts, locking),
                 // Go's pessimistic READ-COMMITTED provider reads every
@@ -65,19 +64,16 @@ impl ClusterServerSession {
                 None if transaction.is_pessimistic() && self.session.is_read_committed() => {
                     transaction.fresh_statement_snapshot(locking)
                 }
-                // Go's pessimistic DML reads at `GetStmtForUpdateTS`, a fresh
-                // timestamp at statement start, so an UPDATE/DELETE sees rows
-                // peers committed after BEGIN. A point write whose keys were
-                // prelocked reads them from the lock responses instead (Go's
-                // `optimizeForNotFetchingLatestTS`).
-                None if is_dml && prelock_keys.is_empty() && transaction.is_pessimistic() => {
-                    transaction.fresh_statement_snapshot(locking)
-                }
-                None if shape == StatementReadShape::LockingRead
-                    && prelock_keys.is_empty()
+                // Go's pessimistic DML and locking reads read at
+                // `GetStmtForUpdateTS`, a fresh timestamp, so they see rows
+                // peers committed after BEGIN -- unless the plan starts with
+                // a locking point read, whose lock answers the latest row
+                // (`AdviseOptimizeWithPlan` -> `optimizeForNotFetchingLatestTS`).
+                // The deferred handle lets the executor's first act decide.
+                None if (is_dml || shape == StatementReadShape::LockingRead)
                     && transaction.is_pessimistic() =>
                 {
-                    transaction.fresh_locking_snapshot()
+                    transaction.deferred_statement_snapshot(locking)
                 }
                 None => transaction.snapshot_for(locking),
             }
@@ -130,7 +126,7 @@ impl ClusterServerSession {
         };
         self.session.begin_external_executor_breakpoint_scope(true);
         let setup = self
-            .open_read_snapshot(shape, &[], None, &statement.read_ts, resource_group, false)
+            .open_read_snapshot(shape, None, &statement.read_ts, resource_group, false)
             .and_then(|snapshot| {
                 drop(self.bind(snapshot));
                 self.declare_read_shape(shape);
