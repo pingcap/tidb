@@ -1381,11 +1381,6 @@ func (*SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *mod
 	return nil
 }
 
-// CleanupGlobalIndexes implements the DDL interface, it's no-op in DM's case.
-func (*SchemaTracker) CleanupGlobalIndexes(_ sessionctx.Context, _ int64) error {
-	return nil
-}
-
 // RefreshMeta implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) RefreshMeta(_ sessionctx.Context, _ *model.RefreshMetaArgs) error {
 	return nil

@@ -2170,7 +2170,7 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 	case model.StateWriteReorganization:
-		// Only reachable by CleanupGlobalIndexes.
+		// Only reachable by cleanupGlobalIndexes.
 		// write reorganization -> delete only
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
@@ -2278,22 +2278,20 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 // non-public global indexes of the table.
 const dropNonPublicGlobalIndexesID = -1
 
-// CleanupGlobalIndexes implements the Executor interface.
-func (e *executor) CleanupGlobalIndexes(sctx sessionctx.Context, tableID int64) error {
-	is := e.infoCache.GetLatest()
-	tbl, ok := is.TableByID(context.Background(), tableID)
-	if !ok {
-		return errors.Errorf("table %d does not exist", tableID)
-	}
-	tblInfo := tbl.Meta()
-	dbInfo, ok := infoschema.SchemaByTable(is, tblInfo)
-	if !ok {
-		return errors.Errorf("database of table %d does not exist", tableID)
+// cleanupGlobalIndexesName is a reserved index name for DROP INDEX. When the table has no
+// index with this name, it drops all non-public global indexes of the table in one drop index
+// job instead, such as the index copies left behind by cancelled REORGANIZE PARTITION jobs,
+// which share the name of a public index and cannot be dropped by name.
+const cleanupGlobalIndexesName = "_tidb$_global_idx_cleanup"
+
+func (e *executor) cleanupGlobalIndexes(sctx sessionctx.Context, dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
+	if sctx.GetSessionVars().StmtCtx.MultiSchemaInfo != nil {
+		return dbterror.ErrRunMultiSchemaChanges.GenWithStackByArgs("cleanup global indexes")
 	}
 	job := &model.Job{
 		Version:    model.JobVersion2,
 		SchemaID:   dbInfo.ID,
-		TableID:    tableID,
+		TableID:    tblInfo.ID,
 		SchemaName: dbInfo.Name.L,
 		TableName:  tblInfo.Name.L,
 		Type:       model.ActionDropIndex,

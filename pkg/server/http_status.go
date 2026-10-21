@@ -308,7 +308,6 @@ func (s *Server) startHTTPServer() {
 
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
-	router.Handle("/ddl/drop-non-public-index/{tableID}", tikvhandler.NewDDLCleanupGlobalIndexesHandler(tikvHandlerTool)).Name("DDL_Drop_Non_Public_Index")
 
 	if kv.IsSystemKS(tikvHandlerTool.Store) {
 		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler()).Name("DXF_Schedule_Status")

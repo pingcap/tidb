@@ -170,12 +170,6 @@ type Executor interface {
 	// RefreshMeta can only be called by BR during the log restore phase.
 	RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error
 
-	// CleanupGlobalIndexes drops all non-public global indexes of the table in one
-	// drop index job. It removes index copies left behind by cancelled REORGANIZE
-	// PARTITION jobs, which share the name of a public index and cannot be dropped by
-	// DROP INDEX.
-	CleanupGlobalIndexes(ctx sessionctx.Context, tableID int64) error
-
 	// CreateSchemaWithInfo creates a database (schema) given its database info.
 	//
 	// WARNING: the DDL owns the `info` after calling this function, and will modify its fields
@@ -6222,6 +6216,9 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
+	if indexInfo == nil && indexName.L == cleanupGlobalIndexesName {
+		return e.cleanupGlobalIndexes(ctx, schema, t.Meta())
+	}
 
 	isPK, err := CheckIsDropPrimaryKey(indexName, indexInfo, t)
 	if err != nil {

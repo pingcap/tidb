@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -101,10 +100,10 @@ func TestDropLeftoverReorgPartitionIndexes(t *testing.T) {
 			}
 		}
 	})
-	// The job query is checked in tests but is empty when called from the status API.
-	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, dom.DDLExecutor().CleanupGlobalIndexes(tk.Session(), tblInfo.ID))
-	require.ErrorContains(t, dom.DDLExecutor().CleanupGlobalIndexes(tk.Session(), tblInfo.ID), "no non-public global index")
+	cleanupSQL := "alter table t drop index `_tidb$_global_idx_cleanup`"
+	require.ErrorContains(t, tk.ExecToErr(cleanupSQL+", add index idx_tmp (s)"), "multi schema change for cleanup global indexes")
+	tk.MustExec(cleanupSQL)
+	require.ErrorContains(t, tk.ExecToErr(cleanupSQL), "no non-public global index")
 	after := external.GetTableByName(t, tk, "test", "t").Meta()
 	require.Len(t, after.Indices, 3)
 	require.Equal(t, publicGlobal.ID, after.FindIndexByName("idx_g").ID)
@@ -119,4 +118,10 @@ func TestDropLeftoverReorgPartitionIndexes(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf(`select count(*) from (select start_key from mysql.gc_delete_range
 			union all select start_key from mysql.gc_delete_range_done) r where start_key = '%s'`, idxPrefix)).Check(testkit.Rows("1"))
 	}
+
+	// A real index with the reserved name is dropped as usual.
+	tk.MustExec("create index `_tidb$_global_idx_cleanup` on t (s)")
+	tk.MustExec(cleanupSQL)
+	require.Nil(t, external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByName("_tidb$_global_idx_cleanup"))
+	require.Len(t, external.GetTableByName(t, tk, "test", "t").Meta().Indices, 3)
 }

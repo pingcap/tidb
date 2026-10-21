@@ -189,46 +189,6 @@ func NewDDLCheckHandler(tool *handler.TikvHandlerTool) *DDLCheckHandler {
 	return &DDLCheckHandler{tool}
 }
 
-// DDLCleanupGlobalIndexesHandler is the handler for dropping all non-public global
-// indexes of a table, such as index copies left behind by cancelled partition reorganizations.
-type DDLCleanupGlobalIndexesHandler struct {
-	*handler.TikvHandlerTool
-}
-
-// NewDDLCleanupGlobalIndexesHandler creates a new DDLCleanupGlobalIndexesHandler.
-func NewDDLCleanupGlobalIndexesHandler(tool *handler.TikvHandlerTool) *DDLCleanupGlobalIndexesHandler {
-	return &DDLCleanupGlobalIndexesHandler{tool}
-}
-
-// ServeHTTP drops all non-public global indexes of the table `tableID`.
-func (h DDLCleanupGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		handler.WriteError(w, errors.Errorf("This api only support POST method"))
-		return
-	}
-	tableID, err := strconv.ParseInt(mux.Vars(req)[handler.TableID], 10, 64)
-	if err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	do, err := session.GetDomain(h.Store)
-	if err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	se, err := session.CreateSession(h.Store)
-	if err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	defer se.Close()
-	if err = do.DDLExecutor().CleanupGlobalIndexes(se, tableID); err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	handler.WriteData(w, "success!")
-}
-
 // ServerInfoHandler is the handler for getting statistics.
 type ServerInfoHandler struct {
 	*handler.TikvHandlerTool
