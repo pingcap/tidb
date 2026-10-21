@@ -55,10 +55,10 @@ const (
 
 // FindVisibleIndexesWithPrefixCoveringColumns returns all usable key layouts for MIN/MAX full-update lookup.
 func FindVisibleIndexesWithPrefixCoveringColumns(
-	sourceTableInfo *model.TableInfo,
+	baseTableInfo *model.TableInfo,
 	groupByCols []string,
 ) []pmodel.CIStr {
-	indexNames := mviewutil.FindVisibleIndexesWithPrefixCoveringColumns(sourceTableInfo, groupByCols)
+	indexNames := mviewutil.FindVisibleIndexesWithPrefixCoveringColumns(baseTableInfo, groupByCols)
 	if len(indexNames) == 0 {
 		return nil
 	}
@@ -112,7 +112,7 @@ func fullUpdateLookupInnerBaseTableName(sel *ast.SelectStmt) (*ast.TableName, er
 }
 
 // SQL construction overview:
-//   1) buildLocal validates MV/source/MLog metadata, parses MV SQL, and extracts layout metadata.
+//   1) buildLocal validates MV/base/mlog metadata, parses MV SQL, and extracts layout metadata.
 //   2) buildMLogDeltaSelect builds stage-1 aggregation on mlog rows inside (FromTS, ToTS].
 //   3) buildMergeSourceSelect LEFT JOINs stage-1 deltas with current MV rows to produce a fixed output schema:
 //      [all delta payload columns][all MV columns][optional rowid handle].
@@ -149,9 +149,9 @@ type BuildResult struct {
 	// Its length equals FullUpdateLookupColumnCount when FullUpdateLookupTemplateSelect is not nil.
 	FullUpdateLookupMVOffsets []int
 
-	MVTableID     int64
-	SourceTableID int64
-	MLogTableID   int64
+	MVTableID   int64
+	BaseTableID int64
+	MLogTableID int64
 
 	// MVColumnCount indicates how many columns in the merge-source output schema belong to the MV row shape.
 	// The MV columns are always put after all delta columns.
@@ -166,8 +166,8 @@ type BuildResult struct {
 
 	// GroupKeyMVOffsets are offsets (0-based) of the group key columns in the MV output schema.
 	GroupKeyMVOffsets []int
-	// GroupKeySourceCols stores source-object column names for GroupKeyMVOffsets in the same order.
-	GroupKeySourceCols []string
+	// GroupKeyBaseCols stores base-table column names for GroupKeyMVOffsets in the same order.
+	GroupKeyBaseCols []string
 
 	// CountStarMVOffset is the offset (0-based) of COUNT(*) in MV output columns.
 	// Build returns error when MV definition does not include COUNT(*).
@@ -375,16 +375,16 @@ type buildLocalResult struct {
 	MVSelect *ast.SelectStmt
 	sctx     planctx.PlanContext
 
-	mvDBName      pmodel.CIStr
-	mviewTable    *model.TableInfo
-	sourceTableID int64
-	mlogTableID   int64
-	sourceTable   *model.TableInfo
-	mlogTable     *model.TableInfo
-	groupKeySet   map[int]struct{}
-	groupKeyOffs  []int
-	aggCols       []aggColInfo
-	hasMinMax     bool
+	mvDBName     pmodel.CIStr
+	mviewTable   *model.TableInfo
+	baseTableID  int64
+	mlogTableID  int64
+	baseTable    *model.TableInfo
+	mlogTable    *model.TableInfo
+	groupKeySet  map[int]struct{}
+	groupKeyOffs []int
+	aggCols      []aggColInfo
+	hasMinMax    bool
 
 	countStarMVOffset int
 }
@@ -406,17 +406,16 @@ func Build(
 }
 
 // FastRefreshSource contains the source object and its MLog used by one FAST refresh.
-// SourceTable can be either a physical table or a ready materialized view.
+// BaseTable can be either a physical table or a ready materialized view.
 type FastRefreshSource struct {
-	SourceTable   *model.TableInfo
-	MLogTable     *model.TableInfo
-	SourceTableID int64
-	MLogTableID   int64
+	BaseTable   *model.TableInfo
+	MLogTable   *model.TableInfo
+	BaseTableID int64
+	MLogTableID int64
 }
 
 // ResolveFastRefreshSource validates the source object and MLog metadata required by a single-source
-// FAST refresh. Persistent metadata keeps the historical BaseTableIDs name, but those IDs may refer
-// to ready materialized views as well as physical tables.
+// FAST refresh. The base table can be a physical table or a ready materialized view.
 func ResolveFastRefreshSource(is infoschema.InfoSchema, mv *model.TableInfo) (*FastRefreshSource, error) {
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
@@ -426,28 +425,28 @@ func ResolveFastRefreshSource(is infoschema.InfoSchema, mv *model.TableInfo) (*F
 	}
 	if len(mv.MaterializedView.BaseTableIDs) != 1 {
 		return nil, errors.Errorf(
-			"materialized view %s has invalid source object list size %d",
+			"materialized view %s has invalid base table list size %d",
 			mv.Name.O,
 			len(mv.MaterializedView.BaseTableIDs),
 		)
 	}
 
-	sourceTableID := mv.MaterializedView.BaseTableIDs[0]
-	sourceTable, ok := is.TableInfoByID(sourceTableID)
+	baseTableID := mv.MaterializedView.BaseTableIDs[0]
+	baseTable, ok := is.TableInfoByID(baseTableID)
 	if !ok {
-		return nil, errors.Errorf("source object id %d not found in infoschema", sourceTableID)
+		return nil, errors.Errorf("base table id %d not found in infoschema", baseTableID)
 	}
-	if sourceTable.State != model.StatePublic {
-		return nil, errors.Errorf("source object %s is not public", sourceTable.Name.O)
+	if baseTable.State != model.StatePublic {
+		return nil, errors.Errorf("source object %s is not public", baseTable.Name.O)
 	}
-	if sourceTable.MaterializedView != nil && !sourceTable.MaterializedView.GetInitBuildState().IsReady() {
-		return nil, errors.Errorf("source materialized view %s is not ready", sourceTable.Name.O)
+	if baseTable.MaterializedView != nil && !baseTable.MaterializedView.GetInitBuildState().IsReady() {
+		return nil, errors.Errorf("source materialized view %s is not ready", baseTable.Name.O)
 	}
-	if sourceTable.MaterializedViewBase == nil || sourceTable.MaterializedViewBase.MLogID == 0 {
-		return nil, errors.Errorf("source object %s has no materialized view log", sourceTable.Name.O)
+	if baseTable.MaterializedViewBase == nil || baseTable.MaterializedViewBase.MLogID == 0 {
+		return nil, errors.Errorf("base table %s has no materialized view log", baseTable.Name.O)
 	}
 
-	mlogTableID := sourceTable.MaterializedViewBase.MLogID
+	mlogTableID := baseTable.MaterializedViewBase.MLogID
 	mlogTable, ok := is.TableInfoByID(mlogTableID)
 	if !ok {
 		return nil, errors.Errorf("materialized view log table id %d not found in infoschema", mlogTableID)
@@ -458,11 +457,11 @@ func ResolveFastRefreshSource(is infoschema.InfoSchema, mv *model.TableInfo) (*F
 	if mlogTable.MaterializedViewLog == nil {
 		return nil, errors.Errorf("table %s is not a materialized view log", mlogTable.Name.O)
 	}
-	if mlogTable.MaterializedViewLog.BaseTableID != sourceTableID {
+	if mlogTable.MaterializedViewLog.BaseTableID != baseTableID {
 		return nil, errors.Errorf(
-			"materialized view log %s does not belong to source object id %d",
+			"materialized view log %s does not belong to base table id %d",
 			mlogTable.Name.O,
-			sourceTableID,
+			baseTableID,
 		)
 	}
 	if !hasColumn(mlogTable, model.MaterializedViewLogOldNewColumnName) {
@@ -480,10 +479,10 @@ func ResolveFastRefreshSource(is infoschema.InfoSchema, mv *model.TableInfo) (*F
 		)
 	}
 	return &FastRefreshSource{
-		SourceTable:   sourceTable,
-		MLogTable:     mlogTable,
-		SourceTableID: sourceTableID,
-		MLogTableID:   mlogTableID,
+		BaseTable:   baseTable,
+		MLogTable:   mlogTable,
+		BaseTableID: baseTableID,
+		MLogTableID: mlogTableID,
 	}, nil
 }
 
@@ -493,7 +492,7 @@ func buildLocal(
 	is infoschema.InfoSchema,
 	mv *model.TableInfo,
 ) (*buildLocalResult, error) {
-	// Stage 0: validate MV/source/MLog metadata and locate all required tables.
+	// Stage 0: validate MV/MLoG metadata and locate all required tables.
 	fastSource, err := ResolveFastRefreshSource(is, mv)
 	if err != nil {
 		return nil, err
@@ -553,9 +552,9 @@ func buildLocal(
 		sctx:              sctx,
 		mvDBName:          mvDBName,
 		mviewTable:        mv,
-		sourceTableID:     fastSource.SourceTableID,
+		baseTableID:       fastSource.BaseTableID,
 		mlogTableID:       fastSource.MLogTableID,
-		sourceTable:       fastSource.SourceTable,
+		baseTable:         fastSource.BaseTable,
 		mlogTable:         fastSource.MLogTable,
 		groupKeySet:       groupKeySet,
 		groupKeyOffs:      groupKeyOffsets,
@@ -617,7 +616,7 @@ func buildFromLocal(
 		fullUpdateSel, fullUpdateMVOffsets, err = buildFullUpdateLookupTemplateSelect(
 			local.sctx,
 			local.mvDBName,
-			local.sourceTable,
+			local.baseTable,
 			local.MVSelect,
 			local.mviewTable.Columns,
 			local.groupKeySet,
@@ -734,7 +733,7 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
-	groupKeySourceCols, err := groupKeyBaseColNamesAtOffsets(local.MVSelect, local.groupKeyOffs)
+	groupKeyBaseCols, err := groupKeyBaseColNamesAtOffsets(local.MVSelect, local.groupKeyOffs)
 	if err != nil {
 		return nil, err
 	}
@@ -746,13 +745,13 @@ func buildFromLocal(
 		FullUpdateLookupColumnCount:    fullUpdateColumnCount,
 		FullUpdateLookupMVOffsets:      append([]int(nil), fullUpdateMVOffsets...),
 		MVTableID:                      local.mviewTable.ID,
-		SourceTableID:                  local.sourceTableID,
+		BaseTableID:                    local.baseTableID,
 		MLogTableID:                    local.mlogTableID,
 		MVColumnCount:                  len(local.mviewTable.Columns),
 		DeltaColumnCount:               len(deltaColumns),
 		MVTablePKCols:                  mvTablePKCols,
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
-		GroupKeySourceCols:             groupKeySourceCols,
+		GroupKeyBaseCols:               groupKeyBaseCols,
 		CountStarMVOffset:              local.countStarMVOffset,
 		AggInfos:                       outAggInfos,
 	}
@@ -830,22 +829,22 @@ func buildMVTablePKHandleCols(
 	}
 }
 
-// inferAggArgNotNullByOffset infers aggregate argument nullability from source-object column flags.
+// inferAggArgNotNullByOffset infers aggregate argument nullability from base-table column flags.
 // If an aggregate argument is known NOT NULL, executor does not need COUNT(expr) dependencies.
 func inferAggArgNotNullByOffset(local *buildLocalResult) map[int]bool {
-	if local == nil || local.sourceTable == nil {
+	if local == nil || local.baseTable == nil {
 		return nil
 	}
-	if len(local.sourceTable.Columns) == 0 || len(local.aggCols) == 0 {
+	if len(local.baseTable.Columns) == 0 || len(local.aggCols) == 0 {
 		return nil
 	}
 
-	sourceColNotNull := make(map[string]bool, len(local.sourceTable.Columns))
-	for _, c := range local.sourceTable.Columns {
+	baseColNotNull := make(map[string]bool, len(local.baseTable.Columns))
+	for _, c := range local.baseTable.Columns {
 		if c == nil {
 			continue
 		}
-		sourceColNotNull[c.Name.L] = mysql.HasNotNullFlag(c.GetFlag())
+		baseColNotNull[c.Name.L] = mysql.HasNotNullFlag(c.GetFlag())
 	}
 
 	out := make(map[int]bool)
@@ -853,7 +852,7 @@ func inferAggArgNotNullByOffset(local *buildLocalResult) map[int]bool {
 		if ac.info.ArgColName == "" {
 			continue
 		}
-		if sourceColNotNull[ac.info.ArgColName] {
+		if baseColNotNull[ac.info.ArgColName] {
 			out[ac.info.MVOffset] = true
 		}
 	}

@@ -224,9 +224,9 @@ func TestBuildMaterializedViewSource(t *testing.T) {
 
 	res, err := mview.Build(sctx.GetPlanCtx(), is, child, mview.BuildOptions{FromTS: 10}, nil)
 	require.NoError(t, err)
-	require.Equal(t, parentID, res.SourceTableID)
+	require.Equal(t, parentID, res.BaseTableID)
 	require.Equal(t, mlogID, res.MLogTableID)
-	require.Equal(t, []string{"a"}, res.GroupKeySourceCols)
+	require.Equal(t, []string{"a"}, res.GroupKeyBaseCols)
 
 	t.Run("source not ready", func(t *testing.T) {
 		defer func() { parent.MaterializedView.InitBuildState = model.MViewInitBuildReady }()
@@ -252,7 +252,7 @@ func TestBuildMaterializedViewSource(t *testing.T) {
 		mlog.MaterializedViewLog.BaseTableID = childID
 		defer func() { mlog.MaterializedViewLog.BaseTableID = parentID }()
 		_, err := mview.ResolveFastRefreshSource(is, child)
-		require.ErrorContains(t, err, "does not belong to source object")
+		require.ErrorContains(t, err, "does not belong to base table")
 	})
 }
 
@@ -841,7 +841,7 @@ func TestFullUpdateLookupIndexHintUsesAllSupportingIndexes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res.FullUpdateLookupTemplateSelect)
 
-	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(base, res.GroupKeySourceCols)
+	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(base, res.GroupKeyBaseCols)
 	require.Equal(t, []pmodel.CIStr{pmodel.NewCIStr("idx_a"), pmodel.NewCIStr("idx_a_b")}, indexNames)
 	require.NoError(t, mview.SetFullUpdateLookupIndexHint(res.FullUpdateLookupTemplateSelect, indexNames))
 
