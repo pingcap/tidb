@@ -1188,21 +1188,24 @@ func Unescape(s string) string {
 	return s
 }
 
-// GetAllNameToIDAndTheMustLoadedTableInfo gets all the fields and values and table info for special attributes in a hash.
+// GetAllNameToIDAndTheMustLoadedTableInfo gets table names, IDs, update timestamps,
+// and table info for special attributes from a database hash.
 // It's used to get some infos for information schema cache in a faster way.
 // If a table contains any of the attributes listed in checkSubstringsInOrder, it must be loaded during schema full load.
 // hasSpecialAttributes() is a subset of it, the difference is that:
 // If a table need to be resident in-memory, its table info MUST be loaded.
 // If a table info is loaded, it's NOT NECESSARILY to be keep in-memory.
-func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, []*model.TableInfo, error) {
+func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[string]int64, map[int64]uint64, []*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, nil, nil, errors.Trace(err)
 	}
 
 	res := make(map[string]int64)
+	updateTSByID := make(map[int64]uint64)
 	idRegex := regexp.MustCompile(`"id":(\d+)`)
 	nameLRegex := regexp.MustCompile(NameExtractRegexp)
+	updateTSRegex := regexp.MustCompile(`"update_timestamp":(\d+)`)
 
 	tableInfos := make([]*model.TableInfo, 0)
 
@@ -1211,15 +1214,24 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 			return nil
 		}
 
-		idMatch := idRegex.FindStringSubmatch(string(hack.String(value)))
-		nameLMatch := nameLRegex.FindStringSubmatch(string(hack.String(value)))
+		valueString := string(hack.String(value))
+		idMatch := idRegex.FindStringSubmatch(valueString)
+		nameLMatch := nameLRegex.FindStringSubmatch(valueString)
 		id, err := strconv.Atoi(idMatch[1])
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		key := Unescape(nameLMatch[1])
-		res[strings.Clone(key)] = int64(id)
+		tableID := int64(id)
+		res[strings.Clone(key)] = tableID
+		if updateTSMatch := updateTSRegex.FindStringSubmatch(valueString); len(updateTSMatch) > 1 {
+			updateTS, err := strconv.ParseUint(updateTSMatch[1], 10, 64)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			updateTSByID[tableID] = updateTS
+		}
 		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
@@ -1232,7 +1244,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 		return nil
 	})
 
-	return res, tableInfos, errors.Trace(err)
+	return res, updateTSByID, tableInfos, errors.Trace(err)
 }
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.

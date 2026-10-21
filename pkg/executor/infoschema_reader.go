@@ -735,6 +735,10 @@ func (e *memtableRetriever) setDataFromOneTable(
 		collation = mysql.DefaultCollationName
 	}
 	createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+	ex := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if !ex.IsTimeValid(createTime) {
+		return rows, nil
+	}
 
 	createOptions := ""
 
@@ -849,20 +853,21 @@ func (e *memtableRetriever) setDataFromOneTable(
 	return rows, nil
 }
 
-func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
-	if len(columns) <= 3 {
-		for _, colInfo := range columns {
-			switch colInfo.Name.L {
-			case "table_schema":
-			case "table_name":
-			case "table_catalog":
-			default:
+func onlyTableItemColumns(columns []*model.ColumnInfo, includeCreateTime bool) bool {
+	for _, colInfo := range columns {
+		switch colInfo.Name.L {
+		case "table_catalog":
+		case "table_schema":
+		case "table_name":
+		case "create_time":
+			if !includeCreateTime {
 				return false
 			}
+		default:
+			return false
 		}
-		return true
 	}
-	return false
+	return true
 }
 
 func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
@@ -888,13 +893,21 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if ex.SkipRequest {
 		return nil
 	}
+	hasTimeRange := ex.HasCreateTimeRange()
+	loc := sctx.GetSessionVars().TimeZone
+	if loc == nil {
+		loc = time.Local
+	}
+
+	// Preserve table-name lookups for queries with a CREATE_TIME range.
+	keepTableNameLookup := hasTimeRange && len(ex.ColPredicates[plannercore.TableName]) > 0
 
 	// Special optimize for queries on infoschema v2 like:
 	//     select count(table_schema) from INFORMATION_SCHEMA.TABLES
 	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
-	// column pruning in general is not supported here.
-	if onlySchemaOrTableColumns(e.columns) && onlySchemaOrTableColPredicates(ex.ColPredicates) {
+	if onlyTableItemColumns(e.columns, hasTimeRange) && onlySchemaOrTableColPredicates(ex.ColPredicates) &&
+		!keepTableNameLookup {
 		is := e.is
 		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			is = raw.InfoSchema
@@ -916,8 +929,19 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				if !ex.HasTableSchema(t.DBName.L) {
 					return true
 				}
+				var tm types.Time
+				if hasTimeRange {
+					tm = types.NewTime(types.FromGoTime(model.TSConvert2Time(t.UpdateTS).In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+					if !ex.IsTimeValid(tm) {
+						return true
+					}
+				}
 				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, t.DBName.L, t.TableName.L, "", mysql.AllPrivMask) {
 					return true
+				}
+				var createTime any
+				if hasTimeRange {
+					createTime = tm
 				}
 
 				record := types.MakeDatums(
@@ -935,7 +959,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // INDEX_LENGTH
 					nil,                   // DATA_FREE
 					nil,                   // AUTO_INCREMENT
-					nil,                   // CREATE_TIME
+					createTime,            // CREATE_TIME
 					nil,                   // UPDATE_TIME
 					nil,                   // CHECK_TIME
 					nil,                   // TABLE_COLLATION
@@ -964,10 +988,6 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		return errors.Trace(err)
 	}
 	e.updateStatsCacheIfNeed(sctx, tables)
-	loc := sctx.GetSessionVars().TimeZone
-	if loc == nil {
-		loc = time.Local
-	}
 	for i, table := range tables {
 		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows)
 		if err != nil {

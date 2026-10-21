@@ -1013,7 +1013,6 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 	b.infoSchema.routineMap = cloneRoutineMap(oldIS.routineMap)
 	b.infoSchema.triggerTableMap = maps.Clone(oldIS.triggerTableMap)
-
 	copy(b.infoSchema.sortedTablesBuckets, oldIS.sortedTablesBuckets)
 	return nil
 }
@@ -1155,10 +1154,15 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 				dbID:          di.ID,
 				tableName:     pmodel.NewCIStr(name),
 				tableID:       id,
+				updateTS:      di.TableID2UpdateTS[id],
 				schemaVersion: schemaVersion,
 			}
 			btreeSet(&b.infoData.byID, &item)
 			btreeSet(&b.infoData.byName, &item)
+		}
+		// Avoid writing to shared virtual database descriptors, which have no temporary map.
+		if di.TableID2UpdateTS != nil {
+			di.TableID2UpdateTS = nil
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
@@ -1187,6 +1191,7 @@ func (b *Builder) addTable(schemaVersion int64, di *model.DBInfo, tblInfo *model
 			dbID:          di.ID,
 			tableName:     tblInfo.Name,
 			tableID:       tblInfo.ID,
+			updateTS:      tblInfo.UpdateTS,
 			schemaVersion: schemaVersion,
 		}, tbl)
 	} else {

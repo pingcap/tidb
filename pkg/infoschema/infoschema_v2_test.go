@@ -45,7 +45,14 @@ func TestV2Basic(t *testing.T) {
 	internal.AddDB(t, r.Store(), dbInfo)
 	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
 	tblInfo.DBID = dbInfo.ID
-	is.Data.add(tableItem{schemaName, dbInfo.ID, tableName, tblInfo.ID, 2, false}, internal.MockTable(t, r.Store(), tblInfo))
+	is.Data.add(tableItem{
+		dbName:        schemaName,
+		dbID:          dbInfo.ID,
+		tableName:     tableName,
+		tableID:       tblInfo.ID,
+		updateTS:      tblInfo.UpdateTS,
+		schemaVersion: 2,
+	}, internal.MockTable(t, r.Store(), tblInfo))
 	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
 	is.base().schemaMetaVersion = 1
 	require.Equal(t, 1, len(is.AllSchemas()))

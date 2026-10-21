@@ -37,6 +37,7 @@ go_test(
     srcs = [
         "main_test.go",
         "meta_test.go",
+        "pkdb_meta_test.go",
     ],
     embed = [":meta"],
     flaky = True,

@@ -329,6 +329,12 @@ func NewInfoSchemaIndexesExtractor() *InfoSchemaIndexesExtractor {
 // InfoSchemaTablesExtractor is the predicate extractor for information_schema.tables.
 type InfoSchemaTablesExtractor struct {
 	InfoSchemaBaseExtractor
+	// StartTime is the inclusive lower CREATE_TIME wall-clock bound.
+	// A zero value means there is no lower bound.
+	StartTime types.Time
+	// EndTime is the inclusive upper CREATE_TIME wall-clock bound.
+	// A zero value means there is no upper bound.
+	EndTime types.Time
 }
 
 // NewInfoSchemaTablesExtractor creates a new InfoSchemaTablesExtractor.

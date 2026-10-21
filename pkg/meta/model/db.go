@@ -32,6 +32,10 @@ type DBInfo struct {
 	State              SchemaState      `json:"state"`
 	PlacementPolicyRef *PolicyRefInfo   `json:"policy_ref_info"`
 	TableName2ID       map[string]int64 `json:"-"`
+	// TableID2UpdateTS carries lightweight table metadata from the v2 full
+	// loader to the InfoSchema builder and is cleared after constructing table
+	// items.
+	TableID2UpdateTS map[int64]uint64 `json:"-"`
 }
 
 // Clone clones DBInfo.

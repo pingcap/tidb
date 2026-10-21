@@ -68,7 +68,6 @@ type infoSchema struct {
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
 	sortedTablesBuckets []sortedTables
-
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
@@ -391,7 +390,12 @@ func (is *infoSchema) TableItemByID(id int64) (TableItem, bool) {
 	if !ok {
 		return TableItem{}, false
 	}
-	return TableItem{DBName: db.Name, TableName: tbl.Meta().Name}, true
+	tblInfo := tbl.Meta()
+	return TableItem{
+		DBName:    db.Name,
+		TableName: tblInfo.Name,
+		UpdateTS:  tblInfo.UpdateTS,
+	}, true
 }
 
 // TableInfoByID implements InfoSchema.TableInfoByID
@@ -483,7 +487,12 @@ func (is *infoSchema) TableItemByPartitionID(partitionID int64) (TableItem, bool
 	if tbl == nil {
 		return TableItem{}, false
 	}
-	return TableItem{DBName: db.Name, TableName: tbl.Meta().Name}, true
+	tblInfo := tbl.Meta()
+	return TableItem{
+		DBName:    db.Name,
+		TableName: tblInfo.Name,
+		UpdateTS:  tblInfo.UpdateTS,
+	}, true
 }
 
 // TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.

@@ -33,6 +33,7 @@ go_library(
         "physical_plans.go",
         "pkdb_plan_cache_unified_param.go",
         "pkdb_plan_cache_unified_validation.go",
+        "pkdb_memtable_infoschema_extractor.go",
         "pkdb_procedure_plan.go",
         "pkdb_procedure_sp.go",
         "pkdb_raise_error.go",

@@ -529,6 +529,11 @@ func (extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string
 // extracts the time range column, e.g:
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
+// Omitting strictStep preserves the legacy log-search time conversion and
+// one-millisecond adjustment. Providing it also validates dates and nanosecond
+// timestamp representability; validation failure returns predicates, 0, 0.
+// A zero step preserves inclusive candidate bounds; callers must retain the
+// original predicates and fall back when no range can be extracted.
 func (helper extractHelper) extractTimeRange(
 	ctx base.PlanContext,
 	schema *expression.Schema,
@@ -536,12 +541,17 @@ func (helper extractHelper) extractTimeRange(
 	predicates []expression.Expression,
 	extractColName string,
 	timezone *time.Location,
+	strictStep ...time.Duration,
 ) (
 	remained []expression.Expression,
 	// unix timestamp in nanoseconds
 	startTime int64,
 	endTime int64,
 ) {
+	step := time.Millisecond
+	if len(strictStep) > 0 {
+		step = strictStep[0]
+	}
 	remained = make([]expression.Expression, 0, len(predicates))
 	extractCols := helper.findColumn(schema, names, extractColName)
 	if len(extractCols) == 0 {
@@ -573,15 +583,29 @@ func (helper extractHelper) extractTimeRange(
 			}
 
 			mysqlTime := timeDatum.GetMysqlTime()
-			timestamp := time.Date(mysqlTime.Year(),
-				time.Month(mysqlTime.Month()),
-				mysqlTime.Day(),
-				mysqlTime.Hour(),
-				mysqlTime.Minute(),
-				mysqlTime.Second(),
-				mysqlTime.Microsecond()*1000,
-				timezone,
-			).UnixNano()
+			var timestamp int64
+			if len(strictStep) > 0 {
+				// Candidate filtering must not normalize invalid dates or use
+				// overflowing nanosecond timestamps to exclude valid rows.
+				t, err := mysqlTime.GoTime(timezone)
+				if err != nil {
+					return predicates, 0, 0
+				}
+				timestamp = t.UnixNano()
+				if !time.Unix(0, timestamp).Equal(t) {
+					return predicates, 0, 0
+				}
+			} else {
+				timestamp = time.Date(mysqlTime.Year(),
+					time.Month(mysqlTime.Month()),
+					mysqlTime.Day(),
+					mysqlTime.Hour(),
+					mysqlTime.Minute(),
+					mysqlTime.Second(),
+					mysqlTime.Microsecond()*1000,
+					timezone,
+				).UnixNano()
+			}
 
 			switch fnName {
 			case ast.EQ:
@@ -593,14 +617,14 @@ func (helper extractHelper) extractTimeRange(
 				}
 			case ast.GT:
 				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
-				startTime = max(startTime, timestamp+int64(time.Millisecond))
+				startTime = max(startTime, timestamp+int64(step))
 			case ast.GE:
 				startTime = max(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
-					endTime = timestamp - int64(time.Millisecond)
+					endTime = timestamp - int64(step)
 				} else {
-					endTime = min(endTime, timestamp-int64(time.Millisecond))
+					endTime = min(endTime, timestamp-int64(step))
 				}
 			case ast.LE:
 				if endTime == 0 {

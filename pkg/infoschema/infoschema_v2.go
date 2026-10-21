@@ -53,6 +53,7 @@ type tableItem struct {
 	dbID          int64
 	tableName     pmodel.CIStr
 	tableID       int64
+	updateTS      uint64
 	schemaVersion int64
 	tomb          bool
 }
@@ -1020,13 +1021,18 @@ func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 	if !ok {
 		return TableItem{}, false
 	}
-	return TableItem{DBName: itm.dbName, TableName: itm.tableName}, true
+	return TableItem{
+		DBName:    itm.dbName,
+		TableName: itm.tableName,
+		UpdateTS:  itm.updateTS,
+	}, true
 }
 
 // TableItem is exported from tableItem.
 type TableItem struct {
 	DBName    pmodel.CIStr
 	TableName pmodel.CIStr
+	UpdateTS  uint64
 }
 
 // IterateAllTableItems is used for special performance optimization.
@@ -1049,7 +1055,11 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 		}
 		pivot = item
 		if !item.tomb {
-			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+			return visit(TableItem{
+				DBName:    item.dbName,
+				TableName: item.tableName,
+				UpdateTS:  item.updateTS,
+			})
 		}
 		return true
 	})
