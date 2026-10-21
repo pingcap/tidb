@@ -135,7 +135,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     resolve_insert_target(insert, catalog, current_db, ctx)?;
     let extended_source = insert_plan_source(insert, catalog, current_db);
     // Go `planner.Optimize`.
-    let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
+    let optimize = super::start_optimize_region();
     let mut fresh = physical_plan
         .is_none()
         .then(|| {
@@ -990,7 +990,9 @@ fn run_insert_rows(
     }
     // Once the target is valid, `INSERT ... SELECT` runs its source over the
     // pre-insert catalog and materializes those rows before the table is
-    // borrowed mutably.
+    // borrowed mutably. The size of each chunk the source returned is kept:
+    // Go executes the rows chunk by chunk (`insertRowsFromSelect`).
+    let mut source_chunks: Vec<usize> = Vec::new();
     let source_rows: Option<Vec<Vec<Datum>>> = match &insert.source {
         // LOAD DATA's rows arrive one at a time below.
         _ if load_rows.is_some() => Some(Vec::new()),
@@ -1002,7 +1004,7 @@ fn run_insert_rows(
             let accountant = ctx
                 .statement_memory()
                 .write_accountant(mem_quota::label::INSERT);
-            let collected = super::physical_builder::execute_dml_source(
+            let collected = super::physical_builder::execute_dml_source_chunks(
                 physical,
                 catalog,
                 ctx,
@@ -1012,6 +1014,7 @@ fn run_insert_rows(
                     rows.push(row);
                     Ok(())
                 },
+                |size| source_chunks.push(size),
             )?;
             if let Some(runtime) = runtime {
                 runtime.extend(collected);
@@ -1678,6 +1681,13 @@ fn run_insert_rows(
                 // hand back and the counter is drawn from as usual. The cursor
                 // is read lazily so that a row carrying its OWN id does not
                 // consume from it -- see `apply_auto_increment`.
+                // Go fills a selected row's id as it reads the row
+                // (`adjustAutoIncrementDatum`, `lazyFillAutoID` off):
+                // `table.AllocAutoIncrementValue` per row. A VALUES list
+                // allocates its batch at once, with no such region.
+                let _alloc = (insert.source.is_some() && load_restrictive.is_none()).then(|| {
+                    tidb_util::tracing::start_thread_region_ex("table.AllocAutoIncrementValue")
+                });
                 let outcome = match kv.apply_auto_increment_in(
                     &mut new_rows[*index],
                     ctx.auto_increment_step(),
@@ -1792,17 +1802,6 @@ fn run_insert_rows(
     // authoritative `addRecord`/index writes below perform the same one
     // existence check and retain the duplicate error, so probing here would
     // issue a redundant remote read for every row in a batch.
-    // Go `InsertExec.exec`'s event over the rows it inserts (REPLACE and
-    // LOAD DATA run their own executors, which log none).
-    if !insert.replace && load_restrictive.is_none() {
-        tidb_util::tracing::thread_event(|| {
-            format!(
-                "insert {} rows into table `{}`",
-                new_rows.len(),
-                table_name.to_lowercase()
-            )
-        });
-    }
     let resolves_conflicts = insert.replace || has_on_duplicate || insert.ignore;
     // A normal INSERT into a clustered table with no secondary indexes can
     // prove all record keys absent in one BatchGet. Keep the proof narrow: a
@@ -1833,18 +1832,92 @@ fn run_insert_rows(
     let mut updates = UpdateRecords::new(fk_triggers);
     let mut removals = DeleteRecords::new(fk_triggers);
     let mut inserted_rows = Vec::new();
-    for (position, candidate) in new_rows.iter().enumerate() {
-        // Generated columns belong to the writable row; the extra handle is
-        // candidate identity and must not affect row equality or FK callbacks.
-        let (row, written_row_id): (&[Datum], Option<i64>) = match extra_handle_offset {
+    // Go `InsertExec.exec` / `ReplaceExec.exec` run once per batch: the whole
+    // VALUES list, or each chunk an INSERT ... SELECT's source returned.
+    let batch_ends: Vec<usize> = {
+        let selected: usize = source_chunks.iter().sum();
+        if insert.source.is_some() && !source_chunks.is_empty() && selected == new_rows.len() {
+            source_chunks
+                .iter()
+                .scan(0, |end, size| {
+                    *end += size;
+                    Some(*end)
+                })
+                .collect()
+        } else {
+            vec![new_rows.len()]
+        }
+    };
+    let mut batches = batch_ends.iter().copied().peekable();
+    let mut batch_start = 0;
+    let mut batch_check: Option<tidb_util::tracing::ThreadRegion> = None;
+    // Generated columns belong to the writable row; the extra handle is
+    // candidate identity and must not affect row equality or FK callbacks.
+    fn split_candidate<'r>(
+        candidate: &'r [Datum],
+        extra_handle_offset: Option<usize>,
+        ctx: &crate::StmtContext,
+    ) -> (&'r [Datum], Option<i64>) {
+        match extra_handle_offset {
             Some(offset) => (
                 &candidate[..offset],
                 candidate
                     .get(offset)
                     .and_then(|value| written_row_id(value, ctx)),
             ),
-            None => (candidate.as_slice(), None),
-        };
+            None => (candidate, None),
+        }
+    }
+    for (position, candidate) in new_rows.iter().enumerate() {
+        if load_restrictive.is_none() && position == batch_start {
+            if let Some(end) = batches.next() {
+                drop(batch_check.take());
+                let rows = new_rows[batch_start..end]
+                    .iter()
+                    .map(|candidate| split_candidate(candidate, extra_handle_offset, ctx))
+                    .collect::<Vec<_>>();
+                batch_start = end;
+                // Go `InsertExec.exec`'s event; REPLACE logs none.
+                if !insert.replace {
+                    tidb_util::tracing::thread_event(|| {
+                        format!(
+                            "insert {} rows into table `{}`",
+                            rows.len(),
+                            table_name.to_lowercase()
+                        )
+                    });
+                }
+                if resolves_conflicts && !lazy_dup_check {
+                    let table = target(catalog, &database, &table_name);
+                    if has_on_duplicate || insert.replace {
+                        // Go `prefetchDataCache` (none for a temporary table).
+                        if !table.is_temporary() {
+                            let _prefetch =
+                                tidb_util::tracing::start_thread_region("prefetchDataCache");
+                            let values = table
+                                .prefetch_unique_indices(&rows, ctx)
+                                .map_err(kv_write_error)?;
+                            table
+                                .prefetch_conflicted_old_rows(&rows, &values, ctx)
+                                .map_err(kv_write_error)?;
+                        }
+                    } else {
+                        // Go `batchCheckAndInsert`, which IGNORE runs over
+                        // the batch's rows.
+                        batch_check = Some(tidb_util::tracing::start_thread_region(
+                            "InsertValues.batchCheckAndInsert",
+                        ));
+                        if !table.is_temporary() {
+                            table
+                                .prefetch_unique_indices(&rows, ctx)
+                                .map_err(kv_write_error)?;
+                        }
+                    }
+                }
+            }
+        }
+        let (row, written_row_id): (&[Datum], Option<i64>) =
+            split_candidate(candidate, extra_handle_offset, ctx);
         // Go's partition-qualified INSERT target is a table wrapper, so the
         // completed candidate is routed through the selected partition set
         // before duplicate-key resolution.  This prevents a row for p0 from
@@ -2591,7 +2664,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     }
     let source = update_source_query(update);
     // Go `planner.Optimize`.
-    let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
+    let optimize = super::start_optimize_region();
     let mut fresh = physical_plan
         .is_none()
         .then(|| match &update.kind {
@@ -3955,7 +4028,7 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
     }
     let source = delete_source_query(delete);
     // Go `planner.Optimize`.
-    let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
+    let optimize = super::start_optimize_region();
     let mut fresh = physical_plan
         .is_none()
         .then(|| match &delete.kind {

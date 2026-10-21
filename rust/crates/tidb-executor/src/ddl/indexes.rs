@@ -1124,6 +1124,7 @@ pub(crate) fn add_index_to_table(
                 "partial index condition failed: {error:?}"
             )));
         }
+        table.set_partial_index_condition_text(id, condition, ctx.connection_charset_info().0);
     }
     let result = table
         .create_index_counting_rows(built, ctx)

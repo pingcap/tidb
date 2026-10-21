@@ -345,6 +345,47 @@ fn information_schema_tables_in_query_at(
     }
 }
 
+// The statement compiles this thread is inside, innermost last: whether each
+// compiles an EXECUTE, and whether it is the prepared statement an EXECUTE
+// runs (which Go plans inside the EXECUTE's compile).
+thread_local! {
+    static COMPILES: std::cell::RefCell<Vec<(bool, bool)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// One statement compile on this thread; see [`COMPILES`].
+struct CompileDepth {
+    nested: bool,
+}
+
+impl CompileDepth {
+    fn enter(stmt: &Stmt) -> Self {
+        let is_execute = matches!(
+            stmt,
+            Stmt::Session(session) if matches!(&**session, SessionStmt::Execute { .. })
+        );
+        let nested = COMPILES.with(|compiles| {
+            let mut compiles = compiles.borrow_mut();
+            let nested = compiles.last().is_some_and(|(execute, _)| *execute);
+            compiles.push((is_execute, nested));
+            nested
+        });
+        Self { nested }
+    }
+
+    /// Whether the compile running now is a prepared statement's inside an
+    /// EXECUTE's.
+    fn is_nested() -> bool {
+        COMPILES.with(|compiles| compiles.borrow().last().is_some_and(|(_, nested)| *nested))
+    }
+}
+
+impl Drop for CompileDepth {
+    fn drop(&mut self) {
+        COMPILES.with(|compiles| compiles.borrow_mut().pop());
+    }
+}
+
 impl Session {
     /// [`information_schema_tables_in_query`] over the views of the catalog
     /// this statement sees.
@@ -2876,17 +2917,25 @@ impl Session {
         self.start_observation_compile();
         // Go `executor.Compile`; the executor hands over to `session.runStmt`
         // where planning ends and execution begins, and a statement that
-        // reaches no such point hands over here.
-        if tidb_util::tracing::current_span().is_some() {
+        // reaches no such point hands over here. The statement an EXECUTE
+        // runs comes back through this door inside the EXECUTE's compile:
+        // Go plans it inside the EXECUTE's `planner.Optimize`, so it opens
+        // no compile of its own.
+        let compile = CompileDepth::enter(&stmt);
+        if !compile.nested && tidb_util::tracing::current_span().is_some() {
             tidb_util::tracing::begin_thread_region("executor.Compile", Some(sql.to_owned()));
         }
         let result =
             self.prepare_parsed_statement_compile_phase(sql, stmt, prepared, select_plan, dml_plan);
-        if result.is_ok() {
-            tidb_executor::driver::begin_run_stmt_region();
-        } else {
-            tidb_util::tracing::end_thread_region("executor.Compile");
+        if !compile.nested {
+            tidb_executor::driver::end_held_optimize_region();
+            if result.is_ok() {
+                tidb_executor::driver::begin_run_stmt_region();
+            } else {
+                tidb_util::tracing::end_thread_region("executor.Compile");
+            }
         }
+        drop(compile);
         if result.is_err() && !self.in_transaction() {
             self.cleanup_txn_read_ts();
         }
@@ -2927,9 +2976,12 @@ impl Session {
         // every table-shaped question from that pass (`preprocess.go`); the
         // three consumers below share this one walk instead of each cloning
         // and re-walking the statement.
-        let preprocess = tidb_util::tracing::start_thread_region("planner.Preprocess");
+        // Go preprocesses the statement it compiles: an EXECUTE, not the
+        // prepared statement it runs.
+        let preprocess = (!CompileDepth::is_nested())
+            .then(|| tidb_util::tracing::start_thread_region("planner.Preprocess"));
         let scan = crate::binding::scan_statement_tables(&mut stmt);
-        preprocess.end();
+        drop(preprocess);
         // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
         if scan.names_commit_ts {
@@ -3333,6 +3385,9 @@ impl Session {
                     return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
                 }
                 SessionStmt::Execute { name, using } => {
+                    // Go plans the prepared statement inside the EXECUTE's
+                    // `planner.Optimize` (`GetPlanFromPlanCache`).
+                    tidb_executor::driver::hold_optimize_region();
                     return self.execute_prepared_statement(name, using);
                 }
                 SessionStmt::Deallocate(name) => {

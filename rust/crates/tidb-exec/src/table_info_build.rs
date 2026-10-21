@@ -2938,6 +2938,7 @@ fn stage_column_default(
             expr,
             field_type,
             context.current_database_name(),
+            context.connection_charset_info().0,
             |expr| {
                 // go resolves a DEFAULT expression against the table's own columns
                 // (`getDefaultValue` runs the expression resolver over them), so an
@@ -2972,9 +2973,13 @@ fn stage_column_default(
                 // and re-runs it per omitted row; the catalog writer carries
                 // the same metadata instead of refusing (oracle m3-catalog:
                 // CREATE TABLE c13(a json DEFAULT (json_array()))).
-                return Ok(StagedColumnDefault::Computed(computed.text));
+                // Go's `DefaultValue` is a Go string: meta JSON writes each
+                // byte that is not UTF-8 as U+FFFD.
+                return Ok(StagedColumnDefault::Computed(go_json_text(&computed.text)));
             }
-            Ok(StagedColumnDefault::TemporalMarker(computed.text))
+            Ok(StagedColumnDefault::TemporalMarker(go_json_text(
+                &computed.text,
+            )))
         }
         tidb_executor::column_default::ColumnDefault::Value(value) => {
             let zone = context.session_zone();
@@ -2983,6 +2988,16 @@ fn stage_column_default(
                     .map_err(default_admission_error)?;
             Ok(StagedColumnDefault::Settled(settled))
         }
+    }
+}
+
+/// A Go string as meta JSON writes it: each byte that is not UTF-8 (carried
+/// as a `tidb_hack::raw_bytes` escape) becomes U+FFFD.
+fn go_json_text(text: &str) -> String {
+    if tidb_hack::raw_bytes::contains_escapes(text) {
+        tidb_datatype::decode_go_utf8_lossy(tidb_hack::raw_bytes::str_to_bytes(text).as_ref())
+    } else {
+        text.to_owned()
     }
 }
 

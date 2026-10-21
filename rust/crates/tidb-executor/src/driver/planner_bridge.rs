@@ -2810,8 +2810,12 @@ fn subquery_evaluator<'a>(
         // Go `EvalSubqueryFirstRow`'s deferred `PreprocessSubQueries++` and
         // `DurationPreprocessSubQuery += time.Since(begin)`, error or not.
         let begin_evaluation = std::time::Instant::now();
+        // Go `EvalSubqueryFirstRow`'s region: the subquery's executors run
+        // under it.
+        let region = tidb_util::tracing::start_thread_region_ex("executor.EvalSubQuery");
         let evaluated =
             crate::driver::physical_builder::execute_first_row(&mut physical, catalog, ctx);
+        region.end();
         ctx.phase_durations()
             .add_preprocess_sub_query(begin_evaluation.elapsed());
         let (row, has_row) = evaluated.map_err(driver_error_to_plan)?;

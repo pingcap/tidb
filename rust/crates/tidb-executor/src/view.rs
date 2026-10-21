@@ -199,7 +199,12 @@ pub fn resolve_view_definition(
     } else {
         catalog
     };
-    let select_sql = canonical_view_query(&create.query, resolving, current_db)?;
+    let select_sql = canonical_view_query(
+        &create.query,
+        resolving,
+        current_db,
+        ctx.connection_charset_info().0,
+    )?;
     // Planning the canonical body both validates it and settles the output
     // column types the view reports to DESCRIBE and SHOW CREATE VIEW; Go's
     // `PlanBuilder` builds the body's plan and reads its schema, and never
@@ -258,6 +263,15 @@ pub fn resolve_view_definition(
         (create.definer.user.clone(), create.definer.host.clone())
     };
     let (character_set_client, collation_connection) = ctx.connection_charset_info();
+    // Go installs the view's `TableInfo` as read back from meta JSON: each
+    // byte of the stored body and column names that is not UTF-8 becomes
+    // U+FFFD.
+    let mut select_sql = select_sql;
+    crate::kv_table::table_meta::go_json_text_round_trip(&mut select_sql);
+    let mut columns: Vec<(String, tidb_datatype::FieldType)> = columns;
+    for column in columns.iter_mut() {
+        crate::kv_table::table_meta::go_json_text_round_trip(&mut column.0);
+    }
     let view = ViewDef {
         name: name.clone(),
         columns,
@@ -434,11 +448,18 @@ struct BodyTable {
 /// A set operation canonicalizes term by term; the statement-level
 /// `ORDER BY`/`LIMIT` and a nested term's parentheses restore unchanged,
 /// which is what Go prints (captured).
+/// `connection_charset` is the CREATE VIEW session's
+/// `character_set_connection`: Go's parser typed each plain string literal of
+/// the body with it, so the stored text writes it as the `_charset`
+/// introducer (`_LATIN1'v'` under the default keyword-uppercase flags).
 fn canonical_view_query(
     query: &QueryStmt,
     catalog: &Catalog,
     current_db: &str,
+    connection_charset: &str,
 ) -> Result<String, DriverError> {
+    let restore_context =
+        tidb_ast::RestoreContext::default().with_string_charset(connection_charset);
     // Go `checkCreateViewWithSelect` sets the lock of the body's SELECT, or of
     // each term of a set operation, to `SelectLockNone` before the text is
     // stored. A SelectStmt restores a non-nil lock info as a space followed by
@@ -457,7 +478,8 @@ fn canonical_view_query(
         }
     }
     let canonical = canonical_query_with(&query, catalog, current_db, &mut Vec::new(), true)?;
-    let mut text = Stmt::Query(tidb_ast::NodeBox::new(canonical.clone())).restore();
+    let mut text = Stmt::Query(tidb_ast::NodeBox::new(canonical.clone()))
+        .restore_with_context(&restore_context);
     match &canonical {
         QueryStmt::Select(_) => {
             if locked_terms[0] {
@@ -470,10 +492,9 @@ fn canonical_view_query(
                 let SetOprTermBody::Select(select) = &term.body else {
                     continue;
                 };
-                let term_text = Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(
-                    select.clone(),
-                )))
-                .restore();
+                let term_text =
+                    Stmt::Query(tidb_ast::NodeBox::new(QueryStmt::Select(select.clone())))
+                        .restore_with_context(&restore_context);
                 let Some(found) = text[cursor..].find(&term_text) else {
                     continue;
                 };

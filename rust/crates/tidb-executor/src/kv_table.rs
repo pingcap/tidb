@@ -428,6 +428,17 @@ struct KvCheckConstraint {
     like_default_escape_sensitive: bool,
 }
 
+/// Go `CheckAndBuildIndexConditionString`'s restore flags
+/// (`pkg/ddl/index.go`).
+fn partial_index_condition_flags() -> tidb_ast::RestoreFlags {
+    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
+        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
+        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
+        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
+        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
+        | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME
+}
+
 /// The lightweight evaluation context used by a partial-index predicate.
 /// Index maintenance historically received only a session timezone rather
 /// than the whole statement context; carrying the row and table columns here
@@ -546,6 +557,10 @@ pub struct KvTable {
     /// widening every source-shaped index fixture while making the predicate
     /// available to every index write and backfill path.
     partial_index_conditions: std::collections::BTreeMap<i64, KvCheckConstraint>,
+    /// Go `IndexInfo.ConditionExprString` as the in-process DDL installed it
+    /// (restored with the DDL session's connection charset, then through the
+    /// meta JSON reload). A predicate without one prints its restored source.
+    partial_index_condition_texts: std::collections::BTreeMap<i64, String>,
     /// The AUTO_INCREMENT column's offset, if the table has one.
     auto_increment_offset: Option<usize>,
     /// Go's auto-id allocator, shared across the copies a transaction stages
@@ -1451,6 +1466,9 @@ impl KvTable {
                 .for_each(go_json_text_round_trip);
         }
         go_json_text_round_trip(&mut self.comment);
+        for text in self.partial_index_condition_texts.values_mut() {
+            go_json_text_round_trip(text);
+        }
     }
 
     /// All table columns in physical offset order, including hidden columns
@@ -1521,6 +1539,7 @@ impl KvTable {
             partition_reorg: None,
             max_index_id: 0,
             partial_index_conditions: std::collections::BTreeMap::new(),
+            partial_index_condition_texts: std::collections::BTreeMap::new(),
             common_handle_offsets: Vec::new(),
             common_handle_prefix_lengths: Vec::new(),
             common_handle_version: 0,
@@ -4166,6 +4185,112 @@ impl KvTable {
         Ok(found)
     }
 
+    /// Go `getKeysNeedCheckOneRow`'s keys for one INSERT row: the record key
+    /// of its handle (a clustered handle, or an explicitly supplied heap ID)
+    /// and the key of every distinct unique-index entry it would file.
+    fn insert_check_keys(
+        &mut self,
+        row: &[Datum],
+        row_id: Option<i64>,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(Option<Key>, Vec<Key>), KvTableError> {
+        let zone = ctx.time_zone();
+        let physical_id = self.record_physical_id(row, ctx)?;
+        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
+        let handle = if clustered {
+            Some(self.handle_of_row(row, &zone, 0)?)
+        } else {
+            row_id.map(TableHandle::Int)
+        };
+        let handle_key = handle.map(|handle| {
+            Key::from_bytes(encode_row_key_with_handle(
+                physical_id,
+                &handle.record_handle(),
+            ))
+        });
+        let mut unique_keys = Vec::new();
+        for index in self.indexes.as_ref().clone() {
+            if !index.unique
+                || index.clustered_primary
+                || !self.index_condition_holds(&index, row, &zone)?
+            {
+                continue;
+            }
+            for entry in
+                self.index_entry_keys(&index, row, &TableHandle::Int(0), physical_id, &zone)?
+            {
+                if entry.distinct {
+                    unique_keys.push(Key::from_bytes(entry.key));
+                }
+            }
+        }
+        Ok((handle_key, unique_keys))
+    }
+
+    /// Go `prefetchUniqueIndices`: one `BatchGet` of every row's handle and
+    /// unique keys, filling the snapshot cache the rows' own duplicate
+    /// checks then read. Returns the entries found.
+    pub(crate) fn prefetch_unique_indices(
+        &mut self,
+        rows: &[(&[Datum], Option<i64>)],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<std::collections::HashMap<Key, Vec<u8>>, KvTableError> {
+        let _region = tidb_util::tracing::start_thread_region_ex("prefetchUniqueIndices");
+        let mut keys = Vec::new();
+        for (row, row_id) in rows {
+            // A row whose keys cannot be built (Go `getKeysNeedCheckOneRow`
+            // marks an unroutable row `ignored`) is left to its own check,
+            // which reports it; the prefetch only fills the cache.
+            let Ok((handle_key, unique_keys)) = self.insert_check_keys(row, *row_id, ctx) else {
+                continue;
+            };
+            keys.extend(handle_key);
+            keys.extend(unique_keys);
+        }
+        // Go `tikvTxn.BatchGet`, the driver transaction's read.
+        let _batch_get = tidb_util::tracing::start_thread_region_ex("tikvTxn.BatchGet");
+        self.store.batch_get(&keys).map_err(KvTableError::from)
+    }
+
+    /// Go `prefetchConflictedOldRows`: one `BatchGet` of the rows the found
+    /// unique keys point at, which an ON DUPLICATE KEY UPDATE or a REPLACE
+    /// reads next.
+    pub(crate) fn prefetch_conflicted_old_rows(
+        &mut self,
+        rows: &[(&[Datum], Option<i64>)],
+        values: &std::collections::HashMap<Key, Vec<u8>>,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
+        let _region = tidb_util::tracing::start_thread_region_ex("prefetchConflictedOldRows");
+        let mut keys = Vec::new();
+        for (row, row_id) in rows {
+            let Ok(physical_id) = self.record_physical_id(row, ctx) else {
+                continue;
+            };
+            let Ok((_, unique_keys)) = self.insert_check_keys(row, *row_id, ctx) else {
+                continue;
+            };
+            for key in unique_keys {
+                let Some(value) = values.get(&key) else {
+                    continue;
+                };
+                let handle = tidb_tablecodec::decode_handle_in_index_value(value)
+                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?
+                    .ok_or_else(|| {
+                        KvTableError::Decode("index value contains no handle".to_owned())
+                    })?;
+                let handle = index_entries::convert_handle(&handle);
+                keys.push(Key::from_bytes(encode_row_key_with_handle(
+                    physical_id,
+                    &handle.record_handle(),
+                )));
+            }
+        }
+        let _batch_get = tidb_util::tracing::start_thread_region_ex("tikvTxn.BatchGet");
+        self.store.batch_get(&keys).map_err(KvTableError::from)?;
+        Ok(())
+    }
+
     /// Checks a batch of ordinary clustered INSERT record keys with one
     /// storage request. `None` means the table shape cannot use this fast
     /// path: a secondary unique index, a partitioned table, or a heap table
@@ -4335,18 +4460,35 @@ impl KvTable {
     /// index carries no predicate.
     #[must_use]
     pub fn partial_index_condition_string(&self, index_id: i64) -> Option<String> {
+        if let Some(text) = self.partial_index_condition_texts.get(&index_id) {
+            return Some(text.clone());
+        }
         self.partial_index_conditions
             .get(&index_id)
             .map(|condition| {
-                condition.source.restore_with_flags(
-                    tidb_ast::RestoreFlags::STRING_SINGLE_QUOTES
-                        | tidb_ast::RestoreFlags::KEYWORD_LOWERCASE
-                        | tidb_ast::RestoreFlags::NAME_BACK_QUOTES
-                        | tidb_ast::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
-                        | tidb_ast::RestoreFlags::WITHOUT_SCHEMA_NAME
-                        | tidb_ast::RestoreFlags::WITHOUT_TABLE_NAME,
-                )
+                condition
+                    .source
+                    .restore_with_flags(partial_index_condition_flags())
             })
+    }
+
+    /// Records Go's `ConditionExprString` for an in-process DDL's partial
+    /// index: the condition restored with Go's index-condition flags and the
+    /// DDL session's `character_set_connection`, which Go's parser typed the
+    /// condition's plain string literals with.
+    pub(crate) fn set_partial_index_condition_text(
+        &mut self,
+        index_id: i64,
+        condition: &tidb_ast::Expr,
+        connection_charset: &str,
+    ) {
+        self.partial_index_condition_texts.insert(
+            index_id,
+            condition.restore_with_flags_and_string_charset(
+                partial_index_condition_flags(),
+                connection_charset,
+            ),
+        );
     }
 
     /// Go `IndexInfo.ConditionExprString`, compiled beside its index: the
@@ -4373,6 +4515,7 @@ impl KvTable {
     /// dropped. The sidecar must never outlive its `KvIndex` owner.
     pub(crate) fn remove_partial_index_condition(&mut self, index_id: i64) {
         self.partial_index_conditions.remove(&index_id);
+        self.partial_index_condition_texts.remove(&index_id);
     }
 
     /// Returns the first partial index whose predicate names `column_name`.

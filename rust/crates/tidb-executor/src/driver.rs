@@ -283,14 +283,68 @@ pub(crate) fn run_query_stmt(
     open_query_meta_stmt_with_physical(query, None, catalog, current_db, ctx)?.collect()
 }
 
+// An EXECUTE's `planner.Optimize`: Go plans the prepared statement inside
+// the EXECUTE's one `planner.Optimize` (`GetPlanFromPlanCache`), so while the
+// session holds it the planning steps open no region of their own, and the
+// handover to execution ends it.
+thread_local! {
+    static HELD_OPTIMIZE_REGION: std::cell::RefCell<Option<tidb_util::tracing::ThreadRegion>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Holds Go `planner.Optimize`'s region over a prepared statement's planning
+/// (the EXECUTE that runs it is the statement Go compiles); see
+/// [`end_held_optimize_region`].
+pub fn hold_optimize_region() {
+    let region = tidb_util::tracing::start_thread_region("planner.Optimize");
+    if region.span().is_some() {
+        HELD_OPTIMIZE_REGION.with(|held| *held.borrow_mut() = Some(region));
+    }
+}
+
+/// Ends the region [`hold_optimize_region`] holds, if any.
+pub fn end_held_optimize_region() {
+    let held = HELD_OPTIMIZE_REGION.with(|held| held.borrow_mut().take());
+    drop(held);
+}
+
+/// Go `planner.Optimize`'s region for one statement's planning; none while
+/// an EXECUTE holds it ([`hold_optimize_region`]).
+pub(crate) fn start_optimize_region() -> OptimizeRegion {
+    let held = HELD_OPTIMIZE_REGION.with(|held| held.borrow().is_some());
+    OptimizeRegion((!held).then(|| tidb_util::tracing::start_thread_region("planner.Optimize")))
+}
+
+/// See [`start_optimize_region`].
+#[must_use = "the region ends when it drops"]
+pub(crate) struct OptimizeRegion(Option<tidb_util::tracing::ThreadRegion>);
+
+impl OptimizeRegion {
+    /// Go `Region.End`.
+    pub(crate) fn end(self) {}
+}
+
 /// Go `session.ExecuteStmt` handing the compiled statement from
 /// `executor.Compile` to `session.runStmt`, which logs the statement's text
 /// (`r.Span.LogKV("sql", s.Text())`). The session opens `executor.Compile`
 /// with the text; once it has ended this does nothing, nor on an untraced
 /// thread.
 pub fn begin_run_stmt_region() {
+    end_held_optimize_region();
     if let Some(text) = tidb_util::tracing::end_thread_region("executor.Compile") {
         if let Some(span) = tidb_util::tracing::begin_thread_region("session.runStmt", None) {
+            span.log_kv("sql", text.as_deref().unwrap_or_default());
+        }
+    }
+}
+
+/// Go `session.ExecuteStmt`'s point-plan short path: a prepared point get in
+/// autocommit runs `ExecStmt.PointGet` (which logs the statement's text)
+/// where any other statement runs `session.runStmt`.
+pub fn begin_point_get_region() {
+    end_held_optimize_region();
+    if let Some(text) = tidb_util::tracing::end_thread_region("executor.Compile") {
+        if let Some(span) = tidb_util::tracing::begin_thread_region("ExecStmt.PointGet", None) {
             span.log_kv("sql", text.as_deref().unwrap_or_default());
         }
     }
@@ -645,7 +699,7 @@ pub fn open_query_meta_stmt_with_physical(
         Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
         None => {
             set_opr::validate_query_usage(query, ctx)?;
-            let optimize = tidb_util::tracing::start_thread_region("planner.Optimize");
+            let optimize = start_optimize_region();
             let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
             optimize.end();
             physical_builder::open_query(query, &mut physical, catalog, ctx)
@@ -912,10 +966,22 @@ pub(crate) struct FromTable {
 /// Delivers each physical row before requesting another chunk. The DML owner
 /// accounts retained rows inside `visit`; no intermediate datum matrix exists.
 fn visit_executor_rows(
+    exec: Box<dyn Executor>,
+    types: &[FieldType],
+    memory: &crate::StatementMemory,
+    visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
+) -> Result<(), DriverError> {
+    visit_executor_row_chunks(exec, types, memory, visit, |_| {})
+}
+
+/// [`visit_executor_rows`], telling `chunk_end` each chunk's row count once
+/// its rows were visited: the batches Go's `insertRowsFromSelect` executes.
+fn visit_executor_row_chunks(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
     memory: &crate::StatementMemory,
     mut visit: impl FnMut(Vec<Datum>) -> Result<(), DriverError>,
+    mut chunk_end: impl FnMut(usize),
 ) -> Result<(), DriverError> {
     let result = (|| {
         exec.open()?;
@@ -928,6 +994,7 @@ fn visit_executor_rows(
             for r in 0..req.num_rows() {
                 visit(req.get_row(r).get_datum_row(types))?;
             }
+            chunk_end(req.num_rows());
         }
         Ok(())
     })();

@@ -524,3 +524,64 @@ fn point_get_fast_path_ignores_schema_qualifiers() {
         )
     );
 }
+
+/// Go `parseBooleanHint` reads WRITE_SLOW_LOG's optional `@qb` before the
+/// value, `TableOptimizerHint.Restore` writes no value for it, and a hint list
+/// that yields no hint and no error is `parseError` at EOF (1064 with the
+/// column past `*/`). Captured from a Go TiDB.
+#[test]
+fn write_slow_log_reads_a_query_block_like_go() {
+    let mut session = Session::new();
+    session
+        .run("SELECT /*+ WRITE_SLOW_LOG(@sel_1 TRUE) */ 1")
+        .unwrap();
+    assert_eq!(warnings_of(&session), vec![]);
+    session
+        .run("SELECT /*+ WRITE_SLOW_LOG(@nosuch TRUE) */ 1")
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1815,
+            "Hint write_slow_log(@`nosuch` ) is ignored due to unknown query block name".to_owned()
+        )]
+    );
+    for (sql, column) in [
+        ("SELECT /*+ WRITE_SLOW_LOG(@nosuch) */ 1", 37),
+        ("SELECT /*+ */ 1", 13),
+        ("SELECT /*+ use_toja(maybe) */ 1", 29),
+        ("SELECT /*+ memory_quota(1 kb) */ 1", 32),
+        ("SELECT /*+ query_type(x) */ 1", 27),
+    ] {
+        session.run(sql).unwrap();
+        assert_eq!(
+            warnings_of(&session),
+            vec![(
+                1064,
+                format!("Optimizer hint syntax error at line 1 column {column} near \"\" ")
+            )],
+            "{sql}"
+        );
+    }
+}
+
+/// Go restores WRITE_SLOW_LOG with no value (`WRITE_SLOW_LOG(@`sel_1` )`), and
+/// `prepareHints` re-parses that `BindSQL` as no hint, so CREATE BINDING
+/// escalates the hint parser's EOF error. Captured from a Go TiDB: 1064 at
+/// column 38 of the restored text.
+#[test]
+fn a_binding_whose_write_slow_log_hint_vanishes_is_refused() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (x INT)").unwrap();
+    assert_eq!(
+        error_of(
+            &mut session,
+            "CREATE GLOBAL BINDING FOR SELECT * FROM t WHERE x = 1 USING SELECT /*+ \
+             WRITE_SLOW_LOG(@sel_1 TRUE) */ * FROM t WHERE x = 1"
+        ),
+        (
+            1064,
+            "Optimizer hint syntax error at line 1 column 38 near \"\" ".to_owned()
+        )
+    );
+}

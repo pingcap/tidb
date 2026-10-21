@@ -301,9 +301,12 @@ fn string_value(expr: &Expr) -> Option<&str> {
 fn computed_default(
     expr: &Expr,
     added_origin_safety: AddedOriginSafety,
+    string_charset: &str,
 ) -> Result<Option<ColumnDefault>, DefaultError> {
     Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
-        text: expr.restore_with_flags(default_restore_flags()),
+        // Go `restoreFuncCall` restores the AST the DDL session parsed, whose
+        // plain string literals carry its `character_set_connection`.
+        text: expr.restore_with_flags_and_string_charset(default_restore_flags(), string_charset),
         kind: ComputedDefaultKind::Expression,
         expr: build_deferred_expression(expr)?,
         added_origin_safety,
@@ -402,6 +405,7 @@ fn func_call_default(
     expr: &Expr,
     field_type: &FieldType,
     current_database: Option<&str>,
+    string_charset: &str,
 ) -> Result<Option<ColumnDefault>, DefaultError> {
     // Go's "%s with disallowed args" refusals print `expr.FnName.String()`,
     // the name as written; only the dispatch is case-insensitive.
@@ -498,13 +502,17 @@ fn func_call_default(
                 args: vec![Expr::Column(path)],
                 origin_position: *origin_position,
             };
-            computed_default(&qualified, AddedOriginSafety::SequenceDefault)
+            computed_default(
+                &qualified,
+                AddedOriginSafety::SequenceDefault,
+                string_charset,
+            )
         }
         "vec_from_text" => {
             if args.len() != 1 {
                 return Err(DefaultError::WrongParameterCount("vec_from_text"));
             }
-            computed_default(expr, AddedOriginSafety::Safe)
+            computed_default(expr, AddedOriginSafety::Safe, string_charset)
         }
         // Go's RAND/UUID arms preserve the expression for each omitted row;
         // `VerifyArgsWrapper` still enforces their individual arities.
@@ -512,19 +520,31 @@ fn func_call_default(
             if args.len() > 1 {
                 return Err(DefaultError::WrongParameterCount("rand"));
             }
-            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+            computed_default(
+                expr,
+                AddedOriginSafety::UnsafeSystemFunction,
+                string_charset,
+            )
         }
         "uuid" => {
             if !args.is_empty() {
                 return Err(DefaultError::WrongParameterCount("uuid"));
             }
-            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+            computed_default(
+                expr,
+                AddedOriginSafety::UnsafeSystemFunction,
+                string_charset,
+            )
         }
         "uuid_to_bin" => {
             if !(1..=2).contains(&args.len()) {
                 return Err(DefaultError::WrongParameterCount("uuid_to_bin"));
             }
-            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+            computed_default(
+                expr,
+                AddedOriginSafety::UnsafeSystemFunction,
+                string_charset,
+            )
         }
         "date_format" => {
             let [now, format] = args else {
@@ -551,7 +571,7 @@ fn func_call_default(
                     "KindString {format}"
                 )));
             }
-            computed_default(expr, AddedOriginSafety::Safe)
+            computed_default(expr, AddedOriginSafety::Safe, string_charset)
         }
         "replace" => {
             let [source, _, _] = args else {
@@ -577,7 +597,11 @@ fn func_call_default(
             if !uuid_args.is_empty() {
                 return Err(DefaultError::WrongParameterCount("uuid"));
             }
-            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+            computed_default(
+                expr,
+                AddedOriginSafety::UnsafeSystemFunction,
+                string_charset,
+            )
         }
         "upper" => {
             let [substring] = args else {
@@ -601,7 +625,11 @@ fn func_call_default(
             }
             if let Some(separator) = string_value(separator) {
                 if separator == "@" {
-                    return computed_default(expr, AddedOriginSafety::UnsafeSystemFunction);
+                    return computed_default(
+                        expr,
+                        AddedOriginSafety::UnsafeSystemFunction,
+                        string_charset,
+                    );
                 }
                 return Err(DefaultError::FunctionNotAllowed(format!(
                     "KindString {separator}"
@@ -620,20 +648,32 @@ fn func_call_default(
                     "{name} with disallowed args"
                 )));
             }
-            computed_default(expr, AddedOriginSafety::Safe)
+            computed_default(expr, AddedOriginSafety::Safe, string_charset)
         }
         "json_object" => {
             if !args.len().is_multiple_of(2) {
                 return Err(DefaultError::WrongParameterCount("json_object"));
             }
-            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+            computed_default(
+                expr,
+                AddedOriginSafety::UnsafeSystemFunction,
+                string_charset,
+            )
         }
-        "json_array" => computed_default(expr, AddedOriginSafety::UnsafeSystemFunction),
+        "json_array" => computed_default(
+            expr,
+            AddedOriginSafety::UnsafeSystemFunction,
+            string_charset,
+        ),
         "json_quote" => {
             if args.len() != 1 {
                 return Err(DefaultError::WrongParameterCount("json_quote"));
             }
-            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+            computed_default(
+                expr,
+                AddedOriginSafety::UnsafeSystemFunction,
+                string_charset,
+            )
         }
         _ => Err(DefaultError::FunctionNotAllowed(lower)),
     }
@@ -694,17 +734,20 @@ pub fn build(
     field_type: &FieldType,
     fold: impl FnOnce(&Expr) -> Result<Datum, DefaultError>,
 ) -> Result<ColumnDefault, DefaultError> {
-    build_with_current_database(expr, field_type, None, fold)
+    build_with_current_database(expr, field_type, None, tidb_mysql::DefaultCharset, fold)
 }
 
 /// [`build`] with Go's preprocessor in front: an unqualified sequence name
 /// inside `nextval()` takes the session's current database
 /// (`handleTableName` under `inSequenceFunction`), so the stored default
-/// prints `` nextval(`db`.`seq`) ``.
+/// prints `` nextval(`db`.`seq`) ``. `string_charset` is the DDL session's
+/// `character_set_connection`, which a computed default's restored text
+/// writes as each plain literal's `_charset` introducer.
 pub fn build_with_current_database(
     expr: &Expr,
     field_type: &FieldType,
     current_database: Option<&str>,
+    string_charset: &str,
     fold: impl FnOnce(&Expr) -> Result<Datum, DefaultError>,
 ) -> Result<ColumnDefault, DefaultError> {
     let mut expr = expr;
@@ -719,7 +762,14 @@ pub fn build_with_current_database(
         _ => clock_marker_call(expr).map(|args| ("CURRENT_TIMESTAMP".to_owned(), args)),
     };
     if let Some((name, args)) = call {
-        if let Some(default) = func_call_default(&name, args, expr, field_type, current_database)? {
+        if let Some(default) = func_call_default(
+            &name,
+            args,
+            expr,
+            field_type,
+            current_database,
+            string_charset,
+        )? {
             return Ok(default);
         }
         // Go `getDefaultValue`: "If the function call is
@@ -749,18 +799,24 @@ pub(crate) fn build_in_context(
     column: &str,
     ctx: &crate::StmtContext,
 ) -> Result<ColumnDefault, crate::DriverError> {
-    build_with_current_database(expr, field_type, ctx.current_database_name(), |expr| {
-        let rewritten = rewrite_expr_resolved(
-            expr,
-            &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
-                ctx.session_zone(),
-                ctx.like_default_escape(),
-            ),
-        )
-        .map_err(rewrite_error)?;
-        tidb_expr::eval_expression_once(&rewritten, ctx)
-            .map_err(|_| DefaultError::Unsupported("a DEFAULT this node cannot evaluate"))
-    })
+    build_with_current_database(
+        expr,
+        field_type,
+        ctx.current_database_name(),
+        ctx.connection_charset_info().0,
+        |expr| {
+            let rewritten = rewrite_expr_resolved(
+                expr,
+                &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+                    ctx.session_zone(),
+                    ctx.like_default_escape(),
+                ),
+            )
+            .map_err(rewrite_error)?;
+            tidb_expr::eval_expression_once(&rewritten, ctx)
+                .map_err(|_| DefaultError::Unsupported("a DEFAULT this node cannot evaluate"))
+        },
+    )
     .map_err(|error| error.into_driver_error(column))
 }
 

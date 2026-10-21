@@ -310,7 +310,7 @@ impl Parser {
             while matches!(self.peek().kind, TokenKind::Ident | TokenKind::Keyword)
                 && !self.is_kw("ON")
             {
-                words.push(self.bump().text.to_ascii_uppercase());
+                words.push(tidb_mysql::to_uppercase(&self.bump().text));
             }
             (words.join(" "), true)
         } else if self.is_kw("ALL") {
@@ -463,9 +463,11 @@ impl Parser {
             if !allow_extended {
                 return Err(self.err_here("expected a standard privilege"));
             }
+            // Go keeps the name as written and every consumer reads
+            // `strings.ToUpper` of it (`grantDynamicPriv`, `IsDynamicPrivilege`).
             let mut words = Vec::new();
             while self.peek().kind == TokenKind::Ident {
-                words.push(self.bump().text.to_ascii_uppercase());
+                words.push(tidb_mysql::to_uppercase(&self.bump().text));
             }
             if words.is_empty() {
                 return Err(self.err_here("expected a privilege"));

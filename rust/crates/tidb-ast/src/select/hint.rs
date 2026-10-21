@@ -528,7 +528,12 @@ impl Hint {
                     out.push_str(&back_quote(qb_name));
                     out.push(' ');
                 }
-                out.push_str(if *value { "TRUE" } else { "FALSE" });
+                // Go `TableOptimizerHint.Restore` writes TRUE/FALSE only for
+                // `use_toja` / `use_cascades`; WRITE_SLOW_LOG's value has no
+                // case there and is not written.
+                if self.lower_name() != "write_slow_log" {
+                    out.push_str(if *value { "TRUE" } else { "FALSE" });
+                }
             }
             HintKind::Name { qb_name, name } => {
                 if let Some(qb_name) = qb_name {

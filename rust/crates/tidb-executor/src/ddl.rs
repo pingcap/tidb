@@ -2084,6 +2084,11 @@ fn create_table_in(
             .map_err(|error| {
                 DriverError::Parse(format!("partial index condition failed: {error:?}"))
             })?;
+        table.set_partial_index_condition_text(
+            *index_id,
+            condition,
+            ctx.connection_charset_info().0,
+        );
     }
     let foreign_keys = table_foreign_keys(
         create,

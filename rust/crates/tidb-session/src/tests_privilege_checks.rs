@@ -360,3 +360,27 @@ fn dynamic_privilege_names_fold_with_go_to_upper() {
         ]
     );
 }
+
+/// Go `grantDynamicPriv` uppercases the written name with `strings.ToUpper`
+/// before its level check, so 3619 names `BACKUP_ADMIN` for `backup_adm\u{131}n`
+/// (dotless `\u{131}` uppercases to `I`), alone or beside a static privilege.
+/// Captured from a Go TiDB.
+#[test]
+fn a_misplaced_dynamic_privilege_is_named_in_go_upper_case() {
+    let (_registry, mut root) = setup();
+    root.run("create user foo").unwrap();
+    for sql in [
+        "grant backup_adm\u{131}n on test.* to foo",
+        "grant backup_adm\u{131}n, select on test.* to foo",
+        "revoke backup_adm\u{131}n on test.* from foo",
+    ] {
+        assert_eq!(
+            error_of(&mut root, sql),
+            (
+                3619,
+                "Illegal privilege level specified for BACKUP_ADMIN".to_owned()
+            ),
+            "{sql}"
+        );
+    }
+}

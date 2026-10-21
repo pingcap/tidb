@@ -5827,6 +5827,10 @@ impl ClusterServerSession {
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
         let mut retries = tidb_exec::pessimistic_lock_error::PessimisticStatementRetry::default();
+        // Whether the statement reached `finishStmt`'s commit: a failure
+        // there is the commit's own, not one `autoCommitAfterStmt` rolls
+        // back.
+        let mut committing = false;
         let result = loop {
             // Selected rows belong to this execution attempt, not an earlier
             // plan or a partially executed failed read.
@@ -5958,6 +5962,7 @@ impl ClusterServerSession {
                             break Err(error);
                         }
                     }
+                    committing = true;
                     match self.commit_if_session_left_transaction().and_then(|()| {
                         // Go `finishStmt` -> `autoCommitAfterStmt`: outside a
                         // transaction, `session.CommitTxn` ->
@@ -6019,6 +6024,11 @@ impl ClusterServerSession {
             }
         };
         if result.is_err() {
+            // Go `autoCommitAfterStmt`: a statement that failed outside a
+            // transaction is rolled back under `session.RollbackTxn`.
+            let _rollback_txn =
+                (!committing && self.explicit.is_none() && !self.session.in_transaction())
+                    .then(|| tidb_util::tracing::start_thread_region_ex("session.RollbackTxn"));
             Self::rollback_prefetched_write(write_transaction);
             // Cancel the client's active fair scope. Ordinary locks remain
             // transaction-owned, following Go StmtRollback.

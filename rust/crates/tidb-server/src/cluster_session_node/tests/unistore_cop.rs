@@ -22862,3 +22862,226 @@ fn trace_records_go_executor_and_transaction_regions() {
     assert_eq!(trace_tree(&mut session, "ROLLBACK"), expected);
     assert!(!session.session.in_transaction());
 }
+
+/// [`trace_tree`] without the client's spans (`regionRequest.SendReqCtx`,
+/// region loads, snapshot reads, commits), whose presence depends on the
+/// region cache and the store rather than on the TiDB-side regions.
+fn tidb_trace_tree(session: &mut ClusterServerSession, sql: &str) -> Vec<String> {
+    const CLIENT: [&str; 7] = [
+        "regionRequest.SendReqCtx",
+        "loadRegion",
+        "tikvSnapshot.get",
+        "tikvTxn.Commit",
+        "twoPhaseCommitter.",
+        "TiKVStore.getTimestampWithRetry",
+        "copr.buildCopTasks",
+    ];
+    trace_tree(session, sql)
+        .into_iter()
+        .filter(|line| !CLIENT.iter().any(|client| line.contains(client)))
+        .collect()
+}
+
+/// The rest of Go's statement-path regions and events: a subquery the
+/// planner evaluates (`executor.EvalSubQuery` under `executor.Compile`),
+/// a prepared point get in autocommit (`ExecStmt.PointGet` in place of
+/// `session.runStmt`, the prepared statement planned inside the EXECUTE's
+/// `planner.Optimize`), a failed autocommit statement's
+/// `session.RollbackTxn`, the duplicate-check prefetches of INSERT IGNORE,
+/// ON DUPLICATE KEY UPDATE and REPLACE (`tikvTxn.BatchGet`), the
+/// auto-increment allocations (`alloc.alloc4Signed`, and
+/// `table.AllocAutoIncrementValue` per selected row), one insert event per
+/// source chunk of an INSERT ... SELECT, and a union scan's
+/// `buildMemTableReader`.
+#[test]
+fn trace_records_go_statement_path_regions() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(156)).unwrap();
+    for sql in [
+        "CREATE TABLE test.tr (id INT PRIMARY KEY, k INT, v INT, KEY ik (k))",
+        "INSERT INTO test.tr VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3), (5, 5, 6)",
+        "CREATE TABLE test.u (id INT PRIMARY KEY, k INT, UNIQUE KEY uk (k))",
+        "INSERT INTO test.u VALUES (1, 1), (2, 2)",
+        "CREATE TABLE test.ai (id INT PRIMARY KEY AUTO_INCREMENT, v INT)",
+        "CREATE TABLE test.big (id INT PRIMARY KEY, v INT)",
+        "SET @@cte_max_recursion_depth = 5000",
+        "INSERT INTO test.big SELECT seq, seq FROM (WITH RECURSIVE c(seq) AS \
+         (SELECT 1 UNION ALL SELECT seq + 1 FROM c WHERE seq < 3000) SELECT seq FROM c) s",
+        "CREATE TABLE test.dst (id INT PRIMARY KEY, v INT)",
+        "PREPARE s FROM 'SELECT * FROM test.tr WHERE id = ?'",
+        "SET @a = 5",
+    ] {
+        rows(&mut session, sql);
+    }
+    let compile = [
+        "trace",
+        "  └─session.ExecuteStmt",
+        "    ├─executor.Compile",
+        "    │ ├─planner.Preprocess",
+        "    │ └─planner.Optimize",
+        "    └─session.runStmt",
+        "      ├─executor.handleNoDelayExecutor",
+    ];
+    let with = |tail: &[&'static str]| {
+        let mut expected = compile.to_vec();
+        expected.extend_from_slice(tail);
+        expected
+    };
+
+    assert_eq!(
+        tidb_trace_tree(
+            &mut session,
+            "SELECT * FROM test.tr WHERE v = (SELECT MAX(k) FROM test.u)"
+        ),
+        [
+            "trace",
+            "  ├─session.ExecuteStmt",
+            "  │ ├─executor.Compile",
+            "  │ │ ├─planner.Preprocess",
+            "  │ │ ├─planner.Optimize",
+            "  │ │ └─executor.EvalSubQuery",
+            "  │ │   ├─distsql.Select",
+            "  │ │   └─*executor.MaxOneRowExec.Next",
+            "  │ │     ├─*aggregate.StreamAggExec.Next",
+            "  │ │     │ ├─*executor.LimitExec.Next",
+            "  │ │     │ │ └─*executor.IndexReaderExecutor.Next",
+            "  │ │     │ └─*executor.LimitExec.Next",
+            "  │ │     └─*aggregate.StreamAggExec.Next",
+            "  │ └─session.runStmt",
+            "  │   └─TableReaderExecutor.Open",
+            "  │     └─distsql.Select",
+            "  ├─*executor.TableReaderExecutor.Next",
+            "  └─*executor.TableReaderExecutor.Next",
+        ]
+    );
+    assert_eq!(
+        tidb_trace_tree(&mut session, "EXECUTE s USING @a"),
+        [
+            "trace",
+            "  ├─session.ExecuteStmt",
+            "  │ ├─executor.Compile",
+            "  │ │ ├─planner.Preprocess",
+            "  │ │ └─planner.Optimize",
+            "  │ └─ExecStmt.PointGet",
+            "  ├─*executor.PointGetExecutor.Next",
+            "  └─*executor.PointGetExecutor.Next",
+        ]
+    );
+    assert_eq!(
+        tidb_trace_tree(&mut session, "INSERT INTO test.tr VALUES (300, 'abc', 1)"),
+        with(&[
+            "      │ └─*executor.InsertExec.Next",
+            "      └─session.RollbackTxn",
+        ])
+    );
+    assert_eq!(
+        tidb_trace_tree(
+            &mut session,
+            "INSERT IGNORE INTO test.u VALUES (1, 9), (3, 3)"
+        ),
+        with(&[
+            "      │ └─*executor.InsertExec.Next",
+            "      │   ├─InsertValues.batchCheckAndInsert",
+            "      │   ├─prefetchUniqueIndices",
+            "      │   │ └─tikvTxn.BatchGet",
+            "      │   ├─table.AddRecord",
+            "      │   └─index.Create",
+            "      └─session.CommitTxn",
+            "        └─session.doCommitWithRetry",
+        ])
+    );
+    let prefetch_data_cache = [
+        "      │   ├─prefetchDataCache",
+        "      │   ├─prefetchUniqueIndices",
+        "      │   │ └─tikvTxn.BatchGet",
+        "      │   ├─prefetchConflictedOldRows",
+        "      │   │ └─tikvTxn.BatchGet",
+    ];
+    let mut tail = vec!["      │ └─*executor.InsertExec.Next"];
+    tail.extend(prefetch_data_cache);
+    tail.extend([
+        "      │   └─executor.updateRecord",
+        "      └─session.CommitTxn",
+        "        └─session.doCommitWithRetry",
+    ]);
+    assert_eq!(
+        tidb_trace_tree(
+            &mut session,
+            "INSERT INTO test.u VALUES (1, 1) ON DUPLICATE KEY UPDATE k = 1"
+        ),
+        with(&tail)
+    );
+    assert_eq!(
+        tidb_trace_tree(&mut session, "REPLACE INTO test.u VALUES (2, 2)"),
+        with(&[
+            "      │ └─*executor.ReplaceExec.Next",
+            "      │   ├─prefetchDataCache",
+            "      │   ├─prefetchUniqueIndices",
+            "      │   │ └─tikvTxn.BatchGet",
+            "      │   └─prefetchConflictedOldRows",
+            "      │     └─tikvTxn.BatchGet",
+            "      └─session.CommitTxn",
+            "        └─session.doCommitWithRetry",
+        ])
+    );
+    assert_eq!(
+        tidb_trace_tree(&mut session, "INSERT INTO test.ai (v) VALUES (1), (2)"),
+        with(&[
+            "      │ └─*executor.InsertExec.Next",
+            "      │   ├─alloc.alloc4Signed",
+            "      │   ├─table.AddRecord",
+            "      │   └─table.AddRecord",
+            "      └─session.CommitTxn",
+            "        └─session.doCommitWithRetry",
+        ])
+    );
+    let tree = tidb_trace_tree(
+        &mut session,
+        "INSERT INTO test.ai (v) SELECT v FROM test.tr WHERE id < 4",
+    );
+    let allocations = tree
+        .iter()
+        .filter(|line| line.ends_with("table.AllocAutoIncrementValue"))
+        .count();
+    assert_eq!(allocations, 3, "{tree:#?}");
+
+    let logged = displayed(rows(
+        &mut session,
+        "TRACE FORMAT = 'log' INSERT INTO test.dst SELECT * FROM test.big",
+    ));
+    let events = logged
+        .iter()
+        .filter(|row| row[1].starts_with("insert "))
+        .map(|row| (row[1].as_str(), row[3].as_str()))
+        .collect::<Vec<_>>();
+    let event = |text| (text, "*executor.InsertExec.Next");
+    assert_eq!(
+        events,
+        [
+            event("insert 1024 rows into table `dst`"),
+            event("insert 1024 rows into table `dst`"),
+            event("insert 952 rows into table `dst`"),
+        ]
+    );
+
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO test.tr VALUES (7, 7, 7)")
+        .unwrap();
+    let tree = tidb_trace_tree(
+        &mut session,
+        "SELECT * FROM test.tr IGNORE INDEX (ik) WHERE v > 0",
+    );
+    assert_eq!(
+        tree[5..10],
+        [
+            "  │ └─session.runStmt",
+            "  │   └─UnionScanExec.Open",
+            "  │     ├─TableReaderExecutor.Open",
+            "  │     │ └─distsql.Select",
+            "  │     └─buildMemTableReader",
+        ],
+        "{tree:#?}"
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+}

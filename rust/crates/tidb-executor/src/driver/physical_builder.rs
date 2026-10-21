@@ -287,18 +287,13 @@ impl BuildState {
                     .and_then(|source| source.for_executor(plan_id))
             })
             .flatten();
-        let (open_region, next_event) = if next_region.is_some() {
-            go_executor_open_trace(plan)
-        } else {
-            (None, None)
-        };
+        let trace = next_region.and_then(|_| GoExecutorTrace::for_plan(plan));
         executor = Box::new(SqlKillerCheckExec {
             child: executor,
             memory,
             runtime_stats,
             next_region,
-            open_region,
-            next_event,
+            trace,
         });
         let Some(counters) = self.runtime_counters.as_mut() else {
             return executor;
@@ -355,40 +350,82 @@ struct SqlKillerCheckExec {
     /// Go `exec.Next`'s `tracing.StartRegionEx(ctx, <type>.Next)` for the
     /// executor Go builds for the node.
     next_region: Option<&'static str>,
-    /// The region the Go executor's own `Open` opens: its name and whether
-    /// the children's opens run under it (`StartRegionEx`).
-    open_region: Option<(&'static str, bool)>,
-    /// The `logutil.Eventf` the Go executor's `Next` logs on every call,
-    /// built only for a traced statement.
-    next_event: Option<String>,
+    /// The regions and events the node's Go executor adds itself.
+    trace: Option<Box<GoExecutorTrace>>,
 }
 
-/// The trace a node's Go executor adds to its own `Open` and `Next`:
-/// `TableReaderExecutor.Open` and the reader's per-call `table scan table:
-/// <name>, range: <ranges>` event (`%v` of its `[]*ranger.Range`),
-/// `UnionScanExec.Open`, and `TableSampleExecutor.Open`.
-fn go_executor_open_trace(plan: &PhysicalPlan) -> (Option<(&'static str, bool)>, Option<String>) {
-    match plan {
-        PhysicalPlan::TableReader(reader) => {
-            let event = tidb_util::tracing::current_span()
-                .and_then(|_| reader.table_scan_plan())
-                .map(|scan| {
-                    let ranges = scan
-                        .ranges
-                        .iter()
-                        .map(tidb_planner::ranger::types::Range::to_display_string)
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    format!(
-                        "table scan table: {}, range: [{ranges}]",
-                        scan.table_name.to_lowercase()
-                    )
-                });
-            (Some(("TableReaderExecutor.Open", true)), event)
-        }
-        PhysicalPlan::UnionScan(_) => (Some(("UnionScanExec.Open", true)), None),
-        PhysicalPlan::TableSample(_) => (Some(("TableSampleExecutor.Open", false)), None),
-        _ => (None, None),
+/// The trace a node's Go executor adds to its own `Open`, `Next` and
+/// `Close`.
+#[derive(Default)]
+struct GoExecutorTrace {
+    /// The region its `Open` opens and whether the children's opens run
+    /// under it (`StartRegionEx`): `TableReaderExecutor.Open`,
+    /// `UnionScanExec.Open`, `TableSampleExecutor.Open`.
+    open_region: Option<(&'static str, bool)>,
+    /// The region its `Open` opens after its child's: `UnionScanExec.open`'s
+    /// `buildMem*Reader` over the child reader. (Here the transaction's
+    /// buffered rows are merged by the storage the reader reads.)
+    after_open_region: Option<&'static str>,
+    /// The `logutil.Eventf` its `Next` logs on every call: a table reader's
+    /// `table scan table: <name>, range: <ranges>` (`%v` of its
+    /// `[]*ranger.Range`), built only for a traced statement.
+    next_event: Option<String>,
+    /// `LimitExec.Close`'s `limitExec.Close` span, opened under the span
+    /// its `Open` ran in when the close took over a millisecond.
+    limit_close: bool,
+    open_span: Option<tidb_util::tracing::Span>,
+}
+
+impl GoExecutorTrace {
+    fn for_plan(plan: &PhysicalPlan) -> Option<Box<Self>> {
+        let trace = match plan {
+            PhysicalPlan::TableReader(reader) => Self {
+                open_region: Some(("TableReaderExecutor.Open", true)),
+                next_event: tidb_util::tracing::current_span()
+                    .and_then(|_| reader.table_scan_plan())
+                    .map(|scan| {
+                        let ranges = scan
+                            .ranges
+                            .iter()
+                            .map(tidb_planner::ranger::types::Range::to_display_string)
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        format!(
+                            "table scan table: {}, range: [{ranges}]",
+                            scan.table_name.to_lowercase()
+                        )
+                    }),
+                ..Self::default()
+            },
+            PhysicalPlan::UnionScan(_) => {
+                // A Selection the builder put over the reader for virtual
+                // columns is looked through.
+                let mut reader = plan.children().first();
+                if let Some(PhysicalPlan::Selection(_)) = reader {
+                    reader = reader.and_then(|selection| selection.children().first());
+                }
+                Self {
+                    open_region: Some(("UnionScanExec.Open", true)),
+                    after_open_region: Some(match reader {
+                        Some(PhysicalPlan::IndexReader(_)) => "buildMemIndexReader",
+                        Some(PhysicalPlan::IndexLookUpReader(_)) => "buildMemIndexLookUpReader",
+                        Some(PhysicalPlan::IndexMergeReader(_)) => "buildMemIndexMergeReader",
+                        _ => "buildMemTableReader",
+                    }),
+                    ..Self::default()
+                }
+            }
+            PhysicalPlan::TableSample(_) => Self {
+                open_region: Some(("TableSampleExecutor.Open", false)),
+                ..Self::default()
+            },
+            PhysicalPlan::Limit(_) => Self {
+                limit_close: true,
+                ..Self::default()
+            },
+            _ => return None,
+        };
+        Some(Box::new(trace))
     }
 }
 
@@ -443,24 +480,38 @@ fn checked_executor_with_stats(
         memory,
         runtime_stats,
         next_region: None,
-        open_region: None,
-        next_event: None,
+        trace: None,
     })
 }
 
 impl Executor for SqlKillerCheckExec {
     fn open(&mut self) -> Result<(), crate::ExecError> {
-        let _region = self.open_region.map(|(name, enter)| {
-            if enter {
-                tidb_util::tracing::start_thread_region_ex(name)
-            } else {
-                tidb_util::tracing::start_thread_region(name)
+        let trace = self.trace.as_deref_mut();
+        let _region = trace
+            .as_ref()
+            .and_then(|trace| trace.open_region)
+            .map(|(name, enter)| {
+                if enter {
+                    tidb_util::tracing::start_thread_region_ex(name)
+                } else {
+                    tidb_util::tracing::start_thread_region(name)
+                }
+            });
+        let after_open = trace.and_then(|trace| {
+            if trace.limit_close {
+                trace.open_span = tidb_util::tracing::current_span();
             }
+            trace.after_open_region
         });
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
         let result = crate::sort_util::recover_executor_panic(|| self.child.open());
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_open(start.elapsed());
+        }
+        if result.is_ok() {
+            if let Some(name) = after_open {
+                tidb_util::tracing::start_thread_region(name).end();
+            }
         }
         result
     }
@@ -469,7 +520,11 @@ impl Executor for SqlKillerCheckExec {
         let _region = self
             .next_region
             .map(tidb_util::tracing::start_thread_region_ex);
-        if let Some(event) = &self.next_event {
+        if let Some(event) = self
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.next_event.as_ref())
+        {
             tidb_util::tracing::thread_event(|| event.clone());
         }
         let start = self.runtime_stats.as_ref().map(|_| Instant::now());
@@ -485,10 +540,29 @@ impl Executor for SqlKillerCheckExec {
     }
 
     fn close(&mut self) -> Result<(), crate::ExecError> {
-        let start = self.runtime_stats.as_ref().map(|_| Instant::now());
+        let close_started = Instant::now();
+        let start = self.runtime_stats.as_ref().map(|_| close_started);
         let result = crate::sort_util::recover_executor_panic(|| self.child.close());
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_close(start.elapsed());
+        }
+        // Go `LimitExec.Close`: a close over a millisecond gets its own span
+        // under the span its `Open` ran in, started when the close began.
+        if let Some(parent) = self
+            .trace
+            .as_ref()
+            .and_then(|trace| trace.open_span.as_ref())
+        {
+            if close_started.elapsed() > Duration::from_millis(1) {
+                let tracer = parent.tracer();
+                tracer
+                    .start_span_child_of_at(
+                        "limitExec.Close",
+                        parent.context(),
+                        tracer.system_time_of(close_started),
+                    )
+                    .finish();
+            }
         }
         result
     }
@@ -6607,8 +6681,20 @@ pub(super) fn open_query(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<super::QueryRecordSet, DriverError> {
-    // Go `runStmt` -> `ExecStmt.Exec`: build the executor and open it.
-    super::begin_run_stmt_region();
+    // Go `runStmt` -> `ExecStmt.Exec`: build the executor and open it --
+    // or, for a prepared point get in autocommit (`stmt.PsStmt`, set when
+    // `IsSafeToReusePointGetExecutor` holds and the plan is a
+    // `PointGetPlan`), `ExecStmt.PointGet`.
+    if matches!(physical, PhysicalPlan::PointGet(_))
+        && ctx.is_prepared_execution()
+        && !ctx.pessimistic_transaction()
+        && !ctx.optimistic_transaction()
+        && !ctx.is_staleness()
+    {
+        super::begin_point_get_region();
+    } else {
+        super::begin_run_stmt_region();
+    }
     prepare_execution_plan(physical, catalog, ctx)?;
     ctx.publish_physical_process_info(physical, catalog);
     let root = build(physical, catalog, ctx)?;
@@ -6706,6 +6792,19 @@ pub(crate) fn execute_dml_source(
     analyze: bool,
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
+    execute_dml_source_chunks(physical, catalog, ctx, analyze, visit, |_| {})
+}
+
+/// [`execute_dml_source`], telling `chunk_end` the row count of each chunk
+/// the source executor returned.
+pub(crate) fn execute_dml_source_chunks(
+    physical: &mut PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    analyze: bool,
+    visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
+    chunk_end: impl FnMut(usize),
+) -> Result<PhysicalRuntimeStats, DriverError> {
     prepare_execution_plan(physical, catalog, ctx)?;
     let mut state = BuildState {
         runtime_counters: analyze.then(HashMap::new),
@@ -6714,7 +6813,13 @@ pub(crate) fn execute_dml_source(
     let root = build_with_state(physical, catalog, ctx, &mut state)?;
     ctx.notify_before_executor_first_run();
     let field_types = root.ret_field_types().to_vec();
-    super::visit_executor_rows(root, &field_types, &ctx.statement_memory(), visit)?;
+    super::visit_executor_row_chunks(
+        root,
+        &field_types,
+        &ctx.statement_memory(),
+        visit,
+        chunk_end,
+    )?;
     Ok(state.runtime_counters.take().unwrap_or_default())
 }
 
@@ -6728,6 +6833,79 @@ mod tests {
         PhysicalProjection, PhysicalSelection, PhysicalTableDual, PhysicalTableReader,
         PhysicalUnionAll,
     };
+
+    /// Go `LimitExec.Close`: a close that takes over a millisecond records
+    /// `limitExec.Close` from when the close began, under the span the
+    /// executor was opened in; a quick close records none.
+    #[test]
+    fn a_slow_limit_close_records_its_span() {
+        struct SlowClose {
+            meta: crate::executor::ExecutorMeta,
+            close_for: Duration,
+        }
+        impl Executor for SlowClose {
+            fn open(&mut self) -> Result<(), crate::ExecError> {
+                Ok(())
+            }
+            fn next(&mut self, req: &mut Chunk) -> Result<(), crate::ExecError> {
+                req.reset();
+                Ok(())
+            }
+            fn close(&mut self) -> Result<(), crate::ExecError> {
+                std::thread::sleep(self.close_for);
+                Ok(())
+            }
+            fn schema(&self) -> &Schema {
+                self.meta.schema()
+            }
+            fn ret_field_types(&self) -> &[FieldType] {
+                self.meta.ret_field_types()
+            }
+            fn init_cap(&self) -> usize {
+                1
+            }
+            fn max_chunk_size(&self) -> usize {
+                1
+            }
+            fn new_chunk(&self) -> Chunk {
+                self.meta.new_chunk()
+            }
+        }
+        let spans = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&spans);
+        let tracer = Arc::new(tidb_util::tracing::Tracer::new(Arc::new(move |raw| {
+            sink.lock().unwrap().push(raw);
+        })));
+        let root = tracer.start_span("trace");
+        let entered = tidb_util::tracing::with_thread_span(Some(root.clone()));
+        for close_for in [Duration::from_millis(3), Duration::ZERO] {
+            let mut limit = SqlKillerCheckExec {
+                child: Box::new(SlowClose {
+                    meta: crate::executor::ExecutorMeta::new(Schema::new(Vec::new()), 1, 1, 1),
+                    close_for,
+                }),
+                memory: crate::StatementMemory::default(),
+                runtime_stats: None,
+                next_region: Some("*executor.LimitExec.Next"),
+                trace: Some(Box::new(GoExecutorTrace {
+                    limit_close: true,
+                    ..GoExecutorTrace::default()
+                })),
+            };
+            limit.open().unwrap();
+            limit.close().unwrap();
+        }
+        drop(entered);
+        root.finish();
+        let spans = spans.lock().unwrap();
+        let names = spans
+            .iter()
+            .map(|span| span.operation.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["limitExec.Close", "trace"]);
+        assert_eq!(spans[0].parent_span_id, root.context().span_id);
+        assert!(spans[0].start >= spans[1].start);
+    }
 
     /// Go `ExplainExec.executeAnalyzeExec` registers `RURuntimeStats` on the
     /// target plan after the run and before its executors' `Close` register

@@ -330,6 +330,8 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
         db_id: i64,
         table_id: i64,
     ) -> Result<(i64, i64), AutoIdServiceError> {
+        // Go `singlePointAlloc.alloc`'s region.
+        let _region = tidb_util::tracing::start_thread_region_ex("autoid.Alloc");
         if !(1..=65_535).contains(&increment) || !(1..=65_535).contains(&offset) {
             return Err(AutoIdServiceError::InvalidIncrementAndOffset { increment, offset });
         }
@@ -399,6 +401,8 @@ impl<C: AutoIdServiceRpc> AutoIdServiceAllocator<C> {
         db_id: i64,
         table_id: i64,
     ) -> Result<(), AutoIdServiceError> {
+        // Go `singlePointAlloc.rebase`'s region.
+        let _region = tidb_util::tracing::start_thread_region_ex("autoid.Rebase");
         let mut backoff = AutoIdServiceBackoff::default();
         let mut retry_state = AutoIdServiceRetryState::default();
         let request = AutoIdServiceRebaseRequest {
@@ -693,14 +697,31 @@ where
     /// nothing, which is Go's "required base satisfied, we don't need to
     /// update KV".
     fn transact<T>(&self, decide: impl Fn(u64) -> (Option<u64>, T)) -> Result<T, AutoIdStoreError> {
+        self.transact_in(None, decide)
+    }
+
+    /// [`Self::transact`] with Go's region inside `kv.RunInNewTxn`'s
+    /// function (`alloc.alloc4Signed` / `alloc.alloc4Unsigned`). As in Go,
+    /// the transaction begins and reads the counter without the caller's
+    /// span (`store.Begin()`, the meta structure's `context.TODO()`), and
+    /// commits with it.
+    fn transact_in<T>(
+        &self,
+        region: Option<&'static str>,
+        decide: impl Fn(u64) -> (Option<u64>, T),
+    ) -> Result<T, AutoIdStoreError> {
         let mut conflicts = 0usize;
         loop {
             let call = UnaryCallContext::with_timeout(self.timeout);
-            let mut transaction = self
-                .opener
-                .begin()
-                .map_err(|error| store_error("open", &error))?;
+            let mut transaction = {
+                let _untraced = tidb_util::tracing::with_thread_span(None);
+                self.opener
+                    .begin()
+                    .map_err(|error| store_error("open", &error))?
+            };
+            let region = region.map(tidb_util::tracing::start_thread_region);
             let stored = {
+                let _untraced = tidb_util::tracing::with_thread_span(None);
                 let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
                 snapshot
                     .get(&self.counter_key)
@@ -715,6 +736,7 @@ where
                 }
             };
             let (new_value, outcome) = decide(current as u64);
+            drop(region);
             let Some(new_value) = new_value else {
                 transaction
                     .finish_without_writes()
@@ -754,7 +776,7 @@ where
     S: StoreClient,
 {
     fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
-        self.transact(|current| {
+        self.transact_in(Some(alloc_region(unsigned)), |current| {
             let end = advance(current, step, unsigned);
             // No room left: say so by handing back an empty range instead of
             // writing the key, which is Go returning from inside the
@@ -779,7 +801,7 @@ where
         offset: u64,
         unsigned: bool,
     ) -> Result<(u64, u64), AutoIdStoreError> {
-        self.transact(|current| {
+        self.transact_in(Some(alloc_region(unsigned)), |current| {
             batch_reservation(current, minimum_step, n, increment, offset, unsigned)
         })
     }
@@ -826,6 +848,15 @@ where
                 (Some(0), ())
             }
         })
+    }
+}
+
+/// Go's region inside an allocation's `RunInNewTxn`.
+const fn alloc_region(unsigned: bool) -> &'static str {
+    if unsigned {
+        "alloc.alloc4Unsigned"
+    } else {
+        "alloc.alloc4Signed"
     }
 }
 

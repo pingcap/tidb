@@ -749,6 +749,68 @@ fn latin1_client_generated_text_carries_the_connection_introducer() {
     );
 }
 
+/// The other stored expression texts a latin1 client's DDL restores carry the
+/// connection charset too, as Go's parser typed the literals: a computed
+/// default (`restoreFuncCall`), a view body (`_LATIN1`, under the default
+/// keyword-uppercase flags) and a partial-index condition. Go oracle, the
+/// same statements (the view body read `fz_ac` there, `test` here).
+#[test]
+fn latin1_client_default_view_and_condition_texts_carry_the_connection_introducer() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (x INT, s VARCHAR(10))")
+        .unwrap();
+    session.run("SET NAMES latin1").unwrap();
+    for sql in [
+        &b"CREATE TABLE dv (a INT, j JSON DEFAULT (JSON_ARRAY('q\xe9')))"[..],
+        &b"CREATE TABLE dv3 (a INT, j JSON DEFAULT (JSON_OBJECT('k', 'q\xe9')))"[..],
+        &b"CREATE TABLE dv4 (a INT, s VARCHAR(40) DEFAULT (REPLACE(UPPER(UUID()), '-', '\xe9')))"[..],
+        &b"CREATE VIEW v1 AS SELECT 'v\xe9' AS c, s FROM t WHERE s <> 'w\xe9'"[..],
+        &b"CREATE TABLE pi (a INT, s VARCHAR(10), KEY k1 (a) WHERE s = 'y\xe9') CHARSET latin1"[..],
+    ] {
+        let sql = client_sql(&session, sql);
+        session.run(&sql).unwrap();
+    }
+    session.run("SET NAMES utf8mb4").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT TABLE_NAME, COLUMN_NAME, HEX(COLUMN_DEFAULT) FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name LIKE 'dv%' ORDER BY 1, 2"
+        )),
+        [
+            ["dv", "a", "NULL"],
+            ["dv", "j", "6A736F6E5F6172726179285F6C6174696E312771EFBFBD2729"],
+            ["dv3", "a", "NULL"],
+            [
+                "dv3",
+                "j",
+                "6A736F6E5F6F626A656374285F6C6174696E31276B272C205F6C6174696E312771EFBFBD2729"
+            ],
+            ["dv4", "a", "NULL"],
+            [
+                "dv4",
+                "s",
+                "7265706C61636528757070657228757569642829292C205F6C6174696E31272D272C205F6C6174696E3127EFBFBD2729"
+            ]
+        ]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT HEX(VIEW_DEFINITION) FROM information_schema.views WHERE table_schema = \
+             'test' AND table_name = 'v1'"
+        )),
+        [[
+            "53454C454354205F4C4154494E312776EFBFBD27204153206063602C607360204153206073602046524F4D206074657374602E60746020574845524520607360213D5F4C4154494E312777EFBFBD27"
+        ]]
+    );
+    assert!(
+        crate::tests_support::show_create(&mut session, "pi")
+            .contains("KEY `k1` (`a`) WHERE `s` = _latin1'y\u{FFFD}'"),
+        "{}",
+        crate::tests_support::show_create(&mut session, "pi")
+    );
+}
+
 /// Go reloads a partitioned table's `PartitionInfo` from meta JSON and
 /// rebuilds its routing from the reloaded bound TEXT: a latin1 client's LIST
 /// COLUMNS bound `'x\xE9'` becomes `'x\u{FFFD}'`, so the row `'x\xE9'` no

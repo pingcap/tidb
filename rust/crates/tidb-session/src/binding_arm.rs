@@ -209,6 +209,7 @@ impl Session {
         }
 
         let bind_sql = binding::restore_with_default_db(hinted, &current_db);
+        self.escalate_vanished_binding_hints(&bind_sql)?;
         // Go's `Preprocess` ran `handleTableName` over the nested statements
         // before this plan was built, so the names a binding is matched by
         // (`Binding.TableNames`) carry the database current at CREATE -- the
@@ -885,6 +886,44 @@ impl Session {
         self.vars
             .get_system("character_set_connection")
             .unwrap_or_else(|_| "utf8mb4".to_owned())
+    }
+
+    /// Go `prepareHints`: `ParseHintsSet` re-parses the stored `BindSQL`, and
+    /// a binding whose hints all vanish there while the hint parser warned
+    /// fails with that warning (`hintsStr == "" && len(warns) > 0`) -- so a
+    /// binding Go restores as `WRITE_SLOW_LOG(@`q` )`, which re-parses as no
+    /// hint, is refused with the 1064 at that text's EOF.
+    fn escalate_vanished_binding_hints(&self, bind_sql: &str) -> Result<(), DriverError> {
+        let reparsed = tidb_parser::parse_with_connection_and_warnings(
+            bind_sql,
+            &self.binding_charset(),
+            &self.binding_collation(),
+        )
+        .map_err(|error| DriverError::Parse(error.compatibility_message(bind_sql)))?;
+        let Some(warning) = reparsed.warnings.into_iter().next() else {
+            return Ok(());
+        };
+        if !binding::collect_hints(&reparsed.statement)
+            .restore()
+            .is_empty()
+        {
+            return Ok(());
+        }
+        let decoded = warning
+            .message
+            .strip_prefix("[parser:")
+            .and_then(|rest| rest.split_once(']'))
+            .and_then(|(code, message)| code.parse::<u16>().ok().map(|code| (code, message)));
+        Err(match decoded {
+            Some((errno, message)) => DriverError::ParseCoded {
+                errno,
+                message: message.to_owned(),
+            },
+            None => DriverError::ParseCoded {
+                errno: 8061,
+                message: warning.message,
+            },
+        })
     }
 
     /// Go `SessionVars.GetCharsetInfo`'s second half.

@@ -4227,6 +4227,14 @@ impl StmtContext {
         self.pessimistic_lazy_dup_check
     }
 
+    /// Whether this statement runs a prepared statement (Go `ExecStmt`
+    /// with a `PlanCacheStmt`): the parameters [`Self::with_prepared_params`]
+    /// supplied.
+    #[must_use]
+    pub fn is_prepared_execution(&self) -> bool {
+        self.prepared_params.is_some()
+    }
+
     /// Whether this statement plans against a pessimistic transaction.
     #[must_use]
     pub fn pessimistic_transaction(&self) -> bool {

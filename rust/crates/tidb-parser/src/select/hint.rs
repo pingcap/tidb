@@ -315,6 +315,12 @@ impl Parser {
                     });
                 }
                 self.bump();
+                // Go `parseBooleanHint`: an optional `@qb` before the value.
+                let qb_name = if self.peek().kind == TokenKind::UserVar {
+                    Some(self.bumped_at_name())
+                } else {
+                    None
+                };
                 let value = if self.is_hint_kw("TRUE") {
                     self.bump();
                     true
@@ -328,10 +334,7 @@ impl Parser {
                 Ok(Hint {
                     name,
                     written_name: None,
-                    kind: HintKind::Bool {
-                        qb_name: None,
-                        value,
-                    },
+                    kind: HintKind::Bool { qb_name, value },
                 })
             }
             // `RESOURCE_GROUP(name)` — a single BARE identifier argument
@@ -902,8 +905,12 @@ pub fn parse_hint(
         }
     }
 
+    // Go `parseHintList`: no hint and no error is `hp.parseError()` at the
+    // scanner's position -- EOF, past the closing comment, the same anchor
+    // as any other hint error at EOF.
     if hints.is_empty() && diagnostics.is_empty() {
-        diagnostics.push(hint_syntax_diagnostic(initial_line));
+        let column = parser.peek().end_offset + column_base + 5;
+        diagnostics.push(hint_1064_diagnostic(initial_line, column, ""));
     }
     HintParseResult { hints, diagnostics }
 }
