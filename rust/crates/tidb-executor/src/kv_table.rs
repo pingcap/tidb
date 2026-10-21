@@ -1355,6 +1355,39 @@ impl KvTable {
         std::sync::Arc::make_mut(&mut self.columns)
     }
 
+    /// The table as Go's infoschema holds it once the DDL job that built or
+    /// changed it is installed: the owner writes the job's `TableInfo` to
+    /// meta through `encoding/json` and `infoschema.Builder` reads it back,
+    /// so every Go string in it -- each column's (see
+    /// [`KvColumn::reload_from_meta_json`]), index and partition names and
+    /// comments, and the table comment -- has each byte that is not UTF-8
+    /// replaced by U+FFFD. A LOCAL temporary table never reaches meta and
+    /// must not be passed through here.
+    pub(crate) fn reload_from_meta_json(&mut self) {
+        use crate::kv_table::table_meta::go_json_text_round_trip;
+        use tidb_hack::raw_bytes::contains_escapes;
+        for column in self.columns_mut() {
+            column.reload_from_meta_json();
+        }
+        if self
+            .indexes
+            .iter()
+            .any(|index| contains_escapes(&index.name) || contains_escapes(&index.comment))
+        {
+            for index in std::sync::Arc::make_mut(&mut self.indexes) {
+                go_json_text_round_trip(&mut index.name);
+                go_json_text_round_trip(&mut index.comment);
+            }
+        }
+        if let Some(partition) = self.partition.as_deref_mut() {
+            for definition in &mut partition.definitions {
+                go_json_text_round_trip(&mut definition.name);
+                go_json_text_round_trip(&mut definition.comment);
+            }
+        }
+        go_json_text_round_trip(&mut self.comment);
+    }
+
     /// All table columns in physical offset order, including hidden columns
     /// used by expression indexes, matching `TableInfo.Columns`.
     #[must_use]
@@ -5788,6 +5821,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -5845,6 +5879,7 @@ mod tests {
                     global,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 false,
             );
@@ -5934,6 +5969,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -5999,6 +6035,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -6080,6 +6117,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             };
             table.add_nonpublic_index(index.clone(), state, backfill);
             let row = [Datum::Int(7), Datum::Null];
@@ -6151,6 +6189,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -6452,6 +6491,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );

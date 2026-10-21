@@ -738,6 +738,7 @@ fn an_index_join_probe_displays_the_outer_probe_count() {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: true,
             },
             false,
         );
@@ -1298,6 +1299,7 @@ fn an_outer_comparison_on_the_next_key_column_narrows_every_probe_range() {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: true,
             },
             false,
         );

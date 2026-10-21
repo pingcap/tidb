@@ -579,6 +579,10 @@ pub struct KvIndex {
     /// for it). Write paths skip it; the planner still reads its stats so
     /// multi-column join NDV estimation sees the composite key.
     pub clustered_primary: bool,
+    /// Go `IndexInfo.Primary`: the PRIMARY KEY's index, clustered or not. A
+    /// legacy secondary index may be called `primary` (TiDB #14243), so the
+    /// name never stands in for this flag.
+    pub primary: bool,
 }
 
 /// An index Go's DDL is still adding or dropping (an `IndexInfo` in a
@@ -902,11 +906,32 @@ impl KvColumn {
                 *value = go_json_string_round_trip(std::mem::take(value));
             }
         }
-        if tidb_hack::raw_bytes::contains_escapes(&self.comment) {
-            self.comment = tidb_datatype::decode_go_utf8_lossy(
-                tidb_hack::raw_bytes::str_to_bytes(&self.comment).as_ref(),
-            );
+        go_json_text_round_trip(&mut self.comment);
+        // `Name` and the expression strings are Go strings of the
+        // `ColumnInfo` too. The generated expression's dependency names are
+        // this table's column names, replaced alike.
+        go_json_text_round_trip(&mut self.name);
+        if let Some(generated) = &mut self.generated {
+            go_json_text_round_trip(&mut generated.expr_text);
+            generated
+                .dependencies
+                .iter_mut()
+                .for_each(go_json_text_round_trip);
         }
+        if let Some(crate::column_default::ColumnDefault::Computed(computed)) =
+            &mut self.default_value
+        {
+            go_json_text_round_trip(&mut computed.text);
+        }
+    }
+}
+
+/// A Go string after `encoding/json`: each byte that is not UTF-8 (carried
+/// as a `tidb_hack::raw_bytes` escape) comes back as U+FFFD.
+pub(crate) fn go_json_text_round_trip(text: &mut String) {
+    if tidb_hack::raw_bytes::contains_escapes(text) {
+        *text =
+            tidb_datatype::decode_go_utf8_lossy(tidb_hack::raw_bytes::str_to_bytes(text).as_ref());
     }
 }
 

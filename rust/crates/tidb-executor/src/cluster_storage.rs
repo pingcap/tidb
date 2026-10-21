@@ -1583,6 +1583,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -1806,6 +1807,7 @@ mod tests {
                         global: false,
                         global_index_version: 0,
                         clustered_primary: false,
+                        primary: false,
                     },
                     false,
                 );
@@ -2283,6 +2285,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -2409,6 +2412,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 };
                 let ctx = crate::StmtContext::default();
                 if operation != "backfill" {

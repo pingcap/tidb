@@ -16,6 +16,8 @@
 
 use super::*;
 
+use tidb_hack::GoCaseCompare;
+
 impl Session {
     /// Pinned Go `ShowExec.fetchShowColumnStatsUsage`: load the persisted map
     /// once, then walk every schema, table, logical/global table ID, physical
@@ -214,7 +216,7 @@ impl Session {
                             .partition()
                             .and_then(|partition| {
                                 partition.definitions.iter().find(|definition| {
-                                    definition.name.eq_ignore_ascii_case(&job.partition_name)
+                                    definition.name.go_lower_eq(&job.partition_name)
                                 })
                             })
                             .map_or(0, |definition| definition.id)

@@ -413,7 +413,7 @@ fn schema_unique_item(table: &KvTable, is_index: bool, id: i64, local_only: bool
         let metadata = tidb_model::IndexInfo {
             state: tidb_model::SchemaState::PUBLIC,
             unique: index.unique,
-            primary: index.clustered_primary || index.name.eq_ignore_ascii_case("PRIMARY"),
+            primary: index.primary,
             condition_expr_string: table
                 .partial_index_condition_string(index.id)
                 .unwrap_or_default(),

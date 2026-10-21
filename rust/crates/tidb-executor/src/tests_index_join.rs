@@ -84,6 +84,7 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             &crate::StmtContext::for_query(),
         )
@@ -113,6 +114,7 @@ fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: true,
             },
             &crate::StmtContext::for_query(),
         )

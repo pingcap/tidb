@@ -125,6 +125,34 @@ fn a_check_constraint_is_stored_and_enforced_when_the_variable_is_on() {
     session.run("insert into ck values (null)").unwrap();
 }
 
+/// Go `BuildTableInfo` (`create_table.go:1503`) finds a column CHECK's own
+/// column as `dependedColsMap[constr.InColumnName]`: the map is keyed by each
+/// referenced name's `.L`, while `InColumnName` is the column's `.O`
+/// (`add_column.go:589`). A column spelled with uppercase therefore does not
+/// find itself, and its CHECK is refused as referring to another column.
+#[test]
+fn a_column_check_on_an_uppercase_column_refers_to_another_column() {
+    let mut session = Session::new();
+    session
+        .run("set @@global.tidb_enable_check_constraint = 1")
+        .unwrap();
+    for sql in [
+        "create table ck1 (A int check (A > 0))",
+        "create table ck2 (A int check (a > 0))",
+    ] {
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(error.code, 3813, "{sql}: {}", error.message);
+        assert!(
+            error.message.ends_with("references other column."),
+            "{sql}: {}",
+            error.message
+        );
+    }
+    session
+        .run("create table ck3 (a int check (A > 0))")
+        .unwrap();
+}
+
 /// Go `pkg/ddl/constraint_test.go` covers ADD rollback on existing-row
 /// violation, enforcement changes, and DROP. A failed validation must leave
 /// the previously public metadata untouched.

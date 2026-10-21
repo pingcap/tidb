@@ -461,7 +461,9 @@ fn match_condition(field: &str, threshold: &Threshold, values: &SlowLogRuleValue
         "conn_id" => match_ge_uint(threshold, values.conn_id),
         "session_alias" => match_equal_text(threshold, &values.session_alias),
         "db" => match threshold {
-            Threshold::Text(text) => text.to_lowercase() == values.db.to_lowercase(),
+            Threshold::Text(text) => {
+                tidb_hack::go_to_lower(text) == tidb_hack::go_to_lower(&values.db)
+            }
             _ => false,
         },
         "exec_retry_count" => match_ge_uint(threshold, values.exec_retry_count),
@@ -484,7 +486,9 @@ fn match_condition(field: &str, threshold: &Threshold, values: &SlowLogRuleValue
         }
         "succ" => match_equal_bool(threshold, values.succ),
         "resource_group" => match threshold {
-            Threshold::Text(text) => text.to_lowercase() == values.resource_group.to_lowercase(),
+            Threshold::Text(text) => {
+                tidb_hack::go_to_lower(text) == tidb_hack::go_to_lower(&values.resource_group)
+            }
             _ => false,
         },
         "kv_total" => kv_match(kv.map(|d| seconds(d.wait_kv_resp_duration))),

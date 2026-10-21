@@ -31,6 +31,7 @@ use std::sync::Arc;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::ddl::HypoIndexes;
 use tidb_executor::DriverError;
+use tidb_hack::GoToLower;
 
 use crate::{Session, StmtOutput, WarningLevel};
 use keyset::{KeySet, Keyed};
@@ -481,7 +482,7 @@ fn graceful_index_name(
     };
     let mut exists = |name: &str| -> bool {
         optimizer
-            .index_name_exist(schema, table, &name.to_lowercase())
+            .index_name_exist(schema, table, &name.go_to_lower())
             .unwrap_or(false)
     };
     let name = clip(format!("idx_{}", columns.join("_")));
@@ -573,7 +574,7 @@ impl SessionOptimizer<'_> {
                 Some(tidb_executor::TableEntry::Kv(stored)) => Ok(stored
                     .columns()
                     .iter()
-                    .map(|column| (column.name.to_lowercase(), column.field_type.clone()))
+                    .map(|column| (column.name.go_to_lower(), column.field_type.clone()))
                     .collect()),
                 Some(_) => Ok(Vec::new()),
                 None => Err(DriverError::Schema(
@@ -675,7 +676,7 @@ fn first_table_name(statement: &tidb_ast::Stmt) -> String {
 
 impl Optimizer for SessionOptimizer<'_> {
     fn column_type(&mut self, column: &Column) -> Result<FieldType> {
-        let wanted = column.column_name.to_lowercase();
+        let wanted = column.column_name.go_to_lower();
         let columns = self.table_columns_of(&column.schema_name, &column.table_name)?;
         columns
             .into_iter()
@@ -708,8 +709,8 @@ impl Optimizer for SessionOptimizer<'_> {
                 let matched = index.columns.iter().enumerate().all(|(position, column)| {
                     table.columns()[stored.column_offsets[position]]
                         .name
-                        .to_lowercase()
-                        == column.column_name.to_lowercase()
+                        .go_to_lower()
+                        == column.column_name.go_to_lower()
                 });
                 if matched {
                     return Ok(true);
@@ -721,7 +722,7 @@ impl Optimizer for SessionOptimizer<'_> {
 
     fn possible_columns(&mut self, schema: &str, column_name: &str) -> Result<Vec<Column>> {
         // Filtering the system schemas.
-        let schema = schema.to_lowercase();
+        let schema = schema.go_to_lower();
         if tidb_metadef::db::is_mem_db(&schema) || tidb_metadef::db::is_system_db(&schema) {
             return Ok(Vec::new());
         }
@@ -736,11 +737,11 @@ impl Optimizer for SessionOptimizer<'_> {
                 if let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in(&schema, &name)
                 {
                     for column in table.columns() {
-                        if column.name.to_lowercase() == column_name {
+                        if column.name.go_to_lower() == column_name {
                             found.push(Column {
                                 schema_name: schema.clone(),
-                                table_name: name.to_lowercase(),
-                                column_name: column.name.to_lowercase(),
+                                table_name: name.go_to_lower(),
+                                column_name: column.name.go_to_lower(),
                             });
                         }
                     }
@@ -773,7 +774,7 @@ impl Optimizer for SessionOptimizer<'_> {
             Ok(stored
                 .indexes()
                 .iter()
-                .any(|index| index.name.to_lowercase() == index_name))
+                .any(|index| index.name.go_to_lower() == index_name))
         })
     }
 
@@ -791,11 +792,11 @@ impl Optimizer for SessionOptimizer<'_> {
                 .map_or(0.0, |stats| stats.row_count as f64);
             let mut size = 0.0_f64;
             for name in columns {
-                let wanted = name.to_lowercase();
+                let wanted = name.go_to_lower();
                 let total_size = stored
                     .columns()
                     .iter()
-                    .find(|column| column.name.to_lowercase() == wanted)
+                    .find(|column| column.name.go_to_lower() == wanted)
                     .and_then(|column| {
                         let stats = statistics.as_ref()?;
                         let loaded = stats

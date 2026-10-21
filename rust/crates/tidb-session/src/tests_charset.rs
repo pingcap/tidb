@@ -663,6 +663,69 @@ fn latin1_client_enum_members_reload_from_stored_json() {
     assert_eq!(row_text(session.run(&sql)), [["64E9"]]);
 }
 
+/// Go reloads the WHOLE `TableInfo` a DDL job installs from its stored meta
+/// JSON, not only its columns: a latin1 client's column name `d\xE9`, index
+/// name and comment, table comment, partition name and comment and generated
+/// expression text all read back with U+FFFD for the byte, at CREATE TABLE
+/// and at ALTER TABLE ... ADD INDEX alike. Go oracle, the same statements on
+/// one connection.
+#[test]
+fn latin1_client_identifiers_and_comments_reload_from_stored_json() {
+    let mut session = Session::new();
+    session.run("SET NAMES latin1").unwrap();
+    let sql = client_sql(
+        &session,
+        b"CREATE TABLE nu (a INT, d\xe9 INT, b VARCHAR(10), g VARCHAR(20) AS (CONCAT(b, 'x\xe9')), \
+          KEY i\xe9 (a) COMMENT 'k\xe9') COMMENT 't\xe9' PARTITION BY RANGE (a) (PARTITION p\xe9 \
+          VALUES LESS THAN (10) COMMENT 'pc\xe9', PARTITION p1 VALUES LESS THAN MAXVALUE)",
+    );
+    session.run(&sql).unwrap();
+    session.run("SET NAMES utf8mb4").unwrap();
+    // Go's generated text is `concat(`b`, _latin1'x\u{FFFD}')`; this crate
+    // still restores the literal's introducer as `_utf8mb4`, a separate
+    // divergence, so only the replaced literal bytes are pinned here.
+    let columns = row_text(session.run(
+        "SELECT HEX(COLUMN_NAME), HEX(GENERATION_EXPRESSION) FROM information_schema.columns \
+         WHERE table_schema = 'test' AND table_name = 'nu' ORDER BY ORDINAL_POSITION",
+    ));
+    assert_eq!(
+        columns
+            .iter()
+            .map(|row| row[0].as_str())
+            .collect::<Vec<_>>(),
+        ["61", "64EFBFBD", "62", "67"]
+    );
+    assert!(columns[3][1].ends_with("2778EFBFBD2729"), "{columns:?}");
+    assert_eq!(
+        row_text(session.run(
+            "SELECT HEX(TABLE_COMMENT) FROM information_schema.tables WHERE table_schema = \
+             'test' AND table_name = 'nu'"
+        )),
+        [["74EFBFBD"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT HEX(PARTITION_NAME), HEX(PARTITION_COMMENT) FROM \
+             information_schema.partitions WHERE table_schema = 'test' AND table_name = 'nu'"
+        )),
+        [["70EFBFBD", "7063EFBFBD"], ["7031", ""]]
+    );
+    session.run("SET NAMES latin1").unwrap();
+    let sql = client_sql(
+        &session,
+        b"ALTER TABLE nu ADD INDEX j\xe9 (b) COMMENT 'jc\xe9'",
+    );
+    session.run(&sql).unwrap();
+    session.run("SET NAMES utf8mb4").unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT HEX(INDEX_NAME), HEX(INDEX_COMMENT) FROM information_schema.statistics \
+             WHERE table_schema = 'test' AND table_name = 'nu' ORDER BY INDEX_NAME"
+        )),
+        [["69EFBFBD", "6BEFBFBD"], ["6AEFBFBD", "6A63EFBFBD"]]
+    );
+}
+
 /// Go parses a statement once, with the client's encodings, and binds a
 /// prepared statement's values onto that tree; nothing re-lexes it in
 /// another encoding. A gbk client's identifier `中` (bytes D6 D0) must name

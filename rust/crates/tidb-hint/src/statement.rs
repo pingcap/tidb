@@ -30,7 +30,7 @@ pub struct HintWarning {
 }
 
 impl HintWarning {
-    fn ordinary(message: impl Into<String>) -> Self {
+    pub(crate) fn ordinary(message: impl Into<String>) -> Self {
         Self {
             code: 1105,
             message: message.into(),
@@ -191,7 +191,7 @@ impl StmtHints {
 
 pub(crate) fn should_warn_restricted(hint: &Hint) -> bool {
     matches!(
-        hint.name.to_ascii_lowercase().as_str(),
+        hint.lower_name().as_str(),
         "memory_quota"
             | "resource_group"
             | "use_toja"
@@ -221,7 +221,7 @@ pub(crate) fn filter_restricted(
     let mut filtered = Vec::with_capacity(hints.len());
     let mut warnings = Vec::new();
     for hint in hints {
-        if let Some(warning) = checker(&hint.name.to_ascii_lowercase()) {
+        if let Some(warning) = checker(&hint.lower_name()) {
             if should_warn(hint) {
                 warnings.push(warning);
             }
@@ -260,7 +260,7 @@ where
     let mut set_var_offsets = Vec::new();
 
     for (offset, hint) in hints.iter().enumerate() {
-        let name = hint.name.to_ascii_lowercase();
+        let name = hint.lower_name();
         match name.as_str() {
             "memory_quota"
             | "resource_group"
@@ -289,12 +289,13 @@ where
                     ));
                     continue;
                 }
-                // Go keys on `DBName.L`, the lowercased db name.
-                let database = tables[0]
-                    .db_name
-                    .clone()
-                    .unwrap_or_else(|| current_database.to_owned());
-                let database = tidb_mysql::to_lowercase(&database);
+                // Go keys on `DBName.L`, falling back to the current db as
+                // the session spells it (not lowered) when the hint names
+                // no db.
+                let database = match &tables[0].db_name {
+                    Some(db_name) => tidb_mysql::to_lowercase(db_name),
+                    None => current_database.to_owned(),
+                };
                 let table = tables[0].name.clone();
                 let index = tables[1].name.clone();
                 let mut columns = Vec::with_capacity(tables.len() - 2);
@@ -335,7 +336,7 @@ where
                 let HintKind::SetVar { var_name, value } = &hint.kind else {
                     continue;
                 };
-                let (allowed, warning) = set_var_checker.check(var_name, &hint.name);
+                let (allowed, warning) = set_var_checker.check(var_name, hint.written_name());
                 warnings.extend(warning);
                 if !allowed {
                     continue;
@@ -343,7 +344,7 @@ where
                 if result.set_vars.contains_key(var_name) {
                     warnings.push(HintWarning::conflicting(format!(
                         "{}({var_name}={value})",
-                        hint.name
+                        hint.written_name()
                     )));
                     continue;
                 }
@@ -574,5 +575,37 @@ mod tests {
         );
         assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
         assert_eq!(1, stmt_hints.hinted_hypo_indexes.len());
+    }
+
+    /// Go hint.go:364-367: `db := hint.Tables[0].DBName.L; if db == "" { db =
+    /// currentDB }` -- the session's current db is used as spelled, so the
+    /// checker and the hypo-index key keep its uppercase.
+    #[test]
+    fn hypo_index_current_database_key_keeps_its_case() {
+        fn accept_set_var(_: &str, _: &str) -> (bool, Option<HintWarning>) {
+            (true, None)
+        }
+        let hints = vec![Hint {
+            name: "HYPO_INDEX".to_owned(),
+            written_name: None,
+            kind: HintKind::Tables {
+                qb_name: None,
+                tables: vec![
+                    hint_table("t1", None),
+                    hint_table("idx", None),
+                    hint_table("c1", None),
+                ],
+            },
+        }];
+        let mut seen = Vec::new();
+        let mut checker = |database: &str, _: &str, _: &str| {
+            seen.push(database.to_owned());
+            Ok(0)
+        };
+        let (stmt_hints, _, warnings) =
+            parse_stmt_hints(&hints, &mut accept_set_var, &mut checker, "DB1", 0);
+        assert_eq!(vec!["DB1".to_owned()], seen);
+        assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
+        assert!(stmt_hints.hinted_hypo_indexes.contains_key("DB1"));
     }
 }

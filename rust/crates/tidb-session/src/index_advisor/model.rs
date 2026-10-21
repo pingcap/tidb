@@ -16,6 +16,8 @@
 
 use super::keyset::Keyed;
 
+use tidb_hack::GoToLower;
+
 /// Go `Query`: a statement of the workload.
 #[derive(Clone, Debug)]
 pub(crate) struct Query {
@@ -42,9 +44,9 @@ impl Column {
     /// Go `NewColumn`: every part lower-cased.
     pub(crate) fn new(schema_name: &str, table_name: &str, column_name: &str) -> Self {
         Self {
-            schema_name: schema_name.to_lowercase(),
-            table_name: table_name.to_lowercase(),
-            column_name: column_name.to_lowercase(),
+            schema_name: schema_name.go_to_lower(),
+            table_name: table_name.go_to_lower(),
+            column_name: column_name.go_to_lower(),
         }
     }
 }
@@ -76,9 +78,9 @@ impl Index {
         columns: &[&str],
     ) -> Self {
         Self {
-            schema_name: schema_name.to_lowercase(),
-            table_name: table_name.to_lowercase(),
-            index_name: index_name.to_lowercase(),
+            schema_name: schema_name.go_to_lower(),
+            table_name: table_name.go_to_lower(),
+            index_name: index_name.go_to_lower(),
             columns: columns
                 .iter()
                 .map(|column| Column::new(schema_name, table_name, column))

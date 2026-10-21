@@ -359,8 +359,18 @@ impl Hint {
     }
 
     /// Go `HintName.O`.
-    fn written_name(&self) -> &str {
+    /// Go `HintName.O` (`HintName.String()`): the name as written.
+    pub fn written_name(&self) -> &str {
         self.written_name.as_deref().unwrap_or(&self.name)
+    }
+
+    /// Go `HintName.L`: `strings.ToLower` of the name as written. Go's hint
+    /// lexer finds the hint's token by `strings.ToUpper` of the written
+    /// name, but every consumer then switches on this lowered spelling, so a
+    /// name such as `HA\u{17F}H_JOIN` (Go uppercases `\u{17F}` to `S`) parses as
+    /// HASH_JOIN yet matches no hint.
+    pub fn lower_name(&self) -> String {
+        tidb_mysql::to_lowercase(self.written_name())
     }
 
     fn restore_into_styled(&self, out: &mut String, hint_name: &str, back_quote_names: bool) {

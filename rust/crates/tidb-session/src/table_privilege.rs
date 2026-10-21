@@ -22,6 +22,7 @@
 use tidb_ast::{AlterPartitionAction, AlterTableAction, DdlStmt, DmlStmt, Stmt, TableConstraint};
 
 use crate::privilege::GlobalPriv;
+use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_util::stringutil::go_to_lower;
 
 /// Go VisitInfo4PrivCheck keeps observation visits while adapting admission.
@@ -126,13 +127,13 @@ impl TablePrivilegeRequest {
 /// are decided by `UserPrivileges.RequestVerification`'s own early arms
 /// (`privileges.go` around line 194) rather than by any stored grant.
 fn is_mem_db(database: &str) -> bool {
-    database.eq_ignore_ascii_case("information_schema")
-        || database.eq_ignore_ascii_case("performance_schema")
-        || database.eq_ignore_ascii_case("metrics_schema")
+    database.go_lower_eq("information_schema")
+        || database.go_lower_eq("performance_schema")
+        || database.go_lower_eq("metrics_schema")
 }
 
 fn is_mem_or_sys_db(database: &str) -> bool {
-    database.eq_ignore_ascii_case("mysql") || is_mem_db(database)
+    database.go_lower_eq("mysql") || is_mem_db(database)
 }
 
 /// SEM's hard table rule, evaluated before stored grants and before the
@@ -147,8 +148,8 @@ pub(crate) fn sem_verdict_mask(
     if !tidb_util::sem_compat::is_enabled() || has_restricted_tables_admin {
         return None;
     }
-    let database_lower = database.to_ascii_lowercase();
-    let table_lower = table.to_ascii_lowercase();
+    let database_lower = database.go_to_lower();
+    let table_lower = table.go_to_lower();
     if tidb_util::sem_compat::is_invisible_table(&database_lower, &table_lower) {
         return Some(false);
     }
@@ -210,9 +211,7 @@ pub(crate) fn mem_db_verdict_mask(database: &str, mask: u64) -> Option<bool> {
     if REFUSED.iter().any(|priv_| priv_.bit() == mask) {
         return Some(false);
     }
-    database
-        .eq_ignore_ascii_case("information_schema")
-        .then_some(true)
+    database.go_lower_eq("information_schema").then_some(true)
 }
 
 /// Splits a written name path into `(schema, table)`, defaulting the schema

@@ -23,14 +23,62 @@ use crate::plan_base::PlanError;
 use super::rule::{conds_to_table_dual, LogicalOptRule, RuleContext};
 use super::rule_predicate_simplification::apply_predicate_simplification;
 
+// Go `resolveOptimizeHint` keeps a hint for a partition when one of its
+// partitions satisfies `p.String() == partitionName.String()`: the names as
+// written, byte for byte, although `checkHintsApplicable` reports unknown
+// partitions by `.L`. `PARTITION(P1)` therefore raises no warning for a
+// partition named `p1`, yet does not apply to it.
+
 fn resolve_index_merge_hints_for_partition(source: &mut DataSource, partition_name: &str) {
     source.index_merge_hints.retain(|hint| {
         hint.partitions.is_empty()
             || hint
                 .partitions
                 .iter()
-                .any(|partition| tidb_mysql::lowercase_equal(partition, partition_name))
+                .any(|partition| partition == partition_name)
     });
+}
+
+/// The read-from-storage half of Go `resolveOptimizeHint`: a storage
+/// preference scoped to partitions survives only on a named partition, and a
+/// partition left preferring both stores warns.
+fn resolve_storage_hints_for_partition(
+    ctx: &RuleContext<'_>,
+    source: &mut DataSource,
+    partition_name: &str,
+) {
+    use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+    for store in [PREFER_TIKV, PREFER_TIFLASH] {
+        if source.prefer_store_type & store == 0 {
+            continue;
+        }
+        let Some(partitions) = source.prefer_partitions.get(&store) else {
+            continue;
+        };
+        if partitions.is_empty() {
+            continue;
+        }
+        source.prefer_store_type ^= store;
+        if partitions
+            .iter()
+            .any(|partition| partition == partition_name)
+        {
+            source.prefer_store_type |= store;
+        }
+    }
+    if source.prefer_store_type & PREFER_TIFLASH != 0 && source.prefer_store_type & PREFER_TIKV != 0
+    {
+        if let Some(sink) = ctx.hint_warning_sink {
+            // Go `AppendWarning(errors.NewNoStackError(...))`: ErrUnknown.
+            sink.set_hint_warning_from_error(
+                1105,
+                &format!(
+                    "hint `read_from_storage` has conflict storage type for the partition {}",
+                    tidb_mysql::to_lowercase(partition_name)
+                ),
+            );
+        }
+    }
 }
 
 fn resolve_index_hints_for_partition(
@@ -42,7 +90,7 @@ fn resolve_index_hints_for_partition(
             || hint
                 .partitions
                 .iter()
-                .any(|partition| tidb_mysql::lowercase_equal(partition, partition_name))
+                .any(|partition| partition == partition_name)
     });
     let table = crate::plan_builder::catalog::SourceTable {
         table_name: source.table_name.clone(),
@@ -94,13 +142,7 @@ fn warn_for_unknown_index_merge_partitions(
     };
     for hint in &source.index_merge_hints {
         let unknown = unknown_hint_partitions(&hint.partitions, used_partition_names);
-        if !unknown.is_empty() {
-            sink.set_hint_warning(&format!(
-                "unknown partitions ({}) in optimizer hint {}",
-                unknown.join(","),
-                hint.restored
-            ));
-        }
+        append_warn_for_unknown_partitions(sink, &hint.restored, &unknown);
     }
 }
 
@@ -114,14 +156,48 @@ fn warn_for_unknown_index_partitions(
     };
     for hint in &source.index_hints {
         let unknown = unknown_hint_partitions(&hint.partitions, used_partition_names);
-        if !unknown.is_empty() {
-            sink.set_hint_warning(&format!(
-                "unknown partitions ({}) in optimizer hint {}",
-                unknown.join(","),
-                hint.restored
-            ));
+        append_warn_for_unknown_partitions(sink, &hint.restored, &unknown);
+    }
+}
+
+/// Go `checkHintsApplicable`'s read-from-storage check: the unknown
+/// partitions of both store preferences, in one warning.
+fn warn_for_unknown_storage_partitions(
+    ctx: &RuleContext<'_>,
+    source: &DataSource,
+    used_partition_names: &std::collections::BTreeSet<String>,
+) {
+    use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+    let Some(sink) = ctx.hint_warning_sink else {
+        return;
+    };
+    let mut unknown = Vec::new();
+    for store in [PREFER_TIKV, PREFER_TIFLASH] {
+        if let Some(partitions) = source.prefer_partitions.get(&store) {
+            unknown.extend(unknown_hint_partitions(partitions, used_partition_names));
         }
     }
+    append_warn_for_unknown_partitions(sink, "read_from_storage", &unknown);
+}
+
+/// Go `appendWarnForUnknownPartitions`: `SetHintWarningFromError` of a
+/// `fmt.Errorf`, so the warning is ErrUnknown (1105).
+fn append_warn_for_unknown_partitions(
+    sink: &dyn super::rule::HintWarningSink,
+    hint_name: &str,
+    unknown_partitions: &[String],
+) {
+    if unknown_partitions.is_empty() {
+        return;
+    }
+    sink.set_hint_warning_from_error(
+        1105,
+        &format!(
+            "unknown partitions ({}) in optimizer hint {}",
+            unknown_partitions.join(","),
+            hint_name
+        ),
+    );
 }
 
 fn unknown_hint_partitions(
@@ -178,12 +254,14 @@ fn make_children(
         if let Some(partition_name) = source.partition_definition_names.get(index) {
             resolve_index_hints_for_partition(&mut child, partition_name)?;
             resolve_index_merge_hints_for_partition(&mut child, partition_name);
+            resolve_storage_hints_for_partition(ctx, &mut child, partition_name);
             used_partition_names.insert(tidb_mysql::to_lowercase(partition_name));
         }
         children.push(LogicalPlan::DataSource(child));
     }
     warn_for_unknown_index_partitions(ctx, &source, &used_partition_names);
     warn_for_unknown_index_merge_partitions(ctx, &source, &used_partition_names);
+    warn_for_unknown_storage_partitions(ctx, &source, &used_partition_names);
     Ok(match children.len() {
         0 => {
             let mut dual = LogicalTableDual::new(
@@ -345,20 +423,26 @@ mod tests {
             partitions: vec!["P1".to_owned()],
             restored: "USE_INDEX_MERGE(`t` PARTITION(`P1`), `idx_p1`)".to_owned(),
         };
-        let mut source = DataSource {
+        let source = DataSource {
             index_merge_hints: vec![global.clone(), p0, p1.clone()],
             ..DataSource::default()
         };
 
-        resolve_index_merge_hints_for_partition(&mut source, "p1");
-        assert_eq!(source.index_merge_hints, vec![global, p1]);
+        // Go `resolveOptimizeHint` compares `p.String() ==
+        // partitionName.String()`: the written names, byte for byte.
+        let mut exact = source.clone_shallow();
+        resolve_index_merge_hints_for_partition(&mut exact, "P1");
+        assert_eq!(exact.index_merge_hints, vec![global.clone(), p1]);
+        let mut folded = source.clone_shallow();
+        resolve_index_merge_hints_for_partition(&mut folded, "p1");
+        assert_eq!(folded.index_merge_hints, vec![global]);
         assert_eq!(
             unknown_hint_partitions(
                 &["p0".to_owned(), "P1".to_owned()],
                 &std::collections::BTreeSet::from(["p1".to_owned()]),
             ),
             vec!["p0"],
-            "Go warns in written order and matches partition names case-insensitively"
+            "Go warns in written order and judges unknown partitions by `.L`"
         );
     }
 
@@ -415,7 +499,11 @@ mod tests {
             ..DataSource::default()
         };
 
-        resolve_index_hints_for_partition(&mut source, "p1").expect("paths resolve");
+        // `PARTITION(P1)` applies to the partition written `P1` only.
+        let mut folded = source.clone_shallow();
+        resolve_index_hints_for_partition(&mut folded, "p1").expect("paths resolve");
+        assert_eq!(folded.index_hints.len(), 1);
+        resolve_index_hints_for_partition(&mut source, "P1").expect("paths resolve");
         assert_eq!(
             source.enumerated_paths,
             vec![
@@ -428,6 +516,37 @@ mod tests {
             std::collections::BTreeSet::from([1, 3])
         );
         assert_eq!(source.index_hints.len(), 2);
+    }
+
+    /// Go `resolveOptimizeHint`'s read-from-storage half: a store preference
+    /// scoped to partitions stays only on a partition written exactly as
+    /// named; an unscoped one stays everywhere.
+    #[test]
+    fn storage_hints_are_resolved_per_static_partition() {
+        use crate::logical::data_source::{PREFER_TIFLASH, PREFER_TIKV};
+        let allocator = crate::plan_base::PlanIdAllocator::new();
+        let ctx = crate::logical::rule_tests::test_context(&allocator);
+        let source = DataSource {
+            prefer_store_type: PREFER_TIKV,
+            prefer_partitions: std::collections::BTreeMap::from([(
+                PREFER_TIKV,
+                vec!["PÉ".to_owned()],
+            )]),
+            ..DataSource::default()
+        };
+        for (partition, kept) in [("PÉ", PREFER_TIKV), ("pé", 0), ("p1", 0)] {
+            let mut child = source.clone_shallow();
+            resolve_storage_hints_for_partition(&ctx, &mut child, partition);
+            assert_eq!(child.prefer_store_type, kept, "{partition}");
+        }
+        let unscoped = DataSource {
+            prefer_store_type: PREFER_TIFLASH,
+            prefer_partitions: std::collections::BTreeMap::from([(PREFER_TIFLASH, Vec::new())]),
+            ..DataSource::default()
+        };
+        let mut child = unscoped.clone_shallow();
+        resolve_storage_hints_for_partition(&ctx, &mut child, "p1");
+        assert_eq!(child.prefer_store_type, PREFER_TIFLASH);
     }
 
     /// Go `resolveAccessPaths` passes `ds.AstIndexHints` back into

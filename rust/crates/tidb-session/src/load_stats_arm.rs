@@ -29,6 +29,7 @@ use tidb_executor::load_stats::{
     statistics_table_from_json, table_statistics_from_table, JsonTable, TIDB_GLOBAL_STATS,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
+use tidb_hack::GoToLower;
 
 use crate::{Session, StmtOutput};
 
@@ -89,9 +90,7 @@ fn load_stats_from_json(
     match (table.partition(), json.partitions.as_ref()) {
         (Some(partition), Some(partitions)) => {
             for definition in &partition.definitions {
-                if let Some(Some(partition_json)) =
-                    partitions.get(&definition.name.to_lowercase())
-                {
+                if let Some(Some(partition_json)) = partitions.get(&definition.name.go_to_lower()) {
                     targets.push((definition.id, partition_json));
                 }
             }

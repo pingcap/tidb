@@ -27,6 +27,7 @@
 use crate::show_index::{show_index_rows, SHOW_INDEX_COLUMNS};
 use crate::*;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
+use tidb_hack::GoCaseCompare;
 use tidb_util::stringutil::go_to_lower;
 
 /// The `Type` cell of a `SHOW COLUMNS`/`DESCRIBE` row: Go `NewColDesc`'s
@@ -521,7 +522,7 @@ impl tidb_executor::Columns for ShowRowResolver<'_> {
         let index = self
             .columns
             .iter()
-            .position(|candidate| candidate.eq_ignore_ascii_case(name))?;
+            .position(|candidate| candidate.go_lower_eq(name))?;
         self.row.get(index).cloned()
     }
 }
@@ -567,11 +568,7 @@ fn first_unknown_output_column(predicate: &tidb_ast::Expr, columns: &[&str]) -> 
                     _ => None,
                 })
             {
-                if !self
-                    .columns
-                    .iter()
-                    .any(|column| column.eq_ignore_ascii_case(&name))
-                {
+                if !self.columns.iter().any(|column| column.go_lower_eq(&name)) {
                     self.missing = Some(name);
                 }
                 // A column leaf has no children; false keeps the walk alive
@@ -1054,9 +1051,7 @@ impl Session {
                 let columns = tidb_executor::view_column_list(&view, &database, catalog, &ctx)?;
                 return Ok(columns
                     .iter()
-                    .filter(|(candidate, _)| {
-                        column.is_none_or(|name| candidate.eq_ignore_ascii_case(name))
-                    })
+                    .filter(|(candidate, _)| column.is_none_or(|name| candidate.go_lower_eq(name)))
                     .map(|(name, field_type)| view_column_description(name, field_type, full))
                     .collect::<Vec<_>>());
             }
@@ -1075,9 +1070,7 @@ impl Session {
             listed
                 .iter()
                 .enumerate()
-                .filter(|(_, candidate)| {
-                    column.is_none_or(|name| candidate.name.eq_ignore_ascii_case(name))
-                })
+                .filter(|(_, candidate)| column.is_none_or(|name| candidate.name.go_lower_eq(name)))
                 .map(|(offset, candidate)| column_description(candidate, offset, table, full, &ctx))
                 .collect::<Result<Vec<_>, _>>()
         })?;
@@ -2850,13 +2843,10 @@ impl Session {
                     Some(pattern) => pattern.row_predicate(&column_names)?,
                     None => None,
                 };
-                let is_virtual_schema = [
-                    "information_schema",
-                    "performance_schema",
-                    "metrics_schema",
-                ]
-                .iter()
-                .any(|schema| database.eq_ignore_ascii_case(schema));
+                let is_virtual_schema =
+                    ["information_schema", "performance_schema", "metrics_schema"]
+                        .iter()
+                        .any(|schema| database.go_lower_eq(schema));
                 let mut rows = Vec::with_capacity(listed.len());
                 for (name, is_view, is_sequence) in listed {
                     let mut row = vec![Datum::Bytes(name.into_bytes())];

@@ -206,14 +206,8 @@ fn visible_tables(
     // `INFORMATION_SCHEMA`), so every I_S table listing follows that order
     // rather than the catalog's own insertion order.
     pairs.sort_by(|(left_schema, left_table), (right_schema, right_table)| {
-        let schema_order = left_schema
-            .to_ascii_lowercase()
-            .cmp(&right_schema.to_ascii_lowercase());
-        schema_order.then_with(|| {
-            left_table
-                .to_ascii_lowercase()
-                .cmp(&right_table.to_ascii_lowercase())
-        })
+        let schema_order = left_schema.go_to_lower().cmp(&right_schema.go_to_lower());
+        schema_order.then_with(|| left_table.go_to_lower().cmp(&right_table.go_to_lower()))
     });
     pairs
 }
@@ -283,7 +277,7 @@ pub(crate) fn tidb_index_usage_rows(
             rows.push(usage_row(
                 &schema,
                 &table.name,
-                &index.name.to_ascii_lowercase(),
+                &index.name.go_to_lower(),
                 collector.get_index_usage(table.table_id, index.id),
             ));
         }
@@ -300,94 +294,94 @@ pub fn table_rows(
     visibility: &SchemaVisibility,
     ctx: &tidb_executor::StmtContext,
 ) -> Option<Vec<Vec<Datum>>> {
-    if name.eq_ignore_ascii_case("SCHEMATA") {
+    if name.go_lower_eq("SCHEMATA") {
         return Some(schemata_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("TABLES") {
+    if name.go_lower_eq("TABLES") {
         return Some(tables_rows(catalog, visibility, &ctx.session_zone()));
     }
-    if name.eq_ignore_ascii_case("PARTITIONS") {
+    if name.go_lower_eq("PARTITIONS") {
         return Some(partitions_rows(catalog, visibility, &ctx.session_zone()));
     }
-    if name.eq_ignore_ascii_case("VIEWS") {
+    if name.go_lower_eq("VIEWS") {
         return Some(views_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("COLUMNS") {
+    if name.go_lower_eq("COLUMNS") {
         return Some(columns_rows(catalog, visibility, ctx));
     }
-    if name.eq_ignore_ascii_case("KEY_COLUMN_USAGE") {
+    if name.go_lower_eq("KEY_COLUMN_USAGE") {
         return Some(key_column_usage_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("STATISTICS") {
+    if name.go_lower_eq("STATISTICS") {
         return Some(statistics_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("TABLE_CONSTRAINTS") {
+    if name.go_lower_eq("TABLE_CONSTRAINTS") {
         return Some(table_constraints_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("CHECK_CONSTRAINTS") {
+    if name.go_lower_eq("CHECK_CONSTRAINTS") {
         return Some(check_constraints_rows(catalog, visibility, false));
     }
-    if name.eq_ignore_ascii_case("TIDB_CHECK_CONSTRAINTS") {
+    if name.go_lower_eq("TIDB_CHECK_CONSTRAINTS") {
         return Some(check_constraints_rows(catalog, visibility, true));
     }
-    if name.eq_ignore_ascii_case("KEYWORDS") {
+    if name.go_lower_eq("KEYWORDS") {
         return Some(keywords_rows());
     }
-    if name.eq_ignore_ascii_case("TIFLASH_REPLICA") {
+    if name.go_lower_eq("TIFLASH_REPLICA") {
         return Some(tiflash_replica_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
+    if name.go_lower_eq("REFERENTIAL_CONSTRAINTS") {
         return Some(referential_constraints_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("CHARACTER_SETS") {
+    if name.go_lower_eq("CHARACTER_SETS") {
         return Some(character_sets_rows());
     }
-    if name.eq_ignore_ascii_case("ENGINES") {
+    if name.go_lower_eq("ENGINES") {
         return Some(engines_rows());
     }
-    if name.eq_ignore_ascii_case("TRIGGERS") {
+    if name.go_lower_eq("TRIGGERS") {
         return Some(triggers_rows());
     }
-    if name.eq_ignore_ascii_case("ROUTINES") {
+    if name.go_lower_eq("ROUTINES") {
         return Some(routines_rows());
     }
-    if name.eq_ignore_ascii_case("EVENTS") {
+    if name.go_lower_eq("EVENTS") {
         return Some(events_rows());
     }
-    if name.eq_ignore_ascii_case("INSPECTION_RESULT") {
+    if name.go_lower_eq("INSPECTION_RESULT") {
         return Some(inspection_result_rows());
     }
-    if name.eq_ignore_ascii_case("TIDB_INDEXES") {
+    if name.go_lower_eq("TIDB_INDEXES") {
         return Some(tidb_indexes_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("METRICS_TABLES") {
+    if name.go_lower_eq("METRICS_TABLES") {
         return Some(metrics_tables_rows());
     }
-    if name.eq_ignore_ascii_case("PARAMETERS") {
+    if name.go_lower_eq("PARAMETERS") {
         return Some(parameters_rows());
     }
-    if name.eq_ignore_ascii_case("PLUGINS") {
+    if name.go_lower_eq("PLUGINS") {
         return Some(plugins_rows());
     }
-    if name.eq_ignore_ascii_case("SEQUENCES") {
+    if name.go_lower_eq("SEQUENCES") {
         return Some(sequences_rows(catalog, visibility));
     }
-    if name.eq_ignore_ascii_case("RUNAWAY_WATCHES") {
+    if name.go_lower_eq("RUNAWAY_WATCHES") {
         return Some(runaway_watches_rows());
     }
-    if name.eq_ignore_ascii_case("TIFLASH_TABLES") {
+    if name.go_lower_eq("TIFLASH_TABLES") {
         return Some(tiflash_tables_rows());
     }
-    if name.eq_ignore_ascii_case("TIFLASH_SEGMENTS") {
+    if name.go_lower_eq("TIFLASH_SEGMENTS") {
         return Some(tiflash_segments_rows());
     }
-    if name.eq_ignore_ascii_case("RESOURCE_GROUPS") {
+    if name.go_lower_eq("RESOURCE_GROUPS") {
         return Some(resource_groups_rows(catalog));
     }
-    if name.eq_ignore_ascii_case("COLLATIONS") {
+    if name.go_lower_eq("COLLATIONS") {
         return Some(collations_rows());
     }
-    if name.eq_ignore_ascii_case("COLLATION_CHARACTER_SET_APPLICABILITY") {
+    if name.go_lower_eq("COLLATION_CHARACTER_SET_APPLICABILITY") {
         return Some(
             SUPPORTED_COLLATIONS
                 .iter()
@@ -395,9 +389,9 @@ pub fn table_rows(
                 .collect(),
         );
     }
-    if name.eq_ignore_ascii_case("SCHEMA_PRIVILEGES")
-        || name.eq_ignore_ascii_case("TABLE_PRIVILEGES")
-        || name.eq_ignore_ascii_case("COLUMN_PRIVILEGES")
+    if name.go_lower_eq("SCHEMA_PRIVILEGES")
+        || name.go_lower_eq("TABLE_PRIVILEGES")
+        || name.go_lower_eq("COLUMN_PRIVILEGES")
     {
         // Declared but never retrieved in Go, even with grants present --
         // the header exists, the body never does.
@@ -483,7 +477,7 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
             ));
         }
         for index in table.indexes() {
-            let constraint_name = if index.name.eq_ignore_ascii_case("PRIMARY") {
+            let constraint_name = if index.primary {
                 "PRIMARY"
             } else if index.unique {
                 index.name.as_str()
@@ -693,7 +687,7 @@ fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> V
             if !index.unique {
                 continue;
             }
-            let constraint_type = if index.name.eq_ignore_ascii_case("PRIMARY") {
+            let constraint_type = if index.primary {
                 "PRIMARY KEY"
             } else {
                 "UNIQUE"
@@ -853,7 +847,7 @@ fn schemata_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Da
         .filter(|name| visibility.allows(name, "", ANY_PRIV))
         .filter(|name| {
             !matches!(
-                name.to_ascii_lowercase().as_str(),
+                name.go_to_lower().as_str(),
                 "metrics_schema" | "performance_schema" | "sys"
             )
         })
@@ -1072,6 +1066,7 @@ fn partitions_rows(
 const INFORMATION_SCHEMA_DB_ID: i64 = (1 << 62) | 1;
 
 use tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA_TABLE_IDS;
+use tidb_hack::{GoCaseCompare, GoToLower};
 
 /// The `information_schema.tables` rows for the schema's OWN tables: Go
 /// `infoschema_reader.go`'s `setDataFromOneTable` with `metadef.IsMemDB`
@@ -2027,7 +2022,7 @@ pub(crate) fn ddl_jobs_rows(
     for job in jobs {
         let job_rows = crate::ddl_jobs::ddl_job_rows(job, false, catalog);
         let names = |cell: &Datum| match cell {
-            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).to_lowercase(),
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).go_to_lower(),
             _ => String::new(),
         };
         let (schema, table) = (names(&job_rows[0][1]), names(&job_rows[0][2]));
@@ -2182,12 +2177,11 @@ pub(crate) fn show_table_status_rows(
     const TABLE_SCHEMA: usize = 1;
     const TABLE_NAME: usize = 2;
     const CHECKSUM: usize = 18;
-    let schema = database.to_lowercase();
+    let schema = database.go_to_lower();
     let mut rows = tables_rows(catalog, visibility, zone)
         .into_iter()
         .filter(|row| {
-            crate::datum_text(&row[TABLE_SCHEMA])
-                .is_some_and(|name| name.to_lowercase() == schema)
+            crate::datum_text(&row[TABLE_SCHEMA]).is_some_and(|name| name.go_to_lower() == schema)
         })
         .map(|row| {
             let mut status = Vec::with_capacity(18);
@@ -2222,7 +2216,7 @@ fn tables_rows(
     for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
         // information_schema's own tables are listed once, as the SYSTEM
         // VIEW rows below; their catalog entries are not base tables.
-        if schema.eq_ignore_ascii_case(INFORMATION_SCHEMA) {
+        if schema.go_lower_eq(INFORMATION_SCHEMA) {
             continue;
         }
         // go seeds metrics_schema/performance_schema/sys with SYSTEM VIEW
@@ -2230,12 +2224,12 @@ fn tables_rows(
         // bootstrap block) -- the seeded placeholder tables render the same
         // shape instead of BASE TABLE rows.
         if matches!(
-            schema.to_ascii_lowercase().as_str(),
+            schema.go_to_lower().as_str(),
             "metrics_schema" | "performance_schema" | "sys"
         ) {
             // The metric tables are listed once, from the generated block
             // below, in the order the oracle shows them.
-            if schema.eq_ignore_ascii_case("metrics_schema") {
+            if schema.go_lower_eq("metrics_schema") {
                 continue;
             }
             let table = match catalog.table_in(&schema, &table_name) {
@@ -3127,7 +3121,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
         let meta_key = format!("t{}", table.table_id);
         if let Some(offset) = table.pk_handle_offset() {
             entries.push((
-                schema.to_lowercase(),
+                schema.go_to_lower(),
                 meta_key.clone(),
                 vec![
                     text(&schema),
@@ -3166,7 +3160,7 @@ fn tidb_indexes_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Ve
                     .filter(|_| table.is_hidden(*offset))
                     .map(|generated| generated.expr_text.clone());
                 entries.push((
-                    schema.to_lowercase(),
+                    schema.go_to_lower(),
                     meta_key.clone(),
                     vec![
                         text(&schema),

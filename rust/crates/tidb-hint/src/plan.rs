@@ -328,7 +328,7 @@ pub fn parse_plan_hints(
     let mut leading_count = 0;
 
     for hint in &hints {
-        let name = hint.name.to_ascii_lowercase();
+        let name = hint.lower_name();
         let tables = hint_tables(hint);
         if requires_table_names(&name) && tables.is_empty() {
             warnings.push(HintWarning::optimizer(format!(
@@ -520,9 +520,9 @@ pub fn parse_plan_hints(
                         current_level,
                         &mut warnings,
                     );
-                    if store.eq_ignore_ascii_case("tiflash") {
+                    if tidb_mysql::lowercase_equal(store, "tiflash") {
                         plan.tiflash_tables.extend(converted);
-                    } else if store.eq_ignore_ascii_case("tikv") {
+                    } else if tidb_mysql::lowercase_equal(store, "tikv") {
                         plan.tikv_tables.extend(converted);
                     }
                 }
@@ -643,7 +643,9 @@ fn table_infos(
     if join_hint_disallows_partitions(hint_name)
         && result.iter().any(|table| !table.partitions.is_empty())
     {
-        warnings.push(HintWarning::optimizer(format!(
+        // Go `SetHintWarningFromError(fmt.Errorf(...))`: a plain error, so
+        // the client reads ErrUnknown (1105), not ErrInternal.
+        warnings.push(HintWarning::ordinary(format!(
             "Optimizer Hint {} is inapplicable on specified partitions",
             restore_join_hint(hint_name, &result)
         )));

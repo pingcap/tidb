@@ -59,6 +59,7 @@ use tidb_executor::analyze::{
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
 use crate::{Session, StmtOutput};
+use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
 
 /// The source goroutine boundary at which a test injects its one-shot panic.
@@ -641,7 +642,7 @@ fn skip_column_types(
         ));
         if vector || (skipped && !mandatory.contains(&column.id)) {
             selected.remove(&column.id);
-            skipped_names.insert(column.name.to_ascii_lowercase());
+            skipped_names.insert(column.name.go_to_lower());
         }
     }
     for column in columns {
@@ -659,7 +660,7 @@ fn skip_column_types(
         if generated
             .dependencies
             .iter()
-            .any(|dependency| skipped_names.contains(&dependency.to_ascii_lowercase()))
+            .any(|dependency| skipped_names.contains(&dependency.go_to_lower()))
         {
             selected.remove(&column.id);
         }

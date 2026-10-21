@@ -28,6 +28,7 @@ use tidb_ast::{
     Visitor, WithClause,
 };
 use tidb_datatype::FieldType;
+use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
 
 use super::keyset::KeySet;
@@ -413,7 +414,7 @@ pub(crate) fn filter_sql_accessing_system_tables(
             continue;
         }
         let accesses_system_table = names.iter().any(|name| {
-            let schema = name.split('.').next().unwrap_or("").to_lowercase();
+            let schema = name.split('.').next().unwrap_or("").go_to_lower();
             tidb_metadef::db::is_mem_db(&schema) || tidb_metadef::db::is_system_db(&schema)
         });
         if !accesses_system_table {
@@ -446,7 +447,7 @@ pub(crate) fn collect_indexable_columns_from_query(
     let table_names = collect_table_names_from_query(&query.schema_name, &query.text)?;
     let mut possible_schemas: Vec<String> = vec![query.schema_name.clone()];
     for name in &table_names {
-        let schema = name.split('.').next().unwrap_or("").to_lowercase();
+        let schema = name.split('.').next().unwrap_or("").go_to_lower();
         if !possible_schemas.contains(&schema) {
             possible_schemas.push(schema);
         }

@@ -1651,10 +1651,11 @@ pub fn fast_index_is_available_by_hints(
         let HintKind::Index { table, indexes, .. } = &hint.kind else {
             continue;
         };
-        let kind = match hint.name.as_str() {
-            "USE_INDEX" => IndexHintKind::Use,
-            "IGNORE_INDEX" => IndexHintKind::Ignore,
-            "FORCE_INDEX" => IndexHintKind::Force,
+        // Go switches on `h.HintName.L`.
+        let kind = match hint.lower_name().as_str() {
+            "use_index" => IndexHintKind::Use,
+            "ignore_index" => IndexHintKind::Ignore,
+            "force_index" => IndexHintKind::Force,
             _ => continue,
         };
         let hint_db = table.db_name.as_deref().unwrap_or(current_db);

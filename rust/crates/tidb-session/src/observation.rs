@@ -19,6 +19,7 @@
 //! RPC/network/CPU measurements are not connected yet; their empty values do
 //! not certify those execution-detail contracts.
 use crate::*;
+use tidb_hack::GoToLower;
 use tidb_stmtsummary::statement_summary::{
     EncodedPlanError, StmtExecInfo, StmtExecLazyInfo, StmtSummaryStmtCtx,
 };
@@ -940,7 +941,7 @@ impl Session {
         ctx.add_affected_rows(affected_rows);
         ctx.set_warning_count(u32::try_from(self.warnings.len()).unwrap_or(u32::MAX));
         tidb_stmtsummary::v2::stmtsummary::add(&StmtExecInfo {
-            schema_name: self.current_db.to_lowercase(),
+            schema_name: self.current_db.go_to_lower(),
             charset: self
                 .vars
                 .get_system("character_set_connection")
@@ -1019,20 +1020,26 @@ impl Session {
                     // Go `getEncodedPlan`: the hints reproducing the plan,
                     // then the statement's own hints of these kinds.
                     let mut hints = plan.plan_hints.clone();
-                    hints.extend(observation.original_table_hints.iter().filter(|hint| {
-                        matches!(
-                            hint.name.to_ascii_lowercase().as_str(),
-                            "memory_quota"
-                                | "use_toja"
-                                | "no_index_merge"
-                                | "max_execution_time"
-                                | "ignore_index"
-                                | "read_from_storage"
-                                | "merge"
-                                | "semi_join_rewrite"
-                                | "no_decorrelate"
-                        )
-                    }).cloned());
+                    hints.extend(
+                        observation
+                            .original_table_hints
+                            .iter()
+                            .filter(|hint| {
+                                matches!(
+                                    hint.lower_name().as_str(),
+                                    "memory_quota"
+                                        | "use_toja"
+                                        | "no_index_merge"
+                                        | "max_execution_time"
+                                        | "ignore_index"
+                                        | "read_from_storage"
+                                        | "merge"
+                                        | "semi_join_rewrite"
+                                        | "no_decorrelate"
+                                )
+                            })
+                            .cloned(),
+                    );
                     tidb_hint::restore_optimizer_hints(&hints)
                 },
                 binding_sql: observation.binding_sql.clone(),

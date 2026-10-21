@@ -23,6 +23,7 @@ use std::any::Any;
 
 use tidb_ast::{Visitable, Visitor};
 use tidb_executor::{Catalog, TableEntry};
+use tidb_hack::{GoCaseCompare, GoToLower};
 
 /// Go `getMaxParamLimit`'s default: more than this many values in one IN
 /// list, or `rows * cols` in one `INSERT`, refuses caching to save memory.
@@ -191,7 +192,7 @@ impl CacheableChecker<'_> {
         self.with_scope_offsets.push(self.cte_can_use.len());
         if with.recursive {
             self.cte_can_use
-                .extend(with.ctes.iter().map(|cte| cte.name.to_ascii_lowercase()));
+                .extend(with.ctes.iter().map(|cte| cte.name.go_to_lower()));
         }
     }
 
@@ -205,12 +206,7 @@ impl CacheableChecker<'_> {
         let Some(table) = path.last() else {
             return false;
         };
-        if path.len() == 1
-            && self
-                .cte_can_use
-                .iter()
-                .any(|cte| cte.eq_ignore_ascii_case(table))
-        {
+        if path.len() == 1 && self.cte_can_use.iter().any(|cte| cte.go_lower_eq(table)) {
             return false;
         }
         let database = if path.len() > 1 {
@@ -275,7 +271,7 @@ impl Visitor for CacheableChecker<'_> {
             });
         if let Some(with) = dml_with.filter(|with| with.recursive) {
             self.cte_can_use
-                .extend(with.ctes.iter().map(|cte| cte.name.to_ascii_lowercase()));
+                .extend(with.ctes.iter().map(|cte| cte.name.go_to_lower()));
         }
         if let Some(insert) = node.downcast_ref::<tidb_ast::InsertStmt>() {
             if insert.source.is_none() {
@@ -375,9 +371,9 @@ impl Visitor for CacheableChecker<'_> {
             if !self
                 .cte_can_use
                 .iter()
-                .any(|name| name.eq_ignore_ascii_case(&cte.name))
+                .any(|name| name.go_lower_eq(&cte.name))
             {
-                self.cte_can_use.push(cte.name.to_ascii_lowercase());
+                self.cte_can_use.push(cte.name.go_to_lower());
             }
         }
         if node

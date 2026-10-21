@@ -477,6 +477,7 @@ where
         statement.analyze_snapshot,
         options,
         concurrency,
+        statement.store_batch_size,
         timeout,
         cancellation.clone(),
         resource_group,
@@ -564,6 +565,20 @@ fn read_policy(snapshot_enabled: bool, snapshot: u64) -> (u64, tidb_distsql::Iso
     }
 }
 
+/// Go `AnalyzeColumnsExec.buildResp`: store batching at the session's
+/// `AnalyzeStoreBatchSize`, with merged responses accepted and the batch
+/// tasks executed serially whenever batching is on.
+fn set_analyze_store_batch(
+    builder: &mut tidb_distsql::RequestBuilder,
+    store_batch_size: i64,
+) -> &mut tidb_distsql::RequestBuilder {
+    let enable_store_batch = store_batch_size > 0;
+    builder
+        .set_store_batch_size(isize::try_from(store_batch_size).unwrap_or(isize::MAX))
+        .set_allow_batch_task_data_merge(enable_store_batch)
+        .set_execute_batch_tasks_serially(enable_store_batch)
+}
+
 /// Uses the process-owned region cache and lock recovery; only sampled
 /// collector responses cross the TiKV boundary.
 pub(super) fn collect_regions<S>(
@@ -576,6 +591,7 @@ pub(super) fn collect_regions<S>(
     snapshot_enabled: bool,
     options: &AnalyzeOptions,
     concurrency: u64,
+    store_batch_size: i64,
     timeout: std::time::Duration,
     cancellation: std::sync::Arc<tidb_distsql::CancelHandle>,
     resource_group: &str,
@@ -602,8 +618,8 @@ where
         .set_analyze_request(request.encode_to_vec(), isolation)
         .set_paging(false)
         .set_start_ts(read_ts)
-        .set_concurrency(concurrency)
-        .set_resource_group_name(resource_group);
+        .set_concurrency(concurrency);
+    set_analyze_store_batch(&mut builder, store_batch_size).set_resource_group_name(resource_group);
     let request = builder
         .build_transport_request(cancellation)
         .map_err(|e| error(format!("{e:?}")))?;
@@ -643,6 +659,28 @@ where
 
 /// Go analyzeIndexNDVPushDown uses index keys for prefix and virtual-column NDV. A single
 /// column's NULL range has a separate histogram and never enters its sketch.
+/// Go `analyzeIndexNDVPushDown`'s key ranges, encoded as `EncodeIndexKey`
+/// does (`[low, PrefixNext(high))` for an inclusive high): a single-column
+/// index reads `FullNotNullRange` -- `[MinNotNull, MaxValue]`, the codec's
+/// `bytesFlag` (1) through `maxFlag` (250) -- and then `NullRange`
+/// (`[NULL, NULL]`, `NilFlag` 0) for its NULL count (`AnalyzeIndexExec.open`);
+/// any other index reads `FullRange`, `[NULL, MaxValue]`. Each entry is
+/// `(is_null_range, start, end)` in Go's request order.
+fn index_ndv_key_ranges(prefix: &[u8], single_column: bool) -> Vec<(bool, Vec<u8>, Vec<u8>)> {
+    const NIL_FLAG: u8 = 0;
+    const BYTES_FLAG: u8 = 1;
+    const MAX_FLAG: u8 = 250;
+    let key = |flag: u8| [prefix, &[flag]].concat();
+    if single_column {
+        vec![
+            (false, key(BYTES_FLAG), key(MAX_FLAG + 1)),
+            (true, key(NIL_FLAG), key(NIL_FLAG + 1)),
+        ]
+    } else {
+        vec![(false, key(NIL_FLAG), key(MAX_FLAG + 1))]
+    }
+}
+
 fn collect_index_ndv<S>(
     opener: &tidb_txnkv::transaction::RealOptimisticTransactionOpener<S>,
     physical_id: i64,
@@ -665,17 +703,7 @@ where
     } else {
         tidb_codec::table_key::encode_index_seek_key(physical_id, index.id, &[])
     };
-    let end = super::finite_successor(&prefix)?;
-    let mut non_null = prefix.clone();
-    let mut ranges = Vec::new();
-    if index.column_positions.len() == 1 {
-        // codec.NilFlag is 0. PrefixNext(prefix ++ NilFlag) starts non-NULLs.
-        let mut null_start = prefix.clone();
-        null_start.push(0);
-        non_null = super::finite_successor(&null_start)?;
-        ranges.push((true, null_start, non_null.clone()));
-    }
-    ranges.push((false, non_null, end));
+    let ranges = index_ndv_key_ranges(&prefix, index.column_positions.len() == 1);
     let request = tipb::AnalyzeReq {
         tp: Some(if common_handle {
             tipb::AnalyzeType::TypeCommonHandle
@@ -755,6 +783,45 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Go `EncodeIndexKey` over `FullNotNullRange`/`NullRange` (single
+    /// column) and `FullRange`: the high bound is `PrefixNext` of the
+    /// `maxFlag` byte, `prefix\xfb`, never `PrefixNext(prefix)`.
+    #[test]
+    fn index_ndv_key_ranges_match_go_encode_index_key() {
+        let prefix = b"t\x80\x00\x00\x00\x00\x00\x00\x01_i\x80\x00\x00\x00\x00\x00\x00\x02";
+        let key = |flag: u8| [&prefix[..], &[flag]].concat();
+        assert_eq!(
+            super::index_ndv_key_ranges(prefix, true),
+            vec![(false, key(0x01), key(0xfb)), (true, key(0x00), key(0x01))]
+        );
+        assert_eq!(
+            super::index_ndv_key_ranges(prefix, false),
+            vec![(false, key(0x00), key(0xfb))]
+        );
+    }
+
+    /// Go `buildResp`'s `SetStoreBatchSize(AnalyzeStoreBatchSize)`,
+    /// `SetAllowBatchTaskDataMerge` and `SetExecuteBatchTasksSerially`, both
+    /// true exactly when the size is positive.
+    #[test]
+    fn full_sampling_request_batches_by_store_like_go() {
+        for (size, enabled) in [(4, true), (0, false)] {
+            let mut builder = tidb_distsql::RequestBuilder::new();
+            builder
+                .set_analyze_request(Vec::new(), tidb_distsql::IsolationLevel::ReadCommitted)
+                .set_non_partitioned_key_ranges(vec![tidb_distsql::RequestKeyRange {
+                    start_key: b"a".to_vec().into(),
+                    end_key: b"b".to_vec().into(),
+                }]);
+            let metadata = super::set_analyze_store_batch(&mut builder, size)
+                .build()
+                .unwrap();
+            assert_eq!(metadata.store_batch_size, size as isize);
+            assert_eq!(metadata.allow_batch_task_data_merge, enabled);
+            assert_eq!(metadata.execute_batch_tasks_serially, enabled);
+        }
+    }
+
     #[test]
     fn adaptive_concurrency_matches_go_store_count_boundaries() {
         for (stores, expected) in [

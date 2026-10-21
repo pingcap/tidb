@@ -67,6 +67,7 @@ pub(super) fn add_spec<'a>(
                 | tidb_ast::IndexConstraintKind::UniqueIndex
                 | tidb_ast::IndexConstraintKind::PrimaryKey
         ),
+        primary: definition.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
         parts: &definition.parts,
         visible: indexes::is_visible(&definition.options),
         global: definition.options.global,

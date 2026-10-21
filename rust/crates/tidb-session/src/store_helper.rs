@@ -31,6 +31,7 @@ use tidb_codec::table_key::{
 };
 use tidb_executor::region_map::RegionStore;
 use tidb_executor::{Catalog, TableEntry};
+use tidb_hack::GoToLower;
 use tikv_client::pd_http;
 
 /// Go `helper.TryGetPDHTTPClient`'s failure for a store without PD.
@@ -145,7 +146,7 @@ pub(crate) struct HelperSchema {
 impl HelperSchema {
     /// Go `metadef.IsMemDB(db.Name.L)`.
     pub(crate) fn is_mem_db(&self) -> bool {
-        tidb_metadef::db::is_mem_db(&self.name.to_lowercase())
+        tidb_metadef::db::is_mem_db(&self.name.go_to_lower())
     }
 }
 
@@ -164,9 +165,9 @@ pub(crate) fn all_schemas(catalog: &Catalog) -> Vec<HelperSchema> {
     let mut stored = catalog
         .database_names()
         .into_iter()
-        .filter(|name| !tidb_metadef::db::is_mem_db(&name.to_lowercase()))
+        .filter(|name| !tidb_metadef::db::is_mem_db(&name.go_to_lower()))
         .collect::<Vec<_>>();
-    stored.sort_by_key(|name| std::cmp::Reverse(name.to_lowercase()));
+    stored.sort_by_key(|name| std::cmp::Reverse(name.go_to_lower()));
     let mut schemas = Vec::with_capacity(stored.len() + 2);
     for schema in stored {
         let mut tables = Vec::new();
@@ -278,7 +279,7 @@ pub(crate) struct TableInfo {
 impl TableInfo {
     /// Go `metadef.IsMemDB(DB.Name.L)`.
     pub(crate) fn is_mem_db(&self) -> bool {
-        tidb_metadef::db::is_mem_db(&self.db_name.to_lowercase())
+        tidb_metadef::db::is_mem_db(&self.db_name.go_to_lower())
     }
 }
 

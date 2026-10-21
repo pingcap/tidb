@@ -98,8 +98,8 @@ pub(crate) fn show_index_rows(
         );
     }
     for index in table.indexes() {
-        let clustered =
-            index.name.eq_ignore_ascii_case("PRIMARY") && !table.common_handle_offsets().is_empty();
+        // Go `tb.Meta().IsCommonHandle && idxInfo.Primary`.
+        let clustered = index.primary && !table.common_handle_offsets().is_empty();
         for (position, offset) in index.column_offsets.iter().enumerate() {
             let column = &table.columns[*offset];
             let nullable = column.field_type.flags() & FieldTypeFlags::NOT_NULL == 0;

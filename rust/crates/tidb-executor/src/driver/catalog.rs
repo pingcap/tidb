@@ -2390,8 +2390,7 @@ impl Catalog {
                                     })
                                     .collect(),
                                 unique: index.unique,
-                                primary: index.clustered_primary
-                                    || index.name.eq_ignore_ascii_case("primary"),
+                                primary: index.primary,
                                 is_public: true,
                                 is_visible: index.visible,
                                 is_columnar: false,
@@ -2406,10 +2405,7 @@ impl Catalog {
                         let common_handle_lens = table
                             .indexes()
                             .iter()
-                            .find(|index| {
-                                index.clustered_primary
-                                    || index.name.eq_ignore_ascii_case("primary")
-                            })
+                            .find(|index| index.primary)
                             .map(|index| {
                                 (0..table.common_handle_offsets().len())
                                     .map(|position| index.prefix_length(position))
@@ -6014,6 +6010,7 @@ mod planner_view_tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );

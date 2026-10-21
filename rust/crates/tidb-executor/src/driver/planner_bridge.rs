@@ -29,6 +29,7 @@ use tidb_expr::expr_util::normal_form::extract_filters_from_dnfs;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::compose_dnf_condition;
+use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::find_best_task::coster::Ver2Coster;
@@ -177,7 +178,7 @@ fn static_global_index_point_lookup(
                         table
                             .columns
                             .iter()
-                            .any(|column| column.name.eq_ignore_ascii_case(column_name))
+                            .any(|column| column.name.go_lower_eq(column_name))
                     })
             }
             _ => false,
@@ -257,8 +258,7 @@ fn static_global_index_point_lookup(
         let key = &index.columns[0];
         key.length < 0
             && table.column_at(key.offset).is_some_and(|column| {
-                column.name.eq_ignore_ascii_case(column_name)
-                    && column.ret_type.code().is_type_integer()
+                column.name.go_lower_eq(column_name) && column.ret_type.code().is_type_integer()
             })
     })
 }
@@ -272,10 +272,8 @@ fn table_column_matches(
     let relation = table_ref.alias.as_deref().unwrap_or(table_name);
     match names {
         [_column] => true,
-        [name, _column] => name.eq_ignore_ascii_case(relation),
-        [schema, name, _column] => {
-            schema.eq_ignore_ascii_case(db_name) && name.eq_ignore_ascii_case(relation)
-        }
+        [name, _column] => name.go_lower_eq(relation),
+        [schema, name, _column] => schema.go_lower_eq(db_name) && name.go_lower_eq(relation),
         _ => false,
     }
 }
@@ -289,10 +287,8 @@ fn table_wildcard_matches(
     let relation = table_ref.alias.as_deref().unwrap_or(table_name);
     match names {
         [] => true,
-        [name] => name.eq_ignore_ascii_case(relation),
-        [schema, name] => {
-            schema.eq_ignore_ascii_case(db_name) && name.eq_ignore_ascii_case(relation)
-        }
+        [name] => name.go_lower_eq(relation),
+        [schema, name] => schema.go_lower_eq(db_name) && name.go_lower_eq(relation),
         _ => false,
     }
 }
@@ -305,10 +301,7 @@ fn index_hint_allows(hints: &[tidb_ast::IndexHint], index_name: &str) -> bool {
         .filter(|hint| hint.scope == tidb_ast::IndexHintScope::All)
     {
         has_scan_hint = true;
-        let matches_index = hint
-            .indexes
-            .iter()
-            .any(|name| name.eq_ignore_ascii_case(index_name));
+        let matches_index = hint.indexes.iter().any(|name| name.go_lower_eq(index_name));
         match hint.kind {
             tidb_ast::IndexHintKind::Ignore => {
                 is_ignore = true;
@@ -855,6 +848,10 @@ impl tidb_planner::logical::rule::HintWarningSink for crate::StmtContext {
     fn set_hint_warning(&self, message: &str) {
         self.append_warning_parts(1815, message);
     }
+
+    fn set_hint_warning_from_error(&self, code: u16, message: &str) {
+        self.append_warning_parts(code, message);
+    }
 }
 
 impl tidb_planner::find_best_task::dispatch::MppWarningSink for crate::StmtContext {
@@ -878,11 +875,7 @@ pub(super) fn is_cte(with: Option<&tidb_ast::WithClause>, table: &tidb_ast::Tabl
     let [name] = table.name.as_slice() else {
         return false;
     };
-    with.is_some_and(|with| {
-        with.ctes
-            .iter()
-            .any(|cte| cte.name.to_lowercase() == name.to_lowercase())
-    })
+    with.is_some_and(|with| with.ctes.iter().any(|cte| cte.name.go_lower_eq(name)))
 }
 
 pub(super) fn logical_from_plan(
@@ -1048,15 +1041,15 @@ pub(super) fn update_target_columns(
                     .as_deref()
                     .or_else(|| table.name.last().map(String::as_str))
                     .unwrap_or_default();
-                if visible.eq_ignore_ascii_case(&name.table.original) {
+                if visible.go_lower_eq(&name.table.original) {
                     break;
                 }
                 continue;
             }
             let (database, original) = split_table_path(&table.name, current_db)?;
             let visible = table.alias.as_deref().unwrap_or(original);
-            if !visible.eq_ignore_ascii_case(&name.table.original)
-                || !database.eq_ignore_ascii_case(&name.database.original)
+            if !visible.go_lower_eq(&name.table.original)
+                || !database.go_lower_eq(&name.database.original)
             {
                 continue;
             }
@@ -1116,12 +1109,12 @@ pub(crate) fn logical_from_scope(
         let column_name = &name.names.column.original;
         let offset = scope.width();
         let append = scope.tables.last_mut().filter(|table| {
-            table.name.eq_ignore_ascii_case(visible_table)
+            table.name.go_lower_eq(visible_table)
                 && table
                     .database
                     .as_deref()
                     .unwrap_or_default()
-                    .eq_ignore_ascii_case(database)
+                    .go_lower_eq(database)
         });
         match append {
             Some(table) => table.columns.push((column_name.clone(), field_type)),
@@ -1415,19 +1408,19 @@ impl InitStats<'_> {
             .table_as_name
             .as_deref()
             .unwrap_or(&source.table_name)
-            .to_lowercase();
-        let table_name = source.table_name.to_lowercase();
-        let db_name = source.db_name.to_lowercase();
+            .go_to_lower();
+        let table_name = source.table_name.go_to_lower();
+        let db_name = source.db_name.go_to_lower();
         let mut columns = BTreeSet::new();
         for (qualifier, name) in &names {
             if let Some(qualifier) = qualifier {
-                let qualifier = qualifier.to_lowercase();
+                let qualifier = qualifier.go_to_lower();
                 if qualifier != visible && qualifier != table_name && qualifier != db_name {
                     continue;
                 }
             }
             for column in &source.columns {
-                if column.name.eq_ignore_ascii_case(name) {
+                if column.name.go_lower_eq(name) {
                     columns.insert(column.id);
                 }
             }
@@ -2724,10 +2717,10 @@ fn default_evaluator<'a>(
         })?;
         let meta = super::dml::column_metadata(entry)
             .into_iter()
-            .find(|meta| meta.name.eq_ignore_ascii_case(column))
+            .find(|meta| meta.name.go_lower_eq(column))
             .ok_or_else(|| {
                 // Go `ErrUnknownColumn.GenWithStackByArgs(colName, "field_list")`.
-                tidb_expr::EvalError::UnknownColumnInClause(column.to_lowercase(), "field_list")
+                tidb_expr::EvalError::UnknownColumnInClause(column.go_to_lower(), "field_list")
             })?;
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
@@ -4190,6 +4183,7 @@ mod statistics_initialization_tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -4367,6 +4361,7 @@ mod statistics_initialization_tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );

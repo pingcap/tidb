@@ -28,6 +28,7 @@ use tidb_exec::exec_details::{
     IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
 };
 use tidb_executor::used_stats::UsedStatsInfoForTable;
+use tidb_hack::GoToLower;
 
 /// Go `SlowLogRowPrefixStr`.
 pub const SLOW_LOG_ROW_PREFIX_STR: &str = "# ";
@@ -741,7 +742,7 @@ pub fn slow_log_format(vars: &SlowLogSessionVars, items: &SlowQueryLogItems) -> 
     }
 
     if !vars.current_db.is_empty() {
-        write_slow_log_item(&mut buf, SLOW_LOG_DB_STR, &vars.current_db.to_lowercase());
+        write_slow_log_item(&mut buf, SLOW_LOG_DB_STR, &vars.current_db.go_to_lower());
     }
     if !items.index_names.is_empty() {
         write_slow_log_item(&mut buf, SLOW_LOG_INDEX_NAMES_STR, &items.index_names);
@@ -984,7 +985,7 @@ pub fn slow_log_format(vars: &SlowLogSessionVars, items: &SlowQueryLogItems) -> 
     }
 
     if vars.current_db_changed {
-        buf.push_str(&format!("use {};\n", vars.current_db.to_lowercase()));
+        buf.push_str(&format!("use {};\n", vars.current_db.go_to_lower()));
     }
 
     buf.push_str(&items.sql);

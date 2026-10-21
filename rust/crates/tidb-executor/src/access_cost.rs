@@ -1364,6 +1364,7 @@ mod index_async_load_queue_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         };
         let histogram = |id, first_low, first_high| IndexStats {
             histogram: Histogram {
@@ -1440,6 +1441,7 @@ mod index_async_load_queue_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         };
         table.add_index(index.clone(), false);
         let mut topn = tidb_stats::TopN::new(10);
@@ -1502,6 +1504,7 @@ mod index_async_load_queue_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         };
         table.add_index(index.clone(), false);
         let column = ColumnStats {
@@ -1631,6 +1634,7 @@ mod index_async_load_queue_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         };
         let table = queue_test_table(vec![long_column("a", 1)]);
         // No index_load_status entry: the index was never loaded. The
@@ -1708,6 +1712,7 @@ mod index_async_load_queue_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         };
         table.add_index(index.clone(), false);
         let key = |value| tidb_codec::encode_key(&[Datum::Int(value)]).unwrap();
@@ -1770,6 +1775,7 @@ mod index_async_load_queue_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         };
         table.add_index(index.clone(), false);
         let index_stats = IndexStats {
@@ -2024,6 +2030,7 @@ mod index_async_load_queue_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         };
         let table = queue_test_table(vec![long_column("a", 1)]);
         let mut stats = TableStatistics::new(10, 0, BTreeMap::new(), BTreeMap::new());

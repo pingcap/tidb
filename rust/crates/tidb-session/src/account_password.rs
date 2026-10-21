@@ -26,6 +26,7 @@
 use crate::account::{tls_policy_of, PasswordOrLockOptions};
 use crate::show::string_column_output;
 use crate::*;
+use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
 
 impl Session {
@@ -686,7 +687,7 @@ impl Session {
              authentication_string, Max_user_connections \
              FROM mysql.user WHERE User={} AND Host={}",
             crate::user_table::sql_str(user),
-            crate::user_table::sql_str(&host.to_lowercase()),
+            crate::user_table::sql_str(&host.go_to_lower()),
         );
         let ctx = self.statement_context(false);
         let (_, rows) = self.with_catalog_mut(|catalog| {

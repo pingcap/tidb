@@ -58,6 +58,7 @@ use std::collections::BTreeMap;
 
 use tidb_ast::{Stmt, Visitable as _, Visitor};
 use tidb_executor::DriverError;
+use tidb_hack::GoCaseCompare;
 use tidb_util::stringutil::go_to_lower;
 
 pub(crate) use tidb_hint::HintsSet;
@@ -183,9 +184,8 @@ pub(crate) fn scan_statement_tables(stmt: &mut Stmt) -> StatementTableScan {
         qualified_function: Option<String>,
     }
     fn is_commit_ts(path: &[String]) -> bool {
-        path.last().is_some_and(|name| {
-            name.eq_ignore_ascii_case(tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME)
-        })
+        path.last()
+            .is_some_and(|name| name.go_lower_eq(tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME))
     }
     impl Visitor for Scanner {
         fn enter(&mut self, node: &mut dyn Any) -> bool {

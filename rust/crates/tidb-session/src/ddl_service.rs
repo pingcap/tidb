@@ -29,6 +29,7 @@ use tidb_exec::real_tikv_ddl::{ClusterDdlReport, DdlWarningLevel};
 use tidb_executor::{DriverError, StmtContext};
 
 use crate::Session;
+use tidb_hack::GoCaseCompare;
 use tidb_util::stringutil::go_to_lower;
 
 /// Go `ddl.DDL.DoDDLJob` for one lowered statement: publishes the change,
@@ -287,7 +288,7 @@ impl Session {
         // DROP removes it: the next unqualified statement answers 1046
         // (`ErrNoDB`) until a fresh `USE`.
         if let DdlStatement::DropDatabase { name, .. } = statement {
-            if self.current_database().eq_ignore_ascii_case(name) {
+            if self.current_database().go_lower_eq(name) {
                 self.deselect_database();
             }
         }

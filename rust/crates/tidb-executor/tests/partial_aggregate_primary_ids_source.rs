@@ -228,6 +228,7 @@ fn a_stored_primary_index_yields_the_same_ids() {
         global: false,
         global_index_version: 0,
         clustered_primary: true,
+        primary: true,
     }, true);
 
     capture(&mut table, Arc::clone(&captured));

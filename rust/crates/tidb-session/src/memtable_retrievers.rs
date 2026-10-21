@@ -28,6 +28,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use tidb_datatype::Datum;
 use tidb_executor::region_map::RegionStore;
 use tidb_executor::{Catalog, DriverError};
+use tidb_hack::GoToLower;
 use tidb_planner::logical::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::{
     HotRegionsHistoryTableExtractor, MetricSummaryTableExtractor, TableStorageStatsExtractor,
@@ -518,8 +519,8 @@ pub(crate) fn tikv_region_status_rows(
                 continue;
             }
             if !visibility.allows(
-                &region_table.db_name.to_lowercase(),
-                &region_table.table_name.to_lowercase(),
+                &region_table.db_name.go_to_lower(),
+                &region_table.table_name.go_to_lower(),
                 PrivMask::Any,
             ) {
                 continue;
@@ -823,13 +824,13 @@ pub(crate) fn table_storage_stats_rows(
         // schema.
         let Some(schema) = schemas
             .iter()
-            .find(|schema| schema.name.to_lowercase() == *db)
+            .find(|schema| schema.name.go_to_lower() == *db)
         else {
             continue;
         };
         if extractor.table_name.is_empty() {
             for table in &schema.tables {
-                if visibility.allows(db, &table.name.to_lowercase(), PrivMask::Any) {
+                if visibility.allows(db, &table.name.go_to_lower(), PrivMask::Any) {
                     initial_tables.push((db.clone(), table));
                 }
             }
@@ -838,11 +839,11 @@ pub(crate) fn table_storage_stats_rows(
                 let Some(table) = schema
                     .tables
                     .iter()
-                    .find(|table| table.name.to_lowercase() == *tb)
+                    .find(|table| table.name.go_to_lower() == *tb)
                 else {
                     continue;
                 };
-                if visibility.allows(db, &table.name.to_lowercase(), PrivMask::Any) {
+                if visibility.allows(db, &table.name.go_to_lower(), PrivMask::Any) {
                     initial_tables.push((db.clone(), table));
                 }
             }

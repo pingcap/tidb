@@ -2486,6 +2486,7 @@ fn residual_selection_uses_logical_rows_over_access_rows() {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: true,
         },
         false,
     );

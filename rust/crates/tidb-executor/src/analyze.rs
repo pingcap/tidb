@@ -283,6 +283,9 @@ pub struct AnalyzeStatement {
     pub partition_merge_concurrency: usize,
     /// Session ANALYZE coprocessor concurrency; nonpositive selects adaptive sizing.
     pub scan_concurrency: i64,
+    /// Go `SessionVars.AnalyzeStoreBatchSize`: the full-sampling request's
+    /// store batch size; zero disables store batching.
+    pub store_batch_size: i64,
     /// Shared statement evaluation and warning context for virtual sample values.
     pub eval_context: AnalyzeEvalContext,
     /// The effective knobs.
@@ -607,6 +610,7 @@ pub fn lower_analyze_admin(
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
             scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
+            store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             eval_context: crate::StmtContext::for_query().into(),
             options,
         });

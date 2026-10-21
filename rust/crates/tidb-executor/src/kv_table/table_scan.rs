@@ -5989,6 +5989,7 @@ mod remote_cursor_tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -6057,6 +6058,7 @@ mod remote_cursor_tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -6311,6 +6313,7 @@ mod remote_cursor_tests {
             let mut primary = table.indexes()[0].clone();
             primary.id = 0;
             primary.name = "PRIMARY".to_owned();
+            primary.primary = true;
             primary.column_offsets = vec![0, 1];
             primary.prefix_lengths = vec![-1, 2];
             table.add_index(primary, true);
@@ -6369,6 +6372,7 @@ mod remote_cursor_tests {
             let mut primary = table.indexes()[0].clone();
             primary.id = 0;
             primary.name = "PRIMARY".to_owned();
+            primary.primary = true;
             primary.prefix_lengths = vec![if handle_value.len() == 2 { 2 } else { -1 }];
             table.add_index(primary, true);
             let encoded = |value: &str| {
@@ -6867,6 +6871,7 @@ mod remote_cursor_tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -6991,6 +6996,7 @@ mod remote_cursor_tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );

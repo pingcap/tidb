@@ -76,10 +76,9 @@ use tidb_txnkv::Key;
 /// but physically reads its ranges from the table's `_r<common_handle>`
 /// record keys. It is therefore a table path, not a secondary-index path.
 pub(crate) fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
-    table.plan_indexes().find(|index| {
-        index.name.eq_ignore_ascii_case("PRIMARY")
-            && index.column_offsets == table.common_handle_offsets()
-    })
+    table
+        .plan_indexes()
+        .find(|index| index.primary && index.column_offsets == table.common_handle_offsets())
 }
 
 /// The clustered PRIMARY's index METADATA, whether or not the catalog stores
@@ -116,6 +115,7 @@ pub(crate) fn clustered_primary_metadata(table: &KvTable) -> Option<std::borrow:
         global: false,
         global_index_version: 0,
         clustered_primary: false,
+        primary: true,
     }))
 }
 

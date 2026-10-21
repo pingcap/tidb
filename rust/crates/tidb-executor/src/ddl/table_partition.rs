@@ -638,7 +638,7 @@ fn primary_or_implicit_key_columns(
     };
     let mut implicit: Option<&KvIndex> = None;
     for index in indexes {
-        if index.name.eq_ignore_ascii_case("PRIMARY") {
+        if index.primary {
             return columns_of(index);
         }
         // Go guards this: an index with no columns is never a primary key.
@@ -1765,7 +1765,7 @@ fn check_unique_keys_include_partition_columns(
         // Only a COMMON handle reaches here: a `pk_is_handle` table encodes
         // its primary key as the handle and builds no index for it, so there
         // is no PRIMARY entry in this list to test.
-        if !handle_offsets.is_empty() && index.name.eq_ignore_ascii_case("PRIMARY") {
+        if !handle_offsets.is_empty() && index.primary {
             return Err(DriverError::PartitionUniqueKeyNeedAllFields(
                 "CLUSTERED INDEX".to_owned(),
             ));
@@ -2668,6 +2668,7 @@ mod round_trip_tests {
             global: true,
             global_index_version: 0,
             clustered_primary: false,
+            primary: false,
         }];
         build_table_partitioning(
             create,
@@ -2709,6 +2710,7 @@ mod round_trip_tests {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: name == "PRIMARY",
         };
 
         // k1: the primary key IS the handle.

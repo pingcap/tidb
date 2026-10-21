@@ -7473,6 +7473,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -7591,6 +7592,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -7717,6 +7719,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -8170,6 +8173,7 @@ mod tests {
                             global,
                             global_index_version: 0,
                             clustered_primary: false,
+                            primary: false,
                         },
                         &crate::StmtContext::for_query(),
                     )

@@ -177,8 +177,42 @@ pub fn run_alter_table_in(
         return Err(error);
     }
     allocators.execute(ctx, alter.actions.len() > 1)?;
+    // An admitted no-op (an IF EXISTS / IF NOT EXISTS note) submits no job,
+    // so Go installs nothing and reloads nothing.
+    if staged.metadata_version() != catalog.metadata_version() {
+        reload_altered_table_from_meta_json(alter, &mut staged, current_db);
+    }
     *catalog = staged;
     Ok(())
+}
+
+/// Go installs the ALTER's job output as `infoschema.Builder` reads the
+/// table back from meta: see [`crate::KvTable::reload_from_meta_json`]. The
+/// table is looked up where the statement left it, under a RENAME's new name.
+fn reload_altered_table_from_meta_json(
+    alter: &tidb_ast::AlterTableStmt,
+    catalog: &mut Catalog,
+    current_db: &str,
+) {
+    let path = alter
+        .actions
+        .iter()
+        .rev()
+        .find_map(|action| match action {
+            tidb_ast::AlterTableAction::RenameTable { new_name } => Some(new_name),
+            _ => None,
+        })
+        .unwrap_or(&alter.name);
+    let Ok((database, name)) = crate::driver::split_table_path_pub(path, current_db) else {
+        return;
+    };
+    // The job already advanced the metadata version; the reload is part of
+    // installing it, not another change.
+    if let Some(crate::TableEntry::Kv(table)) = catalog.get_mut_in(database, name) {
+        if table.temp_table_type() != tidb_model::TempTableType::LOCAL {
+            std::sync::Arc::make_mut(table).reload_from_meta_json();
+        }
+    }
 }
 
 /// Go's `CompactTableStmt`, which is not an ALTER TABLE job: `buildCompactTable`
@@ -1023,8 +1057,17 @@ fn submitted_jobs(
         Action::DropColumn { .. } => Job::new(A::ACTION_DROP_COLUMN),
         Action::DropPrimaryKey(_) => Job::new(A::ACTION_DROP_PRIMARY_KEY),
         // Go `CheckIsDropPrimaryKey`: dropping the index named PRIMARY is
-        // dropping the primary key.
-        Action::DropIndex { name, .. } if name.go_lower_eq("primary") => {
+        // dropping the primary key, unless that index is a legacy secondary
+        // one.
+        Action::DropIndex { name: index, .. }
+            if super::indexes::is_drop_primary_key(
+                match catalog.table_in(database, name) {
+                    Some(crate::TableEntry::Kv(table)) => Some(table),
+                    _ => None,
+                },
+                index,
+            ) =>
+        {
             Job::new(A::ACTION_DROP_PRIMARY_KEY)
         }
         Action::DropIndex { .. } => Job::new(A::ACTION_DROP_INDEX),

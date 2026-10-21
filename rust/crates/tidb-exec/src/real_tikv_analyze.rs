@@ -2690,6 +2690,7 @@ fn selected_columns_for_choice<S: crate::cluster_catalog::MetaSnapshot>(
         enable_async_merge_global_stats: true,
         partition_merge_concurrency: 1,
         scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
+        store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
         eval_context: tidb_executor::StmtContext::for_query().into(),
         options: Default::default(),
     };
@@ -3106,6 +3107,7 @@ mod tests {
             enable_async_merge_global_stats: true,
             partition_merge_concurrency: 1,
             scan_concurrency: tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
+            store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             eval_context: tidb_executor::StmtContext::for_query().into(),
             options: Default::default(),
         }

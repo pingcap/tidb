@@ -173,6 +173,7 @@ pub fn create_hypo_index(
         name: &create.name,
         comment: create.options.comment.as_deref().unwrap_or(""),
         unique,
+        primary: false,
         parts: &create.parts,
         visible: is_visible(&create.options),
         global: create.options.global,
@@ -242,6 +243,7 @@ pub fn set_advisor_hypo_index(
         global: false,
         global_index_version: 0,
         clustered_primary: false,
+        primary: false,
     };
     let name = index.name.go_to_lower();
     let _ = hypo_indexes.remove(database, table_name, &name, true);

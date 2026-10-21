@@ -26,6 +26,7 @@ use std::borrow::Cow;
 use tidb_ast::{DmlStmt, Hint, SessionStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
+use tidb_hack::{GoCaseCompare, GoToLower};
 
 use crate::vars::validation_var_error;
 use crate::{sysvar, Session, VarError};
@@ -467,7 +468,7 @@ impl Session {
                             &resource_group.name,
                         ));
                     }
-                    resource_group.name.to_ascii_lowercase()
+                    resource_group.name.go_to_lower()
                 };
                 Ok(Some(()))
             }
@@ -599,7 +600,7 @@ impl Session {
             None => {}
         }
 
-        let hinted = stmt_hints.resource_group.to_ascii_lowercase();
+        let hinted = stmt_hints.resource_group.go_to_lower();
         // Go `ExecuteStmt`: a hinted group that does not exist falls back
         // to the session's own group (Go only logs it).
         let exists = hinted == self.resource_group
@@ -1782,7 +1783,7 @@ impl Session {
                 table_entry
                     .column_names()
                     .iter()
-                    .position(|table_column| table_column.eq_ignore_ascii_case(column))
+                    .position(|table_column| table_column.go_lower_eq(column))
                     .map(|offset| offset as i64)
                     .ok_or_else(|| {
                         format!("can't find column {column} in table {database}.{table}")

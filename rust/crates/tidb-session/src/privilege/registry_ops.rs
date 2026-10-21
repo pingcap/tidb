@@ -25,6 +25,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::Ordering;
 
 use super::*;
+use tidb_hack::{GoCaseCompare, GoToUpper};
 use tidb_util::stringutil::go_to_upper;
 
 fn compare_host(left: &str, right: &str) -> Comparison {
@@ -202,7 +203,10 @@ impl PrivilegeRegistry {
     ) -> DbPrivKey {
         rows.keys()
             .find(|(row_user, row_host, row_database)| {
-                row_user == user && row_host == host && row_database.eq_ignore_ascii_case(database)
+                // Go `dbRecord.match`: `strings.ToUpper` of both names.
+                row_user == user
+                    && row_host == host
+                    && row_database.go_to_upper() == database.go_to_upper()
             })
             .cloned()
             .unwrap_or_else(|| (user.to_owned(), host.to_owned(), database.to_owned()))
@@ -221,8 +225,8 @@ impl PrivilegeRegistry {
             .find(|(row_user, row_host, row_database, row_table)| {
                 row_user == user
                     && row_host == host
-                    && row_database.eq_ignore_ascii_case(database)
-                    && row_table.eq_ignore_ascii_case(table)
+                    && row_database.go_equal_fold(database)
+                    && row_table.go_equal_fold(table)
             })
             .cloned()
             .unwrap_or_else(|| {
@@ -1506,7 +1510,9 @@ impl PrivilegeRegistry {
         // own way, so the scopes are matched case-insensitively rather than
         // by key -- which is how Go compares them too.
         let scoped = |row_user: &str, row_host: &str, row_database: &str| {
-            row_user == user && row_host == host && row_database.eq_ignore_ascii_case(database)
+            row_user == user
+                && row_host == host
+                && row_database.go_to_upper() == database.go_to_upper()
         };
         if self
             .lock_db()
@@ -1521,7 +1527,7 @@ impl PrivilegeRegistry {
             .iter()
             .any(|((row_user, row_host, row_database, row_table), privs)| {
                 scoped(row_user, row_host, row_database)
-                    && row_table.eq_ignore_ascii_case(table)
+                    && row_table.go_equal_fold(table)
                     && privs & mask != 0
             })
     }
@@ -1755,16 +1761,18 @@ impl PrivilegeRegistry {
                 return true;
             }
             if record.privs & GlobalPriv::Process.bit() != 0
-                && database.eq_ignore_ascii_case("metrics_schema")
+                && database.go_equal_fold("metrics_schema")
             {
                 return true;
             }
         }
-        if database.eq_ignore_ascii_case("information_schema") {
+        if database.go_equal_fold("information_schema") {
             return true;
         }
         let scoped = |row_user: &str, row_host: &str, row_database: &str| {
-            row_user == user && row_host == host && row_database.eq_ignore_ascii_case(database)
+            row_user == user
+                && row_host == host
+                && row_database.go_to_upper() == database.go_to_upper()
         };
         if self
             .lock_db()
@@ -1882,9 +1890,9 @@ impl PrivilegeRegistry {
         if let Some(row) = rows.iter_mut().find(|row| {
             row.user == user
                 && row.host == host
-                && row.database.eq_ignore_ascii_case(database)
-                && row.table.eq_ignore_ascii_case(table)
-                && row.column.eq_ignore_ascii_case(column)
+                && row.database.go_equal_fold(database)
+                && row.table.go_equal_fold(table)
+                && row.column.go_equal_fold(column)
         }) {
             row.privs |= mask;
             return;
@@ -1921,9 +1929,9 @@ impl PrivilegeRegistry {
         rows.retain_mut(|row| {
             let matches = row.user == user
                 && row.host == host
-                && row.database.eq_ignore_ascii_case(database)
-                && row.table.eq_ignore_ascii_case(table)
-                && row.column.eq_ignore_ascii_case(column);
+                && row.database.go_equal_fold(database)
+                && row.table.go_equal_fold(table)
+                && row.column.go_equal_fold(column);
             if !matches {
                 return true;
             }

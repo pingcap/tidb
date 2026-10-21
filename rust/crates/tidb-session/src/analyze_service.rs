@@ -224,6 +224,7 @@ impl Session {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY);
+        statement.store_batch_size = self.vars().analyze_store_batch_size();
         statement.eval_context = self.analyze_statement_context().into();
         statement
     }

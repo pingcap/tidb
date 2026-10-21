@@ -540,7 +540,7 @@ impl KvTable {
             unique: index.unique,
             global: index.global,
             global_index_version: index.global_index_version,
-            primary: index.name.eq_ignore_ascii_case("PRIMARY"),
+            primary: index.primary,
         }
     }
 

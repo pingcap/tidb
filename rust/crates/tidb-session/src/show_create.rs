@@ -16,6 +16,8 @@
 
 use super::*;
 
+use tidb_hack::GoCaseCompare;
+
 /// Go prints the column comment last, after AUTO_RANDOM and before the next
 /// column's line, for every column that carries one.
 fn push_column_comment(clause: &mut String, column: &tidb_executor::KvColumn) {
@@ -292,10 +294,7 @@ pub(super) fn show_create_table_text(
     // unconditionally therefore printed the key TWICE for the first tier --
     // a `SHOW CREATE TABLE` that is not valid SQL. Print it here only when
     // the index list does not already carry it.
-    let index_carries_primary = table
-        .indexes()
-        .iter()
-        .any(|index| index.name.eq_ignore_ascii_case("PRIMARY"));
+    let index_carries_primary = table.indexes().iter().any(|index| index.primary);
     let handle_columns: Vec<usize> = match table.pk_handle_offset() {
         Some(offset) => vec![offset],
         None if index_carries_primary => Vec::new(),
@@ -339,7 +338,7 @@ pub(super) fn show_create_table_text(
         // altogether. A `pk_is_handle` table whose index list also held a
         // PRIMARY was the mirror case: neither test fired and it printed
         // TWICE.
-        if index.name.eq_ignore_ascii_case("PRIMARY") && primary_emitted_from_handles {
+        if index.primary && primary_emitted_from_handles {
             continue;
         }
         // Go `show.go`: a partial index prints its stored condition
@@ -358,7 +357,8 @@ pub(super) fn show_create_table_text(
             })
             .collect::<Vec<_>>()
             .join(",");
-        let primary = index.name.eq_ignore_ascii_case("PRIMARY");
+        // Go `if idxInfo.Primary`.
+        let primary = index.primary;
         let mut clause = if primary {
             format!("  PRIMARY KEY ({columns})")
         } else if index.unique {
@@ -428,17 +428,16 @@ pub(super) fn show_create_table_text(
         // Without this a cross-schema constraint printed back as a
         // same-schema one, which is a `SHOW CREATE TABLE` output no server
         // could replay into the table it came from.
-        let target = if foreign_key.ref_schema.is_empty()
-            || foreign_key.ref_schema.eq_ignore_ascii_case(database)
-        {
-            escape_name(&foreign_key.ref_table, ansi_quotes)
-        } else {
-            format!(
-                "{}.{}",
-                escape_name(&foreign_key.ref_schema, ansi_quotes),
+        let target =
+            if foreign_key.ref_schema.is_empty() || foreign_key.ref_schema.go_lower_eq(database) {
                 escape_name(&foreign_key.ref_table, ansi_quotes)
-            )
-        };
+            } else {
+                format!(
+                    "{}.{}",
+                    escape_name(&foreign_key.ref_schema, ansi_quotes),
+                    escape_name(&foreign_key.ref_table, ansi_quotes)
+                )
+            };
         let mut clause = format!(
             "  CONSTRAINT {} FOREIGN KEY ({columns}) REFERENCES {target} ({referenced})",
             escape_name(&foreign_key.name, ansi_quotes),

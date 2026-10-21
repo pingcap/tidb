@@ -28,6 +28,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{Collation, Datum, Decimal, StringDatum};
 use tidb_executor::{Catalog, PreparedDmlPlan, PreparedSelectPlan};
+use tidb_hack::GoCaseCompare;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 use tidb_planner::metrics::non_prep_plan_cache_unsupported_counter;
 use tidb_util::filter::is_system_schema;
@@ -847,7 +848,7 @@ impl Walk<'_> {
                 continue;
             };
             for (held, field_type) in entry.column_types() {
-                if !held.eq_ignore_ascii_case(column) {
+                if !held.go_lower_eq(column) {
                     continue;
                 }
                 found = true;

@@ -23,6 +23,7 @@
 
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
+use tidb_hack::{GoCaseCompare, GoToLower};
 
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
@@ -194,15 +195,15 @@ pub(crate) fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
 
     impl Filter {
         fn retain(&mut self, hints: &mut Vec<tidb_ast::Hint>) {
-            hints.retain(|hint| {
-                match tidb_util::sem_v2::is_restricted_hint(&hint.name.to_ascii_lowercase()) {
+            hints.retain(
+                |hint| match tidb_util::sem_v2::is_restricted_hint(&hint.lower_name()) {
                     Ok(()) => true,
                     Err(warning) => {
                         self.warnings.push(warning);
                         false
                     }
-                }
-            });
+                },
+            );
         }
     }
 
@@ -297,17 +298,17 @@ fn information_schema_tables_in_query_at(
         match path.as_slice() {
             [name] if infoschema::is_information_schema(current_db) => out.push(name.clone()),
             [name]
-                if current_db.eq_ignore_ascii_case(
-                    tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA,
-                ) && perfschema_rows_served(name) =>
+                if current_db
+                    .go_lower_eq(tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA)
+                    && perfschema_rows_served(name) =>
             {
                 out.push(name.clone())
             }
             [schema, name]
                 if infoschema::is_information_schema(schema)
-                    || (schema.eq_ignore_ascii_case(
-                        tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA,
-                    ) && perfschema_rows_served(name)) =>
+                    || (schema
+                        .go_lower_eq(tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA)
+                        && perfschema_rows_served(name)) =>
             {
                 // The 1146 for a missing virtual table names the database AS
                 // WRITTEN (go folds nothing here).
@@ -718,7 +719,7 @@ impl Session {
                     // drop executor sees IF EXISTS or foreign-key checks.
                     // The guard is unconditional: both `DROP DATABASE
                     // mysql` and its IF EXISTS form report ErrForbiddenDDL.
-                    if name.eq_ignore_ascii_case("mysql") {
+                    if name.go_lower_eq("mysql") {
                         return Err(DriverError::DdlCoded {
                             errno: tidb_error::tidb::errcode::ErrForbiddenDDL,
                             message: "Drop 'mysql' database is forbidden".to_owned(),
@@ -774,7 +775,7 @@ impl Session {
                     // Dropping the current database leaves the session with
                     // none selected, which is Go's ErrNoDB state for the next
                     // unqualified statement.
-                    if dropped && self.current_db.eq_ignore_ascii_case(name) {
+                    if dropped && self.current_db.go_lower_eq(name) {
                         self.current_db.clear();
                     }
                     // Go `DropSchema` then clears the session's table locks
@@ -903,8 +904,8 @@ impl Session {
         written_db: Option<String>,
     ) -> Result<(tidb_planner::physical::PhysicalPlan, Catalog, bool), DriverError> {
         let mut table_names = table_names.to_vec();
-        table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
-        table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        table_names.sort_unstable_by_key(|name| name.go_to_lower());
+        table_names.dedup_by(|left, right| left.go_lower_eq(right));
         let planning_catalog =
             self.information_schema_planning_catalog(&table_names, written_db)?;
         let warnings_start = ctx.warning_count();
@@ -1030,12 +1031,12 @@ impl Session {
         } = reads;
         let (needs_storage_stats, needs_column_lengths) =
             (*needs_storage_stats, *needs_column_lengths);
-        table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
-        table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        table_names.sort_unstable_by_key(|name| name.go_to_lower());
+        table_names.dedup_by(|left, right| left.go_lower_eq(right));
         let reads_storage_statistics = needs_storage_stats
-            && table_names.iter().any(|name| {
-                name.eq_ignore_ascii_case("TABLES") || name.eq_ignore_ascii_case("PARTITIONS")
-            });
+            && table_names
+                .iter()
+                .any(|name| name.go_lower_eq("TABLES") || name.go_lower_eq("PARTITIONS"));
         let mut scratch = if reads_storage_statistics {
             self.table_storage_statistics_catalog(needs_column_lengths)?
         } else {
@@ -1074,7 +1075,7 @@ impl Session {
                 }));
             }
             let required = Some(&required_names);
-            let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
+            let rows = if table_name.go_lower_eq("PROCESSLIST") {
                 self.process_list_table_rows()
             } else if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
                 .is_some()
@@ -1088,32 +1089,32 @@ impl Session {
                 "MEMORY_USAGE_OPS_HISTORY",
             ]
             .iter()
-            .any(|name| table_name.eq_ignore_ascii_case(name))
+            .any(|name| table_name.go_lower_eq(name))
             {
                 self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None, required)?
-            } else if table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS")
-                || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY")
-                || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY")
-                || table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_EVICTED")
+            } else if table_name.go_lower_eq("TIDB_STATEMENTS_STATS")
+                || table_name.go_lower_eq("STATEMENTS_SUMMARY")
+                || table_name.go_lower_eq("STATEMENTS_SUMMARY_HISTORY")
+                || table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED")
             {
                 self.statement_summary_table_rows(&table_name, &columns, &self.session_time_zone())?
-            } else if table_name.eq_ignore_ascii_case("TRX_SUMMARY") {
+            } else if table_name.go_lower_eq("TRX_SUMMARY") {
                 self.transaction_summary_table_rows(None)
-            } else if table_name.eq_ignore_ascii_case("DATA_LOCK_WAITS") {
+            } else if table_name.go_lower_eq("DATA_LOCK_WAITS") {
                 self.data_lock_waits_table_rows(required)?
-            } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
-                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_USER")
-                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST")
+            } else if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
+                || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_USER")
+                || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST")
             {
                 self.client_errors_summary_table_rows(&table_name)?
-            } else if table_name.eq_ignore_ascii_case("TIKV_STORE_STATUS") {
+            } else if table_name.go_lower_eq("TIKV_STORE_STATUS") {
                 crate::memtable_retrievers::tikv_store_status_rows(
                     scratch.region_store().as_ref(),
                     self.sem_hides_cluster_metadata(),
                 )?
-            } else if table_name.eq_ignore_ascii_case("CLUSTER_LOG") {
+            } else if table_name.go_lower_eq("CLUSTER_LOG") {
                 self.cluster_log_table_rows(cluster_log_extractors)?
-            } else if table_name.eq_ignore_ascii_case("SLOW_QUERY") {
+            } else if table_name.go_lower_eq("SLOW_QUERY") {
                 let extractors: Vec<_> = scans_of("SLOW_QUERY")
                     .filter_map(|scan| match &scan.extractor {
                         Some(MemTablePredicateExtractor::SlowQuery(extractor)) => Some(extractor),
@@ -1121,17 +1122,17 @@ impl Session {
                     })
                     .collect();
                 self.slow_query_table_rows(&extractors)?
-            } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
+            } else if table_name.go_lower_eq("USER_PRIVILEGES") {
                 self.user_privileges_table_rows()
-            } else if table_name.eq_ignore_ascii_case("USER_ATTRIBUTES") {
+            } else if table_name.go_lower_eq("USER_ATTRIBUTES") {
                 self.user_attributes_table_rows(&scratch, ctx)
-            } else if table_name.eq_ignore_ascii_case("VARIABLES_INFO") {
+            } else if table_name.go_lower_eq("VARIABLES_INFO") {
                 self.variables_info_table_rows()
-            } else if table_name.eq_ignore_ascii_case("ATTRIBUTES") {
+            } else if table_name.go_lower_eq("ATTRIBUTES") {
                 infoschema::attributes_rows(&scratch, &self.schema_visibility())?
-            } else if table_name.eq_ignore_ascii_case("INSPECTION_RULES") {
+            } else if table_name.go_lower_eq("INSPECTION_RULES") {
                 crate::inspection::inspection_rules_rows()
-            } else if table_name.eq_ignore_ascii_case("INSPECTION_SUMMARY") {
+            } else if table_name.go_lower_eq("INSPECTION_SUMMARY") {
                 let mut rows = Vec::new();
                 for scan in scans_of("INSPECTION_SUMMARY") {
                     let Some(MemTablePredicateExtractor::InspectionSummaryTable(extractor)) =
@@ -1147,10 +1148,10 @@ impl Session {
                     )?);
                 }
                 rows
-            } else if table_name.eq_ignore_ascii_case("METRICS_SUMMARY")
-                || table_name.eq_ignore_ascii_case("METRICS_SUMMARY_BY_LABEL")
+            } else if table_name.go_lower_eq("METRICS_SUMMARY")
+                || table_name.go_lower_eq("METRICS_SUMMARY_BY_LABEL")
             {
-                let by_label = table_name.eq_ignore_ascii_case("METRICS_SUMMARY_BY_LABEL");
+                let by_label = table_name.go_lower_eq("METRICS_SUMMARY_BY_LABEL");
                 let mut rows = Vec::new();
                 for scan in scans_of(&table_name.to_ascii_uppercase()) {
                     // Go checks PROCESS before it looks at the extractor.
@@ -1170,7 +1171,7 @@ impl Session {
                     )?);
                 }
                 rows
-            } else if table_name.eq_ignore_ascii_case("TABLE_STORAGE_STATS") {
+            } else if table_name.go_lower_eq("TABLE_STORAGE_STATS") {
                 let mut rows = Vec::new();
                 for scan in scans_of("TABLE_STORAGE_STATS") {
                     if let Some(MemTablePredicateExtractor::TableStorageStats(extractor)) =
@@ -1185,7 +1186,7 @@ impl Session {
                     }
                 }
                 rows
-            } else if table_name.eq_ignore_ascii_case("TIKV_REGION_PEERS") {
+            } else if table_name.go_lower_eq("TIKV_REGION_PEERS") {
                 let mut rows = Vec::new();
                 for scan in scans_of("TIKV_REGION_PEERS") {
                     if let Some(MemTablePredicateExtractor::TikvRegionPeers(extractor)) =
@@ -1198,7 +1199,7 @@ impl Session {
                     }
                 }
                 rows
-            } else if table_name.eq_ignore_ascii_case("TIKV_REGION_STATUS") {
+            } else if table_name.go_lower_eq("TIKV_REGION_STATUS") {
                 let mut rows = Vec::new();
                 for scan in scans_of("TIKV_REGION_STATUS") {
                     let extractor = match &scan.extractor {
@@ -1215,12 +1216,12 @@ impl Session {
                     )?);
                 }
                 rows
-            } else if table_name.eq_ignore_ascii_case("TIDB_HOT_REGIONS") {
+            } else if table_name.go_lower_eq("TIDB_HOT_REGIONS") {
                 crate::memtable_retrievers::tidb_hot_regions_rows(
                     &scratch,
                     scratch.region_store().as_ref(),
                 )?
-            } else if table_name.eq_ignore_ascii_case("TIDB_HOT_REGIONS_HISTORY") {
+            } else if table_name.go_lower_eq("TIDB_HOT_REGIONS_HISTORY") {
                 let mut rows = Vec::new();
                 for scan in scans_of("TIDB_HOT_REGIONS_HISTORY") {
                     let Some(MemTablePredicateExtractor::HotRegionsHistoryTable(extractor)) =
@@ -1263,19 +1264,19 @@ impl Session {
                 rows
             } else if ["CLUSTER_HARDWARE", "CLUSTER_LOAD", "CLUSTER_SYSTEMINFO"]
                 .iter()
-                .any(|name| table_name.eq_ignore_ascii_case(name))
+                .any(|name| table_name.go_lower_eq(name))
             {
                 // Go `clusterServerInfoRetriever.retrieve`: hardware needs
                 // CONFIG, load and system info PROCESS, checked before the
                 // extractor's SkipRequest.
                 use tidb_proto::diagnosticspb::ServerInfoType;
-                let (privilege, name, tp) = if table_name.eq_ignore_ascii_case("CLUSTER_HARDWARE") {
+                let (privilege, name, tp) = if table_name.go_lower_eq("CLUSTER_HARDWARE") {
                     (
                         crate::privilege::GlobalPriv::Config,
                         "CONFIG",
                         ServerInfoType::HardwareInfo,
                     )
-                } else if table_name.eq_ignore_ascii_case("CLUSTER_LOAD") {
+                } else if table_name.go_lower_eq("CLUSTER_LOAD") {
                     (
                         crate::privilege::GlobalPriv::Process,
                         "PROCESS",
@@ -1293,7 +1294,7 @@ impl Session {
                 }
                 let extractors: Vec<_> = scans
                     .iter()
-                    .filter(|scan| scan.table.eq_ignore_ascii_case(&table_name))
+                    .filter(|scan| scan.table.go_lower_eq(&table_name))
                     .map(|scan| {
                         scan.extractor
                             .as_ref()
@@ -1303,7 +1304,7 @@ impl Session {
                     })
                     .collect();
                 self.cluster_server_info_table_rows(tp, &extractors)?
-            } else if table_name.eq_ignore_ascii_case("DDL_JOBS") {
+            } else if table_name.go_lower_eq("DDL_JOBS") {
                 // Go `DDLJobsReaderExec`: the running jobs, then the history.
                 let (running, history) = self.all_ddl_jobs()?;
                 let jobs = running.into_iter().chain(history).collect::<Vec<_>>();
@@ -1311,28 +1312,28 @@ impl Session {
                 self.with_planning_catalog(|catalog| {
                     Ok(infoschema::ddl_jobs_rows(&jobs, &visibility, catalog))
                 })?
-            } else if table_name.eq_ignore_ascii_case("PROFILING") {
+            } else if table_name.go_lower_eq("PROFILING") {
                 crate::memtable_retrievers::pseudo_profiling_rows(
                     tidb_vardef::option_values::tidb_opt_on(
                         &self.vars.get_system("profiling").unwrap_or_default(),
                     ),
                 )
-            } else if table_name.eq_ignore_ascii_case("KEYSPACE_META") {
+            } else if table_name.go_lower_eq("KEYSPACE_META") {
                 crate::memtable_retrievers::keyspace_meta_rows()
-            } else if table_name.eq_ignore_ascii_case("PLACEMENT_POLICIES") {
+            } else if table_name.go_lower_eq("PLACEMENT_POLICIES") {
                 crate::memtable_retrievers::placement_policies_rows(&scratch)
-            } else if table_name.eq_ignore_ascii_case("ANALYZE_STATUS") {
+            } else if table_name.go_lower_eq("ANALYZE_STATUS") {
                 self.analyze_status_rows()?
             } else if serving_schema_of(&table_name)
                 == tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
-                && table_name.eq_ignore_ascii_case("SESSION_VARIABLES")
+                && table_name.go_lower_eq("SESSION_VARIABLES")
             {
                 self.session_variables_table_rows()?
-            } else if table_name.eq_ignore_ascii_case("CLUSTER_CONFIG") {
+            } else if table_name.go_lower_eq("CLUSTER_CONFIG") {
                 self.cluster_config_table_rows(cluster_config_filters)?
-            } else if table_name.eq_ignore_ascii_case("TIDB_SERVERS_INFO") {
+            } else if table_name.go_lower_eq("TIDB_SERVERS_INFO") {
                 self.tidb_servers_info_table_rows()?
-            } else if table_name.eq_ignore_ascii_case("CLUSTER_INFO") {
+            } else if table_name.go_lower_eq("CLUSTER_INFO") {
                 // Go `memtableRetriever.retrieve`: CLUSTER_INFO needs PROCESS.
                 if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
                     return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
@@ -2071,18 +2072,18 @@ impl Session {
 
         let has_process = self.has_process_privilege();
         if !has_process
-            && (table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL")
-                || table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST"))
+            && (table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
+                || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST"))
         {
             return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
         }
 
         let mut rows = Vec::new();
-        if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_GLOBAL") {
+        if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL") {
             for (code, summary) in infoschema::global_stats() {
                 rows.push(summary_cells(code, &summary));
             }
-        } else if table_name.eq_ignore_ascii_case("CLIENT_ERRORS_SUMMARY_BY_HOST") {
+        } else if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST") {
             for (host, stats) in infoschema::host_stats() {
                 append_scoped(&mut rows, &host, stats);
             }
@@ -4475,7 +4476,7 @@ pub(crate) fn statement_summary_rows(
     use tidb_model::ColumnInfo;
     use tidb_stmtsummary::reader::{StmtSummaryChecker, StmtSummaryReader};
 
-    if table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_EVICTED") {
+    if table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED") {
         if !has_process {
             return Err(DriverError::SpecificAccessDenied("PROCESS".into()));
         }
@@ -4520,8 +4521,8 @@ pub(crate) fn statement_summary_rows(
     let persistent = tidb_config::config_tree::config::get_global_config()
         .instance
         .stmt_summary_enable_persistent;
-    let cumulative = table_name.eq_ignore_ascii_case("TIDB_STATEMENTS_STATS");
-    let history = table_name.eq_ignore_ascii_case("STATEMENTS_SUMMARY_HISTORY");
+    let cumulative = table_name.go_lower_eq("TIDB_STATEMENTS_STATS");
+    let history = table_name.go_lower_eq("STATEMENTS_SUMMARY_HISTORY");
     if persistent {
         // Go refuses cumulative retrieval in v2; never silently substitute
         // an unrelated v1 map for the selected persistent owner.

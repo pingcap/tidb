@@ -25,6 +25,8 @@ use std::sync::Arc;
 
 use crate::{DriverError, Session, StatementKind};
 
+use tidb_hack::GoToLower;
+
 /// The statement context's SESSION-VARIABLE half, parsed once per
 /// variable-table generation instead of once per statement.
 ///
@@ -807,7 +809,7 @@ impl Session {
             _ => ("", ""),
         };
         Err(DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(
-            format!("{}.{}", schema.to_lowercase(), name.to_lowercase()),
+            format!("{}.{}", schema.go_to_lower(), name.go_to_lower()),
         )))
     }
 

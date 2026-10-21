@@ -43,18 +43,14 @@ impl HintsSet {
         result
     }
 
-    /// Go `HintsSet.ContainTableHint`.
-    ///
-    /// Go compares `HintName.String() == hint` in the SQL-written case, so a
-    /// `/*+ USE_PLAN_CACHE() */` written uppercase is MISSED there (callers
-    /// pass lowercase names). This crate normalizes hint names to canonical
-    /// uppercase at parse time and deliberately matches case-insensitively,
-    /// so the hint works in every written case.
+    /// Go `HintsSet.ContainTableHint`: `HintName.String() == hint`, the
+    /// name as written, so a `/*+ USE_PLAN_CACHE() */` written uppercase is
+    /// missed by callers that pass the lowercase constant.
     pub fn contains_table_hint(&self, name: &str) -> bool {
         self.table_hints
             .iter()
             .flatten()
-            .any(|hint| hint.name.eq_ignore_ascii_case(name))
+            .any(|hint| hint.written_name() == name)
     }
 
     /// Go `HintsSet.Restore`.
@@ -73,7 +69,7 @@ impl HintsSet {
 
 fn is_stmt_hint(hint: &Hint) -> bool {
     matches!(
-        hint.name.to_ascii_lowercase().as_str(),
+        hint.lower_name().as_str(),
         "max_execution_time" | "memory_quota" | "resource_group"
     )
 }
@@ -227,16 +223,16 @@ fn extract_dml_hints(
             if let Some(outer) = insert
                 .hints
                 .iter()
-                .find(|hint| hint.name.eq_ignore_ascii_case("memory_quota"))
+                .find(|hint| hint.lower_name() == "memory_quota")
             {
                 if let Some(inner) = source_hints
                     .iter()
-                    .find(|hint| hint.name.eq_ignore_ascii_case(&outer.name))
+                    .find(|hint| hint.lower_name() == outer.lower_name())
                 {
                     if let Some(warnings) = warnings.as_mut() {
                         warnings.push(HintWarning::conflicting(format!(
                             "{}(`{}`)",
-                            inner.name,
+                            inner.written_name(),
                             hint_scalar_value(inner)
                         )));
                     }
@@ -264,7 +260,7 @@ fn hint_scalar_value(hint: &Hint) -> String {
 pub fn contain_table_hint_in_stmt_node(statement: &Stmt, hint_name: &str) -> bool {
     extract_stmt_hints(statement, None)
         .iter()
-        .any(|hint| hint.name.eq_ignore_ascii_case(hint_name))
+        .any(|hint| hint.lower_name() == hint_name)
 }
 
 /// Go `RestoreIndexHint`.

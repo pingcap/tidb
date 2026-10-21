@@ -1590,6 +1590,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: true,
             },
             false,
         );
@@ -2028,6 +2029,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 false,
             );
@@ -2583,6 +2585,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -2708,6 +2711,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -2834,6 +2838,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 false,
             );
@@ -2886,6 +2891,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -2941,6 +2947,7 @@ mod tests {
                         global: false,
                         global_index_version: 0,
                         clustered_primary: false,
+                        primary: false,
                     },
                     false,
                 );

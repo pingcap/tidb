@@ -131,12 +131,6 @@ impl LoadStatsTableSchema {
     /// Builds the schema contract from the ordinary executor table.
     #[must_use]
     pub fn from_kv_table(table: &KvTable) -> Self {
-        let primary_index_offsets = table
-            .indexes()
-            .iter()
-            .find(|index| index.name.eq_ignore_ascii_case("PRIMARY"))
-            .map(|index| index.column_offsets.as_slice())
-            .unwrap_or_default();
         Self {
             columns: table
                 .columns()
@@ -146,8 +140,10 @@ impl LoadStatsTableSchema {
                     id: column.id,
                     name: column.name.go_to_lower(),
                     field_type: column.field_type.clone(),
-                    primary_key: table.pk_handle_offset() == Some(offset)
-                        || primary_index_offsets.contains(&offset),
+                    // Go `mysql.HasPriKeyFlag(colInfo.GetFlag())`.
+                    primary_key: column
+                        .field_type
+                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
                 })
                 .collect(),
             indexes: table
@@ -1331,7 +1327,13 @@ mod tests {
     /// column object.
     #[test]
     fn json_builds_full_table_including_hidden_columns_and_fm_sketch() {
-        let mut schema = KvTable::new(41, vec![column(1, "a")]);
+        // Go's PK-is-handle column carries `PriKeyFlag`, which
+        // `TableStatsFromJSON` reads for `IsHandle`.
+        let mut handle = column(1, "a");
+        handle
+            .field_type
+            .add_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
+        let mut schema = KvTable::new(41, vec![handle]);
         schema.set_pk_handle_offset(0);
         schema.add_hidden_column(column(2, "_V$_expr"));
         let dumped = JsonTable {

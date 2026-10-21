@@ -30,6 +30,7 @@ use tidb_ast::{
 };
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::{DriverError, TableEntry};
+use tidb_hack::GoCaseCompare;
 
 use crate::{Session, StmtOutput};
 
@@ -707,7 +708,7 @@ impl Session {
             Ok(catalog
                 .database_names()
                 .into_iter()
-                .find(|name| name.eq_ignore_ascii_case(schema)))
+                .find(|name| name.go_lower_eq(schema)))
         })
         .ok()
         .flatten()

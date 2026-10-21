@@ -22,6 +22,7 @@
 use tidb_datatype::Datum;
 use tidb_executor::show_regions::policy_placement;
 use tidb_executor::{Catalog, TableEntry};
+use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_model::PlacementSettings;
 
 use crate::{DriverError, SchemaErrorKind, Session};
@@ -87,7 +88,7 @@ impl Session {
                     let Some(name) = catalog
                         .database_names()
                         .into_iter()
-                        .find(|name| name.eq_ignore_ascii_case(database))
+                        .find(|name| name.go_lower_eq(database))
                     else {
                         return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
                             database.clone(),
@@ -125,7 +126,7 @@ impl Session {
                     let Some(definition) = partitioning
                         .definitions
                         .iter()
-                        .find(|definition| definition.name.eq_ignore_ascii_case(partition))
+                        .find(|definition| definition.name.go_lower_eq(partition))
                     else {
                         return Err(unknown());
                     };
@@ -203,7 +204,7 @@ impl Session {
             // The v2 infoschema walks its table btree downwards, so the
             // schemas come out by lower-cased name, last first.
             let mut by_lower = names.clone();
-            by_lower.sort_by_key(|name| std::cmp::Reverse(name.to_lowercase()));
+            by_lower.sort_by_key(|name| std::cmp::Reverse(name.go_to_lower()));
             let mut tables = Vec::new();
             for database in by_lower {
                 let mut sets = Vec::new();
@@ -279,7 +280,7 @@ fn placement_table<'a>(
     let stored_database = catalog
         .database_names()
         .into_iter()
-        .find(|name| name.eq_ignore_ascii_case(database))
+        .find(|name| name.go_lower_eq(database))
         .unwrap_or_else(|| database.to_owned());
     let stored_table = match entry {
         TableEntry::Kv(table) if !table.name().is_empty() => table.name().to_owned(),

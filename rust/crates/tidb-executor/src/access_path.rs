@@ -7043,6 +7043,7 @@ mod tests {
                         global,
                         global_index_version: 0,
                         clustered_primary: false,
+                        primary: false,
                     },
                     &crate::StmtContext::for_query(),
                 )
@@ -7274,6 +7275,7 @@ mod tests {
                         global: false,
                         global_index_version: 0,
                         clustered_primary: false,
+                        primary: false,
                     },
                     &crate::StmtContext::for_query(),
                 )
@@ -7485,6 +7487,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -7641,6 +7644,7 @@ mod tests {
                                 global: false,
                                 global_index_version: 0,
                                 clustered_primary: false,
+                                primary: false,
                             },
                             false,
                         );
@@ -7873,6 +7877,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -7999,6 +8004,7 @@ mod tests {
                 global: false,
                 global_index_version: 0,
                 clustered_primary: false,
+                primary: false,
             },
             false,
         );
@@ -8356,6 +8362,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: true,
                 },
                 &crate::StmtContext::default(),
             )
@@ -8420,6 +8427,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: true,
                 },
                 &crate::StmtContext::default(),
             )
@@ -8545,6 +8553,7 @@ mod tests {
                     comment: String::new(),
                     unique: false,
                     clustered_primary: false,
+                    primary: false,
                     column_offsets: vec![0, 1, 3],
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
                     visible: true,
@@ -8746,6 +8755,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )
@@ -8924,6 +8934,7 @@ mod tests {
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                 },
                 &crate::StmtContext::for_query(),
             )

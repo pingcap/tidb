@@ -22,6 +22,7 @@
 
 use crate::show::string_column_output;
 use crate::*;
+use tidb_hack::GoCaseCompare;
 use tidb_util::password_validation::{self, GlobalVarAccessor, PasswordUser, PwdError};
 
 struct SessionPasswordGlobals<'a>(&'a SessionVars);
@@ -624,7 +625,7 @@ impl Session {
         // `performance_schema` carries the database-access denial instead of
         // the generic privilege-check failure.
         let database_denial = database
-            .eq_ignore_ascii_case("performance_schema")
+            .go_equal_fold("performance_schema")
             .then(|| self.current_identity())
             .flatten()
             .map(|(user, host)| DriverError::DbAccessDenied {
@@ -2025,7 +2026,7 @@ impl Session {
                 match result
                     .columns
                     .iter_mut()
-                    .find(|(named, _)| named.eq_ignore_ascii_case(column))
+                    .find(|(named, _)| named.go_equal_fold(column))
                 {
                     Some((_, existing)) => *existing |= mask,
                     None => result.columns.push((column.clone(), mask)),
@@ -2059,7 +2060,7 @@ impl Session {
             .map(|(column, mask)| {
                 names
                     .iter()
-                    .find(|name| name.eq_ignore_ascii_case(column))
+                    .find(|name| name.go_equal_fold(column))
                     .map(|name| (name.clone(), *mask))
                     .ok_or_else(|| DriverError::UnknownGrantColumn(column.clone()))
             })

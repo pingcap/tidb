@@ -327,6 +327,10 @@ mod tests {
                 .expect("warning lock")
                 .push(message.to_owned());
         }
+
+        fn set_hint_warning_from_error(&self, _code: u16, message: &str) {
+            self.set_hint_warning(message);
+        }
     }
 
     #[test]

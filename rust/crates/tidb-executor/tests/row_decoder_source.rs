@@ -757,6 +757,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
         global: false,
         global_index_version: 0,
         clustered_primary: false,
+        primary: false,
     };
     table.create_index_with_context(index, &statement).unwrap();
     let handles = table

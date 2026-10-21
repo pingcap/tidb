@@ -33,7 +33,9 @@ impl Parser {
             return Err(self.err_here("expected an optimizer hint name"));
         }
         let written = self.bump().text.clone();
-        let mut hint = self.parse_named_hint(written.to_ascii_uppercase())?;
+        // Go `hintTokenMap[strings.ToUpper(lit)]`: Unicode simple uppercase,
+        // so `\u{17F}` and `\u{131}` reach the `S` and `I` hint keywords.
+        let mut hint = self.parse_named_hint(tidb_mysql::to_uppercase(&written))?;
         if written != hint.name {
             hint.written_name = Some(written);
         }
@@ -804,7 +806,7 @@ pub fn parse_hint(
     let mut diagnostics = Vec::new();
     while !parser.at_eof() {
         let name = matches!(parser.peek().kind, TokenKind::Ident | TokenKind::Keyword)
-            .then(|| parser.peek().text.to_ascii_uppercase());
+            .then(|| tidb_mysql::to_uppercase(&parser.peek().text));
 
         if let Some(name) = name.as_deref() {
             let source_name = parser.peek().text.clone();

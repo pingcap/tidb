@@ -41,6 +41,7 @@
 //!    `FLUSH PRIVILEGES`;
 
 use crate::*;
+use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
 
 /// Renders one SQL string literal under the default (backslash-escaping)
@@ -882,8 +883,8 @@ impl Session {
         if !self.user_table_present() || self.account_storage_delegated {
             return Ok(());
         }
-        let (old_user, old_host) = (sql_str(old_user), sql_str(&old_host.to_lowercase()));
-        let (new_user, new_host) = (sql_str(new_user), sql_str(&new_host.to_lowercase()));
+        let (old_user, old_host) = (sql_str(old_user), sql_str(&old_host.go_to_lower()));
+        let (new_user, new_host) = (sql_str(new_user), sql_str(&new_host.go_to_lower()));
         for (table, user_column, host_column) in [
             ("global_priv", "User", "Host"),
             ("db", "User", "Host"),

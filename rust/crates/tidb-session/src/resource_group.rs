@@ -27,6 +27,7 @@ use tidb_ast::{
 };
 use tidb_config::configtypes::parse_go_duration;
 use tidb_executor::{DriverError, MysqlError};
+use tidb_hack::GoToLower;
 use tidb_model::{
     ActionType, ResourceGroupBackgroundSettings, ResourceGroupInfo,
     ResourceGroupRunawayAction as RunawayAction, ResourceGroupRunawaySettings,
@@ -309,7 +310,7 @@ impl Session {
                 tidb_error::tidb::errname::ErrResourceGroupInvalidForRole.raw,
             )));
         }
-        let lower = name.to_lowercase();
+        let lower = name.go_to_lower();
         if lower != DEFAULT_RESOURCE_GROUP_NAME
             && !lower.is_empty()
             && self.lock_catalog()?.resource_group(&lower).is_none()
@@ -410,7 +411,7 @@ impl Session {
         stmt: &DropResourceGroupStmt,
     ) -> Result<Option<ResourceGroupInfo>, DriverError> {
         check_resource_control_enabled()?;
-        if stmt.name.to_lowercase() == DEFAULT_RESOURCE_GROUP_NAME {
+        if stmt.name.go_to_lower() == DEFAULT_RESOURCE_GROUP_NAME {
             return Err(plain_error("can't drop reserved resource group"));
         }
         let existing = self.lock_catalog()?.resource_group(&stmt.name).cloned();

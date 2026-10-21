@@ -800,6 +800,7 @@ pub fn build_table_info_in_schema(
                     global: index.global,
                     global_index_version: index.global_index_version,
                     clustered_primary: false,
+                    primary: index.primary,
                 }
             })
             .collect::<Vec<_>>();

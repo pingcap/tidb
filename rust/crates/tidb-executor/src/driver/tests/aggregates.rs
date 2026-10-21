@@ -738,6 +738,7 @@ fn grouped_partial_count_carries_the_group_key() {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: true,
         },
         false,
     );

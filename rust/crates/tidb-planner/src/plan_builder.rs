@@ -1773,7 +1773,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         let straight_join_order = select.straight_join
             || current_table_hints
                 .iter()
-                .any(|hint| hint.name.eq_ignore_ascii_case("straight_join"));
+                .any(|hint| hint.lower_name() == "straight_join");
         let (parsed_plan_hints, subquery_hint_flags, hint_warnings) =
             tidb_hint::parse_plan_hints(
                 &current_table_hints,

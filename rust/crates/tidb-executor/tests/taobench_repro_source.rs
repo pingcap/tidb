@@ -83,6 +83,7 @@ fn edge_table() -> KvTable {
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: true,
         },
         false,
     );
@@ -261,6 +262,7 @@ fn edges_table_on_capturing_store(captured: Arc<Mutex<Vec<PushdownScanRequest>>>
             global: false,
             global_index_version: 0,
             clustered_primary: false,
+            primary: true,
         },
         false,
     );

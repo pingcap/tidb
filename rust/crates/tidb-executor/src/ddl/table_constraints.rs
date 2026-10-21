@@ -287,6 +287,7 @@ pub(crate) fn table_indexes(
             ),
             clustered_primary: common_handle
                 && index.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
+            primary: index.kind == tidb_ast::IndexConstraintKind::PrimaryKey,
         });
     }
     for (column_index, def) in create.columns.iter().enumerate() {
@@ -323,6 +324,7 @@ pub(crate) fn table_indexes(
                             global: false,
                             global_index_version: 0,
                             clustered_primary: false,
+                            primary: false,
                         });
                     }
                     // A primary key that is not the row handle still needs an
@@ -345,6 +347,7 @@ pub(crate) fn table_indexes(
                                 global: false,
                                 global_index_version: 0,
                                 clustered_primary: common_handle,
+                                primary: true,
                             });
                         }
                     }

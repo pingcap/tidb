@@ -2215,6 +2215,7 @@ fn create_table_in(
                     global: false,
                     global_index_version: 0,
                     clustered_primary: false,
+                    primary: false,
                     visible: true,
                 },
                 false,
@@ -2582,9 +2583,7 @@ fn register_created_table(
         table.use_local_temporary_auto_id();
         catalog.register_local_temporary_in(database, name, table)
     } else {
-        for column in table.columns_mut() {
-            column.reload_from_meta_json();
-        }
+        table.reload_from_meta_json();
         // The job Go submits for the built table.
         bdr::submit(
             catalog,

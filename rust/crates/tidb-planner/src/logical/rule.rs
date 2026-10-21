@@ -697,8 +697,13 @@ pub trait CteOptimizer {
 
 /// The optimizer-hint warning side effect exposed by Go's statement context.
 pub trait HintWarningSink {
-    /// Appends one hint warning.
+    /// Go `StmtCtx.SetHintWarning`: a planner `ErrInternal` (1815).
     fn set_hint_warning(&self, message: &str);
+
+    /// Go `StmtCtx.SetHintWarningFromError` / `AppendWarning` of an error the
+    /// caller built: the warning carries that error's code, ErrUnknown (1105)
+    /// for a plain `fmt.Errorf` / `errors.NewNoStackError`.
+    fn set_hint_warning_from_error(&self, code: u16, message: &str);
 }
 
 /// The session side effect Go's expression and rule simplifiers perform.

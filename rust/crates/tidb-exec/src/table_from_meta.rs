@@ -831,8 +831,7 @@ pub fn cluster_table(
             continue;
         }
         if index.state != SchemaState::PUBLIC {
-            let clustered_primary = (table.pk_is_handle || table.is_common_handle)
-                && index.name.original().eq_ignore_ascii_case("PRIMARY");
+            let clustered_primary = (table.pk_is_handle || table.is_common_handle) && index.primary;
             if clustered_primary {
                 continue;
             }
@@ -884,8 +883,7 @@ pub fn cluster_table(
         // write path skips a `clustered_primary` index (writing one beside the
         // clustered record corrupted tables shared with a Go TiDB node),
         // while multi-column join NDV estimation still reads its stats.
-        let clustered_primary = (table.pk_is_handle || table.is_common_handle)
-            && index.name.original().eq_ignore_ascii_case("PRIMARY");
+        let clustered_primary = (table.pk_is_handle || table.is_common_handle) && index.primary;
         kv_table.add_index(kv_index(&index, &kv_table.columns)?, clustered_primary);
         // Go `IndexInfo.ConditionExprString`: a partial index's predicate,
         // built as `TableFromMeta` builds it, in the default context.
@@ -1164,7 +1162,7 @@ pub fn kv_index(
         };
         let offset = columns
             .iter()
-            .position(|column| column.name.eq_ignore_ascii_case(&name))
+            .position(|column| tidb_hack::GoCaseCompare::go_lower_eq(column.name.as_str(), &name))
             .ok_or_else(|| {
                 format!(
                     "its index {} covers non-public column {}",
@@ -1186,6 +1184,7 @@ pub fn kv_index(
         global: index.global,
         global_index_version: index.global_index_version,
         clustered_primary: false,
+        primary: index.primary,
     })
 }
 

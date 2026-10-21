@@ -155,6 +155,7 @@ pub fn run_create_index_in(
             name: &create.name,
             comment: create.options.comment.as_deref().unwrap_or(""),
             unique,
+            primary: false,
             parts: &create.parts,
             visible: is_visible(&create.options),
             global: create.options.global,
@@ -556,6 +557,8 @@ pub(crate) struct IndexSpec<'a> {
     pub comment: &'a str,
     /// Go `IndexInfo.Unique`.
     pub unique: bool,
+    /// Go `IndexInfo.Primary`: the job is `ADD PRIMARY KEY`.
+    pub primary: bool,
     /// The key parts, each a column or an expression.
     pub parts: &'a [tidb_ast::IndexPart],
     /// Go `!IndexInfo.Invisible`.
@@ -594,6 +597,7 @@ pub(super) fn build_index_definition(
         name: index_name,
         comment,
         unique,
+        primary,
         parts,
         visible,
         global,
@@ -760,6 +764,7 @@ pub(super) fn build_index_definition(
                 &part_types,
             ),
             clustered_primary: false,
+            primary,
         },
         hidden: pending,
     }))
@@ -940,9 +945,7 @@ pub(crate) fn check_invisible_index_on_pk(
     if table.pk_handle_offset().is_some() {
         return Ok(());
     }
-    let explicit = indexes
-        .iter()
-        .find(|index| index.clustered_primary || index.name.eq_ignore_ascii_case("PRIMARY"));
+    let explicit = indexes.iter().find(|index| index.primary);
     let primary = explicit.or_else(|| {
         indexes.iter().find(|index| {
             index.unique
@@ -1129,6 +1132,9 @@ pub(crate) fn add_index_to_table(
         for _ in 0..added {
             table.drop_column(table.columns.len() - 1);
         }
+    } else if table.temp_table_type() != tidb_model::TempTableType::LOCAL {
+        // Go installs the job's table as read back from meta.
+        table.reload_from_meta_json();
     }
     result
 }
@@ -1191,10 +1197,17 @@ pub fn run_drop_index_in(
     ) {
         return Err(DriverError::OperationOnCachedTable("Drop Index"));
     }
+    let is_pk = is_drop_primary_key(
+        match catalog.table_in(&database, &table_name) {
+            Some(crate::TableEntry::Kv(table)) => Some(table),
+            _ => None,
+        },
+        &drop.name,
+    );
     match prepare_drop_index(catalog, &database, &table_name, &drop.name, drop.if_exists)? {
         IndexAdmission::Change(id) => {
             // Go `dropIndex` submits ActionDropPrimaryKey for PRIMARY.
-            let action = if drop.name.go_lower_eq("primary") {
+            let action = if is_pk {
                 tidb_model::ActionType::ACTION_DROP_PRIMARY_KEY
             } else {
                 tidb_model::ActionType::ACTION_DROP_INDEX
@@ -1216,6 +1229,22 @@ pub fn run_drop_index_in(
     }
 }
 
+/// Go `CheckIsDropPrimaryKey`'s `isPK`: the name is PRIMARY and either no
+/// index has that name (a PK-is-handle key) or the one that does is the
+/// primary key -- before TiDB #14243 a secondary index could be called
+/// `primary`, and dropping it is an ordinary DROP INDEX.
+pub(crate) fn is_drop_primary_key(table: Option<&crate::KvTable>, index_name: &str) -> bool {
+    index_name.go_lower_eq("primary")
+        && table
+            .and_then(|table| {
+                table
+                    .indexes()
+                    .iter()
+                    .find(|index| index.name.go_lower_eq(index_name))
+            })
+            .is_none_or(|index| index.primary)
+}
+
 pub(super) fn prepare_drop_index(
     catalog: &Catalog,
     database: &str,
@@ -1235,7 +1264,7 @@ pub(super) fn prepare_drop_index(
     // Go `CheckIsDropPrimaryKey`: dropping PRIMARY is dropping the primary
     // key -- 1091 naming PRIMARY when the table has none, and refused while
     // the table is clustered on it, whatever IF EXISTS says.
-    if index_name.go_lower_eq("primary") {
+    if is_drop_primary_key(Some(table), index_name) {
         let clustered = table.pk_handle_offset().is_some()
             || found.is_some_and(|index| index.clustered_primary);
         if found.is_none() && !clustered {
@@ -1311,18 +1340,15 @@ pub(super) fn drop_prepared_index(
             offsets
         })
         .unwrap_or_default();
-    // Go `DropIndexColumnFlag`: the primary key's columns lose PRI (their
-    // NOT NULL stays).
-    let primary_columns: Vec<usize> = if index_name.go_lower_eq("primary") {
-        table
-            .indexes()
-            .iter()
-            .find(|index| index.name.go_lower_eq(&index_name))
-            .map(|index| index.column_offsets.clone())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    // Go `DropIndexColumnFlag`: when `indexInfo.Primary`, the key's columns
+    // lose PRI (their NOT NULL stays).
+    let primary_columns: Vec<usize> = table
+        .indexes()
+        .iter()
+        .find(|index| index.name.go_lower_eq(&index_name))
+        .filter(|index| index.primary)
+        .map(|index| index.column_offsets.clone())
+        .unwrap_or_default();
     let dropped = table
         .drop_index(&index_name)
         .map_err(|e| DriverError::Parse(format!("index drop failed: {e:?}")))?;

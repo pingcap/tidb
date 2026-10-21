@@ -20,6 +20,7 @@
 use tidb_ast::DatabaseOption;
 use tidb_datatype::{Charset, Collation};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind, TableCharset};
+use tidb_hack::GoCaseCompare;
 
 use crate::{Session, StmtOutput};
 
@@ -32,7 +33,7 @@ pub(crate) fn check_and_normalize_placement_policy(
     catalog: &Catalog,
     name: &str,
 ) -> Result<Option<tidb_model::PolicyRefInfo>, DriverError> {
-    if name.eq_ignore_ascii_case(DEFAULT_PLACEMENT_POLICY_NAME) {
+    if name.go_lower_eq(DEFAULT_PLACEMENT_POLICY_NAME) {
         return Ok(None);
     }
     let policy = catalog

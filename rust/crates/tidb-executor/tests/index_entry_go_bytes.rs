@@ -170,6 +170,7 @@ fn index(id: i64, unique: bool, offsets: Vec<usize>) -> KvIndex {
         global: false,
         global_index_version: 0,
         clustered_primary: false,
+        primary: false,
     }
 }
 

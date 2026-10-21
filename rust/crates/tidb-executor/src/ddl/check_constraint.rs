@@ -230,18 +230,7 @@ pub fn build_constraint_infos(
             return Err(unknown_column(&name, &missing, mode));
         }
         let dependencies = resolver.dependency_names();
-        if let Some(column_name) = &check.in_column {
-            if dependencies.len() > 1
-                || dependencies
-                    .first()
-                    .is_some_and(|dependency| !dependency.eq_ignore_ascii_case(column_name))
-            {
-                return Err(CheckConstraintError::new(
-                    tidb_error::tidb::errcode::ErrColumnCheckConstraintReferencesOtherColumn,
-                    format!("Column check constraint '{name}' references other column."),
-                ));
-            }
-        }
+        column_constraint_references_other(&name, check)?;
         if dependencies.iter().any(|dependency| {
             columns.iter().any(|column| {
                 column.name.original().go_lower_eq(dependency)
@@ -335,7 +324,11 @@ fn column_constraint_references_other(
     let mut expression = check.definition.expression.clone();
     let mut names = Names(std::collections::BTreeSet::new());
     let _ = tidb_ast::Visitable::accept(&mut expression, &mut names);
-    if names.0.len() > 1 || (names.0.len() == 1 && !names.0.contains(&in_column.go_to_lower())) {
+    // Go `dependedColsMap[constr.InColumnName]`: the map is keyed by each
+    // name's `.L` while `InColumnName` is the column's `.O`
+    // (`add_column.go:589`), so a column spelled with uppercase fails to
+    // find itself and its CHECK is refused as referring to another column.
+    if names.0.len() > 1 || (names.0.len() == 1 && !names.0.contains(in_column)) {
         return Err(CheckConstraintError::new(
             tidb_error::tidb::errcode::ErrColumnCheckConstraintReferencesOtherColumn,
             format!("Column check constraint '{name}' references other column."),

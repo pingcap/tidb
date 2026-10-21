@@ -266,9 +266,8 @@ fn check_table_def_compatible(source: &KvTable, target: &KvTable) -> Result<(), 
         }) else {
             return Err(different_metadata());
         };
-        let primary = |name: &str| name.eq_ignore_ascii_case("PRIMARY");
         if source_index.unique != target_index.unique
-            || primary(&source_index.name) != primary(&target_index.name)
+            || source_index.primary != target_index.primary
             || source_index.column_offsets.len() != target_index.column_offsets.len()
         {
             return Err(different_metadata());

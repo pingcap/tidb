@@ -47,17 +47,6 @@ fn access_objects(session: &mut Session, sql: &str) -> Vec<String> {
         .collect()
 }
 
-/// The messages of the last statement's warnings. Go raises the two
-/// partition-hint warnings below through `SetHintWarningFromError` of a
-/// `fmt.Errorf`, so they carry 1105 there while this crate still reports
-/// 1815; only the text is pinned.
-fn warning_messages(session: &Session) -> Vec<String> {
-    warnings_of(session)
-        .into_iter()
-        .map(|(_, message)| message)
-        .collect()
-}
-
 fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
     let error = session.run(sql).unwrap_err().to_mysql_error();
     (error.code, error.message)
@@ -134,12 +123,13 @@ fn hint_warnings_print_the_folded_names() {
         )
         .unwrap();
     assert_eq!(
-        warning_messages(&session),
-        vec![
+        warnings_of(&session),
+        vec![(
+            1105,
             "Optimizer Hint /*+ HASH_JOIN(tσ PARTITION(pé)) */ is inapplicable on specified \
              partitions"
                 .to_owned()
-        ]
+        )]
     );
 
     session
@@ -190,7 +180,8 @@ fn partition_names_fold_like_find_partition_by_name() {
 
 /// Go `checkTableHintsApplicableForPartition` reports each unknown hint
 /// partition by its `.L`, and `Restore2IndexHint` lowers table and
-/// partitions.
+/// partitions. `appendWarnForUnknownPartitions` raises it through
+/// `SetHintWarningFromError` of a `fmt.Errorf`: ErrUnknown, 1105.
 #[test]
 fn unknown_hint_partitions_are_reported_lowered() {
     let mut session = folding_session();
@@ -207,12 +198,183 @@ fn unknown_hint_partitions_are_reported_lowered() {
         .iter()
         .any(|object| object == "table:pσ, partition:PÉ, index:ia(a)"));
     assert_eq!(
-        warning_messages(&session),
-        vec![
+        warnings_of(&session),
+        vec![(
+            1105,
             "unknown partitions (pzz,né) in optimizer hint /*+ USE_INDEX(pσ PARTITION(pé, pzz, \
              né) ia) */"
                 .to_owned()
-        ]
+        )]
+    );
+}
+
+/// The other partition-hint warnings of Go's static partition processor and
+/// hint parser, captured from a Go TiDB: `ParsePlanHints`' join-hint
+/// refusal (`SetHintWarningFromError(fmt.Errorf(...))`) and
+/// `checkHintsApplicable`'s read-from-storage check are both 1105.
+#[test]
+fn partition_hint_warnings_are_plain_errors() {
+    let mut session = folding_session();
+    session.run("CREATE TABLE t2 (a INT, KEY ia(a))").unwrap();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+
+    session
+        .run(
+            "EXPLAIN FORMAT='brief' SELECT /*+ hash_join(pσ partition(PÉ)) */ * FROM pσ, t2 \
+             WHERE pσ.a = t2.a",
+        )
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1105,
+            "Optimizer Hint /*+ HASH_JOIN(pσ PARTITION(pé)) */ is inapplicable on specified \
+             partitions"
+                .to_owned()
+        )]
+    );
+
+    session
+        .run(
+            "EXPLAIN FORMAT='brief' SELECT /*+ read_from_storage(tikv[pσ partition(PÉ, PZZ)]) */ \
+             * FROM pσ WHERE a > 1",
+        )
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1105,
+            "unknown partitions (pzz) in optimizer hint read_from_storage".to_owned()
+        )]
+    );
+
+    session
+        .run(
+            "EXPLAIN FORMAT='brief' SELECT /*+ use_index_merge(pσ partition(QQ), ia) */ * FROM \
+             pσ WHERE a > 1",
+        )
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1105,
+            "unknown partitions (qq) in optimizer hint /*+ USE_INDEX_MERGE(pσ PARTITION(qq) ia) */"
+                .to_owned()
+        )]
+    );
+}
+
+/// Go `resolveOptimizeHint` keeps a hint for a partition only when
+/// `p.String() == partitionName.String()` -- the names as written -- while
+/// unknown partitions are judged by `.L`. Captured from a Go TiDB:
+/// `PARTITION(P1)` on partition `p1` and `PARTITION(pé)` on `PÉ` raise no
+/// warning and do not apply; `PARTITION(PÉ)` does.
+#[test]
+fn hint_partitions_apply_by_written_name() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE pz (a INT, b INT, KEY ia(a)) PARTITION BY RANGE (a) (PARTITION PÉ \
+             VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    let readers = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| {
+                row[0]
+                    .trim_start_matches(['├', '└', '─', '│', ' '])
+                    .to_owned()
+            })
+            .filter(|id| id.starts_with("IndexLookUp") || id.starts_with("TableReader"))
+            .collect()
+    };
+    for hint in ["pz partition(P1)", "pz partition(pé)"] {
+        let sql = format!(
+            "EXPLAIN FORMAT='brief' SELECT /*+ use_index({hint}, ia) */ * FROM pz WHERE a > 1"
+        );
+        assert_eq!(
+            readers(&mut session, &sql),
+            ["TableReader", "TableReader"],
+            "{sql}"
+        );
+        assert_eq!(warnings_of(&session), vec![], "{sql}");
+    }
+    assert_eq!(
+        readers(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT /*+ use_index(pz partition(PÉ), ia) */ * FROM pz \
+             WHERE a > 1"
+        ),
+        ["IndexLookUp", "TableReader"]
+    );
+}
+
+/// Go's hint lexer finds a hint's token by `strings.ToUpper` of its written
+/// name, so `MERGE_JOıN` (dotless `ı` uppercases to `I`) parses as
+/// MERGE_JOIN; but `ParsePlanHints` switches on `HintName.L`, `merge_joın`,
+/// which names no hint. Captured from a Go TiDB: no warning, and the join
+/// stays a hash join, with or without table names.
+#[test]
+fn hint_names_compare_by_go_lowered_written_name() {
+    let mut session = folding_session();
+    session.run("CREATE TABLE t2 (a INT, KEY ia(a))").unwrap();
+    let joins = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(sql))
+            .into_iter()
+            .map(|row| {
+                row[0]
+                    .trim_start_matches(['├', '└', '─', '│', ' '])
+                    .to_owned()
+            })
+            .filter(|id| id.ends_with("Join"))
+            .collect()
+    };
+    assert_eq!(
+        joins(
+            &mut session,
+            "EXPLAIN FORMAT='brief' SELECT /*+ merge_join(tσ) */ * FROM tσ, t2 WHERE tσ.a = t2.a"
+        ),
+        ["MergeJoin"]
+    );
+    for hint in ["MERGE_JOıN(tσ)", "MERGE_JOıN()"] {
+        let sql =
+            format!("EXPLAIN FORMAT='brief' SELECT /*+ {hint} */ * FROM tσ, t2 WHERE tσ.a = t2.a");
+        assert_eq!(joins(&mut session, &sql), ["HashJoin"], "{sql}");
+        assert_eq!(warnings_of(&session), vec![], "{sql}");
+    }
+}
+
+/// Go `CheckIsDropPrimaryKey`: `indexName.L == "primary" && (indexInfo ==
+/// nil || indexInfo.Primary)`. A secondary index named `PRİMARY` (Go's
+/// `checkIndexInfo` refuses only `strings.EqualFold` with PRIMARY, and `İ`
+/// folds to nothing else) has `.L` `primary`, yet dropping it is an
+/// ordinary DROP INDEX job. Captured from a Go TiDB.
+#[test]
+fn dropping_a_secondary_index_named_primary_is_drop_index() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE lp (a INT, b INT, KEY `PRİMARY`(a))")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_NAME = \
+             'lp'"
+        )),
+        Vec::<Vec<String>>::new()
+    );
+    session.run("ALTER TABLE lp DROP INDEX `primary`").unwrap();
+    let jobs = row_text(session.run("ADMIN SHOW DDL JOBS 1"));
+    assert_eq!(jobs[0][3], "drop index");
+    assert_eq!(
+        show_create(&mut session, "lp"),
+        "CREATE TABLE `lp` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB \
+         DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 }
 
