@@ -1398,6 +1398,19 @@ impl KvTable {
         self.store = store;
     }
 
+    /// See [`TableStorage::snapshot_reader`].
+    pub(crate) fn snapshot_reader(&self) -> Option<Box<dyn TableStorage>> {
+        self.store.snapshot_reader()
+    }
+
+    /// See [`TableStorage::mem_buffer_snapshot`].
+    pub(crate) fn mem_buffer_snapshot(
+        &self,
+        ranges: &[(Key, Key)],
+    ) -> Option<std::sync::Arc<crate::cluster_storage::MemBufferSnapshot>> {
+        self.store.mem_buffer_snapshot(ranges)
+    }
+
     pub fn columns_mut(&mut self) -> &mut Vec<KvColumn> {
         std::sync::Arc::make_mut(&mut self.columns)
     }
@@ -2521,6 +2534,11 @@ impl KvTable {
     /// their own copy; point gets, foreign-key checks and DDL reads stay
     /// outside it, as they stay outside Go's coprocessor.
     pub(crate) fn count_keys_read(&mut self, budget: &crate::KeysReadBudget) {
+        // A union scan's mem reader walks the membuffer, which no
+        // coprocessor processes.
+        if !self.store.reads_processed_keys() {
+            return;
+        }
         self.keys_read = Some(budget.clone());
     }
 

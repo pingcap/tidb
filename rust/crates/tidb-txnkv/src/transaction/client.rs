@@ -307,6 +307,14 @@ impl<S: PdClient> ClientTransaction<S> {
             .inner_mut()
             .set_assertion_level(level);
     }
+    /// Go `KVTxn.SetKVFilter`: the commit leaves out every buffered pair the
+    /// filter calls unnecessary (Go's driver installs `TiDBKVFilter`).
+    pub fn set_kv_filter(&mut self, filter: Arc<dyn tikv_client::KvFilter>) {
+        self.engine
+            .transaction_mut()
+            .inner_mut()
+            .set_kv_filter(filter);
+    }
     /// Go `newLockCtx` requests existence metadata using the current statement's
     /// assertion setting, independently of the commit-time activation snapshot.
     pub fn set_statement_assertion_level(&mut self, level: tidb_proto::KvrpcAssertionLevel) {
@@ -589,18 +597,15 @@ impl<S: PdClient> ClientTransaction<S> {
             .collect();
         Ok(values)
     }
-    /// Go `KVTxn.GetSnapshot().Iter`: scans the committed snapshot at
-    /// `read_ts` WITHOUT this transaction's staged writes. The native
-    /// `Transaction::scan` always merges its buffer, so the committed view is
-    /// a read-only native transaction over the same client at that timestamp.
-    pub fn snapshot_scan_committed_at(
+    /// Go `KVTxn.GetSnapshot()`: a read-only native transaction over the same
+    /// client at `read_ts`, which has none of this transaction's staged
+    /// writes (the native `Transaction::get`/`scan`/`batch_get` always merge
+    /// their buffer). It shares the transaction's options and ctx.
+    fn committed_snapshot_driver(
         &mut self,
-        start: &[u8],
-        end: &[u8],
-        limit: Option<usize>,
         read_ts: u64,
         call: &UnaryCallContext,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+    ) -> Result<TikvTransactionDriver<S>, OptimisticCoordinatorError> {
         let scan_call = UnaryCallContext::with_optional_deadline(None, call.cancellation().clone())
             .with_kv_exec_counter(
                 self.snapshot_read_options
@@ -628,6 +633,23 @@ impl<S: PdClient> ClientTransaction<S> {
                 },
             )));
         }
+        Ok(TikvTransactionDriver::new_read_only(
+            transaction,
+            Arc::clone(self.store.runtime()),
+        ))
+    }
+
+    /// Go `KVTxn.GetSnapshot().Iter`: scans the committed snapshot at
+    /// `read_ts` WITHOUT this transaction's staged writes.
+    pub fn snapshot_scan_committed_at(
+        &mut self,
+        start: &[u8],
+        end: &[u8],
+        limit: Option<usize>,
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+        let mut committed = self.committed_snapshot_driver(read_ts, call)?;
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let range = (
             Included(start.to_vec()),
@@ -637,8 +659,6 @@ impl<S: PdClient> ClientTransaction<S> {
                 Excluded(end.to_vec())
             },
         );
-        let mut committed =
-            TikvTransactionDriver::new_read_only(transaction, Arc::clone(self.store.runtime()));
         let values = committed
             .run(|transaction| {
                 transaction.scan(
@@ -648,6 +668,38 @@ impl<S: PdClient> ClientTransaction<S> {
             })
             .map_err(Self::client_read_error)?
             .map(|pair| (Vec::from(pair.0), pair.1))
+            .collect();
+        Ok(values)
+    }
+
+    /// Go `KVTxn.GetSnapshot().Get`: one key of the committed snapshot at
+    /// `read_ts`, WITHOUT this transaction's staged writes.
+    pub fn snapshot_get_committed_at(
+        &mut self,
+        key: &[u8],
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
+        let mut committed = self.committed_snapshot_driver(read_ts, call)?;
+        committed
+            .run(|transaction| transaction.get(key.to_vec()))
+            .map_err(Self::client_read_error)
+    }
+
+    /// Go `KVTxn.GetSnapshot().BatchGet`: the keys of the committed snapshot
+    /// at `read_ts`, WITHOUT this transaction's staged writes.
+    pub fn snapshot_batch_get_committed_at(
+        &mut self,
+        keys: &[Vec<u8>],
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, OptimisticCoordinatorError> {
+        let mut committed = self.committed_snapshot_driver(read_ts, call)?;
+        let values = committed
+            .run(|transaction| transaction.batch_get_with_options(keys.iter().cloned(), &[]))
+            .map_err(Self::client_read_error)?
+            .into_iter()
+            .map(|(key, entry)| (Vec::from(key), entry.value))
             .collect();
         Ok(values)
     }

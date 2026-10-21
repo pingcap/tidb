@@ -787,6 +787,7 @@ impl KvTable {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
+        let _create = tidb_util::tracing::start_thread_region("index.Create");
         for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
             let key = Key::from_bytes(entry.key);
             match self.store.get_local(&key) {
@@ -876,6 +877,7 @@ impl KvTable {
     /// update shape: the same rows as Go in both of its branches, minus work
     /// whose only effect was storing the same bytes again (which also keeps
     /// single-row updates inside one region, where Go's 1PC lives).
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::kv_table) fn rewrite_changed_index_entries(
         &mut self,
         old_row: &[Datum],
@@ -995,7 +997,26 @@ impl KvTable {
                     zone,
                 )?;
                 if old_value == new_value {
-                    // Byte-identical entry: Go's untouched-index skip.
+                    // Byte-identical entry. Go deletes and re-creates it (its
+                    // columns WERE touched); outside a transaction that
+                    // stores the same bytes again and is skipped here, inside
+                    // one it leaves the entry in the membuffer, where the
+                    // transaction's `UnionScanExec` reads it.
+                    if write_untouched {
+                        self.store
+                            .delete_with_assertion(
+                                Key::from_bytes(old_key),
+                                AssertionOp::AssertExist,
+                            )
+                            .map_err(KvTableError::from)?;
+                        self.store
+                            .set_with_assertion(
+                                Key::from_bytes(new_key),
+                                new_value,
+                                AssertionOp::AssertNotExist,
+                            )
+                            .map_err(KvTableError::from)?;
+                    }
                     continue;
                 }
                 // Same index key, different payload (a covering or appended

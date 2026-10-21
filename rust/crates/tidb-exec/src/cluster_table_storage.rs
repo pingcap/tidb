@@ -1963,6 +1963,51 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         }
     }
 
+    fn get_committed(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        let read_ts = self.statement_read_ts()?;
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.set_snapshot_read_options(&self.read_options);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::Pessimistic { transaction, .. } => transaction
+                .snapshot_get_committed_at(key.as_bytes(), read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::Finished => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+        }
+    }
+
+    fn batch_get_committed(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        let read_ts = self.statement_read_ts()?;
+        let call = UnaryCallContext::with_deadline(
+            Instant::now() + self.timeout,
+            self.cancellation.clone(),
+        );
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.set_snapshot_read_options(&self.read_options);
+        match &mut *state {
+            SessionTransactionState::Optimistic(transaction)
+            | SessionTransactionState::Pessimistic { transaction, .. } => transaction
+                .snapshot_batch_get_committed_at(&keys, read_ts, &call)
+                .map_err(classify),
+            SessionTransactionState::Finished => Err(StorageError::Backend(
+                "the transaction is already finished".to_owned(),
+            )),
+        }
+    }
+
     fn start_ts(&self) -> u64 {
         // The timestamp this snapshot READS at, which is the statement's when
         // it has one. Both callers stamp it into a request that names an MVCC

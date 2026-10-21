@@ -1277,6 +1277,9 @@ pub struct PhysicalTableScan {
     /// derived from the (possibly cache-rebuilt) ranges at execution, as Go's
     /// plan-cache rebuild does.
     pub group_by_col_idxs: Vec<usize>,
+    /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
+    /// groups (and, for a local index, its partitions) by.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
     /// Access conditions and handle metadata retained for execute-time plan
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::TableRangeRebuild>,
@@ -2519,6 +2522,9 @@ pub struct PhysicalIndexScan {
     pub ranges: crate::ranger::types::Ranges,
     /// Go `GroupByColIdxs`; see [`PhysicalTableScan::group_by_col_idxs`].
     pub group_by_col_idxs: Vec<usize>,
+    /// Go `ByItems`: the sort items a keep-order read merge-sorts its range
+    /// groups (and, for a local index, its partitions) by.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
     /// Access conditions and index metadata retained for execute-time plan
     /// cache range rebuild.
     pub range_rebuild: Option<crate::physical_plan_cache::IndexRangeRebuild>,
@@ -4671,6 +4677,7 @@ impl PhysicalPlan {
             }),
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
+                by_items: op.by_items.clone(),
                 base: base_of(&op.base),
                 keep_order: op.keep_order,
                 desc: op.desc,
@@ -4803,6 +4810,7 @@ impl PhysicalPlan {
             }),
             Self::IndexScan(op) => Self::IndexScan(PhysicalIndexScan {
                 group_by_col_idxs: op.group_by_col_idxs.clone(),
+                by_items: op.by_items.clone(),
                 data_source_schema: op.data_source_schema.clone(),
                 base: base_of(&op.base),
                 table_id: op.table_id,

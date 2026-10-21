@@ -364,6 +364,36 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         None
     }
 
+    /// The view of this backend Go's reader executors read: the statement's
+    /// read snapshot ALONE. A `TableReader`/`IndexReader`/`IndexLookUp`
+    /// request goes to the coprocessor, which never sees the transaction's
+    /// membuffer; the buffered writes reach a query only through the
+    /// `UnionScanExec` above the reader ([`Self::mem_buffer_snapshot`]).
+    ///
+    /// `None` -- the default, and the in-process store's answer -- is a
+    /// backend whose bytes already include the transaction's writes, so it
+    /// has no snapshot half to separate.
+    fn snapshot_reader(&self) -> Option<Box<dyn TableStorage>> {
+        None
+    }
+
+    /// Go `txn.GetMemBuffer().SnapshotGetter()` / `SnapshotIter` over the
+    /// `[start, end)` key ranges: the transaction's buffered entries there as
+    /// the statement found them, which `UnionScanExec` reads its added rows
+    /// from. `None` exactly when [`Self::snapshot_reader`] is.
+    fn mem_buffer_snapshot(
+        &self,
+        _ranges: &[(Key, Key)],
+    ) -> Option<std::sync::Arc<crate::cluster_storage::MemBufferSnapshot>> {
+        None
+    }
+
+    /// Whether this backend's reads are keys a storage node processes, which
+    /// count against `tidb_max_keys_read` (Go `ScanDetail.ProcessedKeys`).
+    fn reads_processed_keys(&self) -> bool {
+        true
+    }
+
     /// The coprocessor client this backend reads through and the timestamp
     /// its statement reads at: what Go `ChecksumTableExec` takes from
     /// `GetClient()` and `getSnapshotTS()`. `None` for a backend with no
@@ -408,14 +438,14 @@ impl Clone for Box<dyn TableStorage> {
 }
 
 /// An owned cursor used by the correctness-first reverse fallback above.
-struct MaterializedStorageIterator {
+pub(crate) struct MaterializedStorageIterator {
     entries: Vec<(Key, Vec<u8>)>,
     position: usize,
     empty_key: Key,
 }
 
 impl MaterializedStorageIterator {
-    fn new(entries: Vec<(Key, Vec<u8>)>) -> Self {
+    pub(crate) fn new(entries: Vec<(Key, Vec<u8>)>) -> Self {
         Self {
             entries,
             position: 0,

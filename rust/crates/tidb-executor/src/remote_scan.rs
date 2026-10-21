@@ -701,6 +701,16 @@ impl PushdownStatementContext {
         }
     }
 
+    /// A reader whose storage holds no buffered writes to merge -- Go's
+    /// reader executors read the statement's snapshot alone, and a union
+    /// scan's mem reader the buffered entries alone -- keeps no staged-write
+    /// tracker, so nothing in it routes rows as dirty.
+    #[must_use]
+    pub fn without_staged_writes(mut self) -> Self {
+        self.staged_writes = Arc::default();
+        self
+    }
+
     /// Retain the response estimate computed from the physical reader subtree.
     #[must_use]
     pub fn with_estimated_net_bytes(mut self, bytes: f64) -> Self {
@@ -1666,7 +1676,7 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         let (rows, ops) = capture_storage_ops(|| {
             run_select_on(
                 "SELECT _tidb_rowid FROM t ORDER BY _tidb_rowid",
@@ -1721,7 +1731,7 @@ mod tests {
             }
             commit(&fixture.buffer, &fixture.snapshot);
             let mut catalog = catalog_of(fixture.table);
-            let ctx = crate::StmtContext::for_query();
+            let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
             let (changed, ops) = capture_storage_ops(|| {
                 crate::run_update_on(
                     "UPDATE t SET b=b+100 WHERE a>=1 AND a<=3 AND a<>2",
@@ -1873,7 +1883,7 @@ mod tests {
         }
         commit(&fixture.buffer, &fixture.snapshot);
         let mut catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         assert_eq!(
             crate::run_update_on(
                 "UPDATE t SET b=b+100 WHERE a>=1 AND a<=18446744073709551615 AND b<>20",
@@ -2110,8 +2120,12 @@ mod tests {
             });
             assert_eq!(changed, 1);
             assert_eq!(ops.cop_scans, 1);
+            // The UPDATE is staged, not committed: the reads that follow run
+            // in its transaction, where Go reads the table through a union
+            // scan.
+            let dirty = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
             assert_eq!(
-                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &ctx).unwrap(),
+                run_select_on("SELECT * FROM t ORDER BY a", &catalog, &dirty).unwrap(),
                 vec![
                     vec![Datum::Int(1), Datum::Int(11), Datum::Int(21)],
                     vec![Datum::Int(3), Datum::Int(13), Datum::Int(23)],
@@ -2126,7 +2140,7 @@ mod tests {
                 ("SELECT MAX(b) FROM t", vec![22]),
             ] {
                 assert_eq!(
-                    run_select_on(sql, &catalog, &ctx).unwrap(),
+                    run_select_on(sql, &catalog, &dirty).unwrap(),
                     expected
                         .into_iter()
                         .map(|value| vec![Datum::Int(value)])
@@ -2139,7 +2153,7 @@ mod tests {
 
     #[test]
     fn dirty_common_handle_reads_share_the_remote_staged_merge() {
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         for (key_type, key, predicate) in [
             (
                 FieldType::new(FieldTypeCode::LongLong),
@@ -3311,7 +3325,7 @@ mod tests {
         assert!(!fixture.buffer.is_empty(), "the writes are staged");
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         assert_eq!(
             run_select_on("SELECT a, b FROM t WHERE a > 5 ORDER BY a", &catalog, &ctx).unwrap(),
             vec![
@@ -3371,7 +3385,7 @@ mod tests {
             .unwrap();
 
         let catalog = catalog_of(fixture.table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         assert_eq!(
             run_select_on("SELECT a FROM t LIMIT 3", &catalog, &ctx).unwrap(),
             vec![

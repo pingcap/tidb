@@ -42,6 +42,8 @@ impl SessionTransactionOptions {
         self,
         transaction: &mut tidb_txnkv::transaction::RealTransaction<S>,
     ) {
+        // Go `NewTiKVTxn`'s `txn.SetKVFilter(TiDBKVFilter{})`.
+        transaction.set_kv_filter(std::sync::Arc::new(TiDBKVFilter));
         transaction.set_commit_protocol(self.commit_protocol);
         transaction.set_assertion_level(self.assertion_level);
         if let Some(context) = self.kv_context {
@@ -57,6 +59,40 @@ impl SessionTransactionOptions {
     ) -> Self {
         self.kv_context = Some(context);
         self
+    }
+}
+
+/// Go `txn.TiDBKVFilter` (`pkg/store/driver/txn/txn_driver.go`): the pairs
+/// the commit leaves out. An untouched index pair -- an UPDATE inside a
+/// transaction writes one again only for the transaction's own reads -- is
+/// never committed, and one that also presumes its key absent is an error.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TiDBKVFilter;
+
+impl tikv_client::KvFilter for TiDBKVFilter {
+    fn is_unnecessary_key_value(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        flags: tikv_client::MutationFlags,
+    ) -> tikv_client::Result<bool> {
+        let untouched = tidb_tablecodec::is_untouched_index_kv(key, value);
+        if untouched && flags.presumes_key_not_exists() {
+            // Go `kv.Key.String`: lower-case hex.
+            let hex = |bytes: &[u8]| {
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            };
+            return Err(tikv_client::Error::StringError(format!(
+                "unexpected path the untouched key={} value={} contains PresumeKeyNotExists flag \
+                 keyFlags={flags:?}",
+                hex(key),
+                hex(value),
+            )));
+        }
+        Ok(untouched)
     }
 }
 

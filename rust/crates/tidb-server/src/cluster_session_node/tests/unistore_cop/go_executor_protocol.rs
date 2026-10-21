@@ -154,3 +154,138 @@ fn apply_and_selection_ask_an_exhausted_child_again() {
         "{tree:#?}"
     );
 }
+
+/// Go's `UnionScanExec` over a table the open transaction wrote: the reader
+/// below reads the snapshot through the coprocessor -- an index reader sends
+/// its request while the union scan opens -- and the buffered rows come from
+/// the mem reader `buildMem*Reader` builds; `getSnapshotRow` keeps asking the
+/// drained reader each time a row is merged.
+#[test]
+fn union_scan_merges_the_snapshot_reader_with_the_membuffer() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(159)).unwrap();
+    for sql in [
+        "CREATE TABLE test.us (id INT PRIMARY KEY, v INT, k INT, KEY ik (k))",
+        "INSERT INTO test.us VALUES (1, 1, 1), (2, 2, 2), (3, 3, 3)",
+    ] {
+        rows(&mut session, sql);
+    }
+    session.control_transaction("BEGIN").unwrap();
+    for sql in [
+        "INSERT INTO test.us VALUES (7, 7, 1)",
+        "UPDATE test.us SET v = 20 WHERE id = 2",
+        "DELETE FROM test.us WHERE id = 3",
+    ] {
+        session.execute_write(sql).unwrap();
+    }
+    let tree = tidb_trace_tree(
+        &mut session,
+        "SELECT * FROM test.us IGNORE INDEX (ik) WHERE v > 0",
+    );
+    assert_eq!(
+        tree[5..],
+        [
+            "  │ └─session.runStmt",
+            "  │   └─UnionScanExec.Open",
+            "  │     ├─TableReaderExecutor.Open",
+            "  │     │ └─distsql.Select",
+            "  │     └─buildMemTableReader",
+            // One snapshot chunk survives as row 1; each of the two buffered
+            // rows (2 and 7) and the end of input then asks the reader again.
+            "  ├─*executor.UnionScanExec.Next",
+            "  │ ├─*executor.TableReaderExecutor.Next",
+            "  │ ├─*executor.TableReaderExecutor.Next",
+            "  │ ├─*executor.TableReaderExecutor.Next",
+            "  │ └─*executor.TableReaderExecutor.Next",
+            "  └─*executor.UnionScanExec.Next",
+            "    └─*executor.TableReaderExecutor.Next",
+        ],
+        "{tree:#?}"
+    );
+    let tree = tidb_trace_tree(
+        &mut session,
+        "SELECT k FROM test.us USE INDEX (ik) WHERE k < 3",
+    );
+    assert_eq!(
+        tree[5..9],
+        [
+            "  │ └─session.runStmt",
+            "  │   └─UnionScanExec.Open",
+            "  │     ├─distsql.Select",
+            "  │     └─buildMemIndexReader",
+        ],
+        "{tree:#?}"
+    );
+    // Through the index too, the updated row is the buffered one (its index
+    // entry is written again, untouched), the deleted row is gone and the
+    // inserted row is merged in.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT * FROM test.us USE INDEX (ik) WHERE k < 5 ORDER BY id",
+        )),
+        [["1", "1", "1"], ["2", "20", "2"], ["7", "7", "1"]]
+    );
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT id FROM test.us USE INDEX (ik) WHERE k < 5 ORDER BY id",
+        )),
+        [["1"], ["2"], ["7"]]
+    );
+    session.control_transaction("ROLLBACK").unwrap();
+}
+
+/// Go plans an index merge over a table the open transaction wrote under a
+/// `UnionScanExec`: the merge reader reads the snapshot through the
+/// coprocessor, the mem reader walks the buffered rows, and a global index's
+/// handles keep their partition id on the way to the final table lookup.
+/// Captured on the Go oracle (`globalindex/mem_index_merge_non_unique`).
+#[test]
+fn index_merge_over_a_global_index_sees_the_snapshot_and_the_membuffer() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(160)).unwrap();
+    for sql in [
+        "CREATE TABLE test.tpk2 (a INT, b INT, c INT NOT NULL, d INT NOT NULL AUTO_INCREMENT, \
+         KEY idx_bc (b, c), KEY idx_a (a) GLOBAL, UNIQUE KEY uidx_ac (a, c), KEY idx_c (c), \
+         KEY idx_ac (a, c)) \
+         PARTITION BY HASH (c) PARTITIONS 5",
+        "INSERT INTO test.tpk2 VALUES (1, 2, 1, 1), (3, 6, 3, 3)",
+    ] {
+        rows(&mut session, sql);
+    }
+    session.control_transaction("BEGIN").unwrap();
+    session
+        .execute_write("INSERT INTO test.tpk2 VALUES (2, 4, 2, 2)")
+        .unwrap();
+    for (sql, expected) in [
+        (
+            "SELECT /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * FROM test.tpk2 \
+             WHERE a = 1 OR b = 4 ORDER BY d",
+            vec![["1", "2", "1", "1"], ["2", "4", "2", "2"]],
+        ),
+        (
+            "SELECT /*+ use_index_merge(tpk2, idx_a, idx_bc) */ * FROM test.tpk2 \
+             WHERE a = 2 OR b = 4 ORDER BY d",
+            vec![["2", "4", "2", "2"]],
+        ),
+        (
+            "SELECT /*+ use_index_merge(tpk2, idx_a, idx_c) */ * FROM test.tpk2 \
+             WHERE a > 1 AND c > 1 ORDER BY d",
+            vec![["2", "4", "2", "2"], ["3", "6", "3", "3"]],
+        ),
+        (
+            "SELECT /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * FROM test.tpk2 \
+             WHERE a = 1 OR b = 4 ORDER BY c LIMIT 1",
+            vec![["1", "2", "1", "1"]],
+        ),
+        (
+            "SELECT /*+ use_index_merge(tpk2, idx_ac, idx_bc) */ * FROM test.tpk2 \
+             WHERE a = 1 OR b = 4 ORDER BY c DESC LIMIT 1",
+            vec![["2", "4", "2", "2"]],
+        ),
+    ] {
+        assert_eq!(displayed(rows(&mut session, sql)), expected, "{sql}");
+    }
+    session.control_transaction("ROLLBACK").unwrap();
+}

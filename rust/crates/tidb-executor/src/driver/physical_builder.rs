@@ -80,8 +80,77 @@ struct CteBuildSlot {
     producer: Option<SharedCteProducer>,
 }
 
+/// Which view of a table's storage the reader leaves being built read.
+///
+/// Go's `TableReader`/`IndexReader`/`IndexLookUp`/`IndexMerge` executors send
+/// coprocessor requests, which read the statement's snapshot and never the
+/// transaction's membuffer; the buffered writes reach a query only through
+/// the `UnionScanExec` above such a reader, whose mem reader walks the
+/// membuffer over the reader's key ranges.
+#[derive(Clone, Debug, Default)]
+enum ReaderStorage {
+    /// The statement's snapshot alone, where the backend separates it from
+    /// the transaction's buffer ([`crate::storage::TableStorage::snapshot_reader`]).
+    #[default]
+    Snapshot,
+    /// The backend's merged view: below a union scan Go's executor is not
+    /// built for (an index-join inner side), whose reader merges the buffered
+    /// rows itself.
+    Merged,
+    /// A `UnionScanExec`'s mem reader: the buffered entries alone.
+    MemBuffer(Arc<crate::cluster_storage::MemBufferSnapshot>),
+}
+
+impl ReaderStorage {
+    /// `table` as a reader leaf of this kind reads it, and whether its
+    /// storage was separated from the transaction's buffered writes.
+    fn table(&self, table: Arc<crate::KvTable>) -> (Arc<crate::KvTable>, bool) {
+        let store = match self {
+            ReaderStorage::Snapshot => table.snapshot_reader(),
+            ReaderStorage::Merged => None,
+            ReaderStorage::MemBuffer(snapshot) => Some(Box::new(
+                crate::cluster_storage::MemBufferStorage::new(Arc::clone(snapshot)),
+            )
+                as Box<dyn crate::storage::TableStorage>),
+        };
+        match store {
+            Some(store) => {
+                let mut table = Arc::unwrap_or_clone(table);
+                table.replace_storage(store);
+                (Arc::new(table), true)
+            }
+            None => (table, false),
+        }
+    }
+
+    /// `statement` for a reader leaf over a table [`Self::table`] answered
+    /// for.
+    fn statement(
+        separated: bool,
+        statement: crate::remote_scan::PushdownStatementContext,
+    ) -> crate::remote_scan::PushdownStatementContext {
+        if separated {
+            statement.without_staged_writes()
+        } else {
+            statement
+        }
+    }
+
+    /// Whether the leaves are a mem reader, which Go builds no executor for:
+    /// no index usage is reported for it.
+    const fn is_mem_buffer(&self) -> bool {
+        matches!(self, ReaderStorage::MemBuffer(_))
+    }
+}
+
 #[derive(Default)]
 struct BuildState {
+    /// See [`ReaderStorage`].
+    reader_storage: ReaderStorage,
+    /// Building a `UnionScanExec`'s mem reader: Go's mem readers are not
+    /// executors, so the copy records no `exec.Next` regions and no runtime
+    /// statistics.
+    untraced: bool,
     /// Receiver substitutions while building a shuffle worker subtree.
     shuffle_receivers: HashMap<i32, Box<dyn Executor>>,
     cte_slots: HashMap<i32, CteBuildSlot>,
@@ -277,10 +346,10 @@ impl BuildState {
         next_region: Option<&'static str>,
     ) -> Box<dyn Executor> {
         // A coprocessor plan's nodes run in TiKV for Go: no TiDB executor
-        // and no `exec.Next` region.
-        let next_region = next_region.filter(|_| !self.in_reader);
+        // and no `exec.Next` region; neither has a union scan's mem reader.
+        let next_region = next_region.filter(|_| !self.in_reader && !self.untraced);
         let plan_id = i64::from(plan.base().base.id());
-        let runtime_stats = (plan_id > 0)
+        let runtime_stats = (plan_id > 0 && !self.untraced)
             .then(|| {
                 self.executor_runtime_stats_source
                     .as_ref()
@@ -1077,10 +1146,15 @@ fn build_table_scan(
     ctx: &crate::StmtContext,
     net_bytes: Option<f64>,
     range_group: Option<&tidb_planner::ranger::types::Ranges>,
+    storage: &ReaderStorage,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    let table = catalog
-        .physical_kv_table_by_id(scan.table_id)
-        .ok_or_else(|| DriverError::unsupported("physical table ID is absent from the catalog"))?;
+    let (table, separated) = storage.table(
+        catalog
+            .physical_kv_table_by_id(scan.table_id)
+            .ok_or_else(|| {
+                DriverError::unsupported("physical table ID is absent from the catalog")
+            })?,
+    );
     let (schema, keep, extra_handle_slot, extra_commit_ts_slot) = table_scan_schema(scan, &table)?;
     let logical_table_id = table.table_id;
     let index_id = super::index_usage_reporter::cluster_index_id(&table);
@@ -1111,16 +1185,19 @@ fn build_table_scan(
         meta(ctx, plan, schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
         RowDecodeContext::for_query(ctx),
-        PushdownStatementContext::from_stmt(ctx)
-            .with_plan_id(i64::from(scan.base.base.id()))
-            .with_estimated_net_bytes(net_bytes.unwrap_or_else(|| {
-                plan.cop_net_data_size(
-                    false,
-                    tidb_config::tikvcfg::get_global_config()
-                        .tikv_client
-                        .enable_chunk_rpc,
-                )
-            })),
+        ReaderStorage::statement(
+            separated,
+            PushdownStatementContext::from_stmt(ctx)
+                .with_plan_id(i64::from(scan.base.base.id()))
+                .with_estimated_net_bytes(net_bytes.unwrap_or_else(|| {
+                    plan.cop_net_data_size(
+                        false,
+                        tidb_config::tikvcfg::get_global_config()
+                            .tikv_client
+                            .enable_chunk_rpc,
+                    )
+                })),
+        ),
     );
     // Dynamic prune mode keeps ONE logical scan whose read is restricted to
     // the partitions the planner selected -- the statement's own `PARTITION
@@ -1190,6 +1267,9 @@ fn build_table_scan(
     }
     let output = plan_schema(plan)?;
     let source = source.with_physical_schema(output)?;
+    if storage.is_mem_buffer() {
+        return Ok(Box::new(source));
+    }
     let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
         logical_table_id,
@@ -2239,14 +2319,17 @@ fn build_index_reader(
     range_group: Option<&tidb_planner::ranger::types::Ranges>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
+    storage: &ReaderStorage,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let scan = embedded_index_scan(index_plan)
         .ok_or_else(|| DriverError::unsupported("a physical index reader has no index scan"))?;
-    let mut table = catalog
-        .physical_kv_table_by_id(scan.table_id)
-        .ok_or_else(|| {
-            DriverError::unsupported("physical index table ID is absent from the catalog")
-        })?;
+    let (mut table, separated) = storage.table(
+        catalog
+            .physical_kv_table_by_id(scan.table_id)
+            .ok_or_else(|| {
+                DriverError::unsupported("physical index table ID is absent from the catalog")
+            })?,
+    );
     // Global index keys share the logical table prefix; the cursor filters
     // their encoded partition IDs using this same read restriction.
     if let Some(access) = &scan.dynamic_partition_access {
@@ -2337,8 +2420,11 @@ fn build_index_reader(
         scan.index_id,
         ranges,
         RowDecodeContext::for_query(ctx),
-        cop_reader_statement(index_plan, table_plan, true, net_bytes, ctx)
-            .with_plan_id(i64::from(scan.base.base.id())),
+        ReaderStorage::statement(
+            separated,
+            cop_reader_statement(index_plan, table_plan, true, net_bytes, ctx)
+                .with_plan_id(i64::from(scan.base.base.id())),
+        ),
     );
     if let Some(slot) = extra_handle {
         source.read_extra_handle(slot);
@@ -2422,6 +2508,9 @@ fn build_index_reader(
     // by `compareExec.compare`. This tier folds that merge into the source;
     // arming it here keeps every other read untouched.
     source.enable_dirty_union_scan_merge();
+    if storage.is_mem_buffer() {
+        return Ok(Box::new(source));
+    }
     let source = Box::new(CopIndexUsageExec::new(
         Box::new(source),
         logical_table_id,
@@ -2961,13 +3050,15 @@ fn build_index_inner_reader(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     offset_schema: Option<&Schema>,
+    storage: &ReaderStorage,
 ) -> Result<IndexJoinLookupExec, DriverError> {
     let table_id = join.inner_access_table_id.ok_or_else(|| {
         DriverError::unsupported("a physical index join has no retained inner table ID")
     })?;
-    let mut table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
-        DriverError::unsupported("a physical index-join table ID is absent from the catalog")
-    })?;
+    let (mut table, separated) =
+        storage.table(catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
+            DriverError::unsupported("a physical index-join table ID is absent from the catalog")
+        })?);
     let (embedded, covering) = index_inner_reader_payload(plan).ok_or_else(|| {
         DriverError::unsupported("an index-join inner leaf is not a physical reader")
     })?;
@@ -3025,7 +3116,10 @@ fn build_index_inner_reader(
         ),
         _ => (embedded, None),
     };
-    let statement = cop_reader_statement(network_plan, table_lookup_plan, covering, None, ctx);
+    let statement = ReaderStorage::statement(
+        separated,
+        cop_reader_statement(network_plan, table_lookup_plan, covering, None, ctx),
+    );
     let mut source = IndexJoinLookupExec::new_with_statement(
         meta(ctx, plan, row_schema.clone()),
         std::sync::Arc::unwrap_or_clone(table),
@@ -3101,6 +3195,7 @@ fn build_index_inner_subtree(
                 catalog,
                 ctx,
                 Some(&row_schema),
+                &state.reader_storage,
             )?;
             return build_aggregation_over_child(
                 partial_plan,
@@ -3119,6 +3214,7 @@ fn build_index_inner_subtree(
             catalog,
             ctx,
             None,
+            &state.reader_storage,
         )?));
     }
     match plan {
@@ -3140,17 +3236,23 @@ fn build_index_inner_subtree(
                 ctx.clone(),
             )) as Box<dyn Executor>)
         }
-        // The union scan only has to stay in the plan: the reader below it
-        // merges the transaction's own rows (see `build_with_state`).
-        PhysicalPlan::UnionScan(_) => build_index_inner_subtree(
-            only_child(plan)?,
-            join,
-            probe_parts,
-            shared,
-            catalog,
-            ctx,
-            state,
-        ),
+        // Go `buildUnionScanForIndexJoin` builds a union scan over each
+        // probe's reader; here the reader below it merges the transaction's
+        // own rows instead, so it reads the merged storage.
+        PhysicalPlan::UnionScan(_) => {
+            let previous = std::mem::replace(&mut state.reader_storage, ReaderStorage::Merged);
+            let built = build_index_inner_subtree(
+                only_child(plan)?,
+                join,
+                probe_parts,
+                shared,
+                catalog,
+                ctx,
+                state,
+            );
+            state.reader_storage = previous;
+            built
+        }
         PhysicalPlan::Selection(selection) => {
             let child = build_index_inner_subtree(
                 only_child(plan)?,
@@ -3293,8 +3395,17 @@ fn build_index_lookup_source(
 ) -> Result<IndexLookupSource, DriverError> {
     if index_inner_reader_payload(inner).is_some() && index_inner_partial_aggregate(inner).is_none()
     {
-        return build_index_inner_reader(inner, join, probe_parts, None, catalog, ctx, None)
-            .map(IndexLookupSource::Leaf);
+        return build_index_inner_reader(
+            inner,
+            join,
+            probe_parts,
+            None,
+            catalog,
+            ctx,
+            None,
+            &state.reader_storage,
+        )
+        .map(IndexLookupSource::Leaf);
     }
     let probes = std::sync::Arc::new(std::sync::Mutex::new(SharedIndexJoinProbes::default()));
     let exec = build_index_inner_subtree(inner, join, probe_parts, &probes, catalog, ctx, state)?;
@@ -5130,9 +5241,12 @@ fn build_index_merge_reader(
             "a physical index-merge final table plan reads a different table",
         ));
     }
-    let table = catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
-        DriverError::unsupported("physical index-merge table ID is absent from the catalog")
-    })?;
+    let (table, separated) =
+        state
+            .reader_storage
+            .table(catalog.physical_kv_table_by_id(table_id).ok_or_else(|| {
+                DriverError::unsupported("physical index-merge table ID is absent from the catalog")
+            })?);
     let physical_ids = table.record_physical_ids();
     // Go starts one worker goroutine per partial in plan order, all racing to
     // push handle tasks into one fetch channel. The lighter index requests
@@ -5164,16 +5278,19 @@ fn build_index_merge_reader(
                     scan.index_id,
                     ranges,
                     RowDecodeContext::for_query(ctx),
-                    PushdownStatementContext::from_stmt(ctx)
-                        .with_plan_id(i64::from(scan.base.base.id()))
-                        .with_estimated_net_bytes(
-                            partial.cop_net_data_size(
-                                true,
-                                tidb_config::tikvcfg::get_global_config()
-                                    .tikv_client
-                                    .enable_chunk_rpc,
+                    ReaderStorage::statement(
+                        separated,
+                        PushdownStatementContext::from_stmt(ctx)
+                            .with_plan_id(i64::from(scan.base.base.id()))
+                            .with_estimated_net_bytes(
+                                partial.cop_net_data_size(
+                                    true,
+                                    tidb_config::tikvcfg::get_global_config()
+                                        .tikv_client
+                                        .enable_chunk_rpc,
+                                ),
                             ),
-                        ),
+                    ),
                 );
                 source.set_lookup_concurrency(ctx.index_lookup_concurrency());
                 source.set_lookup_size(ctx.index_lookup_size());
@@ -5341,7 +5458,10 @@ fn build_index_merge_reader(
         partials,
         reader.is_intersection_type,
     )
-    .with_table_statement(cop_reader_statement(table_scan, Some(table_plan), false, None, ctx))
+    .with_table_statement(ReaderStorage::statement(
+        separated,
+        cop_reader_statement(table_scan, Some(table_plan), false, None, ctx),
+    ))
     .with_batch_size(ctx.index_lookup_size())
     .with_output_columns(output_columns)
     .with_by_items(by_items)
@@ -5815,6 +5935,7 @@ fn build_reader_node(
                 state.range_group.as_ref(),
                 catalog,
                 ctx,
+                &state.reader_storage,
             )?;
             ctx.mark_physical_table_reader();
             Ok(executor)
@@ -6041,7 +6162,7 @@ fn build_with_state(
     {
         return Ok(state.table_task_source.take().unwrap().1);
     }
-    if state.executor_runtime_stats_source.is_none() {
+    if state.executor_runtime_stats_source.is_none() && !state.untraced {
         state.executor_runtime_stats_source = ctx.executor_runtime_stats_source().cloned();
     }
     if let Some(receiver) = state.shuffle_receivers.remove(&plan.id()) {
@@ -6068,16 +6189,15 @@ fn build_with_state(
             })?;
             build_with_state(child, catalog, ctx, state)
         }
-        PhysicalPlan::TableScan(scan) => {
-            build_table_scan(
-                plan,
-                scan,
-                catalog,
-                ctx,
-                state.reader_net_bytes,
-                state.range_group.as_ref(),
-            )
-        }
+        PhysicalPlan::TableScan(scan) => build_table_scan(
+            plan,
+            scan,
+            catalog,
+            ctx,
+            state.reader_net_bytes,
+            state.range_group.as_ref(),
+            &state.reader_storage,
+        ),
         PhysicalPlan::TableSample(sample) => build_table_sample(plan, sample, catalog, ctx),
         PhysicalPlan::IndexScan(scan) => build_index_reader(
             plan,
@@ -6093,6 +6213,7 @@ fn build_with_state(
             state.range_group.as_ref(),
             catalog,
             ctx,
+            &state.reader_storage,
         ),
         PhysicalPlan::TableReader(_)
         | PhysicalPlan::IndexReader(_)
@@ -6484,11 +6605,9 @@ fn build_with_state(
             Ok(Box::new(MaxOneRowExec::new(executor_meta, child)) as Box<dyn Executor>)
         }
         PhysicalPlan::NominalSort(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
-        // Go builds a `UnionScanExec` over the reader here. This tier's readers
-        // merge the transaction's own rows (and a temporary table's) themselves
-        // (`enable_dirty_union_scan_merge`), so the operator only has to stay
-        // in the plan for EXPLAIN and the plan digest.
-        PhysicalPlan::UnionScan(_) => build_with_state(only_child(plan)?, catalog, ctx, state),
+        PhysicalPlan::UnionScan(union_scan) => {
+            build_union_scan(plan, union_scan, catalog, ctx, state)
+        }
         // Interim M1 seam: a PassThrough sender adds no local semantics, so
         // the fragment still executes in place. M2 replaces this with real
         // DispatchMPPTask routing to the TiFlash store.
@@ -6508,6 +6627,435 @@ fn build_with_state(
         ))),
     }?;
     Ok(state.meter(plan, executor, ctx.statement_memory()))
+}
+
+/// The reader a `UnionScanExec` merges with the transaction's buffered rows:
+/// Go `buildUnionScanFromReader`'s `reader.(type)` arms.
+struct UnionScanReader {
+    /// The table the reader scans (a dynamic partition read names the
+    /// partitioned table; its rows carry `_tidb_tid`).
+    table_id: i64,
+    /// The index an index reader or lookup scans.
+    index_id: Option<i64>,
+    /// Go `keepOrder`.
+    keep_order: bool,
+    /// Go `desc`.
+    desc: bool,
+    /// Go `collectColIdxFromByItems`' input: the plan column ids of the
+    /// reader's `byItems`, whose rows the union scan then sorts by
+    /// (`needExtraSorting`). Empty when the reader has none.
+    by_item_columns: Vec<i64>,
+}
+
+/// Go `collectColIdxFromByItems`'s input: the plan column identity
+/// (`unique_id`) of each item. A
+/// non-column item is Go's "Not support non-column in orderBy pushed down".
+fn by_item_column_ids(
+    items: &[tidb_expr::aggregation::ByItems],
+) -> Result<Vec<i64>, DriverError> {
+    items
+        .iter()
+        .map(|item| match &item.expr {
+            tidb_expr::expression::Expression::Column(column) => Ok(column.unique_id),
+            _ => Err(DriverError::unsupported(
+                "Not support non-column in orderBy pushed down",
+            )),
+        })
+        .collect()
+}
+
+fn union_scan_reader(plan: &PhysicalPlan) -> Result<Option<UnionScanReader>, DriverError> {
+    Ok(match plan {
+        PhysicalPlan::TableReader(reader)
+            if reader.store_type != tidb_planner::physical_table_reader::StoreType::TiDb =>
+        {
+            let Some(scan) = reader.table_plan.as_deref().and_then(embedded_table_scan) else {
+                return Ok(None);
+            };
+            Some(UnionScanReader {
+                table_id: scan.table_id,
+                index_id: None,
+                keep_order: scan.keep_order,
+                desc: scan.desc,
+                by_item_columns: by_item_column_ids(&scan.by_items)?,
+            })
+        }
+        PhysicalPlan::IndexReader(reader) => {
+            let Some(scan) = reader.index_plan.as_deref().and_then(embedded_index_scan) else {
+                return Ok(None);
+            };
+            Some(UnionScanReader {
+                table_id: scan.table_id,
+                index_id: Some(scan.index_id),
+                keep_order: scan.keep_order,
+                desc: scan.desc,
+                by_item_columns: by_item_column_ids(&scan.by_items)?,
+            })
+        }
+        PhysicalPlan::IndexLookUpReader(reader) => {
+            let Some(scan) = reader.index_plan.as_deref().and_then(embedded_index_scan) else {
+                return Ok(None);
+            };
+            Some(UnionScanReader {
+                table_id: scan.table_id,
+                index_id: Some(scan.index_id),
+                keep_order: reader.keep_order,
+                desc: scan.desc,
+                by_item_columns: by_item_column_ids(&scan.by_items)?,
+            })
+        }
+        PhysicalPlan::IndexMergeReader(reader) => {
+            let Some(scan) = reader.table_plan.as_deref().and_then(embedded_table_scan) else {
+                return Ok(None);
+            };
+            // Go `buildUnionScanFromReader`: an index merge with `byItems`
+            // keeps `keepOrder`, takes `desc` from the first item and sorts
+            // by the items' columns.
+            let mut keep_order = false;
+            let mut desc = false;
+            let mut by_item_columns = Vec::new();
+            if let Some(first) = reader.by_items.first() {
+                keep_order = reader.keep_order;
+                desc = first.desc;
+                by_item_columns = by_item_column_ids(&reader.by_items)?;
+            }
+            Some(UnionScanReader {
+                table_id: scan.table_id,
+                index_id: None,
+                keep_order,
+                desc,
+                by_item_columns,
+            })
+        }
+        _ => None,
+    })
+}
+
+/// Go `plannerutil.HandleCols` as `UnionScanExec` uses it: the handle of a
+/// row, built from the union scan's handle columns the way the table writes
+/// its record keys.
+struct UnionScanHandleCols {
+    /// The handle columns' offsets in the row, in the handle's order.
+    offsets: Vec<usize>,
+    /// The row's types.
+    types: Vec<FieldType>,
+    /// The table, for a common handle (`CommonHandleCols.BuildHandle`);
+    /// `None` for an integer handle (`IntHandleCols`).
+    common: Option<Arc<crate::KvTable>>,
+    zone: tidb_datatype::SessionTimeZone,
+}
+
+impl crate::union_scan::HandleColumns for UnionScanHandleCols {
+    fn build_handle(
+        &self,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<crate::kv_table::TableHandle, crate::ExecError> {
+        match &self.common {
+            None => Ok(crate::kv_table::TableHandle::Int(
+                row.get_int64(self.offsets[0]),
+            )),
+            Some(table) => {
+                let values = self
+                    .offsets
+                    .iter()
+                    .map(|&offset| row.get_datum(offset, &self.types[offset]))
+                    .collect::<Vec<_>>();
+                table
+                    .common_handle_of_values(&values, &self.zone)
+                    .map_err(|error| crate::ExecError::internal(format!("{error:?}")))
+            }
+        }
+    }
+
+    fn compare_handles(
+        &self,
+        left: &[tidb_datatype::Datum],
+        right: &[tidb_datatype::Datum],
+        collators: &[tidb_datatype::Collation],
+    ) -> Result<std::cmp::Ordering, crate::ExecError> {
+        for &offset in &self.offsets {
+            // Go `IntHandleCols.Compare` compares with the binary collator,
+            // `CommonHandleCols.Compare` with each column's own.
+            let collation = match self.common {
+                None => tidb_datatype::Collation::Binary,
+                Some(_) => collators
+                    .get(offset)
+                    .copied()
+                    .unwrap_or(tidb_datatype::Collation::Binary),
+            };
+            let ordering = left[offset]
+                .compare(&right[offset], collation)
+                .map_err(|error| crate::ExecError::internal(format!("{error:?}")))?;
+            if ordering != std::cmp::Ordering::Equal {
+                return Ok(ordering);
+            }
+        }
+        Ok(std::cmp::Ordering::Equal)
+    }
+}
+
+/// Go `memRowsIter`: a union scan's mem reader -- here the reader itself over
+/// the buffered entries -- pulled one row at a time. It opens on the first
+/// pull and closes with the union scan, so a re-opened union scan (an
+/// Apply's inner side) reads the buffered rows again.
+struct ReaderMemRowsIter {
+    reader: Box<dyn Executor>,
+    chunk: Option<Chunk>,
+    position: usize,
+    opened: bool,
+}
+
+impl crate::mem_reader::MemRowsIter for ReaderMemRowsIter {
+    fn next_row(
+        &mut self,
+    ) -> Result<Option<Vec<tidb_datatype::Datum>>, crate::mem_reader::MemReaderError> {
+        if !self.opened {
+            self.reader.open()?;
+            self.opened = true;
+            self.chunk = Some(self.reader.new_chunk());
+            self.position = 0;
+        }
+        let Some(chunk) = self.chunk.as_mut() else {
+            return Ok(None);
+        };
+        if self.position >= chunk.num_rows() {
+            self.reader.next(chunk)?;
+            self.position = 0;
+            if chunk.num_rows() == 0 {
+                self.chunk = None;
+                return Ok(None);
+            }
+        }
+        let row = chunk
+            .get_row(self.position)
+            .get_datum_row(self.reader.ret_field_types());
+        self.position += 1;
+        Ok(Some(row))
+    }
+
+    fn close(&mut self) {
+        if self.opened {
+            self.opened = false;
+            self.chunk = None;
+            if let Err(error) = self.reader.close() {
+                eprintln!("union scan mem reader close: {error:?}");
+            }
+        }
+    }
+}
+
+/// Go `buildUnionScanExec` / `buildUnionScanFromReader`: the reader below
+/// reads the statement's snapshot, and `UnionScanExec` merges it with the
+/// transaction's buffered rows of the same key ranges. Go's mem readers
+/// (`buildMemTableReader` and its index siblings) decode the membuffer
+/// entries as the reader decodes coprocessor rows; this tier builds that mem
+/// reader as the same reader over the buffered entries, copied when the
+/// statement starts ([`crate::cluster_storage::MemBufferSnapshot`]).
+///
+/// A point read, a dual or a sample is returned as is (Go: they handle the
+/// buffer themselves or read disk only). A backend without a separate
+/// snapshot keeps its merged reader, as does a reader shape Go's builder has
+/// no arm for.
+fn build_union_scan(
+    plan: &PhysicalPlan,
+    union_scan: &tidb_planner::physical::PhysicalUnionScan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    state: &mut BuildState,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let child_plan = only_child(plan)?;
+    // Go: "If the push-downed condition contains virtual column, we may
+    // build a selection upon reader."
+    let reader_plan = match child_plan {
+        PhysicalPlan::Selection(_) => only_child(child_plan)?,
+        other => other,
+    };
+    let merged = |state: &mut BuildState| {
+        let previous = match state.reader_storage {
+            ReaderStorage::Snapshot => Some(std::mem::replace(
+                &mut state.reader_storage,
+                ReaderStorage::Merged,
+            )),
+            _ => None,
+        };
+        let built = build_with_state(child_plan, catalog, ctx, state);
+        if let Some(previous) = previous {
+            state.reader_storage = previous;
+        }
+        built
+    };
+    if matches!(
+        reader_plan,
+        PhysicalPlan::PointGet(_)
+            | PhysicalPlan::BatchPointGet(_)
+            | PhysicalPlan::TableDual(_)
+            | PhysicalPlan::TableSample(_)
+    ) {
+        return build_with_state(child_plan, catalog, ctx, state);
+    }
+    let Some(reader) = union_scan_reader(reader_plan)? else {
+        return merged(state);
+    };
+    let table = catalog
+        .physical_kv_table_by_id(reader.table_id)
+        .ok_or_else(|| {
+            DriverError::unsupported("a union scan's table ID is absent from the catalog")
+        })?;
+    let schema = plan_schema(plan)?;
+    let handle_offsets = union_scan
+        .handle_cols
+        .iter()
+        .map(|column| usize::try_from(schema.column_index(column)).ok())
+        .collect::<Option<Vec<_>>>();
+    let (Some(handle_offsets), ReaderStorage::Snapshot) = (handle_offsets, &state.reader_storage)
+    else {
+        return merged(state);
+    };
+    if handle_offsets.is_empty() || table.snapshot_reader().is_none() {
+        return merged(state);
+    }
+    // The buffered entries of every physical table the reader can reach,
+    // and of the logical table a global index is keyed under.
+    let mut physical_ids = table.record_physical_ids();
+    physical_ids.push(table.table_id);
+    physical_ids.push(reader.table_id);
+    physical_ids.sort_unstable();
+    physical_ids.dedup();
+    let ranges = physical_ids
+        .iter()
+        .map(|id| {
+            (
+                tidb_txnkv::Key::from_bytes(tidb_codec::table_key::encode_table_prefix(*id)),
+                tidb_txnkv::Key::from_bytes(tidb_codec::table_key::encode_table_prefix(
+                    id.saturating_add(1),
+                )),
+            )
+        })
+        .collect::<Vec<_>>();
+    let snapshot = table.mem_buffer_snapshot(&ranges).ok_or_else(|| {
+        DriverError::unsupported("a union scan's storage has no membuffer to read")
+    })?;
+    let child = build_with_state(child_plan, catalog, ctx, state)?;
+    let mut mem_state = BuildState {
+        reader_storage: ReaderStorage::MemBuffer(Arc::clone(&snapshot)),
+        untraced: true,
+        has_lock: state.has_lock,
+        ..BuildState::default()
+    };
+    let mem_reader = build_with_state(child_plan, catalog, ctx, &mut mem_state)?;
+    let schema = child.schema().clone();
+    if schema.len() != plan_schema(plan)?.len() || mem_reader.schema().len() != schema.len() {
+        return Err(DriverError::unsupported(
+            "a union scan's reader does not produce the union scan's columns",
+        ));
+    }
+    let types = child.ret_field_types().to_vec();
+    let collators = types
+        .iter()
+        .map(|field_type| field_type.collation())
+        .collect::<Vec<_>>();
+    // Go `usedIndex`: an index reader's or lookup's rows are ordered by its
+    // index columns, located in the reader's columns by name; a table read
+    // by its handle alone (Go's `byItems` arms have no counterpart here).
+    let by_item_used_index = reader
+        .by_item_columns
+        .iter()
+        .filter_map(|id| {
+            schema
+                .columns
+                .iter()
+                .position(|column| column.unique_id == *id)
+        })
+        .collect::<Vec<_>>();
+    let need_extra_sorting = !reader.by_item_columns.is_empty();
+    let used_index = reader
+        .index_id
+        .and_then(|index_id| table.indexes().iter().find(|index| index.id == index_id))
+        .map(|index| {
+            index
+                .column_offsets
+                .iter()
+                .filter_map(|offset| {
+                    let name = &table.columns.get(*offset)?.name;
+                    schema.columns.iter().position(|column| {
+                        column
+                            .orig_name
+                            .rsplit('.')
+                            .next()
+                            .is_some_and(|column_name| column_name.go_lower_eq(name))
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    // Go `usedIndex = colIdxes` for an index merge with `byItems`.
+    let used_index = if need_extra_sorting {
+        by_item_used_index
+    } else {
+        used_index
+    };
+    let handle_cols = UnionScanHandleCols {
+        offsets: handle_offsets,
+        types: types.clone(),
+        common: (!table.common_handle_offsets().is_empty()).then(|| Arc::clone(&table)),
+        zone: ctx.session_zone(),
+    };
+    let conditions_with_vir_col = union_scan
+        .conditions
+        .iter()
+        .filter(|condition| {
+            tidb_expr::expr_util::predicates::contain_virtual_column(std::slice::from_ref(
+                condition,
+            ))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let conditions_with_vir_col = resolve_expressions(&conditions_with_vir_col, &schema)?;
+    let columns = schema
+        .columns
+        .iter()
+        .zip(&types)
+        .map(|(column, field_type)| crate::union_scan::UnionScanColumn {
+            id: column.id,
+            name: column
+                .orig_name
+                .rsplit('.')
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
+            field_type: field_type.clone(),
+        })
+        .collect();
+    Ok(Box::new(crate::union_scan::UnionScanExec::new(
+        crate::union_scan::UnionScanSpec {
+            meta: meta(ctx, plan, schema),
+            child,
+            mem_buf_snap: Box::new(snapshot),
+            added_rows_iter: Box::new(ReaderMemRowsIter {
+                reader: mem_reader,
+                chunk: None,
+                position: 0,
+                opened: false,
+            }),
+            conditions_with_vir_col,
+            columns,
+            table_record_id: reader.table_id,
+            // The readers on both sides fill the virtual columns already.
+            virtual_column_index: Vec::new(),
+            cache_table: false,
+            partition_id_map: std::collections::BTreeSet::new(),
+            keep_order: reader.keep_order,
+            compare_exec: crate::union_scan::CompareExec {
+                collators,
+                used_index,
+                desc: reader.desc,
+                need_extra_sorting,
+                handle_cols: Box::new(handle_cols),
+            },
+            ctx: ctx.clone(),
+            stmt: ctx.clone(),
+        },
+    )))
 }
 
 pub(super) fn build(

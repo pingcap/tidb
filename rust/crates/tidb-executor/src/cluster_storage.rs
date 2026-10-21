@@ -158,6 +158,20 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
         self.scan(start, end, limit)
     }
 
+    /// [`get`](Self::get) over the committed snapshot alone: Go
+    /// `GetSnapshot(startTS).Get`, which has no membuffer. A snapshot that
+    /// overlays its transaction's staged writes overrides this to skip the
+    /// overlay.
+    fn get_committed(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        self.get(key)
+    }
+
+    /// [`batch_get`](Self::batch_get) over the committed snapshot alone; see
+    /// [`get_committed`](Self::get_committed).
+    fn batch_get_committed(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        self.batch_get(keys)
+    }
+
     /// The timestamp every read of this snapshot is served at.
     ///
     /// A remote scan has to name it: a coprocessor request that read at any
@@ -705,6 +719,18 @@ impl MutationBuffer {
             state.changes.clear();
         }
     }
+    /// The buffered entries of the `[start, end)` ranges as they stand now,
+    /// for a `UnionScanExec` (see [`MemBufferSnapshot`]).
+    pub fn snapshot_of(&self, ranges: &[(Key, Key)]) -> MemBufferSnapshot {
+        let state = self.state();
+        let mut entries = BTreeMap::new();
+        for (start, end) in ranges {
+            for (key, value, _) in state.entries(Some(start.as_bytes()), Some(end.as_bytes())) {
+                entries.insert(key.as_bytes().to_vec(), value.unwrap_or_default());
+            }
+        }
+        MemBufferSnapshot { entries }
+    }
     /// Copies the staged value view without consuming native flags.
     pub fn snapshot(&self) -> Vec<(Key, Option<Vec<u8>>)> {
         self.state()
@@ -811,6 +837,150 @@ impl MutationBuffer {
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+/// Go `kv.MemBuffer.SnapshotGetter()` / `SnapshotIter` as `UnionScanExec`
+/// reads them: the transaction's buffered entries of the scanned tables as
+/// the statement found them -- copied when the executor is built, before the
+/// statement writes anything, so `INSERT INTO t SELECT ... FROM t` reads the
+/// rows it started from. A tombstone is an empty value, as in the buffer.
+///
+/// Go's snapshot is the buffer's first staging, which a statement opens as it
+/// starts. This buffer also stages user savepoints, so its first staging is
+/// not the statement's; the copy taken at the statement's start is.
+#[derive(Debug, Default)]
+pub struct MemBufferSnapshot {
+    entries: BTreeMap<Vec<u8>, Vec<u8>>,
+}
+
+impl MemBufferSnapshot {
+    /// Go `kv.Getter.Get`: `None` is `kv.ErrNotExist`; a tombstone is
+    /// `Some(empty)`.
+    pub fn get(&self, key: &Key) -> Option<Vec<u8>> {
+        self.entries.get(key.as_bytes()).cloned()
+    }
+
+    /// Go `SnapshotIter(start, end)` (or `SnapshotIterReverse(end, start)`),
+    /// as the ordered pairs it yields, tombstones included.
+    pub fn entries(&self, start: &Key, end: &Key, reverse: bool) -> Vec<(Key, Vec<u8>)> {
+        if start.as_bytes() >= end.as_bytes() {
+            return Vec::new();
+        }
+        let range = self
+            .entries
+            .range(start.as_bytes().to_vec()..end.as_bytes().to_vec())
+            .map(|(key, value)| (Key::from_bytes(key.clone()), value.clone()));
+        if reverse {
+            range.rev().collect()
+        } else {
+            range.collect()
+        }
+    }
+
+    /// Whether the copy holds nothing at all.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+impl crate::union_scan::MemBufferSnapshotGetter for Arc<MemBufferSnapshot> {
+    fn get(&self, key: &Key) -> Result<Option<Vec<u8>>, crate::ExecError> {
+        Ok(MemBufferSnapshot::get(self, key))
+    }
+}
+
+/// The storage a `UnionScanExec`'s mem reader reads: Go's `memTableReader` /
+/// `memIndexReader` walk the membuffer over the reader's key ranges and
+/// decode each entry as the reader decodes a coprocessor row, and this tier's
+/// mem reader is that reader over the buffered entries alone. A tombstone is
+/// absent here, as the mem readers skip it (`len(value) == 0`).
+#[derive(Clone, Debug)]
+pub struct MemBufferStorage(Arc<MemBufferSnapshot>);
+
+impl MemBufferStorage {
+    /// A read-only view of `snapshot`.
+    #[must_use]
+    pub fn new(snapshot: Arc<MemBufferSnapshot>) -> Self {
+        Self(snapshot)
+    }
+
+    fn read_only() -> StorageError {
+        StorageError::Backend("a union scan's membuffer view is read-only".to_owned())
+    }
+
+    fn live_entries(&self, start: Option<&Key>, end: Option<&Key>) -> Vec<(Key, Vec<u8>)> {
+        use std::ops::Bound;
+        let lower = start.map_or(Bound::Unbounded, |key| {
+            Bound::Included(key.as_bytes().to_vec())
+        });
+        let upper = end.map_or(Bound::Unbounded, |key| {
+            Bound::Excluded(key.as_bytes().to_vec())
+        });
+        if let (Bound::Included(lower), Bound::Excluded(upper)) = (&lower, &upper) {
+            if lower >= upper {
+                return Vec::new();
+            }
+        }
+        self.0
+            .entries
+            .range((lower, upper))
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(key, value)| (Key::from_bytes(key.clone()), value.clone()))
+            .collect()
+    }
+}
+
+impl TableStorage for MemBufferStorage {
+    fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
+        match self.0.get(key) {
+            Some(value) if !value.is_empty() => Ok(value),
+            _ => Err(StorageError::NotFound),
+        }
+    }
+
+    fn set(&mut self, _key: Key, _value: Vec<u8>) -> Result<(), StorageError> {
+        Err(Self::read_only())
+    }
+
+    fn delete(&mut self, _key: Key) -> Result<(), StorageError> {
+        Err(Self::read_only())
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        Ok(Box::new(crate::storage::MaterializedStorageIterator::new(
+            self.live_entries(start, upper_bound),
+        )))
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        let mut entries = self.live_entries(lower_bound, upper_bound);
+        entries.reverse();
+        Ok(Box::new(crate::storage::MaterializedStorageIterator::new(
+            entries,
+        )))
+    }
+
+    fn reads_processed_keys(&self) -> bool {
+        false
+    }
+
+    fn key_count(&self) -> usize {
+        self.0.entries.len()
+    }
+
+    fn clear(&mut self) {}
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Box::new(self.clone())
     }
 }
 
@@ -925,6 +1095,14 @@ impl ClusterSnapshot for SwappableSnapshot {
         self.snapshot()?.scan_committed(start, end, limit)
     }
 
+    fn get_committed(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        self.snapshot()?.get_committed(key)
+    }
+
+    fn batch_get_committed(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        self.snapshot()?.batch_get_committed(keys)
+    }
+
     fn start_ts(&self) -> u64 {
         self.bound
             .as_ref()
@@ -937,6 +1115,90 @@ impl ClusterSnapshot for SwappableSnapshot {
         self.bound
             .as_mut()
             .is_some_and(|snapshot| snapshot.declare_autocommit_point_get())
+    }
+}
+
+/// Go `KVTxn.GetSnapshot()` / `GetSnapshotWithStmtReadTS`: a snapshot whose
+/// every read is the committed one, with none of the transaction's staged
+/// writes. A coprocessor reads exactly this; the transaction's own buffered
+/// rows reach a query only through the `UnionScanExec` above its reader.
+#[derive(Debug)]
+struct CommittedOnlySnapshot(Arc<Mutex<dyn ClusterSnapshot>>);
+
+impl CommittedOnlySnapshot {
+    fn inner(&self) -> std::sync::MutexGuard<'_, dyn ClusterSnapshot + 'static> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+impl ClusterSnapshot for CommittedOnlySnapshot {
+    fn set_snapshot_read_options(&mut self, options: tidb_txnkv::SnapshotReadOptions) {
+        self.inner().set_snapshot_read_options(options);
+    }
+
+    fn set_statement_kv_context(&mut self, context: &tidb_txnkv::StatementKvContextCell) {
+        self.inner().set_statement_kv_context(context);
+    }
+
+    fn point_rpc_counts(&mut self) -> (u64, u64) {
+        self.inner().point_rpc_counts()
+    }
+
+    fn lock_keys_for_read(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        only_if_exists: bool,
+    ) -> Result<(), StorageError> {
+        self.inner().lock_keys_for_read(keys, wait, only_if_exists)
+    }
+
+    fn prepare(&mut self) -> Result<(), StorageError> {
+        self.inner().prepare()
+    }
+
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        self.inner().get_committed(key)
+    }
+
+    fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        self.inner().batch_get_committed(keys)
+    }
+
+    fn scan(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.inner().scan_committed(start, end, limit)
+    }
+
+    fn scan_committed(
+        &mut self,
+        start: &Key,
+        end: &Key,
+        limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.inner().scan_committed(start, end, limit)
+    }
+
+    fn get_committed(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        self.inner().get_committed(key)
+    }
+
+    fn batch_get_committed(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
+        self.inner().batch_get_committed(keys)
+    }
+
+    fn start_ts(&self) -> u64 {
+        self.inner().start_ts()
+    }
+
+    fn declare_autocommit_point_get(&mut self) -> bool {
+        self.inner().declare_autocommit_point_get()
     }
 }
 
@@ -980,6 +1242,9 @@ impl ClusterTableStorage {
     pub fn snapshot_only(&self) -> Self {
         Self {
             buffer: MutationBuffer::new(),
+            snapshot: Arc::new(Mutex::new(CommittedOnlySnapshot(Arc::clone(
+                &self.snapshot,
+            )))),
             ..self.clone()
         }
     }
@@ -1309,6 +1574,14 @@ impl TableStorage for ClusterTableStorage {
             Err(PushdownScannerError::Unsupported(_reason)) => None,
             Err(PushdownScannerError::Backend(error)) => Some(Err(error)),
         }
+    }
+
+    fn snapshot_reader(&self) -> Option<Box<dyn TableStorage>> {
+        Some(Box::new(self.snapshot_only()))
+    }
+
+    fn mem_buffer_snapshot(&self, ranges: &[(Key, Key)]) -> Option<Arc<MemBufferSnapshot>> {
+        Some(Arc::new(self.buffer.snapshot_of(ranges)))
     }
 
     fn coprocessor_client(&self) -> Option<(Arc<dyn PushdownScanner>, u64)> {

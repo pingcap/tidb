@@ -1116,7 +1116,7 @@ mod tests {
 
         let mut catalog = Catalog::default();
         catalog.register_kv("t", table);
-        let ctx = crate::StmtContext::for_query();
+        let ctx = crate::StmtContext::for_query_in_dirty_transaction(&[91]);
         assert_eq!(
             run_select_on("SELECT a, b FROM t WHERE a > 5 ORDER BY a", &catalog, &ctx).unwrap(),
             vec![

@@ -3738,6 +3738,20 @@ impl StmtContext {
         Self::for_query_with_memory(StatementMemory::default())
     }
 
+    /// A query inside an open transaction that has written `table_ids`: Go
+    /// plans such a table's reads under a `UnionScan`
+    /// (`tableHasDirtyContent`), through which alone the buffered rows reach
+    /// the statement.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn for_query_in_dirty_transaction(table_ids: &[i64]) -> Self {
+        let ctx = Self::for_query().with_optimistic_transaction(true);
+        for table_id in table_ids {
+            ctx.staged_writes().mark_dirty(*table_id);
+        }
+        ctx
+    }
+
     /// Uses the session's statement trackers from construction onward. Go
     /// `ResetContextOfStmt` initializes these beneath the session roots;
     /// constructing and replacing standalone roots would only discard them.

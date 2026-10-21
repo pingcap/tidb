@@ -842,6 +842,12 @@ mod tests {
         );
 
         session.run("USE app").unwrap();
+
+        // The statements share one uncommitted buffer, which Go reads only
+
+        // inside the transaction that wrote it (through a union scan).
+
+        session.run("BEGIN").unwrap();
         assert!(matches!(
             session
                 .run("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 30)")
@@ -933,6 +939,9 @@ mod tests {
             "a table with a literal DEFAULT is served"
         );
         session.run("USE app").unwrap();
+        // The statements share one uncommitted buffer, which Go reads only
+        // inside the transaction that wrote it (through a union scan).
+        session.run("BEGIN").unwrap();
         session.run("INSERT INTO d (id) VALUES (1)").unwrap();
         let StmtResult::Rows(rows) = session.run("SELECT v FROM d").unwrap() else {
             panic!("expected rows");
@@ -979,6 +988,9 @@ mod tests {
         );
         assert!(skipped.is_empty(), "{skipped:?}");
         session.run("USE app").unwrap();
+        // The statements share one uncommitted buffer, which Go reads only
+        // inside the transaction that wrote it (through a union scan).
+        session.run("BEGIN").unwrap();
         session
             .run("INSERT INTO t(id,v) VALUES (1,10),(2,20)")
             .unwrap();
@@ -1036,6 +1048,9 @@ mod tests {
         );
         assert!(skipped.is_empty());
         session.run("USE app").unwrap();
+        // The statements share one uncommitted buffer, which Go reads only
+        // inside the transaction that wrote it (through a union scan).
+        session.run("BEGIN").unwrap();
         session.run("INSERT INTO t(id) VALUES (1),(2),(3)").unwrap();
         let StmtResult::Rows(rows) = session.run("SELECT * FROM t ORDER BY id").unwrap() else {
             panic!("expected rows");
@@ -1425,6 +1440,9 @@ mod tests {
         );
         assert!(skipped.is_empty(), "a _ci table is served, not refused");
         session.run("USE app").unwrap();
+        // The statements share one uncommitted buffer, which Go reads only
+        // inside the transaction that wrote it (through a union scan).
+        session.run("BEGIN").unwrap();
         session
             .run("INSERT INTO ci (id, c) VALUES (1,'a'),(2,'B'),(3,'b'),(4,'C')")
             .unwrap();
@@ -1487,6 +1505,9 @@ mod tests {
             &LocalTableAutoIds::default(),
         );
         session.run("USE app").unwrap();
+        // The statements share one uncommitted buffer, which Go reads only
+        // inside the transaction that wrote it (through a union scan).
+        session.run("BEGIN").unwrap();
         session
             .run("INSERT INTO ci (id,c) VALUES (1,'B'),(2,'b')")
             .unwrap();
@@ -1520,6 +1541,9 @@ mod tests {
             &LocalTableAutoIds::default(),
         );
         session.run("USE app").unwrap();
+        // The statements share one uncommitted buffer, which Go reads only
+        // inside the transaction that wrote it (through a union scan).
+        session.run("BEGIN").unwrap();
         // Write one row through the driver, promote its staged bytes into the
         // snapshot, and start over: that is what a COMMIT leaves behind for the
         // next statement to read.
@@ -1671,11 +1695,10 @@ mod tests {
         first.run("INSERT INTO no_pk (v) VALUES (10)").unwrap();
         second.run("INSERT INTO no_pk (v) VALUES (20)").unwrap();
 
+        // Two record keys, one per session's row. (Neither session reads the
+        // other's uncommitted row: a reader sees the snapshot, and only its
+        // own transaction's buffer through a union scan.)
         assert_eq!(buffer.len(), 2, "peer sessions must not overwrite rowids");
-        let StmtResult::Rows(rows) = first.run("SELECT v FROM no_pk ORDER BY v").unwrap() else {
-            panic!("expected rows");
-        };
-        assert_eq!(format!("{rows:?}"), "[[Int(10)], [Int(20)]]");
     }
 
     /// The `CREATE INDEX`/`DROP INDEX` backfill walks the rows a table already
@@ -1764,6 +1787,9 @@ mod tests {
         );
         assert!(skipped.is_empty());
         session.run("USE app").unwrap();
+        // The statements share one uncommitted buffer, which Go reads only
+        // inside the transaction that wrote it (through a union scan).
+        session.run("BEGIN").unwrap();
         session
             .run("INSERT INTO ci(id,c) VALUES (1,'alphabet'),(2,'alphanumeric'),(3,'beta')")
             .unwrap();
@@ -1938,6 +1964,9 @@ mod tests {
             );
             assert!(skipped.is_empty());
             session.run("USE app").unwrap();
+            // The statements share one uncommitted buffer, which Go reads only
+            // inside the transaction that wrote it (through a union scan).
+            session.run("BEGIN").unwrap();
             session
                 .run("INSERT INTO iv (id, a) VALUES (1, 10), (2, 20), (3, 30)")
                 .unwrap();

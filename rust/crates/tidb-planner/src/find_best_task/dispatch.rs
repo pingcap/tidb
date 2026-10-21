@@ -1810,6 +1810,17 @@ fn empty_range_dual_task(ds: &crate::logical::DataSource, ctx: &DispatchContext<
     Task::Root(root)
 }
 
+/// Go's `[]*util.ByItems` built from a property's sort items.
+fn sort_items_to_by_items(items: &[crate::physical_property::SortItem]) -> Vec<tidb_expr::aggregation::ByItems> {
+    items
+        .iter()
+        .map(|item| tidb_expr::aggregation::ByItems {
+            expr: tidb_expr::expression::Expression::Column(item.col.clone()),
+            desc: item.desc,
+        })
+        .collect()
+}
+
 /// Go `matchProperty`'s verdict for one access path: whether it delivers the
 /// required order, and the index columns whose per-range constants force the
 /// reader to merge-sort the range groups (`AccessPath.GroupByColIdxs`).
@@ -3638,6 +3649,18 @@ fn find_best_task_4_logical_data_source_paths(
                     desc,
                     ranges: ranges.clone(),
                     group_by_col_idxs: order_match.group_by_col_idxs.clone(),
+                    // Go `convertToTableScan`: a matched keep-order scan of a
+                    // partitioned table, or one that merge-sorts its range
+                    // groups, carries the property's sort items.
+                    by_items: if keep_order
+                        && (!ds.partition_definition_ids.is_empty()
+                            || order_match.result
+                                == crate::physical_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
+                    {
+                        sort_items_to_by_items(&prop.sort_items)
+                    } else {
+                        Vec::new()
+                    },
                     // Go's index-join inner table scan carries no
                     // `AccessCondition`; the join owns its ranges.
                     range_rebuild: if prop.index_join_prop.is_some() {
@@ -3757,6 +3780,7 @@ fn find_best_task_4_logical_data_source_paths(
                 );
                 let ranges = crate::ranger::points::full_int_range(false);
                 let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                    by_items: Vec::new(),
                     group_by_col_idxs: Vec::new(),
                     base,
                     table_id: ds.physical_table_id,
@@ -4421,6 +4445,18 @@ fn find_best_task_4_logical_data_source_paths(
                     desc,
                     ranges: ranges.clone(),
                     group_by_col_idxs: order_match.group_by_col_idxs.clone(),
+                    // Go `convertToIndexScan`: "keep order between partitions
+                    // (only required for a local index)" and "between range
+                    // groups" both add the sort items the reader merges by.
+                    by_items: if keep_order
+                        && ((!ds.partition_definition_ids.is_empty() && !source_index.global)
+                            || order_match.result
+                                == crate::physical_property::PhysicalPropMatchResult::MatchedNeedMergeSort)
+                    {
+                        sort_items_to_by_items(&prop.sort_items_for_keep_order())
+                    } else {
+                        Vec::new()
+                    },
                     // Go's index-join inner scan (`constructDS2IndexScanTask`)
                     // carries no `AccessCondition`; the join owns its ranges.
                     range_rebuild: if prop.index_join_prop.is_some() {
@@ -4509,6 +4545,7 @@ fn find_best_task_4_logical_data_source_paths(
                         }));
                     table_base.base.set_schema(ds.base.base.schema().cloned());
                     let table_scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+                        by_items: Vec::new(),
                         group_by_col_idxs: Vec::new(),
                         base: table_base,
                         table_id: ds.physical_table_id,
