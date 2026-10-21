@@ -1212,6 +1212,8 @@ type CleanupGlobalIndexesResult struct {
 	// GCJobID is the DDL history job of the table that keys the delete ranges of the dropped indexes.
 	GCJobID   int64  `json:"gc_job_id"`
 	GCJobType string `json:"gc_job_type"`
+	// DeleteRanges are the runs [first, last] of dropped index IDs, one delete range each.
+	DeleteRanges [][2]int64 `json:"delete_ranges"`
 }
 
 // ServeHTTP handles request of dropping the leftover global index copies of a table. It edits the
@@ -1254,7 +1256,7 @@ func (h DDLCleanupGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *ht
 		return
 	}
 	defer se.Close()
-	indexIDs, ver, gcJob, err := ddl.CleanupLeftoverIndexes(req.Context(), se, dbInfo.ID, tableID)
+	res, err := ddl.CleanupLeftoverIndexes(req.Context(), se, dbInfo.ID, tableID)
 	if err != nil {
 		log.Error("failed to drop leftover global indexes", zap.Int64("tableID", tableID), zap.Error(err))
 		handler.WriteError(w, err)
@@ -1262,12 +1264,13 @@ func (h DDLCleanupGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *ht
 	}
 	result := CleanupGlobalIndexesResult{
 		TableID:         tableID,
-		DroppedIndexIDs: indexIDs,
-		SchemaVersion:   ver,
+		DroppedIndexIDs: res.IndexIDs,
+		SchemaVersion:   res.SchemaVersion,
+		DeleteRanges:    res.DeleteRanges,
 	}
-	if gcJob != nil {
-		result.GCJobID = gcJob.ID
-		result.GCJobType = gcJob.Type.String()
+	if res.GCJob != nil {
+		result.GCJobID = res.GCJob.ID
+		result.GCJobType = res.GCJob.Type.String()
 	}
 	handler.WriteData(w, result)
 }

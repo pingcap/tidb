@@ -16,8 +16,11 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
+	"math"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -26,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"go.uber.org/zap"
 )
 
@@ -71,42 +75,83 @@ var gcNoopJobTypes = []model.ActionType{
 	model.ActionModifyColumn,
 }
 
+const historyJobBatchSize = 32
+
 // gcJobForLeftoverIndexes returns a history job of the table to key the delete ranges of the
 // leftover copies, since the GC worker never completes a delete range whose history job is missing.
-// It prefers the latest finished job with a type in gcNoopJobTypes. Otherwise it takes the latest
-// rolled back REORGANIZE PARTITION, which exists for every real leftover; for it, GC only drops the
-// placement rules of the new partitions the rollback removed, whose IDs are never reused.
-// Jobs are read by m.GetHistoryDDLJob, the lookup GC does through ddl.GetHistoryJobByID.
+// It walks the history of the table from the newest job and takes the first finished job with a
+// type in gcNoopJobTypes, or rolled back REORGANIZE PARTITION, which exists for every real leftover.
+// For the latter, GC only drops the placement rules of the new partitions the rollback removed,
+// whose IDs are never reused. Jobs are read by m.GetHistoryDDLJob, the lookup GC does through
+// ddl.GetHistoryJobByID.
 func gcJobForLeftoverIndexes(ctx context.Context, se *sess.Session, m *meta.Mutator, tableID int64) (*model.Job, error) {
-	rows, err := se.Execute(ctx, "select job_id from mysql.tidb_ddl_history where table_ids = %? order by job_id desc",
-		"get_table_history_jobs", strconv.FormatInt(tableID, 10))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var rolledBackReorg *model.Job
-	for _, row := range rows {
-		job, err := m.GetHistoryDDLJob(row.GetInt64(0))
+	lastJobID := int64(math.MaxInt64)
+	for {
+		rows, err := se.Execute(ctx, "select job_id from mysql.tidb_ddl_history where job_id < %? and table_ids = %? order by job_id desc limit %?",
+			"get_table_history_jobs", lastJobID, strconv.FormatInt(tableID, 10), historyJobBatchSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if job == nil || job.TableID != tableID {
+		for _, row := range rows {
+			lastJobID = row.GetInt64(0)
+			job, err := m.GetHistoryDDLJob(lastJobID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if job == nil || job.TableID != tableID {
+				continue
+			}
+			if (job.IsSynced() || job.IsDone()) && slices.Contains(gcNoopJobTypes, job.Type) {
+				return job, nil
+			}
+			if job.Type == model.ActionReorganizePartition && job.IsRollbackDone() {
+				// GC decodes these args to get the partitions whose placement rules to drop.
+				if _, err = model.GetFinishedTablePartitionArgs(job); err != nil {
+					return nil, errors.Annotatef(err, "decode args of DDL history job %d", job.ID)
+				}
+				return job, nil
+			}
+		}
+		if len(rows) < historyJobBatchSize {
+			return nil, errors.Errorf("table %d has no DDL history job to key the delete ranges of its leftover global indexes", tableID)
+		}
+	}
+}
+
+// mergeIndexIDRanges merges the dropped index IDs into runs [first, last] of consecutive IDs. Only
+// an index that stays in the table splits a run. Other IDs in a run belong to indexes dropped
+// before, and index IDs are never reused, so deleting their key ranges again is harmless.
+func mergeIndexIDRanges(tblInfo *model.TableInfo, droppedIDs []int64) [][2]int64 {
+	ids := slices.Sorted(slices.Values(droppedIDs))
+	var ranges [][2]int64
+	for _, id := range ids {
+		if n := len(ranges); n > 0 && !slices.ContainsFunc(tblInfo.Indices, func(idx *model.IndexInfo) bool {
+			return idx.ID > ranges[n-1][1] && idx.ID < id
+		}) {
+			ranges[n-1][1] = id
 			continue
 		}
-		if (job.IsSynced() || job.IsDone()) && slices.Contains(gcNoopJobTypes, job.Type) {
-			return job, nil
+		ranges = append(ranges, [2]int64{id, id})
+	}
+	return ranges
+}
+
+// insertIndexIDRanges queues the index key ranges of the given index ID runs of a table for delete
+// range, with element IDs from firstElementID.
+func insertIndexIDRanges(ctx context.Context, wrapper DelRangeExecWrapper, jobID, tableID int64, ranges [][2]int64, firstElementID int64) error {
+	var buf strings.Builder
+	buf.WriteString(insertDeleteRangeSQLPrefix)
+	wrapper.PrepareParamsList(len(ranges) * 5)
+	for i, r := range ranges {
+		if i > 0 {
+			buf.WriteString(",")
 		}
-		if rolledBackReorg == nil && job.Type == model.ActionReorganizePartition && job.IsRollbackDone() {
-			rolledBackReorg = job
-		}
+		buf.WriteString(insertDeleteRangeSQLValue)
+		startKey := hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(tableID, r[0]))
+		endKey := hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(tableID, r[1]+1))
+		wrapper.AppendParamsList(jobID, firstElementID+int64(i), startKey, endKey)
 	}
-	if rolledBackReorg == nil {
-		return nil, errors.Errorf("table %d has no DDL history job to key the delete ranges of its leftover global indexes", tableID)
-	}
-	// GC decodes these args to get the partitions whose placement rules to drop.
-	if _, err = model.GetFinishedTablePartitionArgs(rolledBackReorg); err != nil {
-		return nil, errors.Annotatef(err, "decode args of DDL history job %d", rolledBackReorg.ID)
-	}
-	return rolledBackReorg, nil
+	return errors.Trace(wrapper.ConsumeDeleteRange(ctx, buf.String()))
 }
 
 // maxDeleteRangeElementID returns the max element ID of the delete ranges of a job, done or not.
@@ -124,17 +169,27 @@ func maxDeleteRangeElementID(ctx context.Context, se *sess.Session, jobID int64)
 	return rows[0].GetInt64(0), nil
 }
 
+// LeftoverIndexesCleanup is the result of CleanupLeftoverIndexes.
+type LeftoverIndexesCleanup struct {
+	IndexIDs      []int64
+	SchemaVersion int64
+	// GCJob is the history job that keys the delete ranges.
+	GCJob *model.Job
+	// DeleteRanges are the runs [first, last] of index IDs whose key ranges are queued for delete range.
+	DeleteRanges [][2]int64
+}
+
 // CleanupLeftoverIndexes removes the leftover global index copies of a table from its meta and
 // queues their data for delete range, in one transaction with a new schema version and schema
 // diff. The copies are never read, and their columns, key flags and hidden columns are shared with
 // the public index, so they are removed directly. No DDL job is created: the delete ranges reuse a
-// history job of the table, see gcJobForLeftoverIndexes. It returns the dropped index IDs, the new
-// schema version and the reused job, or no IDs when the table has no leftovers.
-func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, tableID int64) (indexIDs []int64, schemaVersion int64, gcJob *model.Job, err error) {
+// history job of the table, see gcJobForLeftoverIndexes. It returns an empty result when the table
+// has no leftovers.
+func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, tableID int64) (*LeftoverIndexesCleanup, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	se := sess.NewSession(sctx)
-	if err = se.Begin(ctx); err != nil {
-		return nil, 0, nil, errors.Trace(err)
+	if err := se.Begin(ctx); err != nil {
+		return nil, errors.Trace(err)
 	}
 	committed := false
 	defer func() {
@@ -144,55 +199,55 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 	}()
 	txn, err := se.Txn()
 	if err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	m := meta.NewMutator(txn)
 	tblInfo, err := m.GetTable(dbID, tableID)
 	if err != nil || tblInfo == nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	leftovers := leftoverGlobalIndexes(tblInfo)
 	if len(leftovers) == 0 {
-		return nil, 0, nil, nil
+		return &LeftoverIndexesCleanup{}, nil
 	}
-	gcJob, err = gcJobForLeftoverIndexes(ctx, se, m, tableID)
+	gcJob, err := gcJobForLeftoverIndexes(ctx, se, m, tableID)
 	if err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	maxElementID, err := maxDeleteRangeElementID(ctx, se, gcJob.ID)
 	if err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	indexIDs = make([]int64, 0, len(leftovers))
+	indexIDs := make([]int64, 0, len(leftovers))
 	for _, idx := range leftovers {
 		removeIndexInfo(tblInfo, idx)
 		indexIDs = append(indexIDs, idx.ID)
 	}
+	ranges := mergeIndexIDRanges(tblInfo, indexIDs)
 	if err = m.UpdateTable(dbID, tblInfo); err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	ver, err := m.GenSchemaVersion()
 	if err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if err = m.SetSchemaDiff(&model.SchemaDiff{Version: ver, Type: model.ActionDropIndex, SchemaID: dbID, TableID: tableID}); err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	wrapper := newDelRangeExecWrapper(sctx)
 	if err = wrapper.UpdateTSOForJob(); err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	// (job_id, element_id) is unique in both delete range tables, and inserts into them ignore duplicates.
-	ea := elementIDAlloc{offset: maxElementID}
-	if err = doBatchDeleteIndiceRange(ctx, wrapper, gcJob.ID, tableID, indexIDs, &ea, "leftover global index copies"); err != nil {
-		return nil, 0, nil, errors.Trace(err)
+	if err = insertIndexIDRanges(ctx, wrapper, gcJob.ID, tableID, ranges, maxElementID+1); err != nil {
+		return nil, errors.Trace(err)
 	}
 	if err = se.Commit(ctx); err != nil {
-		return nil, 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	committed = true
 	logutil.DDLLogger().Info("dropped leftover global indexes from table meta", zap.Int64("tableID", tableID),
 		zap.Int64s("indexIDs", indexIDs), zap.Int64("schemaVersion", ver), zap.Int64("gcJobID", gcJob.ID), zap.Stringer("gcJobType", gcJob.Type),
-		zap.Int64("firstElementID", maxElementID+1))
-	return indexIDs, ver, gcJob, nil
+		zap.Any("deleteRanges", ranges), zap.Int64("firstElementID", maxElementID+1))
+	return &LeftoverIndexesCleanup{IndexIDs: indexIDs, SchemaVersion: ver, GCJob: gcJob, DeleteRanges: ranges}, nil
 }

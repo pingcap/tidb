@@ -22,8 +22,6 @@ type tblIdxID struct {
 type elementIDAlloc struct {
 	physicalIDs map[int64]int64
 	indexIDs    map[tblIdxID]int64
-	// offset is added to every allocated ID, for a job that already has delete ranges.
-	offset int64
 }
 
 func (e *elementIDAlloc) allocForIndexID(physicalID, indexID int64) int64 {
@@ -34,7 +32,7 @@ func (e *elementIDAlloc) allocForIndexID(physicalID, indexID int64) int64 {
 	if id, found := e.indexIDs[k]; found {
 		return id
 	}
-	next := e.offset + int64(len(e.physicalIDs)+len(e.indexIDs)+1)
+	next := int64(len(e.physicalIDs) + len(e.indexIDs) + 1)
 	e.indexIDs[k] = next
 	return next
 }
@@ -46,7 +44,7 @@ func (e *elementIDAlloc) allocForPhysicalID(tableID int64) int64 {
 	if id, found := e.physicalIDs[tableID]; found {
 		return id
 	}
-	next := e.offset + int64(len(e.physicalIDs)+len(e.indexIDs)+1)
+	next := int64(len(e.physicalIDs) + len(e.indexIDs) + 1)
 	e.physicalIDs[tableID] = next
 	return next
 }
