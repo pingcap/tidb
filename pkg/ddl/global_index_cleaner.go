@@ -75,7 +75,9 @@ var gcNoopJobTypes = []model.ActionType{
 	model.ActionModifyColumn,
 }
 
-const historyJobBatchSize = 32
+// historyJobBatchSize is small because the job to use is usually among the newest jobs of the
+// table, while TiKV scans the history of all tables backwards to fill a batch.
+const historyJobBatchSize = 4
 
 // gcJobForLeftoverIndexes returns a history job of the table to key the delete ranges of the
 // leftover copies, since the GC worker never completes a delete range whose history job is missing.
@@ -121,17 +123,22 @@ func gcJobForLeftoverIndexes(ctx context.Context, se *sess.Session, m *meta.Muta
 }
 
 // mergeIndexIDRanges merges the dropped index IDs into runs [first, last] of consecutive IDs. Only
-// an index that stays in the table splits a run. Other IDs in a run belong to indexes dropped
-// before, and index IDs are never reused, so deleting their key ranges again is harmless.
-func mergeIndexIDRanges(tblInfo *model.TableInfo, droppedIDs []int64) [][2]int64 {
-	ids := slices.Sorted(slices.Values(droppedIDs))
+// a kept index ID splits a run. Other IDs in a run belong to indexes dropped before, and index IDs
+// are never reused, so deleting their key ranges again is harmless.
+func mergeIndexIDRanges(keptIDs, droppedIDs []int64) [][2]int64 {
+	kept := slices.Sorted(slices.Values(keptIDs))
+	dropped := slices.Sorted(slices.Values(droppedIDs))
 	var ranges [][2]int64
-	for _, id := range ids {
-		if n := len(ranges); n > 0 && !slices.ContainsFunc(tblInfo.Indices, func(idx *model.IndexInfo) bool {
-			return idx.ID > ranges[n-1][1] && idx.ID < id
-		}) {
-			ranges[n-1][1] = id
-			continue
+	k := 0
+	for _, id := range dropped {
+		if n := len(ranges); n > 0 {
+			for k < len(kept) && kept[k] <= ranges[n-1][1] {
+				k++
+			}
+			if k == len(kept) || kept[k] > id {
+				ranges[n-1][1] = id
+				continue
+			}
 		}
 		ranges = append(ranges, [2]int64{id, id})
 	}
@@ -221,11 +228,20 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 		return nil, errors.Trace(err)
 	}
 	indexIDs := make([]int64, 0, len(leftovers))
+	leftoverIDs := make(map[int64]struct{}, len(leftovers))
 	for _, idx := range leftovers {
-		removeIndexInfo(tblInfo, idx)
 		indexIDs = append(indexIDs, idx.ID)
+		leftoverIDs[idx.ID] = struct{}{}
 	}
-	ranges := mergeIndexIDRanges(tblInfo, indexIDs)
+	tblInfo.Indices = slices.DeleteFunc(tblInfo.Indices, func(idx *model.IndexInfo) bool {
+		_, ok := leftoverIDs[idx.ID]
+		return ok
+	})
+	keptIDs := make([]int64, 0, len(tblInfo.Indices))
+	for _, idx := range tblInfo.Indices {
+		keptIDs = append(keptIDs, idx.ID)
+	}
+	ranges := mergeIndexIDRanges(keptIDs, indexIDs)
 	if err = m.UpdateTable(dbID, tblInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
