@@ -308,7 +308,7 @@ func (s *Server) startHTTPServer() {
 
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
-	router.Handle("/ddl/drop-leftover-global-indexes/{tableID}", tikvhandler.NewDDLDropLeftoverGlobalIndexesHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Drop_Leftover_Global_Indexes")
+	router.Handle("/ddl/cleanup-global-indexes/{tableID}", tikvhandler.NewDDLCleanupGlobalIndexesHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Cleanup_Global_Indexes")
 
 	if kv.IsSystemKS(tikvHandlerTool.Store) {
 		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler()).Name("DXF_Schedule_Status")

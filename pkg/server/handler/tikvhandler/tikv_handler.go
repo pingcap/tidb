@@ -184,15 +184,15 @@ func NewDDLResignOwnerHandler(store kv.Storage) *DDLResignOwnerHandler {
 	return &DDLResignOwnerHandler{store}
 }
 
-// DDLDropLeftoverGlobalIndexesHandler is the handler for dropping the global index copies left
+// DDLCleanupGlobalIndexesHandler is the handler for dropping the global index copies left
 // behind by cancelled REORGANIZE PARTITION jobs.
-type DDLDropLeftoverGlobalIndexesHandler struct {
+type DDLCleanupGlobalIndexesHandler struct {
 	store kv.Storage
 }
 
-// NewDDLDropLeftoverGlobalIndexesHandler creates a new DDLDropLeftoverGlobalIndexesHandler.
-func NewDDLDropLeftoverGlobalIndexesHandler(store kv.Storage) *DDLDropLeftoverGlobalIndexesHandler {
-	return &DDLDropLeftoverGlobalIndexesHandler{store}
+// NewDDLCleanupGlobalIndexesHandler creates a new DDLCleanupGlobalIndexesHandler.
+func NewDDLCleanupGlobalIndexesHandler(store kv.Storage) *DDLCleanupGlobalIndexesHandler {
+	return &DDLCleanupGlobalIndexesHandler{store}
 }
 
 // NewDDLCheckHandler creates a new DDLCheckHandler.
@@ -1204,8 +1204,8 @@ func (h DDLResignOwnerHandler) ServeHTTP(w http.ResponseWriter, req *http.Reques
 	handler.WriteData(w, "success!")
 }
 
-// DropLeftoverGlobalIndexesResult is the result of dropping the leftover global index copies of a table.
-type DropLeftoverGlobalIndexesResult struct {
+// CleanupGlobalIndexesResult is the result of dropping the leftover global index copies of a table.
+type CleanupGlobalIndexesResult struct {
 	TableID         int64   `json:"table_id"`
 	DroppedIndexIDs []int64 `json:"dropped_index_ids"`
 	SchemaVersion   int64   `json:"schema_version"`
@@ -1214,7 +1214,7 @@ type DropLeftoverGlobalIndexesResult struct {
 // ServeHTTP handles request of dropping the leftover global index copies of a table. It edits the
 // table meta directly without a DDL job, so it can run on any TiDB. A concurrent DDL job on the
 // same table makes the transaction conflict and fail, and the caller can retry.
-func (h DDLDropLeftoverGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (h DDLCleanupGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		handler.WriteError(w, errors.Errorf("This api only support POST method"))
 		return
@@ -1256,7 +1256,7 @@ func (h DDLDropLeftoverGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, re
 		handler.WriteError(w, err)
 		return
 	}
-	handler.WriteData(w, DropLeftoverGlobalIndexesResult{
+	handler.WriteData(w, CleanupGlobalIndexesResult{
 		TableID:         tableID,
 		DroppedIndexIDs: indexIDs,
 		SchemaVersion:   ver,
