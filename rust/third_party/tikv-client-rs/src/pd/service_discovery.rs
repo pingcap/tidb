@@ -4,9 +4,7 @@
 //! use the PD leader; timestamp routing follows the separately discovered owner.
 
 pub use super::service_mode::ServiceModeDiscovery;
-use crate::proto::{keyspacepb, meta_storagepb, pdpb, tsopb};
-use prost::Message;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::proto::{keyspacepb, pdpb};
 use std::sync::{Arc, Mutex};
 use std::{future::Future, time::Duration};
 use tonic::{transport::Channel, Request, Status};
@@ -159,6 +157,16 @@ impl ChannelCache {
         }
     }
 
+    /// The cached connection of `endpoint`, if one exists (a Go
+    /// `clientConns.Load`).
+    pub fn get(&self, endpoint: &str) -> Option<Channel> {
+        self.channels
+            .lock()
+            .expect("PD channel cache poisoned")
+            .as_ref()
+            .and_then(|channels| channels.get(endpoint).cloned())
+    }
+
     /// Release cached handles and prohibit new publication, including a dial
     /// that began before close. RPC/stream owners cancel and join separately.
     pub fn close(&self) {
@@ -176,63 +184,45 @@ pub const UPDATE_INTERVAL: Duration = Duration::from_secs(3);
 /// Go servicediscovery.MemberUpdateInterval.
 pub const MEMBER_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Published timestamp destination, independent of the PD metadata leader:
-/// the TSO client's serving URL, keyspace and keyspace group.
+/// Published timestamp destination in PD mode, independent of the PD
+/// metadata leader: the TSO client's serving URL and keyspace. (In
+/// microservice mode the TSO service discovery owns the destination.)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TsoRoute {
     pub endpoint: String,
     pub keyspace_id: u32,
-    pub group_id: Option<u32>,
 }
 
-/// Clone before refreshing, then publish only after discovery and dialing have
-/// succeeded. Failed RPCs cannot replace the accepted route. Fresh group
-/// revisions are shared across snapshots even if primary discovery then fails,
-/// as Go keyspaceGroupSvcDiscovery.update publishes primaryless metadata.
+/// The facts the TSO provider decision rests on: the keyspace (Go
+/// `keyspaceID` / `keyspaceMeta`) and the accepted service mode (Go
+/// `serviceMode`, observed by PD's discovery). The keyspace group itself is
+/// the TSO service discovery's.
 #[derive(Clone, Debug)]
 pub struct TsoDiscovery {
     keyspace_id: u32,
-    assigned_group: bool,
-    revision: Arc<AtomicU64>,
-    service_urls: Vec<String>,
-    cursor: Arc<Mutex<DiscoveryCursor>>,
-    accepted_info: Option<pdpb::GetClusterInfoResponse>,
+    keyspace_meta: Option<keyspacepb::KeyspaceMeta>,
     service_mode: ServiceModeDiscovery,
-    /// Go `GetKeyspaceGroupID()`: the accepted group (0 until one is found).
-    group_id: u32,
-    /// Go `keyspaceGroupSD.primaryURL`.
-    primary_url: String,
-    /// Go `printFallbackLogOnce`.
-    fallback_logged: Arc<std::sync::atomic::AtomicBool>,
-}
-
-#[derive(Debug, Default)]
-struct DiscoveryCursor {
-    urls: Vec<String>,
-    next: usize,
 }
 
 impl Default for TsoDiscovery {
     fn default() -> Self {
         Self {
             keyspace_id: NULL_KEYSPACE_ID,
-            assigned_group: false,
-            revision: Arc::default(),
-            service_urls: Vec::new(),
-            cursor: Arc::new(Mutex::new(DiscoveryCursor::default())),
-            accepted_info: None,
+            keyspace_meta: None,
             service_mode: ServiceModeDiscovery::default(),
-            group_id: 0,
-            primary_url: String::new(),
-            fallback_logged: Arc::default(),
         }
     }
 }
 
 impl TsoDiscovery {
-    /// The keyspace group's member URLs (Go `tsoServiceDiscovery.GetServiceURLs`).
-    pub fn service_urls(&self) -> &[String] {
-        &self.service_urls
+    /// Go `GetKeyspaceID()`.
+    pub fn keyspace_id(&self) -> u32 {
+        self.keyspace_id
+    }
+
+    /// Go `keyspaceMeta`.
+    pub fn keyspace_meta(&self) -> Option<&keyspacepb::KeyspaceMeta> {
+        self.keyspace_meta.as_ref()
     }
 
     /// Called after LoadKeyspace and before publishing an API-v2 client.
@@ -247,360 +237,49 @@ impl TsoDiscovery {
                 ))
             }
         };
-        if self.keyspace_id != id {
-            self.revision = Arc::default();
-        }
         self.keyspace_id = id;
-        self.assigned_group = meta
-            .config
-            .get("tso_keyspace_group_id")
-            .and_then(|id| id.parse::<u32>().ok())
-            .is_some_and(|id| id != 0);
+        self.keyspace_meta = Some(meta.clone());
         Ok(())
     }
 
-    pub async fn discover<F, Fut>(
-        &mut self,
-        cluster_id: u64,
-        leader: &str,
-        use_pd_proxy: bool,
-        timeout: Duration,
-        channels: &ChannelCache,
-        dial: F,
-    ) -> Result<(TsoRoute, Channel), Status>
-    where
-        F: Fn(String) -> Fut,
-        Fut: Future<Output = Result<Channel, Status>>,
-    {
-        tokio::time::timeout(timeout, async {
-            if let Err(error) = self.service_mode.refresh(leader, timeout, &dial).await {
-                if self.service_mode.snapshot().is_none() {
-                    return Err(error);
-                }
-            }
-            self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, channels, dial)
-                .await
-        })
-        .await
-        .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?
-    }
-
-    /// The PD root owns mode polling; TSO refresh consumes its last accepted facts.
+    /// The PD root owns mode polling; the TSO provider decision consumes its
+    /// last accepted facts.
     pub fn service_mode(&self) -> ServiceModeDiscovery {
         self.service_mode.clone()
     }
 
-    /// Whether this candidate uses the current accepted mode observation.
-    pub fn mode_is_current(&self) -> bool {
-        self.accepted_info == self.service_mode.snapshot()
-    }
-
-    /// Refresh group routing without issuing a service-mode RPC.
-    pub async fn discover_cached<F, Fut>(
-        &mut self,
-        cluster_id: u64,
+    /// Observes the service mode on `leader`; an earlier accepted
+    /// observation survives a failed one.
+    pub async fn refresh_mode<F, Fut>(
+        &self,
         leader: &str,
-        use_pd_proxy: bool,
         timeout: Duration,
-        channels: &ChannelCache,
         dial: F,
-    ) -> Result<(TsoRoute, Channel), Status>
+    ) -> Result<(), Status>
     where
         F: Fn(String) -> Fut,
         Fut: Future<Output = Result<Channel, Status>>,
     {
-        tokio::time::timeout(
-            timeout,
-            self.discover_inner(cluster_id, leader, use_pd_proxy, timeout, channels, dial),
-        )
-        .await
-        .map_err(|_| Status::deadline_exceeded("TSO discovery timed out"))?
+        if let Err(error) = self.service_mode.refresh(leader, timeout, &dial).await {
+            if self.service_mode.snapshot().is_none() {
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 
-    async fn discover_inner<F, Fut>(
-        &mut self,
-        cluster_id: u64,
-        leader: &str,
-        use_pd_proxy: bool,
-        timeout: Duration,
-        channels: &ChannelCache,
-        dial: F,
-    ) -> Result<(TsoRoute, Channel), Status>
-    where
-        F: Fn(String) -> Fut,
-        Fut: Future<Output = Result<Channel, Status>>,
-    {
-        let channel = dial(leader.to_owned()).await?;
+    /// The accepted service mode (Go `serviceMode`).
+    pub fn accepted_mode(&self) -> Result<pdpb::ServiceMode, Status> {
         let info = self
             .service_mode
             .snapshot()
             .ok_or_else(|| Status::unavailable("PD service mode has not been observed"))?;
-        self.accepted_info = Some(info.clone());
-        if info.service_modes[0] == pdpb::ServiceMode::PdSvcMode as i32 || use_pd_proxy {
-            return Ok((self.classic(leader), channel));
-        }
-        let (group, revision) = if info.tso_urls.is_empty() {
-            if self.assigned_group {
-                return Err(Status::unavailable(
-                    "no TSO microservice available in microservice mode",
-                ));
-            }
-            if !self
-                .fallback_logged
-                .swap(true, std::sync::atomic::Ordering::SeqCst)
-            {
-                log::warn!(
-                    "keyspace-id-in-request" = self.keyspace_id,
-                    "tso-server-url" = "",
-                    "discovery-key":% = format!("/ms/{cluster_id}/tso/00000/primary");
-                    "[tso] no tso server URL found, fallback to the legacy path to discover from etcd directly"
-                );
-            }
-            // The Go compatibility path reads the default primary through PD's
-            // MetaStorage service; never redirect API-mode Tso to PD itself.
-            let response = meta_storagepb::meta_storage_client::MetaStorageClient::new(channel)
-                .get(request(
-                    meta_storagepb::GetRequest {
-                        header: Some(meta_storagepb::RequestHeader {
-                            cluster_id,
-                            ..Default::default()
-                        }),
-                        key: format!("/ms/{cluster_id}/tso/00000/primary").into_bytes(),
-                        ..Default::default()
-                    },
-                    timeout,
-                ))
-                .await?
-                .into_inner();
-            if let Some(error) = response.header.and_then(|header| header.error) {
-                return Err(Status::unknown(error.message));
-            }
-            if response.kvs.is_empty() || response.count > 1 {
-                return Err(Status::unavailable("expected one legacy TSO primary"));
-            }
-            let participant = tsopb::Participant::decode(response.kvs[0].value.as_slice())
-                .map_err(|error| Status::data_loss(error.to_string()))?;
-            if participant.listen_urls.is_empty() {
-                return Err(Status::unavailable("legacy TSO primary has no listen URLs"));
-            }
-            (
-                tsopb::KeyspaceGroup {
-                    members: participant
-                        .listen_urls
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, address)| tsopb::KeyspaceGroupMember {
-                            address,
-                            is_primary: i == 0,
-                        })
-                        .collect(),
-                    ..Default::default()
-                },
-                0,
-            )
-        } else {
-            let mut urls = info.tso_urls;
-            urls.sort();
-            // Attempts are not published routing observations. Share the
-            // selection cursor across snapshots so an error or cancellation
-            // advances the next probe without accepting failed group metadata.
-            let url = {
-                let mut cursor = self.cursor.lock().expect("TSO discovery cursor poisoned");
-                if cursor.urls != urls {
-                    log::info!("sorted-urls":serde = urls; "update tso server URLs");
-                    cursor.urls = urls;
-                    cursor.next = 0;
-                }
-                let url = cursor.urls[cursor.next % cursor.urls.len()].clone();
-                cursor.next = (cursor.next + 1) % cursor.urls.len();
-                url
-            };
-            let (mut group, mut revision) = self
-                .find_group_logged(cluster_id, &url, timeout, channels, &dial)
-                .await?;
-            // A discovery server outside the group can return only secondaries.
-            if !group
-                .members
-                .iter()
-                .any(|member| member.is_primary && !member.address.is_empty())
-            {
-                // The metadata revision is accepted before following a group
-                // member, even if that follow-up fails. Older observations must
-                // not resurrect a stale primary on the next refresh either.
-                self.revision.fetch_max(revision, Ordering::SeqCst);
-                use rand::seq::IteratorRandom;
-                let secondary = group
-                    .members
-                    .iter()
-                    .filter(|member| !member.is_primary)
-                    .choose(&mut rand::thread_rng())
-                    .ok_or_else(|| Status::unavailable("no TSO group member"))?;
-                (group, revision) = self
-                    .find_group_logged(cluster_id, &secondary.address, timeout, channels, &dial)
-                    .await?;
-            }
-            (group, revision)
-        };
-        if group.id != self.group_id {
-            log::info!(
-                "keyspace-id" = self.keyspace_id,
-                "new-keyspace-group-id" = group.id,
-                "old-keyspace-group-id" = self.group_id;
-                "[tso] the keyspace group changed"
-            );
-        }
-        if revision < self.revision.load(Ordering::SeqCst) {
-            log::warn!(
-                modRevision = revision;
-                "[tso] failed to update keyspace group, met stale keyspace group info"
-            );
-            return Err(Status::failed_precondition(
-                "stale TSO keyspace group revision",
-            ));
-        }
-        let primary = group
-            .members
-            .iter()
-            .rev()
-            .find(|member| member.is_primary && !member.address.is_empty())
-            .ok_or_else(|| Status::unavailable("no TSO group primary"))?;
-        let route = TsoRoute {
-            endpoint: primary.address.clone(),
-            keyspace_id: self.keyspace_id,
-            group_id: Some(group.id),
-        };
-        let channel = match dial(route.endpoint.clone()).await {
-            Ok(channel) => channel,
-            Err(error) => {
-                log::warn!(
-                    "keyspace-id-in-request" = self.keyspace_id,
-                    "next-primary" = route.endpoint.as_str(),
-                    error:% = error;
-                    "[tso] failed to connect the next primary"
-                );
-                return Err(error);
-            }
-        };
-        self.service_urls = group.members.iter().map(|m| m.address.clone()).collect();
-        self.revision.fetch_max(revision, Ordering::SeqCst);
-        if !route.endpoint.eq_ignore_ascii_case(&self.primary_url) {
-            log::info!(
-                "keyspace-id-in-request" = self.keyspace_id,
-                "keyspace-group-service":% = crate::error::protobuf_text(&group);
-                "[tso] updated keyspace group service discovery info"
-            );
-            log::info!(
-                "new-primary" = route.endpoint.as_str(),
-                "old-primary" = self.primary_url.as_str();
-                "[tso] switch primary"
-            );
-            self.primary_url.clone_from(&route.endpoint);
-        }
-        self.group_id = group.id;
-        Ok((route, channel))
+        info.service_modes
+            .first()
+            .copied()
+            .and_then(|mode| pdpb::ServiceMode::try_from(mode).ok())
+            .ok_or_else(|| Status::unavailable("PD service mode has not been observed"))
     }
-
-    fn classic(&mut self, leader: &str) -> TsoRoute {
-        // A subsequent API-mode entry creates a new group discovery lifecycle.
-        self.revision = Arc::default();
-        self.service_urls.clear();
-        self.group_id = 0;
-        self.primary_url.clear();
-        *self.cursor.lock().expect("TSO discovery cursor poisoned") = DiscoveryCursor::default();
-        TsoRoute {
-            endpoint: leader.to_owned(),
-            keyspace_id: self.keyspace_id,
-            group_id: None,
-        }
-    }
-
-    /// [`Self::find_group`] with pd-client's failure line.
-    async fn find_group_logged<F, Fut>(
-        &self,
-        cluster_id: u64,
-        url: &str,
-        timeout: Duration,
-        channels: &ChannelCache,
-        dial: &F,
-    ) -> Result<(tsopb::KeyspaceGroup, u64), Status>
-    where
-        F: Fn(String) -> Fut,
-        Fut: Future<Output = Result<Channel, Status>>,
-    {
-        let result = self
-            .find_group(cluster_id, url, timeout, channels, dial)
-            .await;
-        if let Err(error) = &result {
-            log::error!(
-                "keyspace-id-in-request" = self.keyspace_id,
-                "tso-server-url" = url,
-                "response-mod-revision" = 0_u64,
-                "current-mod-revision" = self.revision.load(Ordering::SeqCst),
-                error:% = error;
-                "[tso] failed to find the keyspace group"
-            );
-        }
-        result
-    }
-
-    async fn find_group<F, Fut>(
-        &self,
-        cluster_id: u64,
-        url: &str,
-        timeout: Duration,
-        channels: &ChannelCache,
-        dial: &F,
-    ) -> Result<(tsopb::KeyspaceGroup, u64), Status>
-    where
-        F: Fn(String) -> Fut,
-        Fut: Future<Output = Result<Channel, Status>>,
-    {
-        let response = tsopb::tso_client::TsoClient::new(dial(url.to_owned()).await?)
-            .find_group_by_keyspace_id(request(
-                tsopb::FindGroupByKeyspaceIdRequest {
-                    header: Some(tsopb::RequestHeader {
-                        cluster_id,
-                        keyspace: Some(tsopb::request_header::Keyspace::KeyspaceId(
-                            self.keyspace_id,
-                        )),
-                        callee_id: callee_id(url),
-                        ..Default::default()
-                    }),
-                    keyspace: Some(
-                        tsopb::find_group_by_keyspace_id_request::Keyspace::KeyspaceId(
-                            self.keyspace_id,
-                        ),
-                    ),
-                    mod_revision: self.revision.load(Ordering::SeqCst),
-                },
-                timeout,
-            ))
-            .await?
-            .into_inner();
-        if let Some(error) = response.header.and_then(|header| header.error) {
-            if error.message.contains(super::errs::MISMATCH_CALLEE_ID_ERR) {
-                channels.remove(url);
-            }
-            return Err(Status::unknown(error.message));
-        }
-        if response.mod_revision < self.revision.load(Ordering::SeqCst) {
-            return Err(Status::failed_precondition(
-                "stale TSO keyspace group revision",
-            ));
-        }
-        Ok((
-            response
-                .keyspace_group
-                .ok_or_else(|| Status::not_found("no TSO keyspace group"))?,
-            response.mod_revision,
-        ))
-    }
-}
-
-fn request<T>(message: T, timeout: Duration) -> Request<T> {
-    let mut request = Request::new(message);
-    request.set_timeout(timeout);
-    request
 }
 
 pub(crate) fn callee_id(endpoint: &str) -> String {
@@ -617,4 +296,116 @@ pub(crate) fn callee_id(endpoint: &str) -> String {
                 .map(|authority| authority.as_str().to_owned())
         })
         .unwrap_or_default()
+}
+
+/// Go `LeaderSwitchedCallbackFunc`.
+pub(crate) type LeaderSwitchedCallback = Arc<dyn Fn(&str) -> crate::Result<()> + Send + Sync>;
+/// A members-changed callback (Go `func()`).
+pub(crate) type MembersChangedCallback = Arc<dyn Fn() + Send + Sync>;
+
+/// Go `serviceCallbacks` (callbacks.go): the callbacks a service discovery
+/// runs after its leader/primary switches and after its membership changes.
+#[derive(Default)]
+pub(crate) struct ServiceCallbacks {
+    leader_switched_cbs: std::sync::RwLock<Vec<LeaderSwitchedCallback>>,
+    members_changed_cbs: std::sync::RwLock<Vec<MembersChangedCallback>>,
+}
+
+impl ServiceCallbacks {
+    /// Go `addLeaderSwitchedCallback`.
+    pub(crate) fn add_leader_switched_callback(&self, callback: LeaderSwitchedCallback) {
+        self.leader_switched_cbs.write().unwrap().push(callback);
+    }
+
+    /// Go `addMembersChangedCallback`.
+    pub(crate) fn add_members_changed_callback(&self, callback: MembersChangedCallback) {
+        self.members_changed_cbs.write().unwrap().push(callback);
+    }
+
+    /// Go `onLeaderSwitched`: the callbacks in order, stopping at the first
+    /// error.
+    pub(crate) fn on_leader_switched(&self, leader: &str) -> crate::Result<()> {
+        let callbacks = self.leader_switched_cbs.read().unwrap().clone();
+        for callback in callbacks {
+            callback(leader)?;
+        }
+        Ok(())
+    }
+
+    /// Go `onMembersChanged`.
+    pub(crate) fn on_members_changed(&self) {
+        let callbacks = self.members_changed_cbs.read().unwrap().clone();
+        for callback in callbacks {
+            callback();
+        }
+    }
+}
+
+/// The PD members as pd-client's `serviceDiscovery` holds them: the leader's
+/// URL (Go `getLeaderURL`), the URLs the client keeps connections to (the
+/// leader and followers, `PickMatchedURL` of each member), the sorted client
+/// URLs of every member (Go `urls`), and the callbacks run when they change.
+#[derive(Default)]
+pub(crate) struct PdMembership {
+    state: std::sync::RwLock<PdMembershipState>,
+    callbacks: ServiceCallbacks,
+}
+
+#[derive(Default)]
+struct PdMembershipState {
+    leader_url: String,
+    member_urls: Vec<String>,
+    sorted_urls: Vec<String>,
+}
+
+/// What [`PdMembership::update`] changed.
+pub(crate) struct PdMembershipChange {
+    pub(crate) old_sorted_urls: Vec<String>,
+    pub(crate) urls_changed: bool,
+    pub(crate) old_leader_url: String,
+    pub(crate) leader_changed: bool,
+}
+
+impl PdMembership {
+    /// Go `getLeaderURL` / `GetServingURL`.
+    pub(crate) fn leader_url(&self) -> String {
+        self.state.read().unwrap().leader_url.clone()
+    }
+
+    /// The leader's and followers' URLs (the keys of Go's `clientConns` that
+    /// belong to members).
+    pub(crate) fn member_urls(&self) -> Vec<String> {
+        self.state.read().unwrap().member_urls.clone()
+    }
+
+    /// Go `GetServiceURLs`.
+    pub(crate) fn sorted_urls(&self) -> Vec<String> {
+        self.state.read().unwrap().sorted_urls.clone()
+    }
+
+    pub(crate) fn callbacks(&self) -> &ServiceCallbacks {
+        &self.callbacks
+    }
+
+    /// Publishes a membership observation (Go `updateURLs` and
+    /// `switchLeader`'s stores); the caller runs the callbacks and logs.
+    pub(crate) fn update(
+        &self,
+        leader_url: String,
+        member_urls: Vec<String>,
+        sorted_urls: Vec<String>,
+    ) -> PdMembershipChange {
+        let mut state = self.state.write().unwrap();
+        let urls_changed = state.sorted_urls != sorted_urls;
+        let old_sorted_urls = std::mem::replace(&mut state.sorted_urls, sorted_urls);
+        let leader_changed = state.leader_url != leader_url;
+        let old_leader_url = std::mem::replace(&mut state.leader_url, leader_url);
+        state.member_urls = member_urls;
+        PdMembershipChange {
+            old_sorted_urls,
+            urls_changed,
+            old_leader_url,
+            leader_changed,
+        }
+    }
 }

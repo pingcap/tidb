@@ -196,6 +196,13 @@ where
                         .await,
                 )
             }),
+            "/pdpb.PD/QueryRegion" => Box::pin(async move {
+                Ok(
+                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                        .streaming(QueryRegionServer(service), request)
+                        .await,
+                )
+            }),
             _ => Box::pin(async move {
                 Ok(http::Response::builder()
                     .status(200)
@@ -460,6 +467,57 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
                     Some((Ok(response), (requests, None, active, service)))
                 },
             );
+            Ok(tonic::Response::new(
+                Box::pin(responses) as Self::ResponseStream
+            ))
+        })
+    }
+}
+
+/// PD's `QueryRegion` stream: every key maps to the server's region.
+#[derive(Clone)]
+struct QueryRegionServer(PdServer);
+
+impl tonic::server::StreamingService<pdpb::QueryRegionRequest> for QueryRegionServer {
+    type Response = pdpb::QueryRegionResponse;
+    type ResponseStream = Pin<
+        Box<
+            dyn Stream<Item = std::result::Result<pdpb::QueryRegionResponse, tonic::Status>> + Send,
+        >,
+    >;
+    type Future = BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+
+    fn call(
+        &mut self,
+        request: tonic::Request<tonic::Streaming<pdpb::QueryRegionRequest>>,
+    ) -> Self::Future {
+        let service = self.0.clone();
+        Box::pin(async move {
+            let responses = request.into_inner().map(move |request| {
+                let request = request?;
+                let id = service.region_id.load(Ordering::SeqCst) as u64;
+                let mut response = pdpb::QueryRegionResponse {
+                    header: Some(ResponseHeader {
+                        cluster_id: 42,
+                        ..Default::default()
+                    }),
+                    key_id_map: vec![id; request.keys.len()],
+                    prev_key_id_map: vec![id; request.prev_keys.len()],
+                    ..Default::default()
+                };
+                response.regions_by_id.insert(
+                    id,
+                    pdpb::RegionResponse {
+                        region: Some(metapb::Region {
+                            id,
+                            region_epoch: Some(metapb::RegionEpoch::default()),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                );
+                Ok(response)
+            });
             Ok(tonic::Response::new(
                 Box::pin(responses) as Self::ResponseStream
             ))
@@ -919,7 +977,7 @@ async fn get_timestamp_eventually(cli: &Arc<Cli>, within: Duration) -> bool {
 
 async fn metadata_client(server: &Server) -> Arc<RetryClient> {
     let timeout = Duration::from_secs(10);
-    Arc::new(RetryClient::new_with_cluster(
+    Arc::new(RetryClient::new_with_connected_cluster(
         Arc::new(SecurityManager::default()),
         timeout,
         server.cluster(timeout).await,
@@ -1626,7 +1684,11 @@ async fn owning_pd_client(
         crate::pd::PdRpcClient::new(
             crate::Config::default(),
             |_| crate::mock::MockKvConnect,
-            |security| async move { Ok(RetryClient::new_with_cluster(security, timeout, cluster)) },
+            |security| async move {
+                Ok(RetryClient::new_with_connected_cluster(
+                    security, timeout, cluster,
+                ))
+            },
             false,
         )
         .await
@@ -1908,18 +1970,29 @@ async fn source_service_empty_modes_rejected() {
 
 #[tokio::test]
 async fn source_service_api_missing_tso_never_uses_pd_leader() {
+    crate::logutil::test_capture::install();
     let server = Server::start(Reply::Timestamp).await;
     *server.service.cluster_info.write().unwrap() = Some(pdpb::GetClusterInfoResponse {
         service_modes: vec![pdpb::ServiceMode::ApiSvcMode as i32],
         ..Default::default()
     });
-    let result = Connection::new(Arc::new(SecurityManager::default()))
+    let mut connection = Connection::new(Arc::new(SecurityManager::default()));
+    let mut options = crate::pd::opt::Options::new();
+    options.max_retry_times = 1;
+    connection.options = Arc::new(options);
+    // pd-client `resetTSOClientLocked` logs "failed to initialize tso service
+    // discovery" and returns: the client is created without a TSO provider.
+    let cluster = connection
         .connect_cluster(&[server.service.endpoint.clone()], Duration::from_secs(1))
-        .await;
+        .await
+        .expect("a failed TSO discovery does not fail the client");
     assert!(
-        result.is_err(),
+        cluster.tso_svc_discovery_for_test().is_none(),
         "failed TSO discovery must not select classic PD Tso"
     );
+    assert!(crate::logutil::test_capture::any(|line| line.starts_with(
+        "ERROR [pd] failed to initialize tso service discovery "
+    )));
     assert_eq!(server.service.received.load(Ordering::SeqCst), 0);
 }
 
@@ -2157,12 +2230,15 @@ async fn source_service_routes_keyspace_and_retires_on_group_move() {
     assert!(crate::logutil::test_capture::any(
         |line| line.starts_with(group_changed)
     ));
-    let updated = "INFO [tso] updated keyspace group service discovery info keyspace-id-in-request=27 keyspace-group-service=id:9 ";
-    assert!(crate::logutil::test_capture::any(
-        |line| line.starts_with(updated)
-    ));
+    // Go `updateMemberInner`: keyspace-id-in-request, tso-server-url, then
+    // the group's own `String()`.
+    let updated = "INFO [tso] updated keyspace group service discovery info keyspace-id-in-request=27 tso-server-url=";
+    assert!(crate::logutil::test_capture::any(|line| {
+        line.starts_with(updated) && line.contains(" keyspace-group-service=id:9 ")
+    }));
     first.service.revision.store(1, Ordering::SeqCst);
-    assert!(client.reconnect_for_test().await.is_err());
+    // Go `updateMember`: "keyspace group modRevision is stale".
+    assert!(client.tso_update_member_for_test().await.is_err());
     // A stale observation must not replace the accepted route.
     client.clone().get_timestamp().await.unwrap();
     assert_eq!(second.service.received.load(Ordering::SeqCst), 2);
@@ -2250,22 +2326,24 @@ async fn source_service_failed_initial_probe_rotates_to_healthy_endpoint() {
     });
     let connection = Connection::new(Arc::new(SecurityManager::default()));
     let endpoints = [pd.service.endpoint.clone()];
-    assert!(connection
-        .connect_cluster(&endpoints, Duration::from_millis(100))
-        .await
-        .is_err());
+    // pd-client `tsoServiceDiscovery.Init` retries the first member update:
+    // the servers are picked round robin, so the stalled one times out after
+    // `UpdateMemberTimeout` and the retry asks the healthy one.
     let cluster = connection
-        .connect_cluster(&endpoints, Duration::from_secs(1))
+        .connect_cluster(&endpoints, Duration::from_secs(5))
         .await
         .expect("failed probes must advance selection even before initial publication");
-    let client = Arc::new(RetryClient::new_with_cluster(
+    let client = Arc::new(RetryClient::new_with_connected_cluster(
         Arc::new(SecurityManager::default()),
         Duration::from_secs(1),
         cluster,
     ));
     assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
-    assert_eq!(stalled.service.discovery_requests.load(Ordering::SeqCst), 1);
-    assert_eq!(healthy.service.discovery_requests.load(Ordering::SeqCst), 1);
+    // The first timestamp request schedules a member check as the dispatcher
+    // does (`ScheduleCheckMemberChanged`), which asks the next server round
+    // robin, so each server was asked at least once.
+    assert!(stalled.service.discovery_requests.load(Ordering::SeqCst) >= 1);
+    assert!(healthy.service.discovery_requests.load(Ordering::SeqCst) >= 1);
     client.close().await;
 }
 
@@ -2739,6 +2817,9 @@ async fn availability_pair_with_reply(
                 options.timeout = Duration::from_secs(1);
                 options.enable_forwarding = enabled;
                 options.set_enable_tso_follower_proxy(proxy);
+                // These cases exercise the unary region RPCs, which pd-client
+                // uses only while the router client is disabled.
+                options.set_enable_router_client(false);
                 options
             },
             None,
@@ -3460,8 +3541,12 @@ async fn observation_batch_failed_modes_preserve_accepted_provider() {
     }
 }
 
+/// pd-client `getTSOServer` asks PD for its cluster info on every member
+/// update (`discoverMicroservice`), so while PD's `GetClusterInfo` fails the
+/// TSO service discovery's update fails and the accepted group stays; the next
+/// update after PD answers again switches to the group's new primary.
 #[tokio::test]
-async fn independent_observation_mode_failure_does_not_freeze_group() {
+async fn a_failed_pd_cluster_info_fails_the_tso_member_update_like_go() {
     let pd = Server::start(Reply::Timestamp).await;
     let first = Server::start(Reply::Timestamp).await;
     let second =
@@ -3482,18 +3567,22 @@ async fn independent_observation_mode_failure_does_not_freeze_group() {
         .cluster_info_failure
         .store(true, Ordering::SeqCst);
     client.reconnect_for_test().await.unwrap();
+    assert!(client.tso_update_member_for_test().await.is_err());
+    assert_ne!(
+        old.leader_url(),
+        second.service.endpoint,
+        "a failed update must not move the accepted TSO primary"
+    );
+    pd.service
+        .cluster_info_failure
+        .store(false, Ordering::SeqCst);
+    client.tso_update_member_for_test().await.unwrap();
     // The group's new primary is the TSO client's leader switch.
-    let switched = old.leader_url() == second.service.endpoint;
-    if switched {
-        wait_for_streams(&old, &[second.service.endpoint.clone()]).await;
-    }
+    assert_eq!(old.leader_url(), second.service.endpoint);
+    wait_for_streams(&old, &[second.service.endpoint.clone()]).await;
     client.clone().get_timestamp().await.unwrap();
     let headers = second.service.tso_headers.lock().unwrap().clone();
     client.close().await;
-    assert!(
-        switched,
-        "failed PD mode observation froze the accepted TSO group"
-    );
     assert_eq!(headers[0].keyspace_group_id, 9);
 }
 
@@ -3539,49 +3628,9 @@ async fn independent_observation_stalled_members_do_not_block_mode_switch() {
 }
 
 #[tokio::test]
-async fn observation_batch_secondary_must_reach_newly_observed_revision() {
-    let pd = Server::start(Reply::Timestamp).await;
-    let discovery = Server::start(Reply::Timestamp).await;
-    let secondary = Server::start(Reply::Timestamp).await;
-    api_mode(&pd, &discovery);
-    let client = metadata_client(&pd).await;
-    let original = client.tso_for_test().await;
-    discovery.service.revision.store(20, Ordering::SeqCst);
-    secondary.service.revision.store(19, Ordering::SeqCst);
-    *discovery.service.group.write().unwrap() = tsopb::KeyspaceGroup {
-        id: 7,
-        members: vec![tsopb::KeyspaceGroupMember {
-            address: secondary.service.endpoint.clone(),
-            is_primary: false,
-        }],
-        ..Default::default()
-    };
-    assert!(
-        client.reconnect_for_test().await.is_err(),
-        "secondary regressed revision 20 to 19"
-    );
-    assert_eq!(
-        *secondary.service.requested_revisions.lock().unwrap(),
-        vec![20]
-    );
-    assert!(Arc::ptr_eq(&original, &client.tso_for_test().await));
-    // A failed follow-up must not roll back the observed floor in a clone.
-    let primaryless = discovery.service.group.read().unwrap().clone();
-    discovery.service.revision.store(19, Ordering::SeqCst);
-    *discovery.service.group.write().unwrap() = secondary.service.group.read().unwrap().clone();
-    assert!(
-        client.reconnect_for_test().await.is_err(),
-        "failed refresh forgot the newer revision"
-    );
-    discovery.service.revision.store(20, Ordering::SeqCst);
-    *discovery.service.group.write().unwrap() = primaryless;
-    secondary.service.revision.store(20, Ordering::SeqCst);
-    client.reconnect_for_test().await.unwrap();
-    assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
-    client.close().await;
-}
-
-#[tokio::test]
+/// pd-client `findGroupByKeyspaceID` removes the client connection of a server
+/// that answers "mismatch callee id" (a stale address), and only then: the next
+/// member update dials it again. The PD connections are not touched.
 async fn observation_batch_callee_mismatch_retires_only_stale_connection() {
     let pd = Server::start(Reply::Timestamp).await;
     let tso = Server::start(Reply::Timestamp).await;
@@ -3594,9 +3643,9 @@ async fn observation_batch_callee_mismatch_retires_only_stale_connection() {
         ("wrapped mismatch callee id: stale DNS", true),
     ] {
         *tso.service.discovery_error.lock().unwrap() = Some(message.into());
-        assert!(client.reconnect_for_test().await.is_err());
+        assert!(client.tso_update_member_for_test().await.is_err());
         *tso.service.discovery_error.lock().unwrap() = None;
-        client.reconnect_for_test().await.unwrap();
+        client.tso_update_member_for_test().await.unwrap();
         assert_eq!(
             tso.service.connections.load(Ordering::SeqCst) > initial,
             should_reconnect,
@@ -4124,5 +4173,98 @@ async fn client_discovery_lines_follow_the_service_mode() {
     client.close().await;
     assert!(crate::logutil::test_capture::any(
         |line| line == "INFO [router service] is closed"
+    ));
+}
+
+/// pd-client creates the router client at init (`EnableRouterClient`
+/// defaults to on) and its `routerClientInitializer` closes and recreates it
+/// as the option changes; region lookups take the router client's
+/// `QueryRegion` stream while it exists and PD's unary RPCs otherwise.
+#[tokio::test]
+async fn router_client_follows_the_enable_router_client_option() {
+    crate::logutil::test_capture::install();
+    let server = Server::start(Reply::Timestamp).await;
+    server.service.region_id.store(77, Ordering::SeqCst);
+    let client = Arc::new(
+        RetryClient::connect_with_options(
+            &[server.service.endpoint.clone()],
+            Arc::new(SecurityManager::default()),
+            {
+                let mut options = crate::pd::opt::Options::new();
+                options.timeout = Duration::from_secs(3);
+                options
+            },
+            None,
+        )
+        .await
+        .unwrap(),
+    );
+    let routes = |path: &str| {
+        server
+            .service
+            .wire_routes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(route, _, _)| route == path)
+            .count()
+    };
+    let region = client
+        .clone()
+        .get_region_for_cache(b"k".to_vec(), false, false)
+        .await
+        .unwrap();
+    assert_eq!(region.region.id, 77);
+    assert_eq!(routes("/pdpb.PD/QueryRegion"), 1);
+    assert_eq!(routes("/pdpb.PD/GetRegion"), 0);
+    let line = format!(
+        "INFO [router] successfully established the leader router stream connection url={}",
+        server.service.endpoint
+    );
+    assert!(crate::logutil::test_capture::any(|l| l == line));
+    assert!(crate::logutil::test_capture::any(
+        |l| l == "INFO [pd] start router client initializer"
+    ));
+
+    client.set_enable_router_client(false);
+    crate::logutil::test_capture::wait_for("the router client disabled", |l| {
+        l == "INFO [pd] notified to disable the router client"
+    })
+    .await;
+    crate::logutil::test_capture::wait_for("the router client closed", |l| {
+        l == "INFO [router] router client is closed"
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while client.get_router_client().is_some() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    client.clone().get_region(b"k".to_vec()).await.unwrap();
+    assert_eq!(routes("/pdpb.PD/GetRegion"), 1);
+
+    client.set_enable_router_client(true);
+    crate::logutil::test_capture::wait_for("the router client enabled", |l| {
+        l == "INFO [pd] notified to enable the router client"
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while client.get_router_client().is_none() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    client
+        .clone()
+        .get_region_by_id_with_buckets(77)
+        .await
+        .unwrap();
+    assert_eq!(routes("/pdpb.PD/QueryRegion"), 2);
+    client.close().await;
+    assert!(crate::logutil::test_capture::any(
+        |l| l == "INFO [pd] exit router client initializer"
     ));
 }

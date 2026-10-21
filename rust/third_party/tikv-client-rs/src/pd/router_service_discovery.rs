@@ -101,6 +101,8 @@ pub(crate) struct RouterServiceDiscovery {
     nodes: Mutex<BTreeMap<String, Arc<RouterNode>>>,
     balancer: Mutex<Balancer>,
     check_membership: tokio::sync::Notify,
+    /// Go `callbacks` (members-changed only).
+    callbacks: super::service_discovery::ServiceCallbacks,
     /// Go `ctx`; Go `parentCtx` is the owner's.
     ctx: Cancellation,
     workers: tokio::sync::Mutex<Vec<JoinHandle<()>>>,
@@ -131,6 +133,7 @@ impl RouterServiceDiscovery {
             nodes: Mutex::new(BTreeMap::new()),
             balancer: Mutex::new(Balancer::default()),
             check_membership: tokio::sync::Notify::new(),
+            callbacks: Default::default(),
             ctx: parent.child(),
             workers: tokio::sync::Mutex::new(Vec::new()),
         });
@@ -264,11 +267,31 @@ impl RouterServiceDiscovery {
 
     /// Go `updateURLs`.
     fn update_urls(&self, sorted_addrs: Vec<String>) {
+        *self.sorted_urls.write().unwrap() = Some(sorted_addrs.clone());
+        // Reflect the membership change in the members-changed callbacks.
+        self.callbacks.on_members_changed();
         log::info!(
             "new-sorted-urls":serde = sorted_addrs;
             "[router service] update member sorted urls"
         );
-        *self.sorted_urls.write().unwrap() = Some(sorted_addrs);
+    }
+
+    /// Go `GetClientConns`: the nodes' connections, by URL.
+    pub(crate) fn get_client_conns(&self) -> Vec<(String, Channel)> {
+        self.nodes
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(url, node)| (url.clone(), node.channel.clone()))
+            .collect()
+    }
+
+    /// Go `AddMembersChangedCallback`.
+    pub(crate) fn add_members_changed_callback(
+        &self,
+        callback: super::service_discovery::MembersChangedCallback,
+    ) {
+        self.callbacks.add_members_changed_callback(callback);
     }
 
     /// Go `updateNodes`.
@@ -402,6 +425,48 @@ impl RouterServiceDiscovery {
         *self.sorted_urls.write().unwrap() = Some(Vec::new());
         self.balancer.lock().unwrap().clean();
         log::info!("[router service] is closed");
+    }
+}
+
+/// The router client's view of the router service discovery (Go
+/// `routerServiceDiscovery` as a `ServiceDiscovery`).
+#[async_trait::async_trait]
+impl super::router::ServiceDiscovery for RouterServiceDiscovery {
+    fn get_cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    /// Go's discovery embeds PD's, whose serving URL the router client never
+    /// asks this discovery for.
+    fn get_serving_url(&self) -> String {
+        String::new()
+    }
+
+    fn get_client_conns(&self) -> Vec<(String, Channel)> {
+        RouterServiceDiscovery::get_client_conns(self)
+    }
+
+    fn schedule_check_member_changed(&self) {
+        RouterServiceDiscovery::schedule_check_member_changed(self);
+    }
+
+    async fn check_member_changed(&self) -> Result<()> {
+        RouterServiceDiscovery::check_member_changed(self).await
+    }
+
+    /// Go's discovery takes this from the embedded PD discovery; the router
+    /// client registers it only with PD's.
+    fn exec_and_add_leader_switched_callback(
+        &self,
+        _callback: super::service_discovery::LeaderSwitchedCallback,
+    ) {
+    }
+
+    fn add_members_changed_callback(
+        &self,
+        callback: super::service_discovery::MembersChangedCallback,
+    ) {
+        RouterServiceDiscovery::add_members_changed_callback(self, callback);
     }
 }
 

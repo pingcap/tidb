@@ -17,9 +17,11 @@ pub mod resource_group;
 pub mod resource_manager_client;
 mod resource_manager_discovery;
 mod retry;
+pub(crate) mod router;
 mod router_service_discovery;
 pub(crate) mod tso;
 pub mod tso_batch;
+mod tso_service_discovery;
 
 pub use self::client::PdRpcClient;
 pub use self::client::{get_store_liveness_timeout, set_store_liveness_timeout};

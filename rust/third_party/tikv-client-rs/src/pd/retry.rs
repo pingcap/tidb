@@ -370,6 +370,10 @@ pub struct RetryClient<Cl = Cluster> {
     /// pd-client `innerClient.msDiscovery`.
     router_discovery:
         tokio::sync::Mutex<Option<Arc<super::router_service_discovery::RouterServiceDiscovery>>>,
+    /// pd-client `innerClient.routerClient` and what creating one takes.
+    router_client: std::sync::OnceLock<Arc<RouterClientSlot>>,
+    /// pd-client `routerClientInitializer`.
+    router_initializer: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl<Cl> RetryClient<Cl> {
@@ -389,7 +393,26 @@ impl<Cl> RetryClient<Cl> {
             initial_keyspace: None,
             token_dispatcher: tokio::sync::OnceCell::new(),
             router_discovery: tokio::sync::Mutex::new(None),
+            router_client: std::sync::OnceLock::new(),
+            router_initializer: tokio::sync::Mutex::new(None),
         }
+    }
+}
+
+impl RetryClient<Cluster> {
+    /// A retry client over `cluster` that shares the connection which built
+    /// it, as [`Self::connect_with_options`] does: the membership the cluster
+    /// publishes is the one the client's TSO discovery reads.
+    #[cfg(test)]
+    pub(crate) fn new_with_connected_cluster(
+        security_mgr: Arc<SecurityManager>,
+        timeout: Duration,
+        cluster: Cluster,
+    ) -> RetryClient<Cluster> {
+        let connection = cluster.connection().clone();
+        let mut client = Self::new_with_cluster(security_mgr, timeout, cluster);
+        client.connection = connection;
+        client
     }
 }
 
@@ -486,6 +509,12 @@ impl RetryClient<Cluster> {
         self.connection.options.set_enable_follower_handle(enabled);
     }
 
+    /// pd-client `UpdateOption(EnableRouterClient, enabled)`: the router
+    /// client initializer creates or closes the router client.
+    pub fn set_enable_router_client(&self, enabled: bool) {
+        self.connection.options.set_enable_router_client(enabled);
+    }
+
     pub(crate) fn initial_keyspace(&self) -> Option<&keyspacepb::KeyspaceMeta> {
         self.initial_keyspace.as_ref()
     }
@@ -538,7 +567,120 @@ impl RetryClient<Cluster> {
         client.initial_keyspace = initial_keyspace;
         client.start_discovery().await;
         client.start_router_service_discovery().await;
+        client.start_router_client().await;
         Ok(client)
+    }
+
+    /// pd-client `innerClient.init`'s router client half: the router client
+    /// when `EnableRouterClient` is on (its default), and
+    /// `routerClientInitializer`, which creates or closes it as the option
+    /// changes.
+    async fn start_router_client(&self) {
+        let ms_discovery = self
+            .router_discovery
+            .lock()
+            .await
+            .clone()
+            .map(|discovery| discovery as Arc<dyn super::router::ServiceDiscovery>);
+        let cluster_id = self.cluster.read().await.0.id();
+        let slot = Arc::new(RouterClientSlot {
+            cli: std::sync::RwLock::new(None),
+            parent: self.cancellation.clone(),
+            svc_discovery: Arc::new(PdServiceDiscovery {
+                cluster_id,
+                connection: self.connection.clone(),
+                cluster: Arc::downgrade(&self.cluster),
+                refresh: Arc::downgrade(&self.reconnect),
+                timeout: self.timeout,
+            }),
+            ms_discovery,
+            option: self.connection.options.clone(),
+        });
+        let _ = self.router_client.set(slot.clone());
+        if slot.option.get_enable_router_client() {
+            slot.enable().await;
+        }
+        let cancellation = self.cancellation.clone();
+        let initializer = tokio::spawn(async move {
+            log::info!("[pd] start router client initializer");
+            loop {
+                let changed = async {
+                    slot.option
+                        .enable_router_client_ch
+                        .receiver
+                        .lock()
+                        .await
+                        .recv()
+                        .await
+                };
+                tokio::select! {
+                    _ = cancellation.cancelled() => {
+                        log::info!("[pd] exit router client initializer");
+                        return;
+                    }
+                    _ = changed => {
+                        if slot.option.get_enable_router_client() {
+                            log::info!("[pd] notified to enable the router client");
+                            slot.enable().await;
+                        } else {
+                            log::info!("[pd] notified to disable the router client");
+                            slot.disable().await;
+                        }
+                    }
+                }
+            }
+        });
+        *self.router_initializer.lock().await = Some(initializer);
+    }
+
+    /// pd-client `getRouterClient`.
+    pub(crate) fn get_router_client(&self) -> Option<Arc<super::router::Cli>> {
+        self.router_client
+            .get()
+            .and_then(|slot| slot.cli.read().unwrap().clone())
+    }
+
+    /// pd-client `GetRegion` / `GetPrevRegion` / `GetRegionByID` over the
+    /// router client: the client timeout bounds the request, and the
+    /// command's duration is observed whatever the outcome.
+    async fn get_region_from_router(
+        &self,
+        router: Arc<super::router::Cli>,
+        tag: &'static str,
+        query: RouterQuery,
+        options: super::opt::GetRegionOp,
+    ) -> Result<RegionWithLeader> {
+        let started = std::time::Instant::now();
+        let _stats = pd_stats(tag);
+        let result = match &query {
+            RouterQuery::Key(key) => router.get_region(key.clone(), options, self.timeout).await,
+            RouterQuery::PrevKey(key) => {
+                router
+                    .get_prev_region(key.clone(), options, self.timeout)
+                    .await
+            }
+            RouterQuery::Id(id) => router.get_region_by_id(*id, options, self.timeout).await,
+        };
+        crate::util::record_pd_wait_time(started);
+        let region = result?.ok_or_else(|| match query {
+            RouterQuery::Key(key) | RouterQuery::PrevKey(key) => {
+                Error::RegionForKeyNotFound { key }
+            }
+            RouterQuery::Id(region_id) => Error::RegionNotFoundInResponse { region_id },
+        })?;
+        let mut converted = RegionWithLeader::new(region.meta, region.leader);
+        converted.buckets = region.buckets;
+        converted.pending_peers = region.pending_peers;
+        // Go's `router.Region` keeps only the down peers themselves.
+        converted.down_peers = region
+            .down_peers
+            .into_iter()
+            .map(|peer| pdpb::PeerStats {
+                peer: Some(peer),
+                ..Default::default()
+            })
+            .collect();
+        Ok(converted)
     }
 
     /// A meta-storage read through this client's current cluster, of one key
@@ -627,7 +769,23 @@ impl RetryClient<Cluster> {
         let check_refresh = Arc::downgrade(&self.reconnect);
         let connection = self.connection.clone();
         let timeout = self.timeout;
+        let pd_cluster = Arc::downgrade(&self.cluster);
+        let pd_refresh = Arc::downgrade(&self.reconnect);
+        let pd_connection = self.connection.clone();
         super::cluster::TsoDiscoveryHooks {
+            pd_check_member_changed: Arc::new(move || {
+                let cluster = pd_cluster.clone();
+                let refresh = pd_refresh.clone();
+                let connection = pd_connection.clone();
+                async move {
+                    let (Some(cluster), Some(refresh)) = (cluster.upgrade(), refresh.upgrade())
+                    else {
+                        return Err(Error::ContextCanceled);
+                    };
+                    refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None, false).await
+                }
+                .boxed()
+            }),
             schedule_check_member_changed: Arc::new(move || {
                 if let Some(refresh) = refresh.upgrade() {
                     refresh.members_changed.notify_one();
@@ -738,13 +896,15 @@ impl RetryClient<Cluster> {
                     let Some(cluster) = cluster.upgrade() else {
                         break;
                     };
-                    // pd-client `tsoServiceDiscovery.startCheckMemberLoop`.
-                    if let Err(error) =
+                    // pd-client `setServiceMode` (a TSO client reset when the
+                    // accepted mode changes) and, in PD mode, the TSO client's
+                    // leader-switched / members-changed callbacks. In API mode
+                    // the TSO service discovery checks its group itself.
+                    // Neither path has a line of its own in Go: the mode
+                    // check and the member updates log their failures.
+                    let _ =
                         refresh_timestamp_cached(&cluster, &connection, &refresh, timeout, None)
-                            .await
-                    {
-                        log::warn!(error:% = error; "[tso] failed to update member");
-                    }
+                            .await;
                 }
             };
             let members = async {
@@ -819,6 +979,15 @@ impl RetryClient<Cluster> {
             let _ = handle.await;
             worker.take();
         }
+        drop(worker);
+        if let Some(initializer) = self.router_initializer.lock().await.take() {
+            let _ = initializer.await;
+        }
+        // Go's close cancels the router client's parent ctx without closing
+        // the router client; its goroutines end on their own.
+        if let Some(router) = self.get_router_client() {
+            router.join().await;
+        }
         if let Some(discovery) = self.router_discovery.lock().await.take() {
             self.connection.set_router_discovery(None);
             discovery.close().await;
@@ -836,6 +1005,20 @@ impl RetryClient<Cluster> {
     #[cfg(test)]
     pub(crate) async fn tso_for_test(&self) -> Arc<super::tso::Cli> {
         self.cluster.read().await.0.tso_for_test()
+    }
+
+    /// One member update of the current TSO service discovery (what its
+    /// check member loop runs), without its retries.
+    #[cfg(test)]
+    pub(crate) async fn tso_update_member_for_test(&self) -> Result<()> {
+        let discovery = self
+            .cluster
+            .read()
+            .await
+            .0
+            .tso_svc_discovery_for_test()
+            .expect("the TSO microservice provides TSO");
+        discovery.update_member_for_test().await
     }
 
     pub async fn cluster_id(&self) -> u64 {
@@ -912,6 +1095,146 @@ impl RetryClient<Cluster> {
     }
 }
 
+/// A region query of the router client.
+enum RouterQuery {
+    Key(Vec<u8>),
+    PrevKey(Vec<u8>),
+    Id(u64),
+}
+
+/// pd-client `innerClient`'s router client fields: the current router client
+/// (Go `routerClient`, under the client's lock) and what creating one takes.
+struct RouterClientSlot {
+    cli: std::sync::RwLock<Option<Arc<super::router::Cli>>>,
+    parent: Cancellation,
+    svc_discovery: Arc<dyn super::router::ServiceDiscovery>,
+    ms_discovery: Option<Arc<dyn super::router::ServiceDiscovery>>,
+    option: Arc<super::opt::Options>,
+}
+
+impl RouterClientSlot {
+    /// Go `enableRouterClient`.
+    async fn enable(&self) {
+        if self.cli.read().unwrap().is_some() {
+            return;
+        }
+        let cli = super::router::Cli::new(
+            &self.parent,
+            self.svc_discovery.clone(),
+            self.ms_discovery.clone(),
+            self.option.clone(),
+        );
+        let raced = {
+            let mut current = self.cli.write().unwrap();
+            if current.is_some() {
+                true
+            } else {
+                *current = Some(cli.clone());
+                false
+            }
+        };
+        if raced {
+            cli.close().await;
+        }
+    }
+
+    /// Go `disableRouterClient`.
+    async fn disable(&self) {
+        let cli = self.cli.write().unwrap().take();
+        if let Some(cli) = cli {
+            cli.close().await;
+        }
+    }
+}
+
+/// pd-client's `serviceDiscovery` as the router client consumes it: the
+/// members the cluster refresh publishes, their connections, and this
+/// client's member checks.
+struct PdServiceDiscovery {
+    cluster_id: u64,
+    connection: Connection,
+    cluster: std::sync::Weak<RwLock<(Cluster, Instant)>>,
+    refresh: std::sync::Weak<DiscoveryRefresh>,
+    timeout: Duration,
+}
+
+#[async_trait]
+impl super::router::ServiceDiscovery for PdServiceDiscovery {
+    fn get_cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    fn get_serving_url(&self) -> String {
+        self.connection.membership.leader_url()
+    }
+
+    fn get_client_conns(&self) -> Vec<(String, tonic::transport::Channel)> {
+        self.connection
+            .membership
+            .member_urls()
+            .into_iter()
+            .filter_map(|url| {
+                let channel = self.connection.cached_channel(&url)?;
+                Some((url, channel))
+            })
+            .collect()
+    }
+
+    fn schedule_check_member_changed(&self) {
+        if let Some(refresh) = self.refresh.upgrade() {
+            refresh.members_changed.notify_one();
+        }
+    }
+
+    /// Go `serviceDiscovery.CheckMemberChanged` (`updateMember`).
+    async fn check_member_changed(&self) -> Result<()> {
+        let (Some(cluster), Some(refresh)) = (self.cluster.upgrade(), self.refresh.upgrade())
+        else {
+            return Err(Error::ContextCanceled);
+        };
+        refresh_cluster(
+            &cluster,
+            &self.connection,
+            &refresh,
+            self.timeout,
+            0,
+            None,
+            false,
+        )
+        .await
+    }
+
+    fn exec_and_add_leader_switched_callback(
+        &self,
+        callback: super::service_discovery::LeaderSwitchedCallback,
+    ) {
+        let url = self.connection.membership.leader_url();
+        if !url.is_empty() {
+            if let Err(error) = callback(&url) {
+                log::error!(
+                    url = url.as_str(),
+                    error:% = error;
+                    "[pd] failed to run a callback with the current leader url"
+                );
+            }
+        }
+        self.connection
+            .membership
+            .callbacks()
+            .add_leader_switched_callback(callback);
+    }
+
+    fn add_members_changed_callback(
+        &self,
+        callback: super::service_discovery::MembersChangedCallback,
+    ) {
+        self.connection
+            .membership
+            .callbacks()
+            .add_members_changed_callback(callback);
+    }
+}
+
 // The PD client's membership as the HTTP client's service discovery.
 struct MemberServiceDiscovery {
     cluster: std::sync::Weak<RwLock<(Cluster, Instant)>>,
@@ -953,6 +1276,16 @@ impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        if let Some(router) = self.get_router_client() {
+            return self
+                .get_region_from_router(
+                    router,
+                    "get_region",
+                    RouterQuery::Key(key),
+                    Default::default(),
+                )
+                .await;
+        }
         retry_recording_pd_wait!(self, "get_region", |cluster| {
             let key = key.clone();
             cluster
@@ -971,6 +1304,24 @@ impl RetryClientTrait for RetryClient<Cluster> {
         previous: bool,
         leader_only: bool,
     ) -> Result<RegionWithLeader> {
+        if let Some(router) = self.get_router_client() {
+            // client-go `loadRegion`: buckets, and follower or router service
+            // handling on the first attempt only.
+            let options = super::opt::GetRegionOp {
+                need_buckets: true,
+                allow_follower_handle: !leader_only,
+                allow_router_service_handle: !leader_only,
+                ..Default::default()
+            };
+            let (tag, query) = if previous {
+                ("get_prev_region", RouterQuery::PrevKey(key))
+            } else {
+                ("get_region", RouterQuery::Key(key))
+            };
+            return self
+                .get_region_from_router(router, tag, query, options)
+                .await;
+        }
         retry_recording_pd_wait!(self, "get_region_for_cache", |cluster| {
             let key = key.clone();
             cluster
@@ -984,6 +1335,15 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_region_with_buckets(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        if let Some(router) = self.get_router_client() {
+            let options = super::opt::GetRegionOp {
+                need_buckets: true,
+                ..Default::default()
+            };
+            return self
+                .get_region_from_router(router, "get_region", RouterQuery::Key(key), options)
+                .await;
+        }
         retry_recording_pd_wait!(self, "get_region_with_buckets", |cluster| {
             let key = key.clone();
             cluster
@@ -997,6 +1357,16 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
+        if let Some(router) = self.get_router_client() {
+            return self
+                .get_region_from_router(
+                    router,
+                    "get_prev_region",
+                    RouterQuery::PrevKey(key),
+                    Default::default(),
+                )
+                .await;
+        }
         retry_recording_pd_wait!(self, "get_prev_region", |cluster| {
             let key = key.clone();
             cluster
@@ -1013,6 +1383,20 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         key: Vec<u8>,
     ) -> Result<RegionWithLeader> {
+        if let Some(router) = self.get_router_client() {
+            let options = super::opt::GetRegionOp {
+                need_buckets: true,
+                ..Default::default()
+            };
+            return self
+                .get_region_from_router(
+                    router,
+                    "get_prev_region",
+                    RouterQuery::PrevKey(key),
+                    options,
+                )
+                .await;
+        }
         retry_recording_pd_wait!(self, "get_prev_region_with_buckets", |cluster| {
             let key = key.clone();
             cluster
@@ -1026,6 +1410,16 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
+        if let Some(router) = self.get_router_client() {
+            return self
+                .get_region_from_router(
+                    router,
+                    "get_region_by_id",
+                    RouterQuery::Id(region_id),
+                    Default::default(),
+                )
+                .await;
+        }
         retry_recording_pd_wait!(self, "get_region_by_id", |cluster| {
             cluster
                 .get_region_by_id(region_id, self.timeout)
@@ -1041,6 +1435,20 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         region_id: RegionId,
     ) -> Result<RegionWithLeader> {
+        if let Some(router) = self.get_router_client() {
+            let options = super::opt::GetRegionOp {
+                need_buckets: true,
+                ..Default::default()
+            };
+            return self
+                .get_region_from_router(
+                    router,
+                    "get_region_by_id",
+                    RouterQuery::Id(region_id),
+                    options,
+                )
+                .await;
+        }
         retry_recording_pd_wait!(self, "get_region_by_id_with_buckets", |cluster| {
             cluster
                 .get_region_by_id_with_buckets(region_id, self.timeout, true)

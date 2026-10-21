@@ -1,5 +1,36 @@
+diff --git a/src/pd/router/tests.rs b/src/pd/router/tests.rs
+index 4cf37fd..a6d91b5 100644
+--- a/src/pd/router/tests.rs
++++ b/src/pd/router/tests.rs
+@@ -116,7 +116,7 @@ where
+     B: Body + Send + 'static,
+     B::Error: Into<StdError> + Send + 'static,
+ {
+-    type Response = http::Response<tonic::body::BoxBody>;
++    type Response = http::Response<tonic::body::Body>;
+     type Error = Infallible;
+     type Future = BoxFuture<Self::Response, Self::Error>;
+ 
+@@ -129,7 +129,7 @@ where
+         if request.uri().path().ends_with("/QueryRegion") {
+             return Box::pin(async move {
+                 Ok(
+-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                         .streaming(service, request)
+                         .await,
+                 )
+@@ -140,7 +140,7 @@ where
+                 .status(200)
+                 .header("grpc-status", "12")
+                 .header("content-type", "application/grpc")
+-                .body(tonic::body::empty_body())
++                .body(tonic::body::Body::empty())
+                 .unwrap())
+         })
+     }
 diff --git a/src/pd/tso/tests.rs b/src/pd/tso/tests.rs
-index d18013c..db466db 100644
+index 51ff613..a911c3c 100644
 --- a/src/pd/tso/tests.rs
 +++ b/src/pd/tso/tests.rs
 @@ -105,7 +105,7 @@ where
@@ -74,7 +105,7 @@ index d18013c..db466db 100644
                      pdpb::ScanRegionsResponse,
                      pdpb::ScanRegionsRequest,
                  >::default())
-@@ -191,7 +191,7 @@ where
+@@ -191,14 +191,14 @@ where
              }),
              "/pdpb.PD/Tso" => Box::pin(async move {
                  Ok(
@@ -83,7 +114,15 @@ index d18013c..db466db 100644
                          .streaming(service, request)
                          .await,
                  )
-@@ -201,7 +201,7 @@ where
+             }),
+             "/pdpb.PD/QueryRegion" => Box::pin(async move {
+                 Ok(
+-                    tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                    tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                         .streaming(QueryRegionServer(service), request)
+                         .await,
+                 )
+@@ -208,7 +208,7 @@ where
                      .status(200)
                      .header("grpc-status", "12")
                      .header("content-type", "application/grpc")
@@ -92,7 +131,7 @@ index d18013c..db466db 100644
                      .unwrap())
              }),
          }
-@@ -489,7 +489,7 @@ where
+@@ -547,7 +547,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -101,7 +140,7 @@ index d18013c..db466db 100644
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
      fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
-@@ -499,7 +499,7 @@ where
+@@ -557,7 +557,7 @@ where
          let service = self.clone();
          Box::pin(async move {
              Ok(
@@ -110,7 +149,7 @@ index d18013c..db466db 100644
                      .unary(service, request)
                      .await,
              )
-@@ -1933,7 +1933,7 @@ where
+@@ -2006,7 +2006,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -119,7 +158,7 @@ index d18013c..db466db 100644
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
      fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
-@@ -1953,14 +1953,14 @@ where
+@@ -2026,14 +2026,14 @@ where
          match request.uri().path() {
              "/tsopb.TSO/FindGroupByKeyspaceID" => Box::pin(async move {
                  Ok(
@@ -136,7 +175,7 @@ index d18013c..db466db 100644
                          .streaming(service, request)
                          .await,
                  )
-@@ -2291,7 +2291,7 @@ where
+@@ -2369,7 +2369,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -145,7 +184,7 @@ index d18013c..db466db 100644
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
      fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
-@@ -2302,7 +2302,7 @@ where
+@@ -2380,7 +2380,7 @@ where
          assert_eq!(request.uri().path(), "/keyspacepb.Keyspace/LoadKeyspace");
          Box::pin(async move {
              Ok(

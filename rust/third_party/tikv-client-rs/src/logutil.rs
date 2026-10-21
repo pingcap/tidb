@@ -600,6 +600,52 @@ fn base64_std(bytes: &[u8]) -> String {
 /// lines arrive with their structured fields, the way TiDB's `log` bridge
 /// receives them: `"LEVEL message key=value ..."`. Only one logger can be
 /// installed per process, so every test module shares this one.
+/// Go `log.Fatal`'s effect after it logs its entry: zap syncs the logger and
+/// the process exits with status 1 (`os.Exit(1)`). Go's client takes the whole
+/// process down on these paths, so an embedding TiDB stops exactly as Go's
+/// would; unit tests record the exit instead (see [`exits_for_test`]).
+pub(crate) fn fatal_exit() {
+    log::logger().flush();
+    exit_process(1);
+}
+
+/// Go's runtime on a panic that no goroutine recovers: after printing the
+/// panic (Rust's panic hook has printed it) the process exits with status 2.
+pub(crate) fn unrecovered_panic_exit() {
+    log::logger().flush();
+    exit_process(2);
+}
+
+#[cfg(not(test))]
+fn exit_process(code: i32) {
+    std::process::exit(code);
+}
+
+#[cfg(test)]
+static EXITS: std::sync::Mutex<Vec<i32>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn exit_process(code: i32) {
+    EXITS.lock().unwrap().push(code);
+}
+
+/// The exit codes a unit test's process would have exited with so far.
+#[cfg(test)]
+pub(crate) fn exits_for_test() -> Vec<i32> {
+    EXITS.lock().unwrap().clone()
+}
+
+/// The text of a caught panic's payload (Go's `recover()` value).
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_owned()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "<non-string panic payload>".to_owned()
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_capture {
     use std::sync::{Mutex, Once};
