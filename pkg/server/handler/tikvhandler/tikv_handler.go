@@ -1209,6 +1209,8 @@ type CleanupGlobalIndexesResult struct {
 	TableID         int64   `json:"table_id"`
 	DroppedIndexIDs []int64 `json:"dropped_index_ids"`
 	SchemaVersion   int64   `json:"schema_version"`
+	// GCJobID is the DDL history job of the table that keys the delete ranges of the dropped indexes.
+	GCJobID int64 `json:"gc_job_id"`
 }
 
 // ServeHTTP handles request of dropping the leftover global index copies of a table. It edits the
@@ -1251,7 +1253,7 @@ func (h DDLCleanupGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *ht
 		return
 	}
 	defer se.Close()
-	indexIDs, ver, err := ddl.CleanupLeftoverIndexes(req.Context(), se, dbInfo.ID, tableID)
+	indexIDs, ver, gcJobID, err := ddl.CleanupLeftoverIndexes(req.Context(), se, dbInfo.ID, tableID)
 	if err != nil {
 		log.Error("failed to drop leftover global indexes", zap.Int64("tableID", tableID), zap.Error(err))
 		handler.WriteError(w, err)
@@ -1261,6 +1263,7 @@ func (h DDLCleanupGlobalIndexesHandler) ServeHTTP(w http.ResponseWriter, req *ht
 		TableID:         tableID,
 		DroppedIndexIDs: indexIDs,
 		SchemaVersion:   ver,
+		GCJobID:         gcJobID,
 	})
 }
 

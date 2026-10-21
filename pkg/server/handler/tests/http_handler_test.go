@@ -1196,6 +1196,54 @@ func TestDDLCheckHandler(t *testing.T) {
 	require.Equal(t, "success", result["result"])
 }
 
+func TestDDLCleanupGlobalIndexesHandler(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	tk := testkit.NewTestKit(t, ts.store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_gidx (a int, b int, key idx_g (a) global) partition by hash (b) partitions 2")
+	tblInfo := external.GetTableByName(t, tk, "test", "t_gidx").Meta().Clone()
+	createJobID, err := strconv.ParseInt(tk.MustQuery(fmt.Sprintf(
+		"select job_id from information_schema.ddl_jobs where table_id = %d and job_type = 'create table'", tblInfo.ID)).Rows()[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	dbInfo, ok := ts.domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	leftover := tblInfo.FindIndexByName("idx_g").Clone()
+	tblInfo.MaxIndexID++
+	leftover.ID = tblInfo.MaxIndexID
+	leftover.State = model.StateWriteReorganization
+	tblInfo.Indices = append(tblInfo.Indices, leftover)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, ts.store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if err := m.UpdateTable(dbInfo.ID, tblInfo); err != nil {
+			return err
+		}
+		ver, err := m.GenSchemaVersion()
+		if err != nil {
+			return err
+		}
+		return m.SetSchemaDiff(&model.SchemaDiff{Version: ver, Type: model.ActionAddIndex, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	}))
+	require.NoError(t, ts.domain.Reload())
+
+	resp, err := ts.PostStatus(fmt.Sprintf("/ddl/cleanup-global-indexes/%d", tblInfo.ID), "application/json", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Contains(t, string(body), fmt.Sprintf(`"gc_job_id": %d`, createJobID))
+	var result tikvhandler.CleanupGlobalIndexesResult
+	require.NoError(t, json.Unmarshal(body, &result))
+	require.Equal(t, tblInfo.ID, result.TableID)
+	require.Equal(t, []int64{leftover.ID}, result.DroppedIndexIDs)
+	require.Greater(t, result.SchemaVersion, int64(0))
+	require.Equal(t, createJobID, result.GCJobID)
+}
+
 func filterSpaces(bs []byte) []byte {
 	if len(bs) == 0 {
 		return nil
