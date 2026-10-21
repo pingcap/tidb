@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1149,6 +1151,11 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinVecCosineDistanceSig{base}
 	case tipb.ScalarFuncSig_VecL2NormSig:
 		f = &builtinVecL2NormSig{base}
+	case tipb.ScalarFuncSig_LocalMatchAgainstBoolean:
+		f = &builtinMysqlMatchAgainstSig{
+			baseBuiltinFunc: base,
+			modifier:        ast.FulltextSearchModifierBooleanMode,
+		}
 	default:
 		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e
@@ -1250,6 +1257,30 @@ func PBToExpr(ctx BuildContext, expr *tipb.Expr, tps []*types.FieldType) (Expres
 	sf, err := newDistSQLFunctionBySig(ctx, expr.Sig, expr.FieldType, args)
 	if err != nil {
 		return nil, err
+	}
+	if expr.Sig == tipb.ScalarFuncSig_LocalMatchAgainstBoolean {
+		if len(args) < 2 {
+			return nil, errors.New("Local MATCH requires a search argument and at least one column")
+		}
+		query := &tipb.LocalMatchAgainstBooleanQuery{}
+		if err := proto.Unmarshal(expr.Val, query); err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Expr.val contains the Local MATCH semantic protocol version. TiDB only
+		// decodes versions it understands; TiFlash support must be deployed before
+		// TiDB starts emitting a newer version.
+		config, err := fulltext.AnalyzerConfigFromLocalMatchAgainstBooleanQuery(query, args[1].GetType(ctx.GetEvalCtx()).GetCollate())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := SetLocalMatchAgainstEvalInfo(sf.(*ScalarFunction), &LocalMatchAgainstEvalInfo{AnalyzerConfig: config}); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if err := SetLocalMatchAgainstTiFlashEvalInfo(sf.(*ScalarFunction), &LocalMatchAgainstTiFlashEvalInfo{
+			BooleanQuery: query,
+		}); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	return sf, nil

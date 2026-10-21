@@ -414,8 +414,9 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 	case ast.VecDims, ast.VecL1Distance, ast.VecL2Distance, ast.VecNegativeInnerProduct, ast.VecCosineDistance, ast.VecL2Norm, ast.VecAsText:
 		return true
 	case ast.FTSMysqlMatchAgainst:
-		// The release-8.5 backport only implements local no-score evaluation.
-		return false
+		sig, ok := function.Function.(*builtinMysqlMatchAgainstSig)
+		return ok && sig.tiFlashEvalInfo != nil &&
+			sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}

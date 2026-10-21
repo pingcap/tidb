@@ -68,7 +68,11 @@ func newNgramScanState(input string) *ngramScanState {
 }
 
 func isNgramWordChar(ch rune) bool {
-	return unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_'
+	// MySQL's Boolean query lexer uses utf8mb4's BMP character classes,
+	// unlike its ngram DOCUMENT scanner, which retains all multibyte characters.
+	// Supplementary characters therefore delimit query words even when they
+	// are Unicode letters/numbers. Do not reuse this rule for document scanning.
+	return ch <= 0xFFFF && (unicode.IsLetter(ch) || unicode.IsNumber(ch) || ch == '_')
 }
 
 func isNgramUnsupportedOp(ch rune) bool {

@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "analyzer.go",
         "document.go",
+        "local_match_against_tipb.go",
         "query.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/expression/fulltext",
@@ -14,6 +15,8 @@ go_library(
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/util/collate",
+        "@com_github_pingcap_tipb//go-tipb",
     ],
 )
 
@@ -22,15 +25,19 @@ go_test(
     timeout = "short",
     srcs = [
         "analyzer_test.go",
+        "local_match_against_tipb_test.go",
         "query_test.go",
     ],
     embed = [":fulltext"],
     flaky = False,
     shard_count = 18,
     deps = [
+        "//pkg/expression/matchagainst",
         "//pkg/meta/model",
         "//pkg/sessionctx/variable",
+        "//pkg/util/collate",
         "//pkg/util/mock",
+        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -382,7 +382,7 @@ func TestFTSLikeErrorBoundaries(t *testing.T) {
 	tk.MustExec("set tidb_opt_enable_alternative_logical_plans=1,tidb_enable_local_match_against=1,tidb_enable_fts_like_fallback=1")
 	for _, q := range []string{
 		"select id from delivery_edges where match(a) against('cat' in boolean mode)",
-		"select id from delivery_edges where match(b,a) against('cat' in boolean mode)",
+		"select id from delivery_edges where match(a,a) against('cat' in boolean mode)",
 		"select id from delivery_edges where match(a,b) against('cat')",
 		"select match(a,b) against('cat' in boolean mode) from delivery_edges",
 		"select id from delivery_edges where match(a,b) against('cat' in boolean mode)>0",
@@ -396,4 +396,7 @@ func TestFTSLikeErrorBoundaries(t *testing.T) {
 	tk.MustQuery("select id from delivery_edges where match(b,a) against('cat' in boolean mode) order by id").Check(testkit.Rows("1", "2"))
 	tk.MustExec("set tidb_enable_local_match_against=1,tidb_enable_fts_like_fallback=0")
 	tk.MustQuery("select id from delivery_edges where match(a,b) against('cat' in boolean mode) order by id").Check(testkit.Rows("1"))
+	// Local MATCH requires the complete index column set, not its order.
+	// Keep ILIKE disabled so this checks token matching rather than substrings.
+	tk.MustQuery("select id from delivery_edges where match(b,a) against('cat' in boolean mode) order by id").Check(testkit.Rows("1"))
 }
