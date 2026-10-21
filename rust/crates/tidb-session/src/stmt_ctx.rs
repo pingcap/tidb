@@ -168,6 +168,16 @@ impl Session {
         )
     }
 
+    /// Drains the current attempt's published keys, the unchanged matched
+    /// rows apart from the locking reads' (see
+    /// [`tidb_executor::select_lock::TakenLocks`]).
+    pub fn take_selected_locks(&self) -> tidb_executor::select_lock::TakenLocks {
+        self.selected_lock_keys.as_ref().map_or_else(
+            tidb_executor::select_lock::TakenLocks::default,
+            tidb_executor::select_lock::SelectedLockKeys::take_all,
+        )
+    }
+
     fn optimizer_cost_env(
         &self,
         mem_quota: i64,

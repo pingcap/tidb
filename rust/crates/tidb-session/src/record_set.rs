@@ -71,7 +71,11 @@ pub(crate) enum QueryTransactionEnd {
 impl QueryTransactionEnd {
     fn finish(self, session: &mut Session, succeeded: bool) -> Result<(), DriverError> {
         match self {
-            Self::AutocommitRead if succeeded && !session.in_transaction() => {
+            Self::AutocommitRead
+                if succeeded
+                    && !session.in_transaction()
+                    && !session.statement_txns_are_external() =>
+            {
                 let start_ts = session.lock_catalog()?.allocate_tso();
                 session.set_last_txn_info_started(start_ts);
             }

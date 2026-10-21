@@ -1650,6 +1650,17 @@ impl Session {
         self.record_committed_txn_info(start_ts, commit_ts, "2pc");
     }
 
+    /// Whether a server owns this session's statement transactions, so that
+    /// `@@tidb_last_txn_info` is recorded from the store transaction's own
+    /// timestamps at its end (`setLastTxnInfoBeforeTxnEnd` and `CommitHook`)
+    /// and not from the catalog counter this tier's autocommit bookkeeping
+    /// uses. Such a statement that never activated a transaction (`USE`,
+    /// `SET`, `PREPARE`, `SELECT 1`) leaves the record alone, as Go's
+    /// `StartTS == 0` check does.
+    pub(crate) fn statement_txns_are_external(&self) -> bool {
+        self.statement_txn_activator.is_some()
+    }
+
     /// Go's `kv.CommitHook` (`sessiontxn/isolation/base.go:510`): the cluster
     /// transaction's own start and commit timestamps and the protocol that
     /// committed it, recorded once the commit is done.
@@ -1657,6 +1668,14 @@ impl Session {
         *self.last_txn_info.borrow_mut() = format!(
             "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"{commit_mode}\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
         );
+    }
+
+    /// [`Self::set_last_txn_info_started`] for the store transaction a server
+    /// owns: Go `setLastTxnInfoBeforeTxnEnd` runs at the start of both
+    /// `CommitTxn` and `RollbackTxn`, and only for a transaction that was
+    /// activated.
+    pub fn record_started_txn_info(&self, start_ts: u64) {
+        self.set_last_txn_info_started(start_ts);
     }
 
     /// Go `setLastTxnInfoBeforeTxnEnd` (`pkg/session/session.go:1056-1069`):

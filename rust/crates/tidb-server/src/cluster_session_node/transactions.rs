@@ -38,15 +38,21 @@
 //!
 //! Go's `SelectLockExec` sits above the reader and pessimistically locks each
 //! produced row's key at the statement's `for_update_ts`, so a second
-//! transaction's `FOR UPDATE` WAITS and then reads the committed value.
-//! Point and batch reads under repeatable read pre-lock their classified
-//! primary keys and consume the returned values. Other locking reads publish
-//! selected record keys from the executor; the statement owner locks those
-//! keys and retries with an advanced snapshot after a conflict. Ordinary
-//! reads keep their transaction snapshot and cannot use the lock-value cache.
-//! Read-committed reads exclude speculative absent-key prelocks. Partition,
-//! plan-shape and non-default wait exclusions remain explicit in the
-//! pre-lock classifier; they do not imply full lock-mode coverage.
+//! transaction's `FOR UPDATE` WAITS and then reads the committed value. It
+//! does so inside `Next`, in the call that finds its child drained, which for
+//! a single-table UPDATE or DELETE comes after the last chunk's writes
+//! (`buildUpdate` / `buildDelete` plan the lock over the source). Here
+//! `SelectLockExec` takes the same step through
+//! [`ClusterSnapshot::do_lock_keys`]. A locking point plan (`PointGet.Lock`)
+//! locks in its own `Next` through `lock_keys_for_read`, before the read under
+//! repeatable read, with the rows' values. Either lock's failure is kept by the
+//! statement's snapshot ([`StatementLockFailure`]) and the statement owner acts
+//! on it as `handlePessimisticLockError` does: a conflict re-runs the statement
+//! at the advanced `for_update_ts`. What the plan did not lock is locked by
+//! the owner after the statement, as `handlePessimisticDML` does: the keys it
+//! wrote and the matched rows an UPDATE left unchanged, in one request.
+//! Ordinary reads keep their transaction snapshot and cannot use the
+//! lock-value cache. Read-committed point reads lock only what exists.
 //!
 //! `LOCK IN SHARE MODE` is Go's own documented no-op and stays one.
 
@@ -707,6 +713,8 @@ struct DeferredSnapshot {
     /// statement snapshot is dropped.  The slot is shared because the storage
     /// seam intentionally exposes only `ClusterSnapshot` to the executor.
     write_handoff: Option<WriteTransactionSlot>,
+    /// See [`LockRetrySlot`].
+    lock_retry: Option<LockRetrySlot>,
     mutation_buffer: Option<MutationBuffer>,
     /// Behind one `Mutex` because `start_ts` takes `&self` and must answer
     /// with the timestamp of the same transaction the reads use -- and because
@@ -767,6 +775,7 @@ impl DeferredSnapshot {
             resource_group,
             read_ts,
             write_handoff: None,
+            lock_retry: None,
             mutation_buffer: None,
             state: Mutex::new(DeferredState::default()),
         }
@@ -776,6 +785,7 @@ impl DeferredSnapshot {
         transactions: Arc<dyn ClusterTransactions>,
         read_ts: StatementReadTs,
         write_handoff: WriteTransactionSlot,
+        lock_retry: LockRetrySlot,
         mutation_buffer: MutationBuffer,
         resource_group: Arc<str>,
         pessimistic: bool,
@@ -797,12 +807,24 @@ impl DeferredSnapshot {
             resource_group,
             read_ts,
             write_handoff: Some(write_handoff),
+            lock_retry: Some(lock_retry),
             mutation_buffer: Some(mutation_buffer),
             state: Mutex::new(DeferredState {
                 prefetched_write,
                 ..DeferredState::default()
             }),
         }
+    }
+
+    /// A conflict the statement's lock found after its read: the statement
+    /// owner re-runs it at `for_update_ts`.
+    fn lock_conflict(&self, for_update_ts: u64) -> StorageError {
+        if let Some(slot) = &self.lock_retry {
+            *slot.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(for_update_ts);
+        }
+        StorageError::Backend(format!(
+            "pessimistic lock conflict: the statement retries at {for_update_ts}"
+        ))
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, DeferredState> {
@@ -943,6 +965,12 @@ fn lock_storage_error(error: tidb_exec::pessimistic_lock_error::LockSqlError) ->
 /// transaction implementation through the storage trait.
 pub(crate) type WriteTransactionSlot = Arc<Mutex<Option<Box<dyn OpenClusterTransaction>>>>;
 
+/// Where an autocommit statement's lock, taken after its read, leaves the
+/// `for_update_ts` its conflict asks the statement to be re-run at (Go
+/// `handlePessimisticLockError` -> `OnStmtRetry`). The statement owner takes
+/// it back after the snapshot is gone.
+pub(crate) type LockRetrySlot = Arc<Mutex<Option<u64>>>;
+
 impl Drop for DeferredSnapshot {
     fn drop(&mut self) {
         let Some(handoff) = self.write_handoff.take() else {
@@ -1027,9 +1055,43 @@ impl ClusterSnapshot for DeferredSnapshot {
             LockKeysOutcome::Locked { .. } => Ok(()),
             // The statement already read at its start timestamp, so a newer
             // committed version is a write conflict for the whole statement.
-            LockKeysOutcome::RetryStatement { .. } => Err(StorageError::Backend(
-                "pessimistic lock conflict after the statement read".to_owned(),
-            )),
+            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+                Err(self.lock_conflict(for_update_ts))
+            }
+            LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
+                Err(lock_storage_error(error))
+            }
+        }
+    }
+
+    /// Go `doLockKeys` from `SelectLockExec.Next` in a pessimistic implicit
+    /// transaction: the statement has read through its write transaction,
+    /// which locks the keys of the rows the plan returned.
+    fn do_lock_keys(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
+        let mut guard = self.state();
+        self.open_in(&mut guard, None)?;
+        let Some(transaction) = guard
+            .write_transaction
+            .as_ref()
+            .filter(|transaction| transaction.is_pessimistic())
+        else {
+            return Ok(());
+        };
+        let outcome = transaction
+            .lock_staged_keys_with_assertions(keys, BTreeSet::new(), BTreeMap::new(), wait)
+            .map_err(StorageError::Backend)?;
+        match outcome {
+            LockKeysOutcome::Locked { .. } => Ok(()),
+            // The statement already read at its start timestamp, so a newer
+            // committed version is a write conflict for the whole statement.
+            LockKeysOutcome::RetryStatement { for_update_ts, .. } => {
+                Err(self.lock_conflict(for_update_ts))
+            }
             LockKeysOutcome::StatementError(error) | LockKeysOutcome::TransactionError(error) => {
                 Err(lock_storage_error(error))
             }
@@ -1113,6 +1175,7 @@ pub(crate) fn prefetched_write_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     write_handoff: WriteTransactionSlot,
+    lock_retry: LockRetrySlot,
     mutation_buffer: MutationBuffer,
     resource_group: Arc<str>,
     pessimistic: bool,
@@ -1123,6 +1186,7 @@ pub(crate) fn prefetched_write_snapshot(
         transactions,
         read_ts,
         write_handoff,
+        lock_retry,
         mutation_buffer,
         resource_group,
         pessimistic,

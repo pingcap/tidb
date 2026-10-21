@@ -348,6 +348,18 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         Ok(())
     }
 
+    /// Go `doLockKeys` from `SelectLockExec.Next`: locks the record keys of
+    /// the rows the statement's plan returned, at the transaction's
+    /// for-update timestamp, without asking for their values. A backend whose
+    /// statement takes no pessimistic locks answers `Ok(())`.
+    fn do_lock_keys(
+        &mut self,
+        _keys: &[Key],
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
     /// Optionally serves a base-table scan remotely, with the predicate, the
     /// row cap and the column projection evaluated at the backend.
     ///

@@ -145,6 +145,13 @@ impl ClusterServerSession {
         success: bool,
     ) -> Result<(), SqlQueryError> {
         let finished = self.finish_snapshot();
+        // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`: the
+        // autocommit read's transaction, when the statement activated one.
+        if statement.autocommit && self.session.historical_read_ts().is_none() {
+            if let Some(start_ts) = statement.read_ts.get() {
+                self.session.record_started_txn_info(start_ts);
+            }
+        }
         let result = if success {
             finished
                 .and_then(|()| self.commit_if_session_left_transaction())

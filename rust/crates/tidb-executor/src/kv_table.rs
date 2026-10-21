@@ -2298,6 +2298,21 @@ impl KvTable {
             .map_err(KvTableError::from)
     }
 
+    /// Go `doLockKeys` over this table's storage (see
+    /// [`TableStorage::do_lock_keys`]).
+    pub(crate) fn do_lock_keys(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), KvTableError> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+        self.store
+            .do_lock_keys(keys, wait)
+            .map_err(KvTableError::from)
+    }
+
     /// [`KvTable::stored_record`] without the bytes.
     fn stored_record_key(&mut self, handle: &TableHandle) -> Result<Option<Key>, KvTableError> {
         Ok(self.stored_record(handle)?.map(|(key, _)| key))

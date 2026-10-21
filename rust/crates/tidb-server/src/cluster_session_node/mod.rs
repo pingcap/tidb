@@ -5567,6 +5567,7 @@ impl ClusterServerSession {
                     )
                     .with_read_committed(self.session.is_read_committed())
                     .with_lock_state_observer(self.session.transaction_lock_state_observer())
+                    .with_lock_in_execution(true)
                 }),
         );
         let delta_savepoint = self.session.table_delta_savepoint();
@@ -5749,6 +5750,9 @@ impl ClusterServerSession {
         // attempt, reading at the transaction's own snapshot.
         let mut retry_read_ts: Option<u64> = None;
         let mut retries = tidb_exec::pessimistic_lock_error::PessimisticStatementRetry::default();
+        // An autocommit pessimistic statement's lock conflict (see
+        // [`transactions::LockRetrySlot`]).
+        let lock_retry: transactions::LockRetrySlot = Arc::default();
         // Whether the statement reached `finishStmt`'s commit: a failure
         // there is the commit's own, not one `autoCommitAfterStmt` rolls
         // back.
@@ -5760,6 +5764,9 @@ impl ClusterServerSession {
             if let Some(transaction) = self.explicit.as_ref() {
                 let _ = transaction.take_statement_lock_failure();
             }
+            *lock_retry
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             // Go `decideTxnMode`: under the default `pessimistic-auto-commit =
             // false` an autocommit DML runs optimistically -- a read at its
             // start timestamp and a one-phase prewrite -- and only the retry
@@ -5791,6 +5798,7 @@ impl ClusterServerSession {
                             .as_ref()
                             .expect("autocommit write created its transaction handoff"),
                     ),
+                    Arc::clone(&lock_retry),
                     self.buffer.clone(),
                     Arc::<str>::from(resource_group),
                     autocommit_pessimistic,
@@ -5835,6 +5843,15 @@ impl ClusterServerSession {
                     .start_ts();
             }
             let outcome = run(&mut self.session);
+            // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`
+            // for the transaction an autocommit statement ends: recorded
+            // only when the statement activated one (`TxnCtx.StartTS != 0`),
+            // before the commit whose hook overwrites it.
+            if self.explicit.is_none() && self.session.historical_read_ts().is_none() {
+                if let Some(start_ts) = read_ts.get() {
+                    self.session.record_started_txn_info(start_ts);
+                }
+            }
             // Go `TxnCtx.GetForUpdateTS` as the statement left it: a deferred
             // handle advances the for-update timestamp at its first read,
             // after the open published the transaction's earlier one.
@@ -5916,6 +5933,39 @@ impl ClusterServerSession {
                         .explicit
                         .as_ref()
                         .and_then(|transaction| transaction.take_statement_lock_failure());
+                    // An autocommit statement's lock found a newer committed
+                    // version of a row it read.
+                    let autocommit_retry = if self.explicit.is_none() {
+                        lock_retry
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .take()
+                    } else {
+                        None
+                    };
+                    if failure.is_some() || autocommit_retry.is_some() {
+                        // The storage error the lock raised is the statement
+                        // owner's to consume, as `handlePessimisticLockError`
+                        // does: what the client sees is the lock outcome.
+                        self.session
+                            .retract_statement_failure(error.code, &error.message);
+                    }
+                    if autocommit_retry.is_some() {
+                        if let Err(error) = retries.retry() {
+                            break Err(transactions::sql_error(error));
+                        }
+                        self.session.record_statement_retry();
+                        // The implicit transaction has nothing earlier to
+                        // keep: the replay is a new one, reading the version
+                        // that beat the statement.
+                        Self::rollback_prefetched_write(write_transaction.clone());
+                        self.buffer.restore(savepoint.clone());
+                        tidb_util::breakpoint::inject(
+                            &self.session,
+                            "lockErrorAndThenOnStmtRetryCalled",
+                        );
+                        continue;
+                    }
                     match failure {
                         None => break Err(error),
                         Some(StatementLockFailure::Retry { for_update_ts }) => {
@@ -5996,6 +6046,7 @@ impl ClusterServerSession {
             )
             .with_read_committed(self.session.is_read_committed())
             .with_lock_state_observer(self.session.transaction_lock_state_observer())
+            .with_lock_in_execution(true)
         });
         self.session.set_selected_lock_keys(selected);
     }
@@ -6012,8 +6063,20 @@ impl ClusterServerSession {
         if !transaction.is_pessimistic() {
             return Ok(PessimisticStep::Done);
         }
-        let keys = self.buffer.pessimistic_keys_since(*savepoint);
-        let mut requests = self.session.take_selected_lock_requests();
+        // Go `handlePessimisticDML`: `KeysNeedToLock` plus
+        // `CollectUnchangedKeysForXLock` lock in ONE `LockKeys`. The rows a
+        // plan's `SelectLockExec` read were locked inside execution, and a
+        // key the transaction already holds takes no second request, so what
+        // is left here is what the plan did not lock: a statement whose lock
+        // operator never saw its child drained, and the keys it wrote.
+        let taken = self.session.take_selected_locks();
+        let mut requests = taken.reads;
+        let mut keys = self.buffer.pessimistic_keys_since(*savepoint);
+        if !taken.unchanged.is_empty() {
+            keys.extend(taken.unchanged);
+            keys.sort();
+            keys.dedup();
+        }
         if !keys.is_empty() {
             requests.push((
                 tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout()),
@@ -6547,6 +6610,10 @@ impl ClusterServerSession {
         };
         let txn_opened_at = transaction.opened_at();
         let txn_statement_count = transaction.statement_count() as f64;
+        // Go `CommitTxn` -> `setLastTxnInfoBeforeTxnEnd`: the start-only
+        // record is written before the commit, and the commit hook
+        // overwrites it only when a commit really ran.
+        self.session.record_started_txn_info(transaction.start_ts());
         let commit_result = transaction.commit(&self.buffer);
         if let Some(observer) = self.session.transaction_observer() {
             observer.finished();
@@ -6650,6 +6717,8 @@ impl ClusterServerSession {
                 };
                 let txn_opened_at = transaction.opened_at();
                 let txn_statement_count = transaction.statement_count() as f64;
+                // Go `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`.
+                self.session.record_started_txn_info(transaction.start_ts());
                 let result = transaction.rollback();
                 if let Some(observer) = self.session.transaction_observer() {
                     observer.finished();

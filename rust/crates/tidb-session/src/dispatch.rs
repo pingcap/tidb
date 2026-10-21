@@ -3128,7 +3128,14 @@ impl Session {
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
                 .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
         }
-        if was_autocommit_statement && !self.in_transaction() {
+        // A server that owns the statement transactions records
+        // `@@tidb_last_txn_info` from its own store transaction when that
+        // ends; the catalog-counter record below stands in for it only on the
+        // tier without one.
+        if was_autocommit_statement
+            && !self.in_transaction()
+            && !self.statement_txns_are_external()
+        {
             match &mut execution {
                 PendingExecution::Query(query) => {
                     if query_reads_stored_table {

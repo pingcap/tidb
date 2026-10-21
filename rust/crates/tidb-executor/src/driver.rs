@@ -1001,6 +1001,41 @@ fn visit_executor_row_chunks(
     result.and(close)
 }
 
+/// [`visit_executor_row_chunks`] for a DML executor that writes each row as
+/// it is delivered, as Go's `UpdateExec.updateRows` and `DeleteExec` do:
+/// `state` is handed back to `visit`, so the writer can borrow what the read
+/// side only borrowed while the source executor was built.
+///
+/// The source is asked for its next chunk only after every row of the
+/// previous one was written, which is what puts the source's own end-of-input
+/// work (`SelectLockExec`'s lock) after the last chunk's writes.
+fn visit_executor_rows_writing<C: ?Sized>(
+    mut exec: Box<dyn Executor>,
+    types: &[FieldType],
+    memory: &crate::StatementMemory,
+    state: &mut C,
+    mut visit: impl FnMut(&mut C, Vec<Datum>) -> Result<(), DriverError>,
+) -> Result<(), DriverError> {
+    let result = (|| {
+        exec.open()?;
+        let mut req = exec.new_chunk();
+        loop {
+            next_executor(exec.as_mut(), &mut req, memory)?;
+            if req.num_rows() == 0 {
+                break;
+            }
+            for r in 0..req.num_rows() {
+                visit(state, req.get_row(r).get_datum_row(types))?;
+            }
+        }
+        Ok(())
+    })();
+    // Close even after partial open, next, conversion or write failure.
+    // Preserve the primary read/write error if cleanup also fails.
+    let close = exec.close().map_err(DriverError::from);
+    result.and(close)
+}
+
 #[cfg(test)]
 mod dml_batch_tests {
     use super::*;

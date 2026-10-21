@@ -13954,6 +13954,70 @@ fn last_txn_info_reports_the_cluster_commit_as_go_does() {
     );
 }
 
+/// Go `setLastTxnInfoBeforeTxnEnd` runs at the start of `CommitTxn` and
+/// `RollbackTxn` and records the start-only struct only for a transaction
+/// that was activated (`TxnCtx.StartTS != 0`); the commit hook then
+/// overwrites it when a commit really ran. Captured on the Go oracle:
+/// `USE`, `SET @x` and `PREPARE` leave `@@tidb_last_txn_info` alone (empty on
+/// a fresh connection), an autocommit UPDATE matching no row leaves the
+/// start-only record (`commit_ts` 0, no commit mode), and `BEGIN; ROLLBACK`
+/// leaves the start-only record too. This node recorded a two-phase commit
+/// at counter timestamps for every statement that produced no rows.
+#[test]
+fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1014)).unwrap();
+    let info = |session: &mut ClusterServerSession| {
+        displayed(rows(session, "SELECT @@tidb_last_txn_info"))[0][0].clone()
+    };
+    rows(&mut session, "CREATE TABLE test.t_info (a INT PRIMARY KEY)");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET @x = 1");
+    rows(&mut session, "PREPARE p FROM 'SELECT 1'");
+    assert_eq!(info(&mut session), "", "statements that ran no transaction");
+
+    session
+        .execute_write("INSERT INTO test.t_info VALUES (1)")
+        .unwrap();
+    let committed = info(&mut session);
+    assert!(committed.contains("\"txn_commit_mode\":\"2pc\""), "{committed}");
+    rows(&mut session, "USE test");
+    rows(&mut session, "SET @x = 2");
+    rows(&mut session, "PREPARE p2 FROM 'SELECT 1'");
+    assert_eq!(info(&mut session), committed, "no transaction, no record");
+
+    session
+        .execute_write("UPDATE test.t_info SET a = a WHERE a = 99")
+        .unwrap();
+    let empty_update = info(&mut session);
+    assert_ne!(empty_update, committed);
+    assert!(
+        empty_update.contains("\"commit_ts\":0,\"txn_commit_mode\":\"\""),
+        "{empty_update}"
+    );
+
+    session.control_transaction("BEGIN").unwrap();
+    session.control_transaction("ROLLBACK").unwrap();
+    let rolled_back = info(&mut session);
+    assert_ne!(rolled_back, empty_update);
+    assert!(
+        rolled_back.contains("\"commit_ts\":0,\"txn_commit_mode\":\"\""),
+        "{rolled_back}"
+    );
+
+    // `SELECT 1` reads no table and never activates a transaction; a table
+    // read does, and its end leaves the start-only record.
+    rows(&mut session, "SELECT 1");
+    assert_eq!(info(&mut session), rolled_back);
+    rows(&mut session, "SELECT * FROM test.t_info");
+    let read = info(&mut session);
+    assert_ne!(read, rolled_back);
+    assert!(
+        read.contains("\"commit_ts\":0,\"txn_commit_mode\":\"\""),
+        "{read}"
+    );
+}
+
 /// Go `normalizeSplitPolicy` records CREATE TABLE's and ALTER TABLE's region
 /// split policies on the table (`ActionAlterTableSetRegionSplitPolicy`), SHOW
 /// CREATE TABLE prints them, and a new index on a table with policies warns
@@ -23074,8 +23138,8 @@ fn trace_records_the_spans_each_statement_opens() {
         "      │   ├─*executor.PointGetExecutor.Next",
         "      │   │ ├─tikvSnapshot.get",
         "      │   │ └─regionRequest.SendReqCtx",
-        "      │   ├─*executor.PointGetExecutor.Next",
-        "      │   └─executor.updateRecord",
+        "      │   ├─executor.updateRecord",
+        "      │   └─*executor.PointGetExecutor.Next",
         "      └─session.CommitTxn",
         "        └─session.doCommitWithRetry",
     ];
@@ -23467,4 +23531,293 @@ fn trace_records_go_statement_path_regions() {
         "{tree:#?}"
     );
     session.control_transaction("ROLLBACK").unwrap();
+}
+
+/// The span names of a `TRACE` tree, each with its depth, the tree glyphs
+/// stripped.
+fn trace_spans(tree: &[String]) -> Vec<(usize, String)> {
+    tree.iter()
+        .map(|line| {
+            let name = line.trim_start_matches([' ', '│', '├', '└', '─']);
+            (line.chars().count() - name.chars().count(), name.to_owned())
+        })
+        .collect()
+}
+
+/// What a statement's `UpdateExec`/`DeleteExec`/locking read does with its
+/// locks, as the markers of its trace in order: every `SelectLockExec.Next`,
+/// every `updateRecord`, every point `Next`, and the lock request, the
+/// `regionRequest.SendReqCtx` whose parent is a `SelectLockExec.Next` or
+/// `PointGetExecutor.Next` span (Go's `doLockKeys` / `getAndLock`).
+fn lock_markers(tree: &[String]) -> Vec<String> {
+    let spans = trace_spans(tree);
+    let mut markers = Vec::new();
+    for (index, (depth, name)) in spans.iter().enumerate() {
+        let parent = spans[..index]
+            .iter()
+            .rev()
+            .find(|(parent_depth, _)| parent_depth < depth)
+            .map(|(_, name)| name.as_str());
+        if name == "*executor.SelectLockExec.Next"
+            || name == "executor.updateRecord"
+            || name == "*executor.PointGetExecutor.Next"
+        {
+            markers.push(name.clone());
+        } else if name.starts_with("regionRequest.SendReqCtx")
+            && matches!(
+                parent,
+                Some("*executor.SelectLockExec.Next" | "*executor.PointGetExecutor.Next")
+            )
+        {
+            markers.push("lock request".to_owned());
+        }
+    }
+    markers
+}
+
+/// Go plans a `SelectLock` over the source of a single-table pessimistic
+/// UPDATE or DELETE (`buildUpdate` / `buildDelete`, `buildSelectLock`) and
+/// over a `SELECT ... FOR UPDATE`, and `SelectLockExec.Next` locks the rows it
+/// read when its child is drained: AFTER the chunk's `updateRecord`s, in the
+/// `Next` call that returns no rows, not at the end of the statement. Each
+/// tree was captured with `TRACE` from the Go server on TiKV in a
+/// `BEGIN PESSIMISTIC`: the lock request sits under the second
+/// `SelectLockExec.Next`, after every `updateRecord`; a point update locks in
+/// its first `PointGetExecutor.Next` and reads EOF after its `updateRecord`.
+#[test]
+fn a_non_point_pessimistic_write_locks_inside_select_lock_next() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(2001))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.sllock (id int primary key, v int, w int, key iv(v))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.sllock VALUES (1, 2, 0), (2, 2, 0), (3, 5, 0), (4, 2, 0)",
+    );
+    let select = "*executor.SelectLockExec.Next";
+    let update = "executor.updateRecord";
+    let point = "*executor.PointGetExecutor.Next";
+    let lock = "lock request";
+    for (sql, expected) in [
+        // Three rows changed.
+        (
+            "UPDATE test.sllock SET w = 1 WHERE v = 2",
+            vec![select, update, update, update, select, lock],
+        ),
+        // Three rows matched and left as they were: the lock is still the
+        // statement's `SelectLockExec` one, and nothing is left to lock.
+        (
+            "UPDATE test.sllock SET w = 0 WHERE v = 2",
+            vec![select, update, update, update, select, lock],
+        ),
+        // A LIMIT sits above the lock only where Go cannot push it under.
+        (
+            "UPDATE test.sllock SET w = 1 WHERE v = 2 ORDER BY id LIMIT 2",
+            vec![select, update, update, select, lock],
+        ),
+        ("UPDATE test.sllock SET w = 1 WHERE v = 99", vec![select]),
+        ("DELETE FROM test.sllock WHERE v = 2", vec![select, select, lock]),
+        (
+            "SELECT * FROM test.sllock WHERE v = 2 FOR UPDATE",
+            vec![select, select, lock],
+        ),
+        (
+            "UPDATE test.sllock SET w = 1 WHERE id = 1",
+            vec![point, lock, update, point],
+        ),
+    ] {
+        session
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin");
+        let tree = trace_tree(&mut session, sql);
+        session.control_transaction("ROLLBACK").expect("rollback");
+        assert_eq!(lock_markers(&tree), expected, "{sql}\n{tree:#?}");
+    }
+}
+
+/// The rows a single-table pessimistic UPDATE, DELETE or locking read holds
+/// when its transaction stays open are the rows `SelectLockExec` saw: below
+/// the LIMIT where Go pushes it under the lock, every matched row of an
+/// UPDATE that changed nothing, and none when nothing matched. Each case was
+/// captured live from the Go server on TiKV, probing every id with
+/// `FOR UPDATE NOWAIT` from a second transaction.
+#[test]
+fn non_point_pessimistic_statements_hold_the_rows_go_locks() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut setup = factory
+        .open_session(session_context(2002))
+        .expect("session opens");
+    rows(
+        &mut setup,
+        "CREATE TABLE test.slheld (id int primary key, v int, w int, key iv(v))",
+    );
+    rows(
+        &mut setup,
+        "INSERT INTO test.slheld VALUES (1, 2, 0), (2, 2, 0), (3, 5, 0), (4, 2, 0)",
+    );
+    let mut writer = factory
+        .open_session(session_context(2003))
+        .expect("session opens");
+    let mut contender = factory
+        .open_session(session_context(2004))
+        .expect("session opens");
+    for (statement, held) in [
+        (
+            "UPDATE test.slheld SET w = 1 WHERE v = 2 ORDER BY id LIMIT 1",
+            vec![1],
+        ),
+        ("UPDATE test.slheld SET w = 0 WHERE v = 2", vec![1, 2, 4]),
+        (
+            "DELETE FROM test.slheld WHERE v = 2 ORDER BY id DESC LIMIT 2",
+            vec![2, 4],
+        ),
+        (
+            "SELECT * FROM test.slheld WHERE v = 2 ORDER BY id LIMIT 1 FOR UPDATE",
+            vec![1],
+        ),
+        ("UPDATE test.slheld SET w = 1 WHERE v = 99", vec![]),
+    ] {
+        writer
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin writer");
+        if statement.starts_with("SELECT") {
+            writer.execute(statement).expect("statement runs");
+        } else {
+            writer.execute_write(statement).expect("statement runs");
+        }
+        let mut probed = Vec::new();
+        for id in 1..=4 {
+            contender
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin contender");
+            let refused = contender
+                .execute(&format!(
+                    "SELECT id FROM test.slheld WHERE id = {id} FOR UPDATE NOWAIT"
+                ))
+                .err();
+            if let Some(error) = refused {
+                assert_eq!(error.code, 3572, "{statement} id {id}: {}", error.message);
+                probed.push(id);
+            }
+            contender.control_transaction("ROLLBACK").expect("rollback");
+        }
+        writer.control_transaction("ROLLBACK").expect("rollback");
+        assert_eq!(probed, held, "{statement}");
+    }
+}
+
+/// Go's lock comes after the chunk's `updateRecord`s, so a row error preempts
+/// a lock wait: with another transaction holding a matched row, the UPDATE
+/// that violates a unique key or fails a cast reports that error at once,
+/// and only the one that writes cleanly waits and times out with 1205.
+/// Captured live from the Go server on TiKV.
+#[test]
+fn a_row_error_in_a_pessimistic_update_preempts_its_lock_wait() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory
+        .open_session(session_context(2005))
+        .expect("session opens");
+    rows(
+        &mut holder,
+        "CREATE TABLE test.slerr (id int primary key, uk int, w int, unique key uq(uk), key iw(w))",
+    );
+    rows(
+        &mut holder,
+        "INSERT INTO test.slerr VALUES (1, 10, 0), (2, 20, 0), (3, 30, 0)",
+    );
+    holder
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin holder");
+    rows(
+        &mut holder,
+        "SELECT * FROM test.slerr WHERE id = 2 FOR UPDATE",
+    );
+    let mut contender = factory
+        .open_session(session_context(2006))
+        .expect("session opens");
+    contender
+        .execute_write("SET SESSION innodb_lock_wait_timeout = 1")
+        .expect("set lock wait");
+    for (statement, code) in [
+        ("UPDATE test.slerr SET uk = 10 WHERE id > 1", 1062),
+        ("UPDATE test.slerr SET w = 'x' WHERE id > 1", 1292),
+        ("UPDATE test.slerr SET w = 1 WHERE id > 1", 1205),
+    ] {
+        contender
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin contender");
+        let error = match contender.execute_write(statement) {
+            Err(error) => error,
+            Ok(_) => panic!("{statement} must fail"),
+        };
+        contender.control_transaction("ROLLBACK").expect("rollback");
+        assert_eq!(error.code, code, "{statement}: {}", error.message);
+    }
+    holder.control_transaction("ROLLBACK").expect("rollback");
+}
+
+/// A non-point UPDATE that waits on a row and finds it changed when the lock
+/// is granted re-runs at the new `for_update_ts` (Go
+/// `handlePessimisticLockError` -> `OnStmtRetry`): `SET w = w + 1` computes
+/// from the committed 100, not the 0 it first read. Captured live from the Go
+/// server on TiKV: the rows end 1, 101, 1 and the statement affects 3.
+#[test]
+fn a_non_point_pessimistic_update_retries_after_a_conflict_found_by_its_lock() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut holder = factory
+        .open_session(session_context(2007))
+        .expect("session opens");
+    rows(
+        &mut holder,
+        "CREATE TABLE test.slretry (id int primary key, v int, w int, key iv(v))",
+    );
+    rows(
+        &mut holder,
+        "INSERT INTO test.slretry VALUES (1, 2, 0), (2, 2, 0), (3, 5, 0), (4, 2, 0)",
+    );
+    holder
+        .control_transaction("BEGIN PESSIMISTIC")
+        .expect("begin holder");
+    rows(
+        &mut holder,
+        "SELECT * FROM test.slretry WHERE id = 2 FOR UPDATE",
+    );
+    let affected = std::thread::scope(|scope| {
+        let contender = scope.spawn(|| {
+            let mut contender = factory
+                .open_session(session_context(2008))
+                .expect("session opens");
+            contender
+                .execute_write("SET SESSION innodb_lock_wait_timeout = 10")
+                .expect("set lock wait");
+            contender
+                .control_transaction("BEGIN PESSIMISTIC")
+                .expect("begin contender");
+            let outcome = contender
+                .execute_write("UPDATE test.slretry SET w = w + 1 WHERE v = 2")
+                .expect("the update waits for the holder, then retries")
+                .expect("write result");
+            contender.control_transaction("COMMIT").expect("commit");
+            outcome.affected_rows
+        });
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        holder
+            .execute_write("UPDATE test.slretry SET w = 100 WHERE id = 2")
+            .expect("holder writes");
+        holder.control_transaction("COMMIT").expect("commit holder");
+        contender.join().expect("contender thread")
+    });
+    assert_eq!(affected, 3);
+    assert_eq!(
+        displayed(rows(&mut holder, "SELECT id, w FROM test.slretry ORDER BY id")),
+        [["1", "1"], ["2", "101"], ["3", "0"], ["4", "1"]]
+    );
 }

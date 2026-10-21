@@ -2043,6 +2043,29 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         if self.deferred_read_ts.load(Ordering::Acquire) == 0 {
             self.advance_on_first_read.store(false, Ordering::Release);
         }
+        self.lock_in_statement(keys, wait, true, only_if_exists)
+    }
+
+    /// Go `doLockKeys` from `SelectLockExec.Next`: the keys of the rows the
+    /// plan returned lock at the transaction's for-update timestamp, without
+    /// returned values. The statement has read already, so its for-update
+    /// timestamp stands.
+    fn do_lock_keys(&mut self, keys: &[Key], wait: LockWaitTime) -> Result<(), StorageError> {
+        self.lock_in_statement(keys, wait, false, false)
+    }
+}
+
+impl<S: StoreClient> SessionSnapshot<S> {
+    /// The lock both of the above take: the outcome Go's
+    /// `handlePessimisticLockError` acts on is kept for the statement owner
+    /// (see [`StatementLockFailure`]).
+    fn lock_in_statement(
+        &mut self,
+        keys: &[Key],
+        wait: LockWaitTime,
+        return_values: bool,
+        only_if_exists: bool,
+    ) -> Result<(), StorageError> {
         let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
         let mut state = self
             .state
@@ -2051,9 +2074,11 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
         if !matches!(&*state, SessionTransactionState::Pessimistic { .. }) {
             return Ok(());
         }
-        // Go `PointGetExecutor.get`: a locking read answers from the lock
-        // cache (`e.lock`), whichever statement shape opened this handle.
-        self.locking = true;
+        if return_values {
+            // Go `PointGetExecutor.get`: a locking read answers from the lock
+            // cache (`e.lock`), whichever statement shape opened this handle.
+            self.locking = true;
+        }
         arm_fair_locking(&mut state, self.fair_locking);
         let call = UnaryCallContext::with_timeout(self.timeout);
         let lock_started = std::time::Instant::now();
@@ -2071,7 +2096,7 @@ impl<S: StoreClient> ClusterSnapshot for SessionSnapshot<S> {
             &keys,
             &BTreeSet::new(),
             &BTreeMap::new(),
-            true,
+            return_values,
             only_if_exists,
             wait,
             &call,

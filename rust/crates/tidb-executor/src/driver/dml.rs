@@ -3901,16 +3901,6 @@ fn run_update_with_physical(
     let physical = physical_source
         .as_deref_mut()
         .ok_or_else(|| DriverError::unsupported("UPDATE has no retained physical child"))?;
-    let source_rows = execute_physical_write_rows(
-        physical,
-        catalog,
-        &database,
-        &name,
-        ctx,
-        runtime,
-        mem_quota::label::UPDATE,
-        None,
-    )?;
     let mut matched = 0u64;
     let mut touched = 0u64;
     let mut changed = 0u64;
@@ -3922,51 +3912,62 @@ fn run_update_with_physical(
     let accountant = ctx
         .statement_memory()
         .write_accountant(mem_quota::label::UPDATE);
-    let PhysicalWriteRows {
-        rows,
-        field_types: physical_field_types,
-    } = source_rows;
     // Go `UpdateExec.updateRows` composes each row and writes it before the
-    // next: row 1's write error or `HandleBadNull` warning comes before row
-    // 2's cast warning. Assignments that read the catalog (a correlated
-    // subquery) instead see the whole statement snapshot first.
+    // next, and asks its source for the next chunk only afterwards: row 1's
+    // write error or `HandleBadNull` warning comes before row 2's cast
+    // warning, and the source's `SelectLockExec` locks after the last chunk's
+    // writes. Assignments that read the catalog (a correlated subquery)
+    // instead see the whole statement snapshot first.
     if writes_stored_columns && !set_exprs.iter().any(|(_, expr)| expr.reads_catalog()) {
-        for (row_index, row) in rows.into_iter().enumerate() {
-            let handle = extra_handle_value(&row.id);
-            let mut new_row = UpdateRowEvaluator {
-                field_types: &field_types,
-                column_names: &column_names,
-                set_exprs: &set_exprs,
-                catalog: &*catalog,
-                current_db,
-                ctx,
-                on_update_now: &on_update_now,
-                extra_handle: extra_handle_slot.is_some(),
-            }
-            .compute(
-                &row.stored,
-                handle,
-                Some((&row.output, &physical_field_types)),
-                &mut matched,
-            )?;
-            accountant
-                .account_row(&new_row)
-                .map_err(DriverError::from)?;
-            let outcome = records.write(
-                catalog,
-                &database,
-                &name,
-                &row.id,
-                &row.stored,
-                &mut new_row,
-                partition_ids.as_deref(),
-                update.ignore,
-                GeneratedWrite::Update { row_index },
-                ctx,
-            )?;
-            touched += u64::from(outcome.touched());
-            changed += u64::from(outcome.changed());
-        }
+        let mut row_index = 0usize;
+        stream_physical_write_rows(
+            physical,
+            catalog,
+            &database,
+            &name,
+            ctx,
+            runtime,
+            mem_quota::label::UPDATE,
+            None,
+            |catalog, row, physical_field_types| {
+                let handle = extra_handle_value(&row.id);
+                let mut new_row = UpdateRowEvaluator {
+                    field_types: &field_types,
+                    column_names: &column_names,
+                    set_exprs: &set_exprs,
+                    catalog: &*catalog,
+                    current_db,
+                    ctx,
+                    on_update_now: &on_update_now,
+                    extra_handle: extra_handle_slot.is_some(),
+                }
+                .compute(
+                    &row.stored,
+                    handle,
+                    Some((&row.output, physical_field_types)),
+                    &mut matched,
+                )?;
+                accountant
+                    .account_row(&new_row)
+                    .map_err(DriverError::from)?;
+                let outcome = records.write(
+                    catalog,
+                    &database,
+                    &name,
+                    &row.id,
+                    &row.stored,
+                    &mut new_row,
+                    partition_ids.as_deref(),
+                    update.ignore,
+                    GeneratedWrite::Update { row_index },
+                    ctx,
+                )?;
+                row_index += 1;
+                touched += u64::from(outcome.touched());
+                changed += u64::from(outcome.changed());
+                Ok(())
+            },
+        )?;
         records.finish(catalog, ctx)?;
         ctx.set_message(format!(
             "Rows matched: {matched}  Changed: {changed}  Warnings: {}",
@@ -3978,6 +3979,19 @@ fn run_update_with_physical(
             changed
         });
     }
+    let PhysicalWriteRows {
+        rows,
+        field_types: physical_field_types,
+    } = execute_physical_write_rows(
+        physical,
+        catalog,
+        &database,
+        &name,
+        ctx,
+        runtime,
+        mem_quota::label::UPDATE,
+        None,
+    )?;
     let row_evaluator = UpdateRowEvaluator {
         field_types: &field_types,
         column_names: &column_names,
@@ -4443,7 +4457,11 @@ fn run_delete_with_physical(
             tidb_ast::QueryStmt::Select(select) => delete_pruning(select, catalog, current_db, ctx),
             _ => None,
         });
-    let rows = execute_physical_write_rows(
+    // Go `DeleteExec.deleteSingleTableByChunk` removes each chunk's rows
+    // before asking its source for the next chunk.
+    let mut records = DeleteRecords::new(fk_triggers);
+    let mut deleted = 0;
+    stream_physical_write_rows(
         physical,
         catalog,
         &database,
@@ -4452,21 +4470,19 @@ fn run_delete_with_physical(
         runtime,
         mem_quota::label::DELETE,
         pruning.as_ref(),
-    )?
-    .rows;
-    let mut records = DeleteRecords::new(fk_triggers);
-    let mut deleted = 0;
-    for row in rows {
-        deleted += u64::from(records.write(
-            catalog,
-            &database,
-            &name,
-            &row.id,
-            &row.stored,
-            delete.ignore,
-            ctx,
-        )?);
-    }
+        |catalog, row, _| {
+            deleted += u64::from(records.write(
+                catalog,
+                &database,
+                &name,
+                &row.id,
+                &row.stored,
+                delete.ignore,
+                ctx,
+            )?);
+            Ok(())
+        },
+    )?;
     records.finish(catalog, ctx)?;
     Ok(deleted)
 }
@@ -4493,9 +4509,155 @@ struct PhysicalWriteRows {
     field_types: Vec<FieldType>,
 }
 
+/// How a row of a single-table write's source becomes the record the write
+/// changes: its handle, the stored columns, and the source's own row.
+///
+/// It owns what it needs of the table, so a write can apply each row to the
+/// catalog while the source executor is still delivering the next ones.
+struct PhysicalWriteShape {
+    field_types: Vec<FieldType>,
+    table: Arc<crate::kv_table::KvTable>,
+    stored_width: usize,
+    expected_width: usize,
+    /// Where `_tidb_rowid` sits in a row of this read.
+    extra_position: usize,
+    /// The stored-column offsets a pruned DELETE read keeps (see
+    /// [`DeletePruning`]); `None` when the read carries every column.
+    kept: Option<Vec<usize>>,
+}
+
+impl PhysicalWriteShape {
+    fn new(
+        physical: &tidb_planner::physical::PhysicalPlan,
+        catalog: &Catalog,
+        database: &str,
+        name: &str,
+        pruning: Option<&DeletePruning>,
+    ) -> Result<Self, DriverError> {
+        let field_types = physical
+            .schema()
+            .ok_or_else(|| DriverError::unsupported("a physical write child has no schema"))?
+            .columns
+            .iter()
+            .map(|column| {
+                column.ret_type.clone().ok_or_else(|| {
+                    DriverError::unsupported("a physical write child has an untyped column")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let table = catalog.get_in(database, name).ok_or_else(|| {
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                "{database}.{name}"
+            )))
+        })?;
+        let TableEntry::Kv(table) = table else {
+            return Err(DriverError::Mysql(MysqlError::new(
+                tidb_error::tidb::errcode::ErrUnsupportedOp,
+                "operation not supported",
+            )));
+        };
+        let stored_width = table.columns().len();
+        let has_extra_handle =
+            table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
+        // A pruned DELETE read carries only the kept columns (see
+        // [`DeletePruning`]); a plan cached before the decision changed carries
+        // them all, which the row width tells apart.
+        let pruning = pruning.filter(|pruning| field_types.len() == pruning.width());
+        let expected_width =
+            pruning.map_or(stored_width + usize::from(has_extra_handle), |p| p.width());
+        let extra_position = pruning.map_or(stored_width, |p| p.kept.len());
+        Ok(Self {
+            field_types,
+            table: table.clone(),
+            stored_width,
+            expected_width,
+            extra_position,
+            kept: pruning.map(|pruning| pruning.kept.clone()),
+        })
+    }
+
+    /// The cell holding the stored column at `offset`.
+    fn cell(&self, row: &[Datum], offset: usize) -> Option<Datum> {
+        match &self.kept {
+            None => row.get(offset).cloned(),
+            Some(kept) => kept
+                .iter()
+                .position(|kept| *kept == offset)
+                .and_then(|position| row.get(position).cloned()),
+        }
+    }
+
+    fn row(&self, row: Vec<Datum>, ctx: &crate::StmtContext) -> Result<PhysicalWriteRow, DriverError> {
+        let table = &self.table;
+        if row.len() < self.expected_width {
+            return Err(DriverError::unsupported(format!(
+                "a physical write child returned {} columns, expected at least {}",
+                row.len(),
+                self.expected_width
+            )));
+        }
+        let id = if let Some(offset) = table.pk_handle_offset() {
+            match self.cell(&row, offset) {
+                Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(value),
+                Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(value as i64),
+                _ => {
+                    return Err(DriverError::unsupported(
+                        "a physical write child returned an invalid integer handle",
+                    ));
+                }
+            }
+        } else if !table.common_handle_offsets().is_empty() {
+            let values = table
+                .common_handle_offsets()
+                .iter()
+                .map(|offset| {
+                    self.cell(&row, *offset).ok_or_else(|| {
+                        DriverError::unsupported(
+                            "a physical write child dropped a common-handle column",
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            table
+                .common_handle_of_values(&values, &ctx.session_zone())
+                .map_err(kv_write_error)?
+        } else {
+            match row.get(self.extra_position) {
+                Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
+                Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
+                _ => {
+                    return Err(DriverError::unsupported(
+                        "a physical write child returned no _tidb_rowid handle",
+                    ));
+                }
+            }
+        };
+        // A pruned column is NULL here: removing a record reads only the
+        // handle's and the indexes' columns.
+        let stored = match &self.kept {
+            None => row[..self.stored_width].to_vec(),
+            Some(kept) => {
+                let mut stored = vec![Datum::Null; self.stored_width];
+                for (position, offset) in kept.iter().enumerate() {
+                    stored[*offset] = row[position].clone();
+                }
+                stored
+            }
+        };
+        Ok(PhysicalWriteRow {
+            id,
+            stored,
+            output: row,
+        })
+    }
+}
+
+/// The rows a single-table write changes, all read before the first write.
+/// Only an assignment that reads the catalog needs this; every other write
+/// applies each row as the source delivers it ([`stream_physical_write_rows`]).
 fn execute_physical_write_rows(
     physical: &mut tidb_planner::physical::PhysicalPlan,
-    catalog: &Catalog,
+    catalog: &mut Catalog,
     database: &str,
     name: &str,
     ctx: &crate::StmtContext,
@@ -4503,127 +4665,63 @@ fn execute_physical_write_rows(
     memory_label: i64,
     pruning: Option<&DeletePruning>,
 ) -> Result<PhysicalWriteRows, DriverError> {
-    let field_types = physical
-        .schema()
-        .ok_or_else(|| DriverError::unsupported("a physical write child has no schema"))?
-        .columns
-        .iter()
-        .map(|column| {
-            column.ret_type.clone().ok_or_else(|| {
-                DriverError::unsupported("a physical write child has an untyped column")
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let table = catalog.get_in(database, name).ok_or_else(|| {
-        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-            "{database}.{name}"
-        )))
-    })?;
-    let TableEntry::Kv(table) = table else {
-        return Err(DriverError::Mysql(MysqlError::new(
-            tidb_error::tidb::errcode::ErrUnsupportedOp,
-            "operation not supported",
-        )));
-    };
-    let stored_width = table.columns().len();
-    let has_extra_handle =
-        table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty();
-    // A pruned DELETE read carries only the kept columns (see
-    // [`DeletePruning`]); a plan cached before the decision changed carries
-    // them all, which the row width tells apart.
-    let pruning = pruning.filter(|pruning| field_types.len() == pruning.width());
-    let expected_width =
-        pruning.map_or(stored_width + usize::from(has_extra_handle), |p| p.width());
-    // Where `_tidb_rowid` sits in a row of this read.
-    let extra_position = pruning.map_or(stored_width, |p| p.kept.len());
-    // The cell holding the stored column at `offset`.
-    let cell = |row: &[Datum], offset: usize| -> Option<Datum> {
-        match pruning {
-            None => row.get(offset).cloned(),
-            Some(pruning) => pruning
-                .kept
-                .iter()
-                .position(|kept| *kept == offset)
-                .and_then(|position| row.get(position).cloned()),
-        }
-    };
-    let accountant = ctx.statement_memory().write_accountant(memory_label);
     let mut rows = Vec::new();
-    let collected = super::physical_builder::execute_dml_source(
+    let field_types = stream_physical_write_rows(
+        physical,
+        catalog,
+        database,
+        name,
+        ctx,
+        runtime,
+        memory_label,
+        pruning,
+        |_, row, _| {
+            rows.push(row);
+            Ok(())
+        },
+    )?;
+    Ok(PhysicalWriteRows { rows, field_types })
+}
+
+/// Go `UpdateExec.updateRows` / `DeleteExec.deleteSingleTableByChunk`'s
+/// loop: `apply` writes each row the source delivers before the source is
+/// asked for the next chunk, so what the source does when it is drained (a
+/// `SelectLockExec`'s lock) comes after the last chunk's writes. Returns the
+/// source's column types.
+fn stream_physical_write_rows(
+    physical: &mut tidb_planner::physical::PhysicalPlan,
+    catalog: &mut Catalog,
+    database: &str,
+    name: &str,
+    ctx: &crate::StmtContext,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+    memory_label: i64,
+    pruning: Option<&DeletePruning>,
+    mut apply: impl FnMut(&mut Catalog, PhysicalWriteRow, &[FieldType]) -> Result<(), DriverError>,
+) -> Result<Vec<FieldType>, DriverError> {
+    let shape = PhysicalWriteShape::new(physical, catalog, database, name, pruning)?;
+    let accountant = ctx.statement_memory().write_accountant(memory_label);
+    let collected = super::physical_builder::execute_dml_source_writing(
         physical,
         catalog,
         ctx,
         runtime.is_some(),
-        |row| {
-            if row.len() < expected_width {
-                return Err(DriverError::unsupported(format!(
-                    "a physical write child returned {} columns, expected at least {expected_width}",
-                    row.len()
-                )));
-            }
-            let id = if let Some(offset) = table.pk_handle_offset() {
-                match cell(&row, offset) {
-                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(value),
-                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(value as i64),
-                    _ => {
-                        return Err(DriverError::unsupported(
-                            "a physical write child returned an invalid integer handle",
-                        ));
-                    }
-                }
-            } else if !table.common_handle_offsets().is_empty() {
-                let values = table
-                    .common_handle_offsets()
-                    .iter()
-                    .map(|offset| {
-                        cell(&row, *offset).ok_or_else(|| {
-                            DriverError::unsupported(
-                                "a physical write child dropped a common-handle column",
-                            )
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                table
-                    .common_handle_of_values(&values, &ctx.session_zone())
-                    .map_err(kv_write_error)?
-            } else {
-                match row.get(extra_position) {
-                    Some(Datum::Int(value)) => crate::kv_table::TableHandle::Int(*value),
-                    Some(Datum::UInt(value)) => crate::kv_table::TableHandle::Int(*value as i64),
-                    _ => {
-                        return Err(DriverError::unsupported(
-                            "a physical write child returned no _tidb_rowid handle",
-                        ));
-                    }
-                }
-            };
-            // A pruned column is NULL here: removing a record reads only the
-            // handle's and the indexes' columns.
-            let stored = match pruning {
-                None => row[..stored_width].to_vec(),
-                Some(pruning) => {
-                    let mut stored = vec![Datum::Null; stored_width];
-                    for (position, offset) in pruning.kept.iter().enumerate() {
-                        stored[*offset] = row[position].clone();
-                    }
-                    stored
-                }
-            };
-            // Both representations stay live until the write phase.
-            accountant.account_row(&row).map_err(DriverError::from)?;
-            accountant.account_row(&stored).map_err(DriverError::from)?;
-            rows.push(PhysicalWriteRow {
-                id,
-                stored,
-                output: row,
-            });
-            Ok(())
+        |catalog, row| {
+            let row = shape.row(row, ctx)?;
+            // Both representations stay live until the write.
+            accountant
+                .account_row(&row.output)
+                .map_err(DriverError::from)?;
+            accountant
+                .account_row(&row.stored)
+                .map_err(DriverError::from)?;
+            apply(catalog, row, &shape.field_types)
         },
     )?;
     if let Some(runtime) = runtime {
         runtime.extend(collected);
     }
-    Ok(PhysicalWriteRows { rows, field_types })
+    Ok(shape.field_types)
 }
 
 /// A one-row chunk holding `row`, so an expression can be evaluated over it.

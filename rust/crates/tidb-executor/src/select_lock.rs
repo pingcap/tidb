@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Selected record keys for Go's `SelectLockExec`. The executor extracts
-//! identities from its output rows; the session owns lock RPCs and replay.
+//! Go's `SelectLockExec`. The executor extracts record keys from its output
+//! rows and, once its child is drained, locks them (`doLockKeys`) when the
+//! statement's storage locks inside execution; a tier that does not (the
+//! in-process store) has the session take the published keys at its lock step.
+//! The session owns the replay after a lock failure either way.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
@@ -93,17 +96,32 @@ pub struct SelectedLockKeys {
     default_wait: LockWaitTime,
     shared_lock_promotion: bool,
     /// Go `IsPessimisticReadConsistency`: a read-committed transaction's
-    /// locking point reads read first and lock only the rows they found,
-    /// which this statement's lock step does after execution.
+    /// locking point reads read first and lock only the rows they found.
     read_committed: bool,
     /// See [`LockStateObserver`].
     lock_state: Option<LockStateObserver>,
+    /// Whether the statement's storage takes pessimistic locks while the plan
+    /// runs, so [`SelectLockExec`] locks inside `Next` as Go's does (`doLockKeys`)
+    /// instead of publishing its keys for the owner's lock step.
+    lock_in_execution: bool,
 }
 
 #[derive(Debug, Default)]
 struct SelectedLocks {
     dml: BTreeSet<Vec<u8>>,
     reads: Vec<(LockWaitTime, Vec<Vec<u8>>)>,
+}
+
+/// What one statement attempt left for its owner's lock step.
+#[derive(Debug, Default)]
+pub struct TakenLocks {
+    /// Locking reads' keys with their wait policy, in EOF order. Empty when
+    /// the operators locked inside execution.
+    pub reads: Vec<(LockWaitTime, Vec<Vec<u8>>)>,
+    /// Go `TxnCtx.UnchangedKeysForLock`: matched rows an UPDATE left as they
+    /// were, which Go's `handlePessimisticDML` locks together with the keys
+    /// the statement wrote.
+    pub unchanged: Vec<Vec<u8>>,
 }
 
 impl Default for SelectedLockKeys {
@@ -121,7 +139,27 @@ impl SelectedLockKeys {
             shared_lock_promotion,
             read_committed: false,
             lock_state: None,
+            lock_in_execution: false,
         }
+    }
+
+    /// Declares that the statement's storage locks inside execution (Go
+    /// `doLockKeys` from `SelectLockExec.Next`): the cluster node's
+    /// statements, whose lock failures carry the retry the owner acts on.
+    #[must_use]
+    pub fn with_lock_in_execution(mut self, lock_in_execution: bool) -> Self {
+        self.lock_in_execution = lock_in_execution;
+        self
+    }
+
+    /// Whether [`SelectLockExec`] locks inside `Next`.
+    pub fn lock_in_execution(&self) -> bool {
+        self.lock_in_execution
+    }
+
+    /// See [`LockStateObserver`].
+    pub(crate) fn lock_state(&self) -> Option<LockStateObserver> {
+        self.lock_state.clone()
     }
 
     /// Publishes lock acquisition to the session's transaction state.
@@ -181,13 +219,22 @@ impl SelectedLockKeys {
     /// Drains operators in EOF order, preserving each operator's wait policy.
     /// Matched DML rows follow locking reads, as in Go's statement lock step.
     pub fn take_requests(&self) -> Vec<(LockWaitTime, Vec<Vec<u8>>)> {
-        let mut state = std::mem::take(&mut *self.state.lock().unwrap_or_else(|p| p.into_inner()));
-        if !state.dml.is_empty() {
-            state
-                .reads
-                .push((self.default_wait, state.dml.into_iter().collect()));
+        let mut taken = self.take_all();
+        if !taken.unchanged.is_empty() {
+            taken.reads.push((self.default_wait, taken.unchanged));
         }
-        state.reads
+        taken.reads
+    }
+
+    /// Drains the attempt's published keys, keeping the matched-but-unchanged
+    /// rows apart from the locking reads' keys: Go locks the former together
+    /// with the keys the statement wrote, in one `LockKeys`.
+    pub fn take_all(&self) -> TakenLocks {
+        let state = std::mem::take(&mut *self.state.lock().unwrap_or_else(|p| p.into_inner()));
+        TakenLocks {
+            reads: state.reads,
+            unchanged: state.dml.into_iter().collect(),
+        }
     }
 
     fn extend(&self, keys: BTreeSet<Vec<u8>>, wait: LockWaitTime) {
@@ -206,15 +253,68 @@ impl SelectedLockKeys {
 /// without a physical row, not an unknown or pruned handle.
 pub type SelectedRecordKey = Box<dyn Fn(Row<'_>) -> Result<Option<Vec<u8>>, ExecError> + Send>;
 
+/// Go `SelectLockExec.Next`'s lock step: `UpdateDeltaForTableID` for every
+/// locked table, then `doLockKeys` over the statement's transaction.
+pub struct StatementLocker {
+    /// Any one table of the statement: its storage is the statement's
+    /// snapshot, which owns the transaction the keys lock in.
+    table: crate::kv_table::KvTable,
+    /// The logical table ids of Go's `tblID2Handle`, temporary tables removed.
+    table_ids: Vec<i64>,
+    ctx: crate::StmtContext,
+    lock_state: Option<LockStateObserver>,
+}
+
+impl StatementLocker {
+    /// A locker over `table`'s storage for the tables `table_ids`.
+    pub(crate) fn new(
+        table: crate::kv_table::KvTable,
+        table_ids: Vec<i64>,
+        ctx: crate::StmtContext,
+        lock_state: Option<LockStateObserver>,
+    ) -> Self {
+        Self {
+            table,
+            table_ids,
+            ctx,
+            lock_state,
+        }
+    }
+
+    fn lock(&mut self, keys: &BTreeSet<Vec<u8>>, wait: LockWaitTime) -> Result<(), ExecError> {
+        for table_id in &self.table_ids {
+            self.ctx.update_table_delta(*table_id, 0, 0);
+        }
+        if keys.is_empty() {
+            return Ok(());
+        }
+        let keys: Vec<tidb_txnkv::Key> = keys
+            .iter()
+            .map(|key| tidb_txnkv::Key::from_bytes(key.clone()))
+            .collect();
+        if let Some(state) = &self.lock_state {
+            state.set(true);
+        }
+        let locked = self.table.do_lock_keys(&keys, wait);
+        if let Some(state) = &self.lock_state {
+            state.set(false);
+        }
+        locked.map_err(ExecError::from)
+    }
+}
+
 /// Passes rows through unchanged and collects their physical record keys.
-/// Like Go's SelectLockExec, it publishes keys only after draining its child.
-/// The containing session must acquire them before exposing query results.
+/// Like Go's SelectLockExec, it acts on them only after draining its child:
+/// it locks them in that `Next` when the statement's storage locks inside
+/// execution, and otherwise publishes them for the containing session, which
+/// must acquire them before exposing query results.
 pub struct SelectLockExec {
     child: Box<dyn Executor>,
     expressions: Vec<SelectedRecordKey>,
     selected: SelectedLockKeys,
     pending: BTreeSet<Vec<u8>>,
     wait: LockWaitTime,
+    locker: Option<StatementLocker>,
 }
 
 impl SelectLockExec {
@@ -232,12 +332,19 @@ impl SelectLockExec {
             selected,
             pending: BTreeSet::new(),
             wait,
+            locker: None,
         }
     }
 
     /// The physical lock's NOWAIT/WAIT policy, resolved by executorBuilder.
     pub fn with_wait(mut self, wait: LockWaitTime) -> Self {
         self.wait = wait;
+        self
+    }
+
+    /// Locks inside `Next` (Go `doLockKeys`) instead of publishing the keys.
+    pub(crate) fn with_locker(mut self, locker: StatementLocker) -> Self {
+        self.locker = Some(locker);
         self
     }
 }
@@ -251,8 +358,11 @@ impl Executor for SelectLockExec {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         self.child.next(req)?;
         if req.num_rows() == 0 {
-            self.selected
-                .extend(std::mem::take(&mut self.pending), self.wait);
+            let keys = std::mem::take(&mut self.pending);
+            match &mut self.locker {
+                Some(locker) => locker.lock(&keys, self.wait)?,
+                None => self.selected.extend(keys, self.wait),
+            }
         } else {
             for index in 0..req.num_rows() {
                 for expression in &self.expressions {

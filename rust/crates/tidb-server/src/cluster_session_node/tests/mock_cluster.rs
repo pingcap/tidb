@@ -71,6 +71,11 @@ pub(super) struct MockCluster {
     /// attempt: the 3572 NOWAIT refusal or the 1205 timeout TiKV answers
     /// when another transaction holds the key.
     pub(super) fail_next_lock: Mutex<Option<tidb_txnkv::transaction::PessimisticLockFailure>>,
+    /// The outcome of a lock the running statement took during execution
+    /// (`SelectLockExec`'s `doLockKeys`) and failed on, for the statement
+    /// owner to take back.
+    pub(super) statement_lock_failure:
+        Mutex<Option<tidb_exec::cluster_table_storage::StatementLockFailure>>,
     /// Read handles still bound. A statement that leaks one leaves this
     /// above zero, which is the lock-left-behind failure in miniature.
     pub(super) live: AtomicUsize,
@@ -266,6 +271,38 @@ impl ClusterSnapshot for MockSnapshot {
 
     fn start_ts(&self) -> u64 {
         self.start_ts
+    }
+
+    /// `SelectLockExec`'s lock inside execution: the same outcomes as the
+    /// transaction's lock entry point, kept for the statement owner as the
+    /// real snapshot keeps them.
+    fn do_lock_keys(
+        &mut self,
+        _keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        use tidb_exec::cluster_table_storage::StatementLockFailure;
+        self.cluster.lock_waits.lock().unwrap().push(wait);
+        let failure = if let Some(failure) = self.cluster.fail_next_lock.lock().unwrap().take() {
+            StatementLockFailure::Statement(
+                tidb_exec::pessimistic_lock_error::lock_failure_to_sql_error(&failure),
+            )
+        } else if self
+            .cluster
+            .retry_pessimistic_locks
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                remaining.checked_sub(1)
+            })
+            .is_ok()
+        {
+            StatementLockFailure::Retry {
+                for_update_ts: self.cluster.timestamp(),
+            }
+        } else {
+            return Ok(());
+        };
+        *self.cluster.statement_lock_failure.lock().unwrap() = Some(failure);
+        Err(StorageError::Backend("the lock failed".to_owned()))
     }
 }
 
@@ -608,6 +645,12 @@ impl OpenClusterTransaction for MockSessionTransaction {
 
     fn is_pessimistic(&self) -> bool {
         self.pessimistic
+    }
+
+    fn take_statement_lock_failure(
+        &self,
+    ) -> Option<tidb_exec::cluster_table_storage::StatementLockFailure> {
+        self.cluster.statement_lock_failure.lock().unwrap().take()
     }
 
     fn lock_staged_keys_with_values(

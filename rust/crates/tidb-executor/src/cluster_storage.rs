@@ -105,6 +105,16 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
         Ok(())
     }
 
+    /// See [`TableStorage::do_lock_keys`]. Only a locking statement handle of
+    /// a pessimistic transaction locks; every other snapshot answers `Ok(())`.
+    fn do_lock_keys(
+        &mut self,
+        _keys: &[Key],
+        _wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        Ok(())
+    }
+
     /// Starts any asynchronous work needed by an ordinary statement snapshot.
     /// The first read still owns error delivery and timestamp publication.
     fn prepare(&mut self) -> Result<(), StorageError> {
@@ -1065,6 +1075,14 @@ impl ClusterSnapshot for SwappableSnapshot {
             .lock_keys_for_read(keys, wait, only_if_exists)
     }
 
+    fn do_lock_keys(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        self.snapshot()?.do_lock_keys(keys, wait)
+    }
+
     fn prepare(&mut self) -> Result<(), StorageError> {
         self.snapshot()?.prepare()
     }
@@ -1153,6 +1171,14 @@ impl ClusterSnapshot for CommittedOnlySnapshot {
         only_if_exists: bool,
     ) -> Result<(), StorageError> {
         self.inner().lock_keys_for_read(keys, wait, only_if_exists)
+    }
+
+    fn do_lock_keys(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        self.inner().do_lock_keys(keys, wait)
     }
 
     fn prepare(&mut self) -> Result<(), StorageError> {
@@ -1320,6 +1346,18 @@ impl TableStorage for ClusterTableStorage {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .lock_keys_for_read(keys, wait, only_if_exists)
+    }
+
+    fn do_lock_keys(
+        &mut self,
+        keys: &[Key],
+        wait: tidb_txnkv::transaction::LockWaitTime,
+    ) -> Result<(), StorageError> {
+        self.check_usable()?;
+        self.snapshot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .do_lock_keys(keys, wait)
     }
 
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {

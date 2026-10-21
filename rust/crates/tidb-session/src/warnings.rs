@@ -145,6 +145,21 @@ impl Session {
         });
     }
 
+    /// Takes back the `Error` row the statement pipeline filed for a failure
+    /// the statement owner then replaced: a lock that failed inside execution
+    /// reaches the pipeline as a storage error, while Go's
+    /// `handlePessimisticLockError` consumes that error (a retry) or returns
+    /// the lock error itself, which `TiDBContext.ExecuteStmt` files once.
+    pub fn retract_statement_failure(&mut self, code: u16, message: &str) {
+        if let Some(position) = self.warnings.iter().rposition(|warning| {
+            warning.level == WarningLevel::Error
+                && warning.code == code
+                && warning.message == message
+        }) {
+            self.warnings.remove(position);
+        }
+    }
+
     /// Files the error an `IF EXISTS` / `IF NOT EXISTS` clause swallowed as
     /// Go's `Note`.
     ///

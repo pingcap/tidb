@@ -4594,6 +4594,10 @@ fn select_lock_executor(
     };
     let types = child.ret_field_types().to_vec();
     let mut expressions: Vec<SelectedRecordKey> = Vec::new();
+    // Go `buildSelectLock` removes the temporary tables from `tblID2Handle`;
+    // `SelectLockExec.Next` locks through the statement's transaction.
+    let mut locked_table_ids = Vec::new();
+    let mut lock_carrier = None;
     for (table_id, columns) in &lock.tbl_id_to_handle_cols {
         let table = catalog.kv_table_by_id(*table_id).ok_or_else(|| {
             DriverError::unsupported("SelectLock table ID is absent from the catalog")
@@ -4601,6 +4605,8 @@ fn select_lock_executor(
         if table.is_temporary() {
             continue;
         }
+        locked_table_ids.push(*table_id);
+        lock_carrier.get_or_insert_with(|| table.clone());
         let width = table.common_handle_offsets().len().max(1);
         if columns.len() % width != 0 {
             return Err(DriverError::unsupported(
@@ -4669,11 +4675,24 @@ fn select_lock_executor(
             }));
         }
     }
-    Ok(
-        Box::new(SelectLockExec::new(child, expressions, selected).with_wait(wait))
-            as Box<dyn Executor>,
-    )
-
+    let locker = selected
+        .lock_in_execution()
+        .then(|| {
+            lock_carrier.map(|table| {
+                crate::select_lock::StatementLocker::new(
+                    table,
+                    locked_table_ids,
+                    ctx.clone(),
+                    selected.lock_state(),
+                )
+            })
+        })
+        .flatten();
+    let mut executor = SelectLockExec::new(child, expressions, selected).with_wait(wait);
+    if let Some(locker) = locker {
+        executor = executor.with_locker(locker);
+    }
+    Ok(Box::new(executor) as Box<dyn Executor>)
 }
 
 /// Go's `PointGetExecutor` / `BatchPointGetExec` with `lock` set: a locking
@@ -7329,6 +7348,36 @@ pub(crate) fn execute_dml_source(
     visit: impl FnMut(Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
 ) -> Result<PhysicalRuntimeStats, DriverError> {
     execute_dml_source_chunks(physical, catalog, ctx, analyze, visit, |_| {})
+}
+
+/// [`execute_dml_source`] for a statement that writes each row as the source
+/// delivers it (Go `UpdateExec.updateRows`, `DeleteExec.deleteSingleTableByChunk`):
+/// `visit` receives the catalog the write mutates. The source executor owns
+/// what it read from the catalog while it was built, so the catalog is free
+/// again for the rows' writes.
+pub(crate) fn execute_dml_source_writing(
+    physical: &mut PhysicalPlan,
+    catalog: &mut Catalog,
+    ctx: &crate::StmtContext,
+    analyze: bool,
+    visit: impl FnMut(&mut Catalog, Vec<tidb_datatype::Datum>) -> Result<(), DriverError>,
+) -> Result<PhysicalRuntimeStats, DriverError> {
+    prepare_execution_plan(physical, catalog, ctx)?;
+    let mut state = BuildState {
+        runtime_counters: analyze.then(HashMap::new),
+        ..BuildState::default()
+    };
+    let root = build_with_state(physical, catalog, ctx, &mut state)?;
+    ctx.notify_before_executor_first_run();
+    let field_types = root.ret_field_types().to_vec();
+    super::visit_executor_rows_writing(
+        root,
+        &field_types,
+        &ctx.statement_memory(),
+        catalog,
+        visit,
+    )?;
+    Ok(state.runtime_counters.take().unwrap_or_default())
 }
 
 /// [`execute_dml_source`], telling `chunk_end` the row count of each chunk
