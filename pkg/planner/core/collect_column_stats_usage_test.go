@@ -207,6 +207,16 @@ func TestCollectPredicateColumns(t *testing.T) {
 			res: []string{"t.a", "t2.a"},
 		},
 		{
+			// Materialized CTE referenced twice must still collect seed predicate columns.
+			sql: "with c1 as (select a from t where a > 1) select * from c1 x join c1 y on x.a = y.a",
+			res: []string{"t.a"},
+		},
+		{
+			// CTE chain: later CTEs reference earlier ones. Seed walk must be memoized.
+			sql: "with c1 as (select a from t where a > 1), c2 as (select c1.a from c1), c3 as (select c2.a from c2 join c1 on c2.a = c1.a) select * from c3",
+			res: []string{"t.a"},
+		},
+		{
 			// LogicalJoin
 			sql: "select * from t as x join t2 as y on x.c + y.b > 2",
 			res: []string{"t.c", "t2.b"},

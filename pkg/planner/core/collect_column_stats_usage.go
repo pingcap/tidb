@@ -65,6 +65,9 @@ type columnStatsUsageCollector struct {
 	interestingColsByDS map[*logicalop.DataSource][]*expression.Column
 	// Temporary storage for deduplication
 	colSet map[int64]struct{}
+	// visitedCTEs records CTE storage IDs whose seed/recursive plans have already
+	// been walked. Each LogicalCTE reference still maps its own output columns.
+	visitedCTEs map[int]struct{}
 }
 
 func newColumnStatsUsageCollector(enabledPlanCapture bool, collectIndexPruningCols bool) *columnStatsUsageCollector {
@@ -74,6 +77,7 @@ func newColumnStatsUsageCollector(enabledPlanCapture bool, collectIndexPruningCo
 		cols:               make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs:  &set,
 		tblID2PartitionIDs: make(map[int64][]int64),
+		visitedCTEs:        make(map[int]struct{}),
 	}
 	collector.predicateCols = make(map[model.TableItemID]bool)
 	collector.colMap = make(map[int64]map[model.TableItemID]struct{})
@@ -376,10 +380,14 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 	case *logicalop.LogicalPartitionUnionAll:
 		c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 	case *logicalop.LogicalCTE:
-		// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
-		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan, nil, nil)
-		if x.Cte.RecursivePartLogicalPlan != nil {
-			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan, nil, nil)
+		// Seed/recursive plans are shared across references. Walking them on every
+		// LogicalCTE is O(n^2) for CTE chains (CTE_n references CTE_{n-1}).
+		if _, visited := c.visitedCTEs[x.Cte.IDForStorage]; !visited {
+			c.visitedCTEs[x.Cte.IDForStorage] = struct{}{}
+			c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan, nil, nil)
+			if x.Cte.RecursivePartLogicalPlan != nil {
+				c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan, nil, nil)
+			}
 		}
 		// Schema change from seedPlan/recursivePlan to self.
 		columns := x.Schema().Columns

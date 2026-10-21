@@ -98,6 +98,66 @@ func TestSemiJoinOrder(t *testing.T) {
 		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"))
 }
 
+func TestJoinReorderLimitZeroCTEOuterJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
+
+	query := `
+with
+  c1 as (select a from t1 limit 0),
+  c2 as (select a from t2 limit 0),
+  c3 as (select c1.a from c1 left join c2 on c1.a = c2.a)
+select * from c3`
+	derived := `select t1.a from (select 1 as a from t1, t2) v0, t2 left join t1 on t2.a = t1.a`
+
+	for _, threshold := range []string{"0", "10"} {
+		tk.MustExec("set tidb_opt_join_reorder_threshold = " + threshold)
+		tk.MustQuery(query).Check(testkit.Rows())
+		tk.MustQuery("explain " + query)
+		tk.MustQuery(derived)
+	}
+}
+
+func TestJoinReorderConstantPropagationOuterJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table modules (id bigint primary key, module_id bigint)")
+	tk.MustExec("create table items (id bigint primary key, module_id bigint)")
+	tk.MustExec("create table details (item_id bigint, user_id bigint, score int)")
+	tk.MustExec("create table employees (id bigint primary key)")
+	tk.MustExec("insert into modules values (1, 10), (2, 20)")
+	tk.MustExec("insert into items values (101, 1), (102, 1), (201, 2)")
+	tk.MustExec("insert into details values (101, 12345, 7), (102, 99999, 9), (201, null, 11)")
+	tk.MustExec("set tidb_opt_enable_advanced_join_reorder = on")
+	tk.MustExec("set tidb_enable_outer_join_reorder = on")
+
+	query := `select m.module_id, i.id, d.score
+		from modules m join items i on i.module_id = m.id
+		left join (
+			select d.item_id, d.score from details d
+			join employees e on e.id = d.user_id where e.id = 12345
+		) d on d.item_id = i.id order by i.id`
+	for _, employeeExists := range []bool{false, true} {
+		if employeeExists {
+			tk.MustExec("insert into employees values (12345)")
+		}
+		for _, threshold := range []string{"0", "3", "4", "10"} {
+			tk.MustExec("set tidb_opt_join_reorder_threshold = " + threshold)
+			tk.MustQuery("explain " + query)
+			if employeeExists {
+				tk.MustQuery(query).Check(testkit.Rows("10 101 7", "10 102 <nil>", "20 201 <nil>"))
+			} else {
+				tk.MustQuery(query).Check(testkit.Rows("10 101 <nil>", "10 102 <nil>", "20 201 <nil>"))
+			}
+		}
+	}
+}
+
 func TestJoinWithNullEQ(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

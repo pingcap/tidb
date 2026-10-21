@@ -227,6 +227,22 @@ func validateCumCost(cost float64) error {
 	}
 }
 
+// normalizeCumCost sanitizes cumulative costs that cannot be compared or
+// validated. NaN, -Inf and negative values come from degenerate row-count/NDV
+// estimates; leaving them as-is would fail validateCumCost (aborting the whole
+// query) or make every cost comparison false. Treating them as 0 lets join
+// reorder keep running (and fall back to the original order) instead of failing.
+//
+// +Inf is intentionally preserved: it is the penalty marker for cartesian
+// joins (see applyCartesianFactor), and DP relies on it to avoid choosing such
+// plans early.
+func normalizeCumCost(cost float64) float64 {
+	if math.IsNaN(cost) || math.IsInf(cost, -1) || cost < 0 {
+		return 0
+	}
+	return cost
+}
+
 func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
 	var cost1, cost2 float64
 	if node1 != nil {
@@ -272,7 +288,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCostByChildren(v),
+			cumCost: normalizeCumCost(calcCumCostByChildren(v)),
 		}
 		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
 			return nil, err
@@ -714,7 +730,7 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}
 	maps.Copy(usedEdges, node1.usedEdges)
 	maps.Copy(usedEdges, node2.usedEdges)
-	cumCost := calcCumCost(p, node1, node2)
+	cumCost := normalizeCumCost(calcCumCost(p, node1, node2))
 	if err := validateCumCost(cumCost); err != nil {
 		return nil, err
 	}

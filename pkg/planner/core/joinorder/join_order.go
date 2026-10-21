@@ -327,6 +327,11 @@ func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.Logica
 			return nil, err
 		}
 	}
+	// Defensive fallback: a reorderer that cannot produce a valid join order
+	// may return nil. Keep the original tree instead of dereferencing nil below.
+	if p == nil {
+		return group.root, nil
+	}
 
 	// Ensure the schema is not changed after join reorder.
 	if !p.Schema().Equal(originalSchema) {
@@ -851,7 +856,10 @@ func makeJoinWithDetector(detector *ConflictDetector, left, right *Node, vertexH
 	if !checkResult.Connected() {
 		checkResult = detector.TryCreateCartesianCheckResult(left, right)
 		if checkResult == nil {
-			return nil, errors.New("failed to construct bushy tree: no valid join edge found")
+			// Outer-join groups cannot invent a cartesian edge. Returning an
+			// error here fails the whole statement; nil lets the caller keep
+			// the original join order. See pingcap/tidb#69986.
+			return nil, nil
 		}
 	}
 
@@ -893,6 +901,9 @@ func makeBushyTree(ctx base.PlanContext, detector *ConflictDetector, cartesianNo
 			}
 			if err != nil {
 				return nil, err
+			}
+			if newJoin == nil {
+				return nil, nil
 			}
 			iterNodes = append(iterNodes, newJoin)
 		}
