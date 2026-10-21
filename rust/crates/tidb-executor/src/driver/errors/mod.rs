@@ -1677,6 +1677,9 @@ impl DriverError {
             &tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW,
             "Subquery returns more than 1 row".to_owned(),
         ),
+        DriverError::MemTableRetrievalNeeded => MysqlError::unknown(
+            "a memory table was read without its rows being retrieved".to_owned(),
+        ),
         DriverError::SelectIntoMoreThanOneRow => MysqlError::sql_error(
             1172,
             "Result consisted of more than one row".to_owned(),

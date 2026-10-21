@@ -857,7 +857,7 @@ impl Session {
         let current_db = self.current_db.clone();
         let ctx = self.statement_context(false);
         let select = select.clone();
-        self.with_catalog_mut(|catalog| {
+        self.with_catalog_retrieving(&ctx, |catalog| {
             tidb_executor::explain_select_stmt(
                 &select,
                 catalog,

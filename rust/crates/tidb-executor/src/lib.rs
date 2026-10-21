@@ -120,6 +120,7 @@ pub mod max_one_row;
 pub mod mem_quota;
 pub mod mem_reader;
 pub mod mem_table;
+pub mod mem_table_retrieval;
 mod mpp_query;
 pub(crate) mod merge_join_plan;
 pub mod partition_pruning;
@@ -252,7 +253,6 @@ pub use driver::{
     },
     bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
     build_prepared_dml_plan, fts_columns_are_strings, parameter_count, parsed_parameter_count,
-    physical_plan_needs_table_storage_column_lengths, physical_plan_needs_table_storage_statistics,
     plan_query_meta_stmt, plan_query_meta_stmt_with_subqueries, plan_select_meta_stmt,
     run_delete_in, run_delete_on, run_delete_stmt, run_delete_stmt_with_physical, run_insert_in,
     run_insert_on, run_insert_reporting, run_insert_stmt, run_insert_stmt_with_physical,

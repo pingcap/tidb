@@ -447,6 +447,11 @@ pub enum PlanErrorKind {
     /// executor's `MaxOneRowExec` detects it; this variant carries the typed
     /// identity back across the planner boundary.
     SubqueryReturnsMoreThanOneRow,
+    /// An uncorrelated subquery evaluated during planning
+    /// (`EvalSubqueryFirstRow`) scanned a memory table whose rows the session
+    /// has yet to retrieve. Not a Go error: the executor tier asks the session
+    /// for the rows and plans again.
+    MemTableRetrievalNeeded,
     /// Go `plannererrors.ErrNotSupportedYet` (1235).
     NotSupportedYet(String),
     /// Go `plannererrors.ErrAggregateOrderNonAggQuery` (3029).
@@ -912,6 +917,16 @@ impl PlanError {
         Self {
             message: "Subquery returns more than 1 row".to_owned(),
             kind: PlanErrorKind::SubqueryReturnsMoreThanOneRow,
+        }
+    }
+
+    /// A subquery evaluated during planning needs memory-table rows the
+    /// session has not retrieved; see [`PlanErrorKind::MemTableRetrievalNeeded`].
+    #[must_use]
+    pub fn mem_table_retrieval_needed() -> Self {
+        Self {
+            message: "a memory table was read without its rows being retrieved".to_owned(),
+            kind: PlanErrorKind::MemTableRetrievalNeeded,
         }
     }
 

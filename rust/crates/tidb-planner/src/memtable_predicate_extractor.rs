@@ -2187,6 +2187,19 @@ pub struct ClusterTableFilter {
 }
 
 impl ClusterTableFilter {
+    /// The routing one scan's extractor asks for; a scan with none, or one
+    /// that is not a cluster table's, asks for every node.
+    #[must_use]
+    pub fn of(extractor: Option<&MemTablePredicateExtractor>) -> Self {
+        extractor
+            .and_then(MemTablePredicateExtractor::as_cluster_table)
+            .map_or_else(Self::default, |e| Self {
+                skip_request: e.skip_request,
+                node_types: e.node_types.clone(),
+                instances: e.instances.clone(),
+            })
+    }
+
     /// Whether this scan provably needs no nodes.
     #[must_use]
     pub fn skip_request(&self) -> bool {
@@ -2280,15 +2293,7 @@ pub fn cluster_table_filters(plan: &PhysicalPlan, table: &str) -> Vec<ClusterTab
     mem_table_extractors(plan, table, &mut extractors);
     extractors
         .into_iter()
-        .map(|extractor| {
-            extractor
-                .and_then(MemTablePredicateExtractor::as_cluster_table)
-                .map_or_else(ClusterTableFilter::default, |e| ClusterTableFilter {
-                    skip_request: e.skip_request,
-                    node_types: e.node_types.clone(),
-                    instances: e.instances.clone(),
-                })
-        })
+        .map(ClusterTableFilter::of)
         .collect()
 }
 

@@ -23,7 +23,7 @@
 
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
 use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
-use tidb_hack::{GoCaseCompare, GoToLower};
+use tidb_hack::GoCaseCompare;
 
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
@@ -244,109 +244,6 @@ struct RetainedSelectPlan<'a> {
     used: &'a mut bool,
 }
 
-/// Every `information_schema` base table a top-level join tree references.
-///
-/// The ordinary executor resolves bare names against `current_db`; mirror
-/// that here so `USE information_schema; SELECT ... FROM tables` materializes
-/// the same virtual source as its qualified spelling.
-/// The schema a referenced virtual table registers under: the
-/// `performance_schema` tables Go fills per statement, and the
-/// `information_schema` ones (the two schemas share no table name).
-fn serving_schema_of(table_name: &str) -> &'static str {
-    if tidb_executor::driver::perfschema::is_predefined_table(table_name) {
-        tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
-    } else {
-        infoschema::INFORMATION_SCHEMA
-    }
-}
-
-/// Whether a `performance_schema` table is materialized per statement: all
-/// of them are, since Go serves each as a virtual table (`MemTableScan`);
-/// the ones `perfSchemaTable.getRows` does not fill come back empty.
-fn perfschema_rows_served(table_name: &str) -> bool {
-    tidb_executor::driver::perfschema::is_predefined_table(table_name)
-}
-
-/// The virtual tables a query reads, in every scope Go's `buildDataSource`
-/// reaches: FROM clauses, derived tables, CTE bodies, the subqueries of any
-/// expression, and the bodies of the views it reads (`view_body` gives a
-/// view's stored `SELECT`; Go plans the expanded body,
-/// `BuildDataSourceFromView`). A subquery-only reference used to be missed,
-/// sending the statement down the stored-table path with no memory table to
-/// plan, and a view over one still was: it read an unrelated table's rows.
-pub(crate) fn information_schema_tables_in_query(
-    query: &tidb_ast::QueryStmt,
-    current_db: &str,
-    out: &mut Vec<String>,
-    written_db: &mut Option<String>,
-    view_body: &dyn Fn(&str, &str) -> Option<String>,
-) {
-    information_schema_tables_in_query_at(query, current_db, out, written_db, view_body, 0);
-}
-
-fn information_schema_tables_in_query_at(
-    query: &tidb_ast::QueryStmt,
-    current_db: &str,
-    out: &mut Vec<String>,
-    written_db: &mut Option<String>,
-    view_body: &dyn Fn(&str, &str) -> Option<String>,
-    view_depth: usize,
-) {
-    // A view cannot read itself (creation resolves its body), so this only
-    // bounds a catalog that is inconsistent.
-    const MAX_VIEW_DEPTH: usize = 64;
-    let stmt = Stmt::Query(tidb_ast::NodeBox::new(query.clone()));
-    for path in crate::binding::collect_physical_table_refs(&stmt) {
-        match path.as_slice() {
-            [name] if infoschema::is_information_schema(current_db) => out.push(name.clone()),
-            [name]
-                if current_db
-                    .go_lower_eq(tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA)
-                    && perfschema_rows_served(name) =>
-            {
-                out.push(name.clone())
-            }
-            [schema, name]
-                if infoschema::is_information_schema(schema)
-                    || (schema
-                        .go_lower_eq(tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA)
-                        && perfschema_rows_served(name)) =>
-            {
-                // The 1146 for a missing virtual table names the database AS
-                // WRITTEN (go folds nothing here).
-                if written_db.is_none() {
-                    *written_db = Some(schema.clone());
-                }
-                out.push(name.clone());
-            }
-            [name] | [_, name] if view_depth < MAX_VIEW_DEPTH => {
-                let schema = match path.as_slice() {
-                    [schema, _] => schema.as_str(),
-                    _ => current_db,
-                };
-                let Some(select_sql) = view_body(schema, name) else {
-                    continue;
-                };
-                let Ok(Stmt::Query(body)) = tidb_parser::parse(&select_sql) else {
-                    continue;
-                };
-                // A missing table inside a view is the view's own error, not
-                // one naming the statement's written schema.
-                let mut view_written_db = None;
-                information_schema_tables_in_query_at(
-                    &body,
-                    schema,
-                    out,
-                    &mut view_written_db,
-                    view_body,
-                    view_depth + 1,
-                );
-            }
-            _ => {}
-        }
-    }
-}
-
 // The statement compiles this thread is inside, innermost last: whether each
 // compiles an EXECUTE, and whether it is the prepared statement an EXECUTE
 // runs (which Go plans inside the EXECUTE's compile).
@@ -385,32 +282,6 @@ impl CompileDepth {
 impl Drop for CompileDepth {
     fn drop(&mut self) {
         COMPILES.with(|compiles| compiles.borrow_mut().pop());
-    }
-}
-
-impl Session {
-    /// [`information_schema_tables_in_query`] over the views of the catalog
-    /// this statement sees.
-    pub(crate) fn information_schema_tables_read_by(
-        &mut self,
-        query: &tidb_ast::QueryStmt,
-        current_db: &str,
-        out: &mut Vec<String>,
-        written_db: &mut Option<String>,
-    ) -> Result<(), DriverError> {
-        self.with_catalog_mut(|catalog| {
-            information_schema_tables_in_query(
-                query,
-                current_db,
-                out,
-                written_db,
-                &|schema, name| match catalog.table_in(schema, name) {
-                    Some(tidb_executor::TableEntry::View(view)) => Some(view.select_sql.clone()),
-                    _ => None,
-                },
-            );
-            Ok(())
-        })
     }
 }
 
@@ -465,151 +336,6 @@ fn cached_dml_plan<'a>(
     }
     Ok(Some(plan))
 }
-
-/// What a statement's memory-table scans read, which decides how the
-/// virtual tables are generated: each table's needed columns, whether
-/// `TABLES`/`PARTITIONS` need the storage statistics (Go
-/// `memtableRetriever.updateStatsCacheIfNeed`) and their column lengths, and
-/// the cluster tables' extracted routing.
-#[derive(Default)]
-pub(crate) struct InformationSchemaReads {
-    columns: std::collections::HashMap<String, std::collections::HashSet<String>>,
-    /// The columns a cluster table's TiDB-store scan reads, by catalog column
-    /// id (memory-table column ids are offset + 1): Go plans these tables as
-    /// ordinary scans, so they carry ids rather than a `MemTable`'s names.
-    cluster_column_ids: std::collections::HashMap<String, std::collections::HashSet<i64>>,
-    needs_storage_stats: bool,
-    needs_column_lengths: bool,
-    cluster_config_filters: Vec<tidb_planner::memtable_predicate_extractor::ClusterTableFilter>,
-    cluster_log_extractors:
-        Vec<tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor>,
-    /// Every memory-table scan's extractor and time range, which the
-    /// retrievers that request by them (Go `memtableRetriever` per scan) read.
-    scans: Vec<tidb_planner::memtable_predicate_extractor::MemTableScanRead>,
-}
-
-impl InformationSchemaReads {
-    fn of(plans: &[&tidb_planner::physical::PhysicalPlan]) -> Self {
-        type Names = std::collections::HashMap<String, std::collections::HashSet<String>>;
-        type Ids = std::collections::HashMap<String, std::collections::HashSet<i64>>;
-        fn visit(plan: &tidb_planner::physical::PhysicalPlan, columns: &mut Names, ids: &mut Ids) {
-            use tidb_planner::physical::PhysicalPlan;
-            if let PhysicalPlan::TableScan(scan) = plan {
-                if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb {
-                    ids.entry(scan.table_name.to_ascii_uppercase())
-                        .or_default()
-                        .extend(
-                            plan.schema()
-                                .into_iter()
-                                .flat_map(|schema| schema.columns.iter().map(|column| column.id)),
-                        );
-                }
-            }
-            if let PhysicalPlan::MemTable(scan) = plan {
-                columns
-                    .entry(scan.table_name.to_ascii_uppercase())
-                    .or_default()
-                    .extend(
-                        scan.columns
-                            .iter()
-                            .map(|column| column.name.to_ascii_uppercase()),
-                    );
-            }
-            if let PhysicalPlan::CTE(cte) = plan {
-                visit(&cte.seed_plan, columns, ids);
-                if let Some(recursive) = &cte.recursive_plan {
-                    visit(recursive, columns, ids);
-                }
-            }
-            if let PhysicalPlan::TableReader(reader) = plan {
-                if let Some(inner) = reader.table_plan.as_deref() {
-                    visit(inner, columns, ids);
-                }
-            }
-            for child in plan.children() {
-                visit(child, columns, ids);
-            }
-        }
-        let mut reads = Self::default();
-        for plan in plans {
-            visit(plan, &mut reads.columns, &mut reads.cluster_column_ids);
-            reads.needs_storage_stats |=
-                tidb_executor::physical_plan_needs_table_storage_statistics(plan);
-            reads.needs_column_lengths |=
-                tidb_executor::physical_plan_needs_table_storage_column_lengths(plan);
-            reads.cluster_config_filters.extend(
-                tidb_planner::memtable_predicate_extractor::cluster_table_filters(
-                    plan,
-                    "CLUSTER_CONFIG",
-                ),
-            );
-            reads
-                .cluster_log_extractors
-                .extend(tidb_planner::memtable_predicate_extractor::cluster_log_extractors(plan));
-            reads
-                .scans
-                .extend(tidb_planner::memtable_predicate_extractor::mem_table_scan_reads(plan));
-        }
-        reads
-    }
-
-    /// Whether rows generated for `self` serve every scan of `reads`.
-    fn covers(&self, reads: &Self) -> bool {
-        let contains = |have: &[String], want: &String| have.iter().any(|item| item == want);
-        let filters = |filters: &[_]| -> Vec<String> {
-            filters.iter().map(|filter| format!("{filter:?}")).collect()
-        };
-        fn logs<T: std::fmt::Debug>(extractors: &[T]) -> Vec<String> {
-            extractors
-                .iter()
-                .map(|extractor| format!("{extractor:?}"))
-                .collect()
-        }
-        reads.columns.iter().all(|(table, columns)| {
-            self.columns
-                .get(table)
-                .is_some_and(|have| columns.is_subset(have))
-        }) && reads.cluster_column_ids.iter().all(|(table, ids)| {
-            self.cluster_column_ids
-                .get(table)
-                .is_some_and(|have| ids.is_subset(have))
-        }) && (self.needs_storage_stats || !reads.needs_storage_stats)
-            && (self.needs_column_lengths || !reads.needs_column_lengths)
-            && {
-                let have = filters(&self.cluster_config_filters);
-                filters(&reads.cluster_config_filters)
-                    .iter()
-                    .all(|want| contains(&have, want))
-            }
-            && {
-                let have = logs(&self.cluster_log_extractors);
-                logs(&reads.cluster_log_extractors)
-                    .iter()
-                    .all(|want| contains(&have, want))
-            }
-            && {
-                let have = logs(&self.scans);
-                logs(&reads.scans).iter().all(|want| contains(&have, want))
-            }
-    }
-
-    fn extend(&mut self, reads: Self) {
-        for (table, columns) in reads.columns {
-            self.columns.entry(table).or_default().extend(columns);
-        }
-        for (table, ids) in reads.cluster_column_ids {
-            self.cluster_column_ids.entry(table).or_default().extend(ids);
-        }
-        self.needs_storage_stats |= reads.needs_storage_stats;
-        self.needs_column_lengths |= reads.needs_column_lengths;
-        self.cluster_config_filters
-            .extend(reads.cluster_config_filters);
-        self.cluster_log_extractors
-            .extend(reads.cluster_log_extractors);
-        self.scans.extend(reads.scans);
-    }
-}
-
 impl Session {
     /// Applies `USE`, `CREATE DATABASE`, `DROP DATABASE`, `SHOW DATABASES`
     /// and `SHOW TABLES`.
@@ -878,111 +604,59 @@ impl Session {
         }
     }
 
-    /// Opens the ordinary executor over the virtual table image. The image
-    /// remains eagerly generated; query evaluation and result delivery use Next.
-    pub(crate) fn open_information_schema_query(
+    /// Answers the memory-table scans the statement's executors asked for
+    /// (`StmtContext::mem_table_retrieval`): Go's `MemTableReaderExec` calls
+    /// its retriever when it is read; the retrievers here need this session,
+    /// so the executor states what it needs and the session retrieves it.
+    /// Returns how many scans were answered.
+    pub(crate) fn retrieve_memory_tables(
         &mut self,
-        query: &tidb_ast::QueryStmt,
-        table_names: Vec<String>,
-        current_db: &str,
         ctx: &tidb_executor::StmtContext,
-        written_db: Option<String>,
-    ) -> Result<tidb_executor::driver::QueryRecordSet, DriverError> {
-        let (mut physical, scratch) = self.plan_information_schema_query_for_execution(
-            query,
-            table_names,
-            current_db,
-            ctx,
-            written_db,
-        )?;
-        tidb_executor::driver::open_query_meta_stmt_with_physical(
-            query,
-            Some(&mut physical),
-            &scratch,
-            current_db,
-            ctx,
-        )
-    }
-
-    /// [`Self::plan_information_schema_query`], with the virtual tables
-    /// generated for the plan's scans when planning did not already: the
-    /// plan and the catalog it runs on.
-    pub(crate) fn plan_information_schema_query_for_execution(
-        &mut self,
-        query: &tidb_ast::QueryStmt,
-        table_names: Vec<String>,
-        current_db: &str,
-        ctx: &tidb_executor::StmtContext,
-        written_db: Option<String>,
-    ) -> Result<(tidb_planner::physical::PhysicalPlan, Catalog), DriverError> {
-        let (physical, catalog, materialized) =
-            self.plan_information_schema_query(query, &table_names, current_db, ctx, written_db)?;
-        if materialized {
-            return Ok((physical, catalog));
+    ) -> Result<usize, DriverError> {
+        let reads = ctx.mem_table_retrieval().take_pending();
+        for read in &reads {
+            let rows = self.retrieve_memory_table(read, ctx)?;
+            ctx.mem_table_retrieval().supply(read, rows);
         }
-        let reads = InformationSchemaReads::of(&[&physical]);
-        let scratch = self.materialize_information_schema_catalog(table_names, ctx, &reads)?;
-        Ok((physical, scratch))
+        Ok(reads.len())
     }
 
-    /// Plans a query over virtual tables. Go resolves and prunes each
-    /// memory-table scan before its executor performs the restricted
-    /// statistics reads, so the plan is built against schema-only virtual
-    /// tables and the real rows are generated once, after it (`false`, the
-    /// schema-only catalog). But an uncorrelated subquery is run while the
-    /// statement is still being planned (`EvalSubqueryFirstRow`), and its
-    /// memory-table retriever reads real rows then: when one scanned a
-    /// virtual table, the tables are generated for every scan the plans
-    /// read, the planning warnings are dropped (`TruncateWarnings`), and the
-    /// statement is planned again over those rows (`true`, the generated
-    /// catalog the plan runs on). A replanned statement whose scans read
-    /// more than was generated -- a subquery's value can change which scans
-    /// remain -- is generated and planned once more.
-    pub(crate) fn plan_information_schema_query(
+    /// Runs `attempt` over the session's catalog, retrieving the memory
+    /// tables its plan reads and running it again when it asks for them
+    /// (`DriverError::MemTableRetrievalNeeded`). The ask comes while the
+    /// statement is planned (an uncorrelated subquery runs then, Go
+    /// `EvalSubqueryFirstRow`) or before its executors are built, so nothing
+    /// the attempt did needs undoing but its warnings: those are dropped and
+    /// raised again by the rerun, and the retrievers' own go after them, in
+    /// the order Go raises them (planning, then the read).
+    pub(crate) fn with_catalog_retrieving<T>(
         &mut self,
-        query: &tidb_ast::QueryStmt,
-        table_names: &[String],
-        current_db: &str,
         ctx: &tidb_executor::StmtContext,
-        written_db: Option<String>,
-    ) -> Result<(tidb_planner::physical::PhysicalPlan, Catalog, bool), DriverError> {
-        let mut table_names = table_names.to_vec();
-        table_names.sort_unstable_by_key(|name| name.go_to_lower());
-        table_names.dedup_by(|left, right| left.go_lower_eq(right));
-        let planning_catalog =
-            self.information_schema_planning_catalog(&table_names, written_db)?;
+        mut attempt: impl FnMut(&mut Catalog) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
+        self.retrieving_memory_tables(ctx, |session| session.with_catalog_mut(&mut attempt))
+    }
+
+    /// [`Self::with_catalog_retrieving`] over any way of running the
+    /// statement, such as a staged catalog for a write.
+    pub(crate) fn retrieving_memory_tables<T>(
+        &mut self,
+        ctx: &tidb_executor::StmtContext,
+        mut run: impl FnMut(&mut Self) -> Result<T, DriverError>,
+    ) -> Result<T, DriverError> {
         let warnings_start = ctx.warning_count();
-        let (mut physical, mut subqueries) = tidb_executor::plan_query_meta_stmt_with_subqueries(
-            query,
-            &planning_catalog,
-            current_db,
-            ctx,
-        )?;
-        if subqueries
-            .iter()
-            .all(|subquery| InformationSchemaReads::of(&[subquery]).columns.is_empty())
-        {
-            return Ok((physical, planning_catalog, false));
-        }
-        let mut generated = InformationSchemaReads::default();
-        let mut catalog = None;
+        let mut retriever_warnings = Vec::new();
         loop {
-            let plans: Vec<_> = std::iter::once(&physical)
-                .chain(subqueries.iter())
-                .collect();
-            let reads = InformationSchemaReads::of(&plans);
-            if let Some(catalog) = catalog.take().filter(|_| generated.covers(&reads)) {
-                return Ok((physical, catalog, true));
+            let result = run(self);
+            if !matches!(result, Err(DriverError::MemTableRetrievalNeeded)) {
+                ctx.extend_warnings(retriever_warnings);
+                return result;
             }
-            // Each pass reads strictly more than the last generated, so the
-            // finite set of virtual-table columns bounds the loop.
-            generated.extend(reads);
-            let next =
-                self.materialize_information_schema_catalog(table_names.clone(), ctx, &generated)?;
             ctx.truncate_warnings(warnings_start);
-            (physical, subqueries) =
-                tidb_executor::plan_query_meta_stmt_with_subqueries(query, &next, current_db, ctx)?;
-            catalog = Some(next);
+            if self.retrieve_memory_tables(ctx)? == 0 {
+                return result;
+            }
+            retriever_warnings.extend(ctx.split_off_warnings(warnings_start));
         }
     }
 
@@ -1017,76 +691,67 @@ impl Session {
         .flatten()
     }
 
-    pub(crate) fn information_schema_planning_catalog(
+    /// Go `memtableRetriever.retrieve` and the other `memTableRetriever`s
+    /// `buildMemTable` picks per table: the rows of the memory-table scan
+    /// `read` describes, from the statement's own schema image and this
+    /// session's state. The rows are full width, one value per declared
+    /// column; the scan projects its pruned columns and keeps the rows its
+    /// extractor claims.
+    fn retrieve_memory_table(
         &mut self,
-        table_names: &[String],
-        written_db: Option<String>,
-    ) -> Result<Catalog, DriverError> {
-        let mut schemas = Vec::with_capacity(table_names.len());
-        for table_name in table_names {
-            let Some(columns) = self.virtual_table_schema(table_name) else {
-                // go names the database AS THE STATEMENT WROTE it in this
-                // 1146, not the canonical `INFORMATION_SCHEMA` spelling.
-                let db = written_db
-                    .clone()
-                    .unwrap_or_else(|| infoschema::INFORMATION_SCHEMA.to_owned());
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{}.{}",
-                    db, table_name
-                ))));
-            };
-            schemas.push((table_name.clone(), columns));
-        }
-        self.with_catalog_mut(|catalog| {
-            let mut scratch = catalog.clone();
-            for (table_name, columns) in schemas {
-                scratch.register_mem_in(
-                    serving_schema_of(&table_name),
-                    &table_name,
-                    tidb_executor::MemTable {
-                        columns,
-                        rows: Vec::new(),
-                    },
-                );
-            }
-            Ok(scratch)
-        })
-    }
-
-    /// Clones this statement's real catalog and overlays each referenced
-    /// virtual table with its computed rows.  The result is deliberately a
-    /// normal [`Catalog`]: every query shape then reaches exactly the same
-    /// executor and optimizer paths as stored tables do.
-    fn materialize_information_schema_catalog(
-        &mut self,
-        mut table_names: Vec<String>,
+        read: &tidb_executor::mem_table_retrieval::MemTableRead,
         ctx: &tidb_executor::StmtContext,
-        reads: &InformationSchemaReads,
-    ) -> Result<Catalog, DriverError> {
-        let InformationSchemaReads {
-            columns: required_columns,
-            cluster_column_ids,
-            needs_storage_stats,
-            needs_column_lengths,
-            cluster_config_filters,
-            cluster_log_extractors,
-            scans,
-        } = reads;
-        let (needs_storage_stats, needs_column_lengths) =
-            (*needs_storage_stats, *needs_column_lengths);
-        table_names.sort_unstable_by_key(|name| name.go_to_lower());
-        table_names.dedup_by(|left, right| left.go_lower_eq(right));
-        let reads_storage_statistics = needs_storage_stats
-            && table_names
-                .iter()
-                .any(|name| name.go_lower_eq("TABLES") || name.go_lower_eq("PARTITIONS"));
-        let mut scratch = if reads_storage_statistics {
-            self.table_storage_statistics_catalog(needs_column_lengths)?
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        use tidb_planner::memtable_predicate_extractor::{
+            ClusterTableFilter, MemTablePredicateExtractor, MemTableScanRead,
+        };
+        let table_name = read.table_name.clone();
+        let Some(columns) = self.virtual_table_schema(&table_name) else {
+            return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                "{}.{}",
+                read.db_name, table_name
+            ))));
+        };
+        let scratch = if read.needs_table_storage_statistics() {
+            self.table_storage_statistics_catalog(read.needs_table_storage_column_lengths())?
         } else {
             self.with_catalog_mut(|catalog| Ok(catalog.clone()))?
         };
-        let mut materialized = Vec::with_capacity(table_names.len());
-        use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor;
+        // The columns the scan reads, which retrievers use to skip expensive
+        // fields; a cluster table's scan names them by id (`offset + 1`).
+        let mut required_names: std::collections::HashSet<String> = read
+            .columns
+            .iter()
+            .map(|name| name.to_ascii_uppercase())
+            .collect();
+        required_names.extend(read.column_ids.iter().filter_map(|id| {
+            let offset = usize::try_from(id - 1).ok()?;
+            columns
+                .get(offset)
+                .map(|(name, _)| name.to_ascii_uppercase())
+        }));
+        let required = Some(&required_names);
+        let scans = vec![MemTableScanRead {
+            table: table_name.to_ascii_uppercase(),
+            extractor: read.extractor.clone(),
+            query_time_range: read.query_time_range.clone(),
+        }];
+        let cluster_config_filters: Vec<ClusterTableFilter> = scans
+            .iter()
+            .map(|scan| ClusterTableFilter::of(scan.extractor.as_ref()))
+            .collect();
+        let cluster_log_extractors: Vec<_> = scans
+            .iter()
+            .map(|scan| {
+                scan.extractor
+                    .as_ref()
+                    .and_then(MemTablePredicateExtractor::as_cluster_log_table)
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect();
+        let (cluster_config_filters, cluster_log_extractors) =
+            (&cluster_config_filters, &cluster_log_extractors);
         let scans_of = |table: &str| {
             let table = table.to_owned();
             scans.iter().filter(move |scan| scan.table == table)
@@ -1097,305 +762,276 @@ impl Session {
             tidb_executor::run_select_meta_in(sql, &scratch, "metrics_schema", ctx)
                 .map(|(_, rows)| rows)
         };
-        for table_name in table_names {
-            let Some(columns) = self.virtual_table_schema(&table_name) else {
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{}.{}",
-                    infoschema::INFORMATION_SCHEMA,
-                    table_name
-                ))));
-            };
-            let mut required_names = required_columns
-                .get(&table_name.to_ascii_uppercase())
-                .cloned()
-                .unwrap_or_default();
-            if let Some(ids) = cluster_column_ids.get(&table_name.to_ascii_uppercase()) {
-                required_names.extend(ids.iter().filter_map(|id| {
-                    let offset = usize::try_from(id - 1).ok()?;
-                    columns
-                        .get(offset)
-                        .map(|(name, _)| name.to_ascii_uppercase())
-                }));
+        let rows = if table_name.go_lower_eq("PROCESSLIST") {
+            self.process_list_table_rows()
+        } else if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
+            .is_some()
+        {
+            self.cluster_table_rows(&table_name, &columns, required)?
+        } else if [
+            "TIDB_INDEX_USAGE",
+            "TIDB_TRX",
+            "DEADLOCKS",
+            "MEMORY_USAGE",
+            "MEMORY_USAGE_OPS_HISTORY",
+        ]
+        .iter()
+        .any(|name| table_name.go_lower_eq(name))
+        {
+            self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None, required)?
+        } else if table_name.go_lower_eq("TIDB_STATEMENTS_STATS")
+            || table_name.go_lower_eq("STATEMENTS_SUMMARY")
+            || table_name.go_lower_eq("STATEMENTS_SUMMARY_HISTORY")
+            || table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED")
+        {
+            self.statement_summary_table_rows(&table_name, &columns, &self.session_time_zone())?
+        } else if table_name.go_lower_eq("TRX_SUMMARY") {
+            self.transaction_summary_table_rows(None)
+        } else if table_name.go_lower_eq("DATA_LOCK_WAITS") {
+            self.data_lock_waits_table_rows(required)?
+        } else if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
+            || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_USER")
+            || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST")
+        {
+            self.client_errors_summary_table_rows(&table_name)?
+        } else if table_name.go_lower_eq("TIKV_STORE_STATUS") {
+            crate::memtable_retrievers::tikv_store_status_rows(
+                scratch.region_store().as_ref(),
+                self.sem_hides_cluster_metadata(),
+            )?
+        } else if table_name.go_lower_eq("CLUSTER_LOG") {
+            self.cluster_log_table_rows(cluster_log_extractors)?
+        } else if table_name.go_lower_eq("SLOW_QUERY") {
+            let extractors: Vec<_> = scans_of("SLOW_QUERY")
+                .filter_map(|scan| match &scan.extractor {
+                    Some(MemTablePredicateExtractor::SlowQuery(extractor)) => Some(extractor),
+                    _ => None,
+                })
+                .collect();
+            self.slow_query_table_rows(&extractors)?
+        } else if table_name.go_lower_eq("USER_PRIVILEGES") {
+            self.user_privileges_table_rows()
+        } else if table_name.go_lower_eq("USER_ATTRIBUTES") {
+            self.user_attributes_table_rows(&scratch, ctx)
+        } else if table_name.go_lower_eq("VARIABLES_INFO") {
+            self.variables_info_table_rows()
+        } else if table_name.go_lower_eq("ATTRIBUTES") {
+            infoschema::attributes_rows(&scratch, &self.schema_visibility())?
+        } else if table_name.go_lower_eq("INSPECTION_RULES") {
+            crate::inspection::inspection_rules_rows()
+        } else if table_name.go_lower_eq("INSPECTION_SUMMARY") {
+            let mut rows = Vec::new();
+            for scan in scans_of("INSPECTION_SUMMARY") {
+                let Some(MemTablePredicateExtractor::InspectionSummaryTable(extractor)) =
+                    &scan.extractor
+                else {
+                    continue;
+                };
+                rows.extend(crate::inspection::inspection_summary_rows(
+                    extractor,
+                    &scan.query_time_range,
+                    query_metrics,
+                    |warning| ctx.append_warning_parts(1105, &warning),
+                )?);
             }
-            let required = Some(&required_names);
-            let rows = if table_name.go_lower_eq("PROCESSLIST") {
-                self.process_list_table_rows()
-            } else if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
-                .is_some()
-            {
-                self.cluster_table_rows(&table_name, &columns, required)?
-            } else if [
-                "TIDB_INDEX_USAGE",
-                "TIDB_TRX",
-                "DEADLOCKS",
-                "MEMORY_USAGE",
-                "MEMORY_USAGE_OPS_HISTORY",
-            ]
-            .iter()
-            .any(|name| table_name.go_lower_eq(name))
-            {
-                self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None, required)?
-            } else if table_name.go_lower_eq("TIDB_STATEMENTS_STATS")
-                || table_name.go_lower_eq("STATEMENTS_SUMMARY")
-                || table_name.go_lower_eq("STATEMENTS_SUMMARY_HISTORY")
-                || table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED")
-            {
-                self.statement_summary_table_rows(&table_name, &columns, &self.session_time_zone())?
-            } else if table_name.go_lower_eq("TRX_SUMMARY") {
-                self.transaction_summary_table_rows(None)
-            } else if table_name.go_lower_eq("DATA_LOCK_WAITS") {
-                self.data_lock_waits_table_rows(required)?
-            } else if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
-                || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_USER")
-                || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST")
-            {
-                self.client_errors_summary_table_rows(&table_name)?
-            } else if table_name.go_lower_eq("TIKV_STORE_STATUS") {
-                crate::memtable_retrievers::tikv_store_status_rows(
-                    scratch.region_store().as_ref(),
-                    self.sem_hides_cluster_metadata(),
-                )?
-            } else if table_name.go_lower_eq("CLUSTER_LOG") {
-                self.cluster_log_table_rows(cluster_log_extractors)?
-            } else if table_name.go_lower_eq("SLOW_QUERY") {
-                let extractors: Vec<_> = scans_of("SLOW_QUERY")
-                    .filter_map(|scan| match &scan.extractor {
-                        Some(MemTablePredicateExtractor::SlowQuery(extractor)) => Some(extractor),
-                        _ => None,
-                    })
-                    .collect();
-                self.slow_query_table_rows(&extractors)?
-            } else if table_name.go_lower_eq("USER_PRIVILEGES") {
-                self.user_privileges_table_rows()
-            } else if table_name.go_lower_eq("USER_ATTRIBUTES") {
-                self.user_attributes_table_rows(&scratch, ctx)
-            } else if table_name.go_lower_eq("VARIABLES_INFO") {
-                self.variables_info_table_rows()
-            } else if table_name.go_lower_eq("ATTRIBUTES") {
-                infoschema::attributes_rows(&scratch, &self.schema_visibility())?
-            } else if table_name.go_lower_eq("INSPECTION_RULES") {
-                crate::inspection::inspection_rules_rows()
-            } else if table_name.go_lower_eq("INSPECTION_SUMMARY") {
-                let mut rows = Vec::new();
-                for scan in scans_of("INSPECTION_SUMMARY") {
-                    let Some(MemTablePredicateExtractor::InspectionSummaryTable(extractor)) =
-                        &scan.extractor
-                    else {
-                        continue;
-                    };
-                    rows.extend(crate::inspection::inspection_summary_rows(
-                        extractor,
-                        &scan.query_time_range,
-                        query_metrics,
-                        |warning| ctx.append_warning_parts(1105, &warning),
-                    )?);
+            rows
+        } else if table_name.go_lower_eq("METRICS_SUMMARY")
+            || table_name.go_lower_eq("METRICS_SUMMARY_BY_LABEL")
+        {
+            let by_label = table_name.go_lower_eq("METRICS_SUMMARY_BY_LABEL");
+            let mut rows = Vec::new();
+            for scan in scans_of(&table_name.to_ascii_uppercase()) {
+                // Go checks PROCESS before it looks at the extractor.
+                if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
+                    return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
                 }
-                rows
-            } else if table_name.go_lower_eq("METRICS_SUMMARY")
-                || table_name.go_lower_eq("METRICS_SUMMARY_BY_LABEL")
-            {
-                let by_label = table_name.go_lower_eq("METRICS_SUMMARY_BY_LABEL");
-                let mut rows = Vec::new();
-                for scan in scans_of(&table_name.to_ascii_uppercase()) {
-                    // Go checks PROCESS before it looks at the extractor.
-                    if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
-                        return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
-                    }
-                    let Some(MemTablePredicateExtractor::MetricSummaryTable(extractor)) =
-                        &scan.extractor
-                    else {
-                        continue;
-                    };
-                    rows.extend(crate::memtable_retrievers::metrics_summary_rows(
-                        extractor,
-                        &scan.query_time_range,
-                        by_label,
-                        query_metrics,
-                    )?);
-                }
-                rows
-            } else if table_name.go_lower_eq("TABLE_STORAGE_STATS") {
-                let mut rows = Vec::new();
-                for scan in scans_of("TABLE_STORAGE_STATS") {
-                    if let Some(MemTablePredicateExtractor::TableStorageStats(extractor)) =
-                        &scan.extractor
-                    {
-                        rows.extend(crate::memtable_retrievers::table_storage_stats_rows(
-                            extractor,
-                            &scratch,
-                            scratch.region_store().as_ref(),
-                            &self.schema_visibility(),
-                        )?);
-                    }
-                }
-                rows
-            } else if table_name.go_lower_eq("TIKV_REGION_PEERS") {
-                let mut rows = Vec::new();
-                for scan in scans_of("TIKV_REGION_PEERS") {
-                    if let Some(MemTablePredicateExtractor::TikvRegionPeers(extractor)) =
-                        &scan.extractor
-                    {
-                        rows.extend(crate::memtable_retrievers::tikv_region_peers_rows(
-                            extractor,
-                            scratch.region_store().as_ref(),
-                        )?);
-                    }
-                }
-                rows
-            } else if table_name.go_lower_eq("TIKV_REGION_STATUS") {
-                let mut rows = Vec::new();
-                for scan in scans_of("TIKV_REGION_STATUS") {
-                    let extractor = match &scan.extractor {
-                        Some(MemTablePredicateExtractor::TiKVRegionStatus(extractor)) => {
-                            Some(extractor)
-                        }
-                        _ => None,
-                    };
-                    rows.extend(crate::memtable_retrievers::tikv_region_status_rows(
+                let Some(MemTablePredicateExtractor::MetricSummaryTable(extractor)) =
+                    &scan.extractor
+                else {
+                    continue;
+                };
+                rows.extend(crate::memtable_retrievers::metrics_summary_rows(
+                    extractor,
+                    &scan.query_time_range,
+                    by_label,
+                    query_metrics,
+                )?);
+            }
+            rows
+        } else if table_name.go_lower_eq("TABLE_STORAGE_STATS") {
+            let mut rows = Vec::new();
+            for scan in scans_of("TABLE_STORAGE_STATS") {
+                if let Some(MemTablePredicateExtractor::TableStorageStats(extractor)) =
+                    &scan.extractor
+                {
+                    rows.extend(crate::memtable_retrievers::table_storage_stats_rows(
                         extractor,
                         &scratch,
                         scratch.region_store().as_ref(),
                         &self.schema_visibility(),
                     )?);
                 }
-                rows
-            } else if table_name.go_lower_eq("TIDB_HOT_REGIONS") {
-                crate::memtable_retrievers::tidb_hot_regions_rows(
-                    &scratch,
-                    scratch.region_store().as_ref(),
-                )?
-            } else if table_name.go_lower_eq("TIDB_HOT_REGIONS_HISTORY") {
-                let mut rows = Vec::new();
-                for scan in scans_of("TIDB_HOT_REGIONS_HISTORY") {
-                    let Some(MemTablePredicateExtractor::HotRegionsHistoryTable(extractor)) =
-                        &scan.extractor
-                    else {
-                        continue;
-                    };
-                    if extractor.skip_request {
-                        continue;
-                    }
-                    if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
-                        return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
-                    }
-                    // Go `infoschema.GetPDServerInfo`, whose per-member
-                    // failures are warnings.
-                    let mut warnings = Vec::new();
-                    let pd_servers = match &self.cluster_topology {
-                        Some(topology) => topology.pd_servers(&mut warnings),
-                        None => Ok(Vec::new()),
-                    };
-                    for warning in &warnings {
-                        ctx.append_warning_parts(1105, warning);
-                    }
-                    let pd_servers = pd_servers
-                        .map_err(|message| DriverError::unsupported(message))?
-                        .into_iter()
-                        .map(|server| server.status_address)
-                        .collect::<Vec<_>>();
-                    rows.extend(crate::memtable_retrievers::tidb_hot_regions_history_rows(
+            }
+            rows
+        } else if table_name.go_lower_eq("TIKV_REGION_PEERS") {
+            let mut rows = Vec::new();
+            for scan in scans_of("TIKV_REGION_PEERS") {
+                if let Some(MemTablePredicateExtractor::TikvRegionPeers(extractor)) =
+                    &scan.extractor
+                {
+                    rows.extend(crate::memtable_retrievers::tikv_region_peers_rows(
                         extractor,
-                        &pd_servers,
-                        &scratch,
                         scratch.region_store().as_ref(),
-                        |warning| ctx.append_warning_parts(1105, warning),
                     )?);
                 }
-                rows
-            } else if ["CLUSTER_HARDWARE", "CLUSTER_LOAD", "CLUSTER_SYSTEMINFO"]
-                .iter()
-                .any(|name| table_name.go_lower_eq(name))
-            {
-                // Go `clusterServerInfoRetriever.retrieve`: hardware needs
-                // CONFIG, load and system info PROCESS, checked before the
-                // extractor's SkipRequest.
-                use tidb_proto::diagnosticspb::ServerInfoType;
-                let (privilege, name, tp) = if table_name.go_lower_eq("CLUSTER_HARDWARE") {
-                    (
-                        crate::privilege::GlobalPriv::Config,
-                        "CONFIG",
-                        ServerInfoType::HardwareInfo,
-                    )
-                } else if table_name.go_lower_eq("CLUSTER_LOAD") {
-                    (
-                        crate::privilege::GlobalPriv::Process,
-                        "PROCESS",
-                        ServerInfoType::LoadInfo,
-                    )
-                } else {
-                    (
-                        crate::privilege::GlobalPriv::Process,
-                        "PROCESS",
-                        ServerInfoType::SystemInfo,
-                    )
+            }
+            rows
+        } else if table_name.go_lower_eq("TIKV_REGION_STATUS") {
+            let mut rows = Vec::new();
+            for scan in scans_of("TIKV_REGION_STATUS") {
+                let extractor = match &scan.extractor {
+                    Some(MemTablePredicateExtractor::TiKVRegionStatus(extractor)) => {
+                        Some(extractor)
+                    }
+                    _ => None,
                 };
-                if !self.has_scoped_privilege("", "", privilege) {
-                    return Err(DriverError::SpecificAccessDenied(name.to_owned()));
+                rows.extend(crate::memtable_retrievers::tikv_region_status_rows(
+                    extractor,
+                    &scratch,
+                    scratch.region_store().as_ref(),
+                    &self.schema_visibility(),
+                )?);
+            }
+            rows
+        } else if table_name.go_lower_eq("TIDB_HOT_REGIONS") {
+            crate::memtable_retrievers::tidb_hot_regions_rows(
+                &scratch,
+                scratch.region_store().as_ref(),
+            )?
+        } else if table_name.go_lower_eq("TIDB_HOT_REGIONS_HISTORY") {
+            let mut rows = Vec::new();
+            for scan in scans_of("TIDB_HOT_REGIONS_HISTORY") {
+                let Some(MemTablePredicateExtractor::HotRegionsHistoryTable(extractor)) =
+                    &scan.extractor
+                else {
+                    continue;
+                };
+                if extractor.skip_request {
+                    continue;
                 }
-                let extractors: Vec<_> = scans
-                    .iter()
-                    .filter(|scan| scan.table.go_lower_eq(&table_name))
-                    .map(|scan| {
-                        scan.extractor
-                            .as_ref()
-                            .and_then(tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor::as_cluster_table)
-                            .cloned()
-                            .unwrap_or_default()
-                    })
-                    .collect();
-                self.cluster_server_info_table_rows(tp, &extractors)?
-            } else if table_name.go_lower_eq("DDL_JOBS") {
-                // Go `DDLJobsReaderExec`: the running jobs, then the history.
-                let (running, history) = self.all_ddl_jobs()?;
-                let jobs = running.into_iter().chain(history).collect::<Vec<_>>();
-                let visibility = self.schema_visibility();
-                // Go `DDLJobsReaderExec.Open`: `DDLJobRetriever.is = e.is`,
-                // the statement's own InfoSchema -- the snapshot schema
-                // under `tidb_snapshot`, the transaction's otherwise.
-                self.with_catalog_mut(|catalog| {
-                    Ok(infoschema::ddl_jobs_rows(&jobs, &visibility, catalog))
-                })?
-            } else if table_name.go_lower_eq("PROFILING") {
-                crate::memtable_retrievers::pseudo_profiling_rows(
-                    tidb_vardef::option_values::tidb_opt_on(
-                        &self.vars.get_system("profiling").unwrap_or_default(),
-                    ),
-                )
-            } else if table_name.go_lower_eq("KEYSPACE_META") {
-                crate::memtable_retrievers::keyspace_meta_rows()
-            } else if table_name.go_lower_eq("PLACEMENT_POLICIES") {
-                crate::memtable_retrievers::placement_policies_rows(&scratch)
-            } else if table_name.go_lower_eq("ANALYZE_STATUS") {
-                self.analyze_status_rows()?
-            } else if serving_schema_of(&table_name)
-                == tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA
-                && table_name.go_lower_eq("SESSION_VARIABLES")
-            {
-                self.session_variables_table_rows()?
-            } else if table_name.go_lower_eq("CLUSTER_CONFIG") {
-                self.cluster_config_table_rows(cluster_config_filters)?
-            } else if table_name.go_lower_eq("TIDB_SERVERS_INFO") {
-                self.tidb_servers_info_table_rows()?
-            } else if table_name.go_lower_eq("CLUSTER_INFO") {
-                // Go `memtableRetriever.retrieve`: CLUSTER_INFO needs PROCESS.
                 if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
                     return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
                 }
-                self.cluster_info_table_rows()?
+                // Go `infoschema.GetPDServerInfo`, whose per-member
+                // failures are warnings.
+                let mut warnings = Vec::new();
+                let pd_servers = match &self.cluster_topology {
+                    Some(topology) => topology.pd_servers(&mut warnings),
+                    None => Ok(Vec::new()),
+                };
+                for warning in &warnings {
+                    ctx.append_warning_parts(1105, warning);
+                }
+                let pd_servers = pd_servers
+                    .map_err(|message| DriverError::unsupported(message))?
+                    .into_iter()
+                    .map(|server| server.status_address)
+                    .collect::<Vec<_>>();
+                rows.extend(crate::memtable_retrievers::tidb_hot_regions_history_rows(
+                    extractor,
+                    &pd_servers,
+                    &scratch,
+                    scratch.region_store().as_ref(),
+                    |warning| ctx.append_warning_parts(1105, warning),
+                )?);
+            }
+            rows
+        } else if ["CLUSTER_HARDWARE", "CLUSTER_LOAD", "CLUSTER_SYSTEMINFO"]
+            .iter()
+            .any(|name| table_name.go_lower_eq(name))
+        {
+            // Go `clusterServerInfoRetriever.retrieve`: hardware needs
+            // CONFIG, load and system info PROCESS, checked before the
+            // extractor's SkipRequest.
+            use tidb_proto::diagnosticspb::ServerInfoType;
+            let (privilege, name, tp) = if table_name.go_lower_eq("CLUSTER_HARDWARE") {
+                (
+                    crate::privilege::GlobalPriv::Config,
+                    "CONFIG",
+                    ServerInfoType::HardwareInfo,
+                )
+            } else if table_name.go_lower_eq("CLUSTER_LOAD") {
+                (
+                    crate::privilege::GlobalPriv::Process,
+                    "PROCESS",
+                    ServerInfoType::LoadInfo,
+                )
             } else {
-                let visibility = self.schema_visibility();
-                infoschema::table_rows(&table_name, &scratch, &visibility, ctx).unwrap_or_default()
+                (
+                    crate::privilege::GlobalPriv::Process,
+                    "PROCESS",
+                    ServerInfoType::SystemInfo,
+                )
             };
-            materialized.push((table_name, columns, rows));
-        }
-        for (table_name, columns, rows) in materialized {
-            scratch.register_mem_in(
-                serving_schema_of(&table_name),
-                &table_name,
-                tidb_executor::MemTable { columns, rows },
-            );
-        }
-        Ok(scratch)
+            if !self.has_scoped_privilege("", "", privilege) {
+                return Err(DriverError::SpecificAccessDenied(name.to_owned()));
+            }
+            let extractors: Vec<_> = scans
+                .iter()
+                .filter(|scan| scan.table.go_lower_eq(&table_name))
+                .map(|scan| {
+                    scan.extractor
+                        .as_ref()
+                        .and_then(tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor::as_cluster_table)
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .collect();
+            self.cluster_server_info_table_rows(tp, &extractors)?
+        } else if table_name.go_lower_eq("DDL_JOBS") {
+            // Go `DDLJobsReaderExec`: the running jobs, then the history.
+            let (running, history) = self.all_ddl_jobs()?;
+            let jobs = running.into_iter().chain(history).collect::<Vec<_>>();
+            let visibility = self.schema_visibility();
+            // Go `DDLJobsReaderExec.Open`: `DDLJobRetriever.is = e.is`,
+            // the statement's own InfoSchema -- the snapshot schema
+            // under `tidb_snapshot`, the transaction's otherwise.
+            self.with_catalog_mut(|catalog| {
+                Ok(infoschema::ddl_jobs_rows(&jobs, &visibility, catalog))
+            })?
+        } else if table_name.go_lower_eq("PROFILING") {
+            crate::memtable_retrievers::pseudo_profiling_rows(
+                tidb_vardef::option_values::tidb_opt_on(
+                    &self.vars.get_system("profiling").unwrap_or_default(),
+                ),
+            )
+        } else if table_name.go_lower_eq("KEYSPACE_META") {
+            crate::memtable_retrievers::keyspace_meta_rows()
+        } else if table_name.go_lower_eq("PLACEMENT_POLICIES") {
+            crate::memtable_retrievers::placement_policies_rows(&scratch)
+        } else if table_name.go_lower_eq("ANALYZE_STATUS") {
+            self.analyze_status_rows()?
+        } else if read
+            .db_name
+            .go_lower_eq(tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA)
+            && table_name.go_lower_eq("SESSION_VARIABLES")
+        {
+            self.session_variables_table_rows()?
+        } else if table_name.go_lower_eq("CLUSTER_CONFIG") {
+            self.cluster_config_table_rows(cluster_config_filters)?
+        } else if table_name.go_lower_eq("TIDB_SERVERS_INFO") {
+            self.tidb_servers_info_table_rows()?
+        } else if table_name.go_lower_eq("CLUSTER_INFO") {
+            // Go `memtableRetriever.retrieve`: CLUSTER_INFO needs PROCESS.
+            if !self.has_scoped_privilege("", "", crate::privilege::GlobalPriv::Process) {
+                return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            }
+            self.cluster_info_table_rows()?
+        } else {
+            let visibility = self.schema_visibility();
+            infoschema::table_rows(&table_name, &scratch, &visibility, ctx).unwrap_or_default()
+        };
+        Ok(rows)
     }
 
     /// Go `memtableRetriever.setDataForVariablesInfo`: one row per system
@@ -2438,7 +2074,7 @@ impl Session {
             let stmt_ctx = self
                 .statement_context_for_stmt(statement, false)
                 .with_prepared_params(parameters.clone());
-            self.with_catalog_mut(|catalog| {
+            self.with_catalog_retrieving(&stmt_ctx, |catalog| {
                 if schema_version != catalog.schema_version() {
                     return Ok(None);
                 }
@@ -2454,12 +2090,12 @@ impl Session {
                 };
                 open_query(
                     query,
-                    Some(physical),
+                    Some(&mut *physical),
                     catalog,
                     &current_db,
                     &stmt_ctx,
                 )
-                .map(|record_set| Some((record_set, stmt_ctx)))
+                .map(|record_set| Some((record_set, stmt_ctx.clone())))
             })
         });
         let Some(opened) = opened else {
@@ -3520,26 +3156,8 @@ impl Session {
                         }
                     }
                 }
-                let mut table_names = Vec::new();
-                let mut written_db = None;
-                self.information_schema_tables_read_by(
-                    query,
-                    &current_db,
-                    &mut table_names,
-                    &mut written_db,
-                )?;
-                if !table_names.is_empty() {
-                    let record_set = self.open_information_schema_query(
-                        query,
-                        table_names,
-                        &current_db,
-                        &ctx,
-                        written_db,
-                    )?;
-                    return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
-                }
                 let tidb_ast::QueryStmt::Select(select) = &**query else {
-                    let record_set = self.with_catalog_mut(|catalog| {
+                    let record_set = self.with_catalog_retrieving(&ctx, |catalog| {
                         let physical = select_plan.as_mut().and_then(|retained| {
                             (retained.schema_version == catalog.schema_version()).then(|| {
                                 *retained.used = true;
@@ -3576,12 +3194,12 @@ impl Session {
                             let tidb_ast::QueryStmt::Select(_) = query.as_ref() else {
                                 unreachable!("a retained SELECT owns a SELECT query")
                             };
-                            self.with_catalog_mut(|catalog| {
+                            self.with_catalog_retrieving(&ctx, |catalog| {
                                 (schema_version == catalog.schema_version())
                                     .then(|| {
                                         tidb_executor::driver::open_query_meta_stmt_with_physical(
                                             query,
-                                            Some(physical),
+                                            Some(&mut *physical),
                                             catalog,
                                             &current_db,
                                             &ctx,
@@ -3596,7 +3214,7 @@ impl Session {
                         }
                     }
                 }
-                let record_set = self.with_catalog_mut(|catalog| {
+                let record_set = self.with_catalog_retrieving(&ctx, |catalog| {
                     let physical = select_plan.as_mut().and_then(|retained| {
                         (retained.schema_version == catalog.schema_version()).then(|| {
                             *retained.used = true;
@@ -3645,7 +3263,7 @@ impl Session {
                 }
                 match &**dml {
                     DmlStmt::Insert(insert) => {
-                        let physical_plan = cached_dml_plan(dml_plan, "Insert")?;
+                        let mut physical_plan = cached_dml_plan(dml_plan, "Insert")?;
                         let current_db = self.current_db.clone();
                         let enable_strict_not_null_check = !matches!(
                             self.vars
@@ -3674,25 +3292,27 @@ impl Session {
                         if insert.source.is_some() {
                             self.write_sli.set_invalid();
                         }
-                        let result = self.with_staged_catalog_for_path(
-                            &insert.table,
-                            &current_db,
-                            |catalog| {
-                                // Go executes the statement the protocol BOUND
-                                // (`pkg/server`'s `statement`/`executableParams`
-                                // carry the values): re-parsing `sql` here would run
-                                // a tree whose markers never met their execute-time
-                                // values, which is a wrong answer for every binary-
-                                // protocol write.
-                                tidb_executor::run_insert_stmt_with_physical(
-                                    insert,
-                                    catalog,
-                                    &current_db,
-                                    &ctx,
-                                    physical_plan,
-                                )
-                            },
-                        );
+                        let result = self.retrieving_memory_tables(&ctx, |session| {
+                            session.with_staged_catalog_for_path(
+                                &insert.table,
+                                &current_db,
+                                |catalog| {
+                                    // Go executes the statement the protocol BOUND
+                                    // (`pkg/server`'s `statement`/`executableParams`
+                                    // carry the values): re-parsing `sql` here would
+                                    // run a tree whose markers never met their
+                                    // execute-time values, which is a wrong answer
+                                    // for every binary-protocol write.
+                                    tidb_executor::run_insert_stmt_with_physical(
+                                        insert,
+                                        catalog,
+                                        &current_db,
+                                        &ctx,
+                                        physical_plan.as_deref_mut(),
+                                    )
+                                },
+                            )
+                        });
                         self.drain_eval_warnings(&ctx);
                         // Go `session.LastInsertID()`, the OK packet's field:
                         // `StmtCtx.LastInsertID` when the statement PUBLISHED an
@@ -3719,7 +3339,7 @@ impl Session {
                         Ok(StmtOutput::Affected(affected))
                     }
                     DmlStmt::Update(update) => {
-                        let physical_plan = cached_dml_plan(dml_plan, "Update")?;
+                        let mut physical_plan = cached_dml_plan(dml_plan, "Update")?;
                         let current_db = self.current_db.clone();
                         // Go `ResetUpdateStmtCtx`, which applies the same
                         // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
@@ -3734,44 +3354,47 @@ impl Session {
                             .with_statement_class(tidb_executor::StatementClass::Update);
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(table_ref) => self
-                                .with_staged_catalog_for_path(
-                                    &table_ref.name,
-                                    &current_db,
-                                    |catalog| {
-                                        // Bound AST, not SQL text: the text still
-                                        // carries the markers the binary protocol
-                                        // already replaced. See the INSERT arm.
+                                .retrieving_memory_tables(&ctx, |session| {
+                                    session.with_staged_catalog_for_path(
+                                        &table_ref.name,
+                                        &current_db,
+                                        |catalog| {
+                                            // Bound AST, not SQL text: the text still
+                                            // carries the markers the binary protocol
+                                            // already replaced. See the INSERT arm.
+                                            Ok(StmtOutput::Affected(
+                                                tidb_executor::run_update_stmt_with_physical(
+                                                    update,
+                                                    catalog,
+                                                    &current_db,
+                                                    &ctx,
+                                                    physical_plan.as_deref_mut(),
+                                                )?,
+                                            ))
+                                        },
+                                    )
+                                }),
+                            tidb_ast::UpdateKind::Multi { .. } => self
+                                .retrieving_memory_tables(&ctx, |session| {
+                                    session.with_staged_catalog(|catalog| {
                                         Ok(StmtOutput::Affected(
                                             tidb_executor::run_update_stmt_with_physical(
                                                 update,
                                                 catalog,
                                                 &current_db,
                                                 &ctx,
-                                                physical_plan,
+                                                physical_plan.as_deref_mut(),
                                             )?,
                                         ))
-                                    },
-                                ),
-                            tidb_ast::UpdateKind::Multi { .. } => {
-                                self.with_staged_catalog(|catalog| {
-                                    Ok(StmtOutput::Affected(
-                                        tidb_executor::run_update_stmt_with_physical(
-                                            update,
-                                            catalog,
-                                            &current_db,
-                                            &ctx,
-                                            physical_plan,
-                                        )?,
-                                    ))
-                                })
-                            }
+                                    })
+                                }),
                         };
                         self.drain_eval_warnings(&ctx);
                         self.statement_message = ctx.message();
                         output
                     }
                     DmlStmt::Delete(delete) => {
-                        let physical_plan = cached_dml_plan(dml_plan, "Delete")?;
+                        let mut physical_plan = cached_dml_plan(dml_plan, "Delete")?;
                         let current_db = self.current_db.clone();
                         // Go `ResetDeleteStmtCtx`, which applies the same
                         // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
@@ -3786,36 +3409,39 @@ impl Session {
                             .with_statement_class(tidb_executor::StatementClass::Delete);
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(table_ref) => self
-                                .with_staged_catalog_for_path(
-                                    &table_ref.name,
-                                    &current_db,
-                                    |catalog| {
-                                        // Bound AST, not SQL text -- see the
-                                        // UPDATE arm.
+                                .retrieving_memory_tables(&ctx, |session| {
+                                    session.with_staged_catalog_for_path(
+                                        &table_ref.name,
+                                        &current_db,
+                                        |catalog| {
+                                            // Bound AST, not SQL text -- see the
+                                            // UPDATE arm.
+                                            Ok(StmtOutput::Affected(
+                                                tidb_executor::run_delete_stmt_with_physical(
+                                                    delete,
+                                                    catalog,
+                                                    &current_db,
+                                                    &ctx,
+                                                    physical_plan.as_deref_mut(),
+                                                )?,
+                                            ))
+                                        },
+                                    )
+                                }),
+                            tidb_ast::DeleteKind::Multi { .. } => self
+                                .retrieving_memory_tables(&ctx, |session| {
+                                    session.with_staged_catalog(|catalog| {
                                         Ok(StmtOutput::Affected(
                                             tidb_executor::run_delete_stmt_with_physical(
                                                 delete,
                                                 catalog,
                                                 &current_db,
                                                 &ctx,
-                                                physical_plan,
+                                                physical_plan.as_deref_mut(),
                                             )?,
                                         ))
-                                    },
-                                ),
-                            tidb_ast::DeleteKind::Multi { .. } => {
-                                self.with_staged_catalog(|catalog| {
-                                    Ok(StmtOutput::Affected(
-                                        tidb_executor::run_delete_stmt_with_physical(
-                                            delete,
-                                            catalog,
-                                            &current_db,
-                                            &ctx,
-                                            physical_plan,
-                                        )?,
-                                    ))
-                                })
-                            }
+                                    })
+                                }),
                         };
                         self.drain_eval_warnings(&ctx);
                         output

@@ -275,12 +275,14 @@ impl Session {
             // the EXECUTE-time plan remain the execution source.
             match &validated_query {
                 Some(tidb_ast::Stmt::Query(query)) if param_count == 0 => {
-                    tidb_executor::plan_query_meta_stmt(
-                        query,
-                        &catalog,
-                        self.current_database(),
-                        &planner_context,
-                    )?;
+                    self.retrieving_memory_tables(&planner_context, |session| {
+                        tidb_executor::plan_query_meta_stmt(
+                            query,
+                            &catalog,
+                            session.current_database(),
+                            &planner_context,
+                        )
+                    })?;
                 }
                 // Go builds this plan with each `?` still a ParamMarkerExpr,
                 // so what the markers will hold is not checked, but a name the
@@ -302,6 +304,9 @@ impl Session {
                             &planner_context.with_isolated_warnings(),
                         )
                         .err()
+                        // A scan of a memory table needs the session to
+                        // retrieve its rows, which says nothing of the query.
+                        .filter(|error| !matches!(error, DriverError::MemTableRetrievalNeeded))
                     };
                     // A shape this tier cannot plan is no answer Go gives,
                     // so it never refuses a PREPARE Go would admit.

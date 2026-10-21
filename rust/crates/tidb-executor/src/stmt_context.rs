@@ -678,6 +678,9 @@ pub struct StmtContextData {
     explain_table_hints: Vec<tidb_ast::Hint>,
     /// Go `SessionVars.PlannerSelectBlockAsName`, set by the plan builder.
     block_as_names: Arc<Mutex<Vec<(String, String)>>>,
+    /// The memory-table rows this statement's scans read and the requests
+    /// still waiting for the session to retrieve them.
+    mem_table_retrieval: Arc<crate::mem_table_retrieval::MemTableRetrieval>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`StmtContext::enter_cop_eval`]).
     ///
@@ -2523,6 +2526,7 @@ impl StmtContext {
             explain_format: None,
             explain_table_hints: Vec::new(),
             block_as_names: Arc::default(),
+            mem_table_retrieval: Arc::default(),
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             used_stats_info: Arc::default(),
@@ -2800,6 +2804,13 @@ impl StmtContext {
             .block_as_names
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = names;
+    }
+
+    /// The statement's memory-table retrievals (Go `MemTableReaderExec`'s
+    /// retriever state, answered by the session).
+    #[must_use]
+    pub fn mem_table_retrieval(&self) -> &crate::mem_table_retrieval::MemTableRetrieval {
+        &self.mem_table_retrieval
     }
 
     /// The statement's select-block aliases.
@@ -5197,6 +5208,24 @@ impl StmtContext {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .truncate(start);
+    }
+
+    /// Removes and returns the warnings recorded after the first `start`.
+    pub fn split_off_warnings(&self, start: usize) -> Vec<(WarningLevel, u16, String)> {
+        let mut warnings = self
+            .warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let start = start.min(warnings.len());
+        warnings.split_off(start)
+    }
+
+    /// Appends warnings taken off with [`Self::split_off_warnings`].
+    pub fn extend_warnings(&self, extra: Vec<(WarningLevel, u16, String)>) {
+        self.warnings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(extra);
     }
 
     /// Publishes the statement's human-readable info string for the protocol

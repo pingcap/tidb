@@ -451,7 +451,7 @@ fn physical_dml_plan_with_cache_mode(
         update_expressions,
         fk_triggers,
     });
-    super::physical_builder::prepare_execution_plan(&mut plan, catalog, ctx)?;
+    super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
     Ok(plan)
 }
 

@@ -1086,6 +1086,11 @@ pub enum DriverError {
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
+    /// A memory-table scan needs the session to retrieve its rows
+    /// (`StmtContext::mem_table_retrieval`). Internal: the session answers
+    /// the request and rebuilds, so a client sees it only when a statement
+    /// path forgot to.
+    MemTableRetrievalNeeded,
     /// MySQL `ER_TOO_MANY_ROWS` (1172): `SELECT ... INTO @var` produced more
     /// than one row.
     SelectIntoMoreThanOneRow,

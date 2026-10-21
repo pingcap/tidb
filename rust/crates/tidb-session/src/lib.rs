@@ -2634,7 +2634,7 @@ impl Session {
         let ctx = self
             .statement_context(false)
             .with_prepared_params(parameters.unwrap_or_default());
-        self.with_catalog_mut(|catalog| {
+        self.with_catalog_retrieving(&ctx, |catalog| {
             tidb_executor::plan_select_meta_stmt(&select, catalog, &current_db, &ctx)
         })
     }
@@ -3549,6 +3549,8 @@ mod tests_subquery;
 mod tests_support;
 #[cfg(test)]
 mod tests_sysbench_access;
+#[cfg(test)]
+mod tests_memory_tables;
 #[cfg(test)]
 mod tests_system_schemas;
 #[cfg(test)]

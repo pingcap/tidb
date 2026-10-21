@@ -2704,6 +2704,9 @@ fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner::plan_base::P
         crate::DriverError::SubqueryReturnsMoreThanOneRow => {
             tidb_planner::plan_base::PlanError::subquery_returns_more_than_one_row()
         }
+        crate::DriverError::MemTableRetrievalNeeded => {
+            tidb_planner::plan_base::PlanError::mem_table_retrieval_needed()
+        }
         crate::DriverError::Exec(crate::ExecError::Eval(eval)) => {
             tidb_planner::plan_base::PlanError::eval(eval)
         }

@@ -3790,7 +3790,11 @@ fn render_physical_query(
     crate::driver::set_opr::validate_query_usage(query, ctx)?;
     let (mut physical, scalar_subqueries) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
-    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    if analyze {
+        crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    } else {
+        crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
+    }
     let runtime = analyze
         .then(|| crate::driver::physical_builder::execute_for_explain(&mut physical, catalog, ctx))
         .transpose()?;
@@ -3816,7 +3820,7 @@ pub fn explain_physical_plan(
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
     let mut physical = physical.deep_clone();
-    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     render_physical_plan(ctx, ctx, &physical, catalog, format, false, None, &[])
 }
 
@@ -3831,7 +3835,7 @@ pub fn explain_connection_plan(
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
     let mut physical = physical.deep_clone();
-    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     render_physical_plan(ctx, ctx, &physical, catalog, format, true, None, &[])
 }
 
@@ -3898,7 +3902,7 @@ pub fn query_plan_cost(
                 .to_owned(),
         )));
     }
-    crate::driver::physical_builder::prepare_execution_plan(&mut physical, catalog, ctx)?;
+    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
     let coster = Ver2Coster::from_env(ctx.optimizer_cost_env()).with_explain_cache();
     Ok(coster
         .plan_cost(&physical, tidb_planner::task_type::TaskType::Root, false)

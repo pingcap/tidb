@@ -183,7 +183,7 @@ impl Session {
                 }
             }
             let (columns, rows) = match target {
-                Stmt::Query(query) => self.with_catalog_mut(|catalog| match &**query {
+                Stmt::Query(query) => self.with_catalog_retrieving(&ctx, |catalog| match &**query {
                     tidb_ast::QueryStmt::Select(select) => {
                         tidb_executor::explain_analyze_select_stmt(
                             select,
@@ -204,32 +204,38 @@ impl Session {
                     }
                 })?,
                 Stmt::Dml(dml) => match &**dml {
-                    tidb_ast::DmlStmt::Insert(insert) => self.with_staged_catalog(|catalog| {
-                        tidb_executor::explain_analyze_insert_stmt(
-                            insert,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                            format,
-                        )
+                    tidb_ast::DmlStmt::Insert(insert) => self.retrieving_memory_tables(&ctx, |session| {
+                        session.with_staged_catalog(|catalog| {
+                            tidb_executor::explain_analyze_insert_stmt(
+                                insert,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                                format,
+                            )
+                        })
                     })?,
-                    tidb_ast::DmlStmt::Update(update) => self.with_staged_catalog(|catalog| {
-                        tidb_executor::explain_analyze_update_stmt(
-                            update,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                            format,
-                        )
+                    tidb_ast::DmlStmt::Update(update) => self.retrieving_memory_tables(&ctx, |session| {
+                        session.with_staged_catalog(|catalog| {
+                            tidb_executor::explain_analyze_update_stmt(
+                                update,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                                format,
+                            )
+                        })
                     })?,
-                    tidb_ast::DmlStmt::Delete(delete) => self.with_staged_catalog(|catalog| {
-                        tidb_executor::explain_analyze_delete_stmt(
-                            delete,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                            format,
-                        )
+                    tidb_ast::DmlStmt::Delete(delete) => self.retrieving_memory_tables(&ctx, |session| {
+                        session.with_staged_catalog(|catalog| {
+                            tidb_executor::explain_analyze_delete_stmt(
+                                delete,
+                                catalog,
+                                &current_db,
+                                &ctx,
+                                format,
+                            )
+                        })
                     })?,
                     other => {
                         return Err(DriverError::unsupported(format!(
@@ -260,34 +266,6 @@ impl Session {
                 return Ok(Some(output));
             }
         }
-        // A query over information_schema plans its virtual tables as memory
-        // tables (Go `buildDataSource`'s `LogicalMemTable`): plan against the
-        // catalog the query itself plans against -- schema-only, or the
-        // generated rows a subquery evaluated during planning read. The
-        // explain below plans again, so this pass's warnings are dropped.
-        let mut memory_tables = Vec::new();
-        let mut written_db = None;
-        let mut planning_catalog = None;
-        if let Stmt::Query(query) = target {
-            self.information_schema_tables_read_by(
-                query,
-                &current_db,
-                &mut memory_tables,
-                &mut written_db,
-            )?;
-            if !memory_tables.is_empty() {
-                let warnings_start = ctx.warning_count();
-                let (_, catalog, _) = self.plan_information_schema_query(
-                    query,
-                    &memory_tables,
-                    &current_db,
-                    &ctx,
-                    written_db,
-                )?;
-                ctx.truncate_warnings(warnings_start);
-                planning_catalog = Some(catalog);
-            }
-        }
         let explain_query =
             |query: &tidb_ast::QueryStmt, catalog: &tidb_executor::Catalog| match query {
                 tidb_ast::QueryStmt::Select(select) => {
@@ -298,22 +276,21 @@ impl Session {
                 }
             };
         let (columns, rows) = match target {
-            Stmt::Query(query) => match &planning_catalog {
-                Some(catalog) => explain_query(query, catalog)?,
-                None => self.with_catalog_mut(|catalog| explain_query(query, catalog))?,
-            },
+            Stmt::Query(query) => {
+                self.with_catalog_retrieving(&ctx, |catalog| explain_query(query, catalog))?
+            }
             // A write's plan is the same plan recorder run over the read path
             // the driver's write executes; nothing is executed -- no row is
             // read or written -- which is also what Go does (`EXPLAIN
             // INSERT` inserts no row, captured).
             Stmt::Dml(dml) => match &**dml {
-                tidb_ast::DmlStmt::Insert(insert) => self.with_catalog_mut(|catalog| {
+                tidb_ast::DmlStmt::Insert(insert) => self.with_catalog_retrieving(&ctx, |catalog| {
                     tidb_executor::explain_insert_stmt(insert, catalog, &current_db, &ctx, format)
                 })?,
-                tidb_ast::DmlStmt::Update(update) => self.with_catalog_mut(|catalog| {
+                tidb_ast::DmlStmt::Update(update) => self.with_catalog_retrieving(&ctx, |catalog| {
                     tidb_executor::explain_update_stmt(update, catalog, &current_db, &ctx, format)
                 })?,
-                tidb_ast::DmlStmt::Delete(delete) => self.with_catalog_mut(|catalog| {
+                tidb_ast::DmlStmt::Delete(delete) => self.with_catalog_retrieving(&ctx, |catalog| {
                     tidb_executor::explain_delete_stmt(delete, catalog, &current_db, &ctx, format)
                 })?,
                 other => {
@@ -397,11 +374,11 @@ impl Session {
         // The cached plan's constants are this execute's parameters.
         let ctx = ctx.clone().with_prepared_params(execution.parameters());
         let rendered = execution.with_plan(|_, physical| {
-            self.with_catalog_mut(|catalog| {
+            self.with_catalog_retrieving(&ctx, |catalog| {
                 if analyze {
-                    tidb_executor::explain_analyze_physical_plan(physical, catalog, &ctx, format)
+                    tidb_executor::explain_analyze_physical_plan(&mut *physical, catalog, &ctx, format)
                 } else {
-                    tidb_executor::explain_physical_plan(physical, catalog, &ctx, format)
+                    tidb_executor::explain_physical_plan(&mut *physical, catalog, &ctx, format)
                 }
             })
         });

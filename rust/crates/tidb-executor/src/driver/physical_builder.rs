@@ -1428,6 +1428,66 @@ fn build_table_sample(
     )))
 }
 
+/// The declared columns and the rows a memory-table scan reads.
+struct MemoryTableRows<'a> {
+    column_names: Vec<String>,
+    source: MemoryTableRowSource<'a>,
+}
+
+enum MemoryTableRowSource<'a> {
+    /// The catalog stores the rows (a fixture, `SHOW ... WHERE`'s selection).
+    Stored(&'a [Vec<tidb_datatype::Datum>]),
+    /// The session retrieved them for this scan (Go `memtableRetriever`).
+    Retrieved(std::sync::Arc<Vec<Vec<tidb_datatype::Datum>>>),
+}
+
+impl MemoryTableRows<'_> {
+    fn rows(&self) -> &[Vec<tidb_datatype::Datum>] {
+        match &self.source {
+            MemoryTableRowSource::Stored(rows) => rows,
+            MemoryTableRowSource::Retrieved(rows) => rows,
+        }
+    }
+}
+
+/// Resolves the rows of the memory-table scan `plan_id` over
+/// `database`.`table`. A virtual table's rows are not stored: the session
+/// retrieves them per scan, so a scan read before that fails with
+/// [`DriverError::MemTableRetrievalNeeded`].
+fn memory_table_rows<'a>(
+    plan: &PhysicalPlan,
+    database: &str,
+    table: &str,
+    catalog: &'a Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<MemoryTableRows<'a>, DriverError> {
+    match catalog
+        .table_in(database, table)
+        .ok_or_else(|| DriverError::unsupported("memory table is absent from the catalog"))?
+    {
+        super::TableEntry::Mem(stored) => Ok(MemoryTableRows {
+            column_names: stored.columns.iter().map(|(name, _)| name.clone()).collect(),
+            source: MemoryTableRowSource::Stored(&stored.rows),
+        }),
+        super::TableEntry::Kv(virtual_table) => {
+            let rows = mem_table_read_of(plan)
+                .and_then(|read| ctx.mem_table_retrieval().rows(&read))
+                .ok_or(DriverError::MemTableRetrievalNeeded)?;
+            Ok(MemoryTableRows {
+                column_names: virtual_table
+                    .columns()
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+                source: MemoryTableRowSource::Retrieved(rows),
+            })
+        }
+        _ => Err(DriverError::unsupported(
+            "a memory-table scan resolved to a view or sequence",
+        )),
+    }
+}
+
 fn build_mem_table(
     plan: &PhysicalPlan,
     scan: &PhysicalMemTable,
@@ -1442,25 +1502,16 @@ fn build_mem_table(
             "query metric error: pd unavailable".to_owned(),
         )));
     }
-    let super::TableEntry::Mem(table) = catalog
-        .table_in(&scan.db_name, &scan.table_name)
-        .ok_or_else(|| {
-            DriverError::unsupported("physical memory table is absent from the catalog")
-        })?
-    else {
-        return Err(DriverError::unsupported(
-            "PhysicalMemTable resolved to a non-memory catalog table",
-        ));
-    };
+    let table = memory_table_rows(plan, &scan.db_name, &scan.table_name, catalog, ctx)?;
 
     let offsets = scan
         .columns
         .iter()
         .map(|column| {
             table
-                .columns
+                .column_names
                 .iter()
-                .position(|(name, _)| name.eq_ignore_ascii_case(&column.name))
+                .position(|name| name.eq_ignore_ascii_case(&column.name))
                 .ok_or_else(|| {
                     DriverError::unsupported(
                         "a physical memory-table output column is absent from its table",
@@ -1471,13 +1522,9 @@ fn build_mem_table(
     // The extractor's claimed predicates left the Selection above this scan;
     // Go's reader requests only what they keep, so the whole materialized
     // table is filtered by them here.
-    let column_names: Vec<&str> = table
-        .columns
-        .iter()
-        .map(|(name, _)| name.as_str())
-        .collect();
+    let column_names: Vec<&str> = table.column_names.iter().map(String::as_str).collect();
     let rows = table
-        .rows
+        .rows()
         .iter()
         .filter(|row| {
             scan.extractor
@@ -5674,11 +5721,113 @@ fn set_index_merge_partition(plan: &mut PhysicalPlan, physical_id: i64) {
 }
 
 /// Refresh statement-dependent routing before execution and plan publication.
+///
+/// Also states what the plan's memory-table scans need retrieved (Go builds a
+/// `MemTableReaderExec` per `PhysicalMemTable`); a plan with scans whose rows
+/// the statement does not hold yet is refused with
+/// [`DriverError::MemTableRetrievalNeeded`] so the session retrieves them.
 pub(crate) fn prepare_execution_plan(
     plan: &mut PhysicalPlan,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    prepare_execution_plan_node(plan, catalog, ctx, true)?;
+    if ctx.mem_table_retrieval().has_pending() {
+        return Err(DriverError::MemTableRetrievalNeeded);
+    }
+    Ok(())
+}
+
+/// [`prepare_execution_plan`] for a plan that is only reported, never run
+/// (plain `EXPLAIN`): Go's `EXPLAIN` builds no executor, so no memory-table
+/// retriever runs.
+pub(crate) fn prepare_plan_for_explain(
+    plan: &mut PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    prepare_execution_plan_node(plan, catalog, ctx, false)
+}
+
+/// What the memory-table scan `plan` hands its retriever (Go's
+/// `PhysicalMemTable` fields; for a cluster table's TiDB-store scan, its
+/// columns), or `None` for any other node.
+fn mem_table_read_of(plan: &PhysicalPlan) -> Option<crate::mem_table_retrieval::MemTableRead> {
+    let (db_name, table_name, columns, column_ids, extractor, query_time_range, is_cluster_scan) =
+        match plan {
+            PhysicalPlan::MemTable(scan) => (
+                &scan.db_name,
+                &scan.table_name,
+                scan.columns
+                    .iter()
+                    .map(|column| column.name.clone())
+                    .collect(),
+                Vec::new(),
+                scan.extractor.clone(),
+                scan.query_time_range.clone(),
+                false,
+            ),
+            PhysicalPlan::TableScan(scan)
+                if scan.store_type == tidb_planner::physical_table_reader::StoreType::TiDb =>
+            {
+                (
+                    &scan.db_name,
+                    &scan.table_name,
+                    Vec::new(),
+                    plan.schema()
+                        .map(|schema| schema.columns.iter().map(|column| column.id).collect())
+                        .unwrap_or_default(),
+                    None,
+                    tidb_planner::logical::mem_table::QueryTimeRange::default(),
+                    true,
+                )
+            }
+            _ => return None,
+        };
+    Some(crate::mem_table_retrieval::MemTableRead {
+        plan_id: plan.id(),
+        db_name: db_name.clone(),
+        table_name: table_name.clone(),
+        columns,
+        column_ids,
+        extractor,
+        query_time_range,
+        is_cluster_scan,
+    })
+}
+
+/// Records the retrieval a virtual-table scan at `plan` needs: the rows of an
+/// `information_schema` / `performance_schema` table are not stored, so the
+/// session produces them per scan. A table the catalog stores as materialized
+/// rows (a fixture, `SHOW ... WHERE`'s selection) already holds its own.
+fn request_memory_table_rows(plan: &PhysicalPlan, catalog: &Catalog, ctx: &crate::StmtContext) {
+    let Some(read) = mem_table_read_of(plan) else {
+        return;
+    };
+    // Go's metric tables query metric storage, which the node does not have;
+    // `build_mem_table` answers them.
+    if read.db_name.go_lower_eq(super::metricsschema::METRICS_SCHEMA) {
+        return;
+    }
+    if !matches!(
+        catalog.table_in(&read.db_name, &read.table_name),
+        Some(super::TableEntry::Kv(_))
+    ) || ctx.mem_table_retrieval().rows(&read).is_some()
+    {
+        return;
+    }
+    ctx.mem_table_retrieval().request(read);
+}
+
+fn prepare_execution_plan_node(
+    plan: &mut PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    retrieve: bool,
+) -> Result<(), DriverError> {
+    if retrieve {
+        request_memory_table_rows(plan, catalog, ctx);
+    }
     if let PhysicalPlan::PointGet(point) = plan {
         let physical_id = point_partition_id(point, catalog, ctx)?;
         if let Some(partition) = &mut point.partition {
@@ -5714,49 +5863,49 @@ pub(crate) fn prepare_execution_plan(
 
     match plan {
         PhysicalPlan::ShuffleReceiver(receiver) => {
-            prepare_execution_plan(&mut receiver.data_source, catalog, ctx)?;
+            prepare_execution_plan_node(&mut receiver.data_source, catalog, ctx, retrieve)?;
         }
         PhysicalPlan::TableReader(reader) => {
             if let Some(plan) = reader.table_plan.as_deref_mut() {
-                prepare_execution_plan(plan, catalog, ctx)?;
+                prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
         }
         PhysicalPlan::IndexReader(reader) => {
             if let Some(plan) = reader.index_plan.as_deref_mut() {
-                prepare_execution_plan(plan, catalog, ctx)?;
+                prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
         }
         PhysicalPlan::IndexLookUpReader(reader) => {
             if let Some(plan) = reader.index_plan.as_deref_mut() {
-                prepare_execution_plan(plan, catalog, ctx)?;
+                prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
             if let Some(plan) = reader.table_plan.as_deref_mut() {
-                prepare_execution_plan(plan, catalog, ctx)?;
+                prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
         }
         PhysicalPlan::IndexMergeReader(reader) => {
             for partial in &mut reader.partial_plans_raw {
-                prepare_execution_plan(partial, catalog, ctx)?;
+                prepare_execution_plan_node(partial, catalog, ctx, retrieve)?;
             }
             if let Some(plan) = reader.table_plan.as_deref_mut() {
-                prepare_execution_plan(plan, catalog, ctx)?;
+                prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
         }
         PhysicalPlan::Dml(root) => {
             if let Some(plan) = root.select_plan.as_deref_mut() {
-                prepare_execution_plan(plan, catalog, ctx)?;
+                prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
         }
         PhysicalPlan::CTE(cte) => {
-            prepare_execution_plan(&mut cte.seed_plan, catalog, ctx)?;
+            prepare_execution_plan_node(&mut cte.seed_plan, catalog, ctx, retrieve)?;
             if let Some(plan) = cte.recursive_plan.as_deref_mut() {
-                prepare_execution_plan(plan, catalog, ctx)?;
+                prepare_execution_plan_node(plan, catalog, ctx, retrieve)?;
             }
         }
         _ => {}
     }
     for child in plan.base_mut().children_mut() {
-        prepare_execution_plan(child, catalog, ctx)?;
+        prepare_execution_plan_node(child, catalog, ctx, retrieve)?;
     }
     Ok(())
 }
@@ -6185,16 +6334,7 @@ fn build_cluster_table_scan(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    let super::TableEntry::Mem(table) = catalog
-        .table_in(&scan.db_name, &scan.table_name)
-        .ok_or_else(|| {
-            DriverError::unsupported("a cluster table scan is absent from the catalog")
-        })?
-    else {
-        return Err(DriverError::unsupported(
-            "a cluster table scan resolved to a non-memory catalog table",
-        ));
-    };
+    let table = memory_table_rows(plan, &scan.db_name, &scan.table_name, catalog, ctx)?;
     let schema = plan_schema(plan)?;
     // Memory-table column ids are offset + 1 (`planner_schema_view`).
     let offsets = schema
@@ -6203,7 +6343,7 @@ fn build_cluster_table_scan(
         .map(|column| {
             usize::try_from(column.id - 1)
                 .ok()
-                .filter(|offset| *offset < table.columns.len())
+                .filter(|offset| *offset < table.column_names.len())
                 .ok_or_else(|| {
                     DriverError::unsupported(
                         "a cluster table scan column is absent from its table",
@@ -6212,7 +6352,7 @@ fn build_cluster_table_scan(
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut rows = table
-        .rows
+        .rows()
         .iter()
         .map(|row| {
             offsets
