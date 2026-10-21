@@ -32,6 +32,21 @@ pub struct Settings {
     pub half_open_success_count: u32,
 }
 
+impl Settings {
+    /// zap's `zap.Any("config", cb.config)` rendering: the Go struct as JSON
+    /// with its Go field names and durations in nanoseconds.
+    fn go_reflect(&self) -> String {
+        format!(
+            "{{\"ErrorRateThresholdPct\":{},\"MinQPSForOpen\":{},\"ErrorRateWindow\":{},\"CoolDownInterval\":{},\"HalfOpenSuccessCount\":{}}}",
+            self.error_rate_threshold_pct,
+            self.min_qps_for_open,
+            self.error_rate_window,
+            self.cool_down_interval,
+            self.half_open_success_count
+        )
+    }
+}
+
 /// Go's mutable named disabled configuration, distinct from zero Settings and
 /// client-go's explicit 30-second region-meta configuration.
 pub static ALWAYS_CLOSED_SETTINGS: RwLock<Settings> = RwLock::new(Settings {
@@ -190,7 +205,7 @@ impl CircuitBreaker {
     pub fn change_settings(&self, apply: impl FnOnce(&mut Settings)) {
         let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         apply(&mut inner.settings);
-        log::debug!("circuit breaker settings changed: {:?}", inner.settings);
+        log::debug!(config:% = inner.settings.go_reflect(); "circuit breaker settings changed");
     }
 
     /// Execute a synchronous call, preserving its returned error or panic.
@@ -249,7 +264,7 @@ impl CircuitBreaker {
                 if settings.error_rate_threshold_pct > 0 && total > 0 {
                     let rate = state.failure_count.wrapping_mul(100) / total;
                     if total >= minimum && rate >= settings.error_rate_threshold_pct {
-                        log::error!("circuit breaker tripped and starting to fail all requests: name={} observed-err-rate-pct={} config={:?}", self.name, rate, settings);
+                        log::error!(name:% = self.name, "observed-err-rate-pct" = rate, config:% = settings.go_reflect(); "circuit breaker tripped and starting to fail all requests");
                         Some((StateType::OPEN, false))
                     } else {
                         Some((StateType::CLOSED, true))
@@ -263,7 +278,7 @@ impl CircuitBreaker {
                 Some((StateType::CLOSED, true))
             }
             StateType::OPEN if state.expired(now) => {
-                log::info!("circuit breaker cooldown period is over. Transitioning to half-open state to test the service: name={} config={:?}", self.name, settings);
+                log::info!(name:% = self.name, config:% = settings.go_reflect(); "circuit breaker cooldown period is over. Transitioning to half-open state to test the service");
                 Some((StateType::HALF_OPEN, true))
             }
             StateType::OPEN => return Err(super::errs::ERR_CIRCUIT_BREAKER_OPEN.error().into()),
@@ -271,11 +286,11 @@ impl CircuitBreaker {
                 Some((StateType::CLOSED, true))
             }
             StateType::HALF_OPEN if state.failure_count > 0 => {
-                log::error!("circuit breaker goes from half-open to open again as errors persist and continue to fail all requests: name={} config={:?}", self.name, settings);
+                log::error!(name:% = self.name, config:% = settings.go_reflect(); "circuit breaker goes from half-open to open again as errors persist and continue to fail all requests");
                 Some((StateType::OPEN, false))
             }
             StateType::HALF_OPEN if state.success_count == settings.half_open_success_count => {
-                log::info!("circuit breaker is closed and start allowing all requests: name={} config={:?}", self.name, settings);
+                log::info!(name:% = self.name, config:% = settings.go_reflect(); "circuit breaker is closed and start allowing all requests");
                 Some((StateType::CLOSED, true))
             }
             StateType::HALF_OPEN if state.pending_count < settings.half_open_success_count => {

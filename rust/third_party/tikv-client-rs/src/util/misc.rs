@@ -55,8 +55,9 @@ where
             .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
             .unwrap_or("non-string panic");
         log::error!(
-            "panic in the recoverable task, r: {panic}, stack trace: {}",
-            Backtrace::force_capture()
+            r:% = panic,
+            "stack trace":% = Backtrace::force_capture();
+            "panic in the recoverable goroutine"
         );
     }
 }

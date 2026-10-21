@@ -172,7 +172,7 @@ impl Limiter {
             }),
             metrics: None,
         };
-        log::debug!("new limiter, rate {r}, burst {b}, tokens {tokens}");
+        log::debug!(limiter:% = format!("rate:{r} burst:{b} tokens:{tokens}"); "new limiter");
         Arc::new(limiter)
     }
 
@@ -204,10 +204,11 @@ impl Limiter {
             }),
         };
         log::debug!(
-            "new limiter {name}, rate {}, burst {}, tokens {}",
-            cfg.new_fill_rate,
-            cfg.new_burst,
-            cfg.new_tokens
+            limiter:% = format!(
+                "name:{name} rate:{} burst:{} tokens:{}",
+                cfg.new_fill_rate, cfg.new_burst, cfg.new_tokens
+            );
+            "new limiter"
         );
         Arc::new(limiter)
     }
@@ -303,12 +304,14 @@ impl Limiter {
         opts: &[LimiterOption],
     ) {
         let mut state = self.lock();
-        log_controller_trace(|| {
-            format!(
-                "[resource group controller] before reconfigure, name: {}, old-tokens: {}, old-rate: {}, old-notify-threshold: {}, old-burst: {}",
-                state.name, state.tokens, state.fill_rate, state.notify_threshold, state.burst
-            )
-        });
+        log_controller_trace!(
+            name = state.name.as_str(),
+            "old-tokens" = state.tokens,
+            "old-rate" = state.fill_rate,
+            "old-notify-threshold" = state.notify_threshold,
+            "old-burst" = state.burst;
+            "[resource group controller] before reconfigure"
+        );
         if args.new_burst < 0 {
             state.update_last(now);
             state.tokens = args.new_tokens;
@@ -329,12 +332,14 @@ impl Limiter {
             reconfigured.cancel();
         }
         state.reconfigured_ch = Some(Arc::new(Cancellation::default()));
-        log_controller_trace(|| {
-            format!(
-                "[resource group controller] after reconfigure, name: {}, tokens: {}, rate: {}, notify-threshold: {}, burst: {}",
-                state.name, state.tokens, state.fill_rate, args.new_notify_threshold, state.burst
-            )
-        });
+        log_controller_trace!(
+            name = state.name.as_str(),
+            tokens = state.tokens,
+            rate = state.fill_rate,
+            "notify-threshold" = args.new_notify_threshold,
+            burst = state.burst;
+            "[resource group controller] after reconfigure"
+        );
     }
 
     /// The tokens available at `now`.
@@ -397,19 +402,19 @@ impl Limiter {
             // Log when the limiter cannot reserve for a while.
             if state.last.elapsed() > RESERVE_WARN_LOG_INTERVAL {
                 log::warn!(
-                    "[resource group controller] cannot reserve enough tokens, need-wait-duration: {}, max-wait-duration: {}, current-ltb-tokens: {}, current-ltb-rate: {}, request-tokens: {}, notify-threshold: {}, is-low-process: {}, burst: {}, remaining-notify-times: {}, name: {}",
-                    go_duration_string(duration_nanos(wait_duration)),
-                    max_future_reserve
+                    "need-wait-duration":% = go_duration_string(duration_nanos(wait_duration)),
+                    "max-wait-duration":% = max_future_reserve
                         .map(|max| go_duration_string(duration_nanos(max)))
                         .unwrap_or_else(|| "negative".to_owned()),
-                    state.tokens,
-                    state.fill_rate,
-                    n,
-                    state.notify_threshold,
-                    state.is_low_process,
-                    state.burst,
-                    state.remaining_notify_times,
-                    state.name
+                    "current-ltb-tokens" = state.tokens,
+                    "current-ltb-rate" = state.fill_rate,
+                    "request-tokens" = n,
+                    "notify-threshold" = state.notify_threshold,
+                    "is-low-process" = state.is_low_process,
+                    burst = state.burst,
+                    "remaining-notify-times" = state.remaining_notify_times,
+                    name = state.name.as_str();
+                    "[resource group controller] cannot reserve enough tokens"
                 );
             }
             state.update_last(last);

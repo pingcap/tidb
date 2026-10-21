@@ -160,10 +160,11 @@ macro_rules! impl_txn_v2_response {
     };
 }
 
-/// API V2-only commands added after the V1 response-codec command matrix.
+/// API V2 commands added after the V1 response-codec command matrix.
 ///
-/// `codec_v1.go` intentionally leaves these responses untouched, even when
-/// they carry a `region_error`; do not reuse `impl_txn_v2_response` here.
+/// `codec_v1.go` has no switch case for these responses, but its
+/// `decodeRegionError` rewrites the response's region error in place before
+/// the switch, so their region errors are decoded all the same.
 macro_rules! impl_txn_v2_only_response {
     ($request:ty, $response:ty, $decode:expr) => {
         impl KvRequest for $request {
@@ -182,6 +183,17 @@ macro_rules! impl_txn_v2_only_response {
                     return Ok(());
                 };
                 $decode(codec, response)
+            }
+
+            fn decode_v1_response(
+                &self,
+                response: &mut Self::Response,
+                codec: Option<&crate::request::ApiV1Codec>,
+            ) -> Result<()> {
+                if let (Some(codec), Some(region_error)) = (codec, &mut response.region_error) {
+                    codec.decode_region_error(region_error)?;
+                }
+                Ok(())
             }
         }
     };
@@ -2281,6 +2293,23 @@ impl KvRequest for crate::proto::coprocessor::Request {
         }
         Ok(())
     }
+
+    // client-go `codecV1.DecodeResponse` runs `decodeRegionError` on every
+    // response that has `GetRegionError`, and that decode rewrites the error
+    // in place, so a Cop response's region error is decoded although `CmdCop`
+    // has no case in its switch. Undecoded, an `EpochNotMatch` installs
+    // memcomparable-encoded region bounds in the cache, and raw keys past the
+    // region's real end (every reserved system-table id) then route to it.
+    fn decode_v1_response(
+        &self,
+        response: &mut Self::Response,
+        codec: Option<&crate::request::ApiV1Codec>,
+    ) -> Result<()> {
+        if let (Some(codec), Some(region_error)) = (codec, &mut response.region_error) {
+            codec.decode_region_error(region_error)?;
+        }
+        Ok(())
+    }
 }
 
 // client-go's coprocessor builds its own region tasks and sends each with
@@ -3598,8 +3627,11 @@ mod tests {
         assert_eq!(meta.api_version, kvrpcpb::ApiVersion::V2 as i32);
     }
 
+    /// client-go `codecV1.decodeRegionError` rewrites the region error in
+    /// place, so every response carrying one is decoded, including the
+    /// commands (Flush, Cop) its `DecodeResponse` switch has no case for.
     #[test]
-    fn v1_decoder_only_transforms_the_client_go_v1_command_matrix() {
+    fn v1_decoder_decodes_every_region_error_in_place_like_client_go() {
         let codec = ApiV1Codec::new(KeyMode::Txn);
         let encoded_start = codec.encode_region_key(b"start");
         let encoded_end = codec.encode_region_key(b"end");
@@ -3640,13 +3672,13 @@ mod tests {
         kvrpcpb::FlushRequest::default()
             .decode_v1_response(&mut flush_response, Some(&codec))
             .unwrap();
-        let untouched = flush_response
+        let decoded = flush_response
             .region_error
             .unwrap()
             .key_not_in_region
             .unwrap();
-        assert_eq!(untouched.start_key, encoded_start);
-        assert_eq!(untouched.end_key, encoded_end);
+        assert_eq!(decoded.start_key, b"start");
+        assert_eq!(decoded.end_key, b"end");
 
         let mut cop_response = crate::proto::coprocessor::Response {
             region_error: Some(errorpb::Error {
@@ -3655,6 +3687,13 @@ mod tests {
                     end_key: codec.encode_region_key(b"cop-end"),
                     ..Default::default()
                 }),
+                epoch_not_match: Some(errorpb::EpochNotMatch {
+                    current_regions: vec![crate::proto::metapb::Region {
+                        start_key: codec.encode_region_key(b"cop-start"),
+                        end_key: codec.encode_region_key(b"cop-end"),
+                        ..Default::default()
+                    }],
+                }),
                 ..Default::default()
             }),
             ..Default::default()
@@ -3662,13 +3701,13 @@ mod tests {
         crate::proto::coprocessor::Request::default()
             .decode_v1_response(&mut cop_response, Some(&codec))
             .unwrap();
-        let untouched = cop_response
-            .region_error
-            .unwrap()
-            .key_not_in_region
-            .unwrap();
-        assert_eq!(untouched.start_key, codec.encode_region_key(b"cop-start"));
-        assert_eq!(untouched.end_key, codec.encode_region_key(b"cop-end"));
+        let region_error = cop_response.region_error.unwrap();
+        let decoded = region_error.key_not_in_region.unwrap();
+        assert_eq!(decoded.start_key, b"cop-start");
+        assert_eq!(decoded.end_key, b"cop-end");
+        let region = &region_error.epoch_not_match.unwrap().current_regions[0];
+        assert_eq!(region.start_key, b"cop-start");
+        assert_eq!(region.end_key, b"cop-end");
     }
 
     #[test]

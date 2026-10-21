@@ -125,6 +125,15 @@ pub(crate) fn current_exec_details() -> Option<Arc<ExecDetails>> {
     CURRENT_EXEC_DETAILS.try_with(Arc::clone).ok()
 }
 
+/// client-go `ctx.Value(util.ExecDetailsKey)` for the current task: the
+/// statement's `ExecDetails` in the active trace context, else the one a
+/// [`with_exec_details`] scope installed.
+pub(crate) fn current_stmt_exec_details() -> Option<Arc<ExecDetails>> {
+    crate::trace::with_active_trace_context(|context| exec_details_from_context(context).cloned())
+        .flatten()
+        .or_else(current_exec_details)
+}
+
 #[derive(Default)]
 pub struct TrafficDetails {
     sent_kv_total: AtomicI64,
@@ -2402,5 +2411,115 @@ mod tests {
             original.write_detail.as_ref().unwrap(),
             copied.write_detail.as_ref().unwrap()
         ));
+    }
+
+    mod statement_charging {
+        use std::any::Any;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        use crate::mock::{MockKvClient, MockPdClient};
+        use crate::proto::{errorpb, kvrpcpb};
+        use crate::util::{context_with_exec_details, ExecDetails};
+        use crate::{CheckLevel, Timestamp, TimestampExt, Transaction, TransactionOptions};
+
+        fn transaction(not_leader_first: bool) -> Transaction<MockPdClient> {
+            let gets = Arc::new(AtomicUsize::new(0));
+            let rpc = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    assert!(request.downcast_ref::<kvrpcpb::GetRequest>().is_some());
+                    if not_leader_first && gets.fetch_add(1, Ordering::SeqCst) == 0 {
+                        return Ok(Box::new(kvrpcpb::GetResponse {
+                            region_error: Some(errorpb::Error {
+                                not_leader: Some(errorpb::NotLeader {
+                                    region_id: 1,
+                                    leader: None,
+                                }),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        }) as Box<dyn Any>);
+                    }
+                    Ok(Box::new(kvrpcpb::GetResponse {
+                        value: b"value".to_vec(),
+                        ..Default::default()
+                    }) as Box<dyn Any>)
+                },
+            )));
+            Transaction::new(
+                Timestamp::from_version(1),
+                rpc,
+                TransactionOptions::new_optimistic()
+                    .heartbeat_option(crate::transaction::HeartbeatOption::NoHeartbeat)
+                    .drop_check(CheckLevel::None),
+                crate::request::Keyspace::Disable,
+            )
+        }
+
+        /// client-go charges `sendReqToRegion`'s RPC wait, the network
+        /// collector's traffic and every Backoffer sleep to the statement
+        /// ctx's `util.ExecDetails`.
+        #[tokio::test]
+        async fn a_read_charges_kv_wait_traffic_and_backoff_to_the_statement() {
+            let details = Arc::new(ExecDetails::default());
+            let context =
+                context_with_exec_details(&crate::trace::TraceContext::new(), details.clone());
+            let mut txn = transaction(true);
+            crate::trace::with_trace_context(context, txn.get(vec![5_u8]))
+                .await
+                .unwrap();
+            let charged = details.snapshot();
+            assert!(charged.wait_kv_response_duration_ns > 0, "{charged:?}");
+            assert_eq!(charged.backoff_count, 1, "{charged:?}");
+            assert!(charged.backoff_duration_ns >= 1_000_000, "{charged:?}");
+            assert_eq!(charged.backoff_duration_ns % 1_000_000, 0, "{charged:?}");
+            // Two Get requests went out; one answer carried a value.
+            assert!(charged.traffic.sent_kv_total > 0, "{charged:?}");
+            assert!(charged.traffic.received_kv_total > 0, "{charged:?}");
+            assert_eq!(charged.traffic.sent_kv_cross_zone, 0);
+            assert_eq!(charged.wait_pd_response_duration_ns, 0);
+        }
+
+        #[tokio::test]
+        async fn set_exec_details_charges_without_a_trace_context() {
+            let details = Arc::new(ExecDetails::default());
+            let mut txn = transaction(false);
+            txn.set_exec_details(details.clone());
+            txn.get(vec![5_u8]).await.unwrap();
+            let charged = details.snapshot();
+            assert!(charged.wait_kv_response_duration_ns > 0, "{charged:?}");
+            assert!(charged.traffic.sent_kv_total > 0, "{charged:?}");
+
+            // Without either, nothing is charged anywhere.
+            let untouched = Arc::new(ExecDetails::default());
+            transaction(false).get(vec![5_u8]).await.unwrap();
+            assert_eq!(untouched.snapshot(), Default::default());
+        }
+
+        /// The legacy traffic scope only collects when the statement has no
+        /// `ExecDetails`, so a caller summing both never double counts.
+        #[tokio::test]
+        async fn traffic_goes_to_exec_details_before_the_legacy_scope() {
+            let details = Arc::new(ExecDetails::default());
+            let network = Arc::new(crate::traffic::NetworkTrafficDetails::default());
+            let context =
+                context_with_exec_details(&crate::trace::TraceContext::new(), details.clone());
+            let mut txn = transaction(false);
+            crate::trace::with_trace_context(
+                context,
+                crate::traffic::with_network_traffic_details(network.clone(), txn.get(vec![5_u8])),
+            )
+            .await
+            .unwrap();
+            assert!(details.snapshot().traffic.sent_kv_total > 0);
+            assert_eq!(network.snapshot(), Default::default());
+
+            let network = Arc::new(crate::traffic::NetworkTrafficDetails::default());
+            let mut txn = transaction(false);
+            crate::traffic::with_network_traffic_details(network.clone(), txn.get(vec![5_u8]))
+                .await
+                .unwrap();
+            assert!(network.snapshot().sent_kv_total > 0);
+        }
     }
 }

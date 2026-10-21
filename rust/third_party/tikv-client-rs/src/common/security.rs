@@ -6,7 +6,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use log::info;
 use regex::Regex;
 use tonic::transport::Channel;
 use tonic::transport::ClientTlsConfig;
@@ -178,7 +177,6 @@ impl SecurityManager {
     where
         Factory: FnOnce(Channel) -> Client,
     {
-        info!("connect to rpc server at endpoint: {:?}", addr);
         let mut channel = self
             .channel_endpoint(
                 addr,

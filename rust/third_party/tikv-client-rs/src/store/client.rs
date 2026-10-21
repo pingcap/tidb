@@ -289,8 +289,9 @@ impl KvConnect for TikvConnect {
     ) -> Result<KvRpcClient> {
         let mut clients = Vec::with_capacity(self.grpc_connection_count);
         let mut debug_clients = Vec::with_capacity(self.grpc_connection_count);
+        let mut channels = Vec::with_capacity(self.grpc_connection_count);
         for _ in 0..self.grpc_connection_count {
-            let (client, debug_client) = self
+            let (client, debug_client, channel) = self
                 .security_mgr
                 .connect_with_http2_settings_and_timeout(
                     address,
@@ -308,7 +309,7 @@ impl KvConnect for TikvConnect {
                         } else {
                             debug_client
                         };
-                        let client = TikvClient::new(channel)
+                        let client = TikvClient::new(channel.clone())
                             .max_decoding_message_size(self.grpc_max_decoding_message_size)
                             .accept_compressed(CompressionEncoding::Gzip);
                         let client = if self.send_gzip_requests {
@@ -316,14 +317,16 @@ impl KvConnect for TikvConnect {
                         } else {
                             client
                         };
-                        (client, debug_client)
+                        (client, debug_client, channel)
                     },
                 )
                 .await?;
             clients.push(client);
             debug_clients.push(debug_client);
+            channels.push(channel);
         }
         let client = KvRpcClient::new_with_debug_clients(clients, debug_clients, self.timeout)
+            .with_channels(channels)
             .with_open_tracing(self.open_tracing_enable);
         // client-go `enableBatch := req.StoreTp == tikvrpc.TiKV`: TiFlash and
         // TiDB pools never batch. The worker owns only batchable physical
@@ -345,7 +348,6 @@ mod tests {
     use std::task::{Context, Poll};
     use tokio_stream::wrappers::TcpListenerStream;
     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
-    use tonic_prost::ProstCodec;
 
     #[derive(Clone)]
     struct LargeDebugServer {
@@ -378,9 +380,11 @@ mod tests {
                     payload_len: self.payload_len,
                 };
                 return Box::pin(async move {
-                    Ok(tonic::server::Grpc::new(ProstCodec::default())
-                        .unary(service, request)
-                        .await)
+                    Ok(
+                        tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                            .unary(service, request)
+                            .await,
+                    )
                 });
             }
             Box::pin(async move {
@@ -1458,6 +1462,9 @@ pub trait ClientEventListener: Send + Sync {
 #[derive(Clone)]
 pub struct KvRpcClient {
     rpc_clients: Arc<[TikvClient<Channel>]>,
+    /// The pool's channels, for client-go's `waitConnReady`; absent for a
+    /// pool built from clients alone.
+    channels: Option<Arc<[Channel]>>,
     debug_clients: Option<Arc<[DebugClient<Channel>]>>,
     connection_states: Arc<[AtomicU8]>,
     next_client: Arc<AtomicUsize>,
@@ -1543,6 +1550,7 @@ impl KvRpcClient {
             .into();
         Self {
             rpc_clients: rpc_clients.into(),
+            channels: None,
             debug_clients,
             connection_states,
             next_client: Arc::new(AtomicUsize::new(0)),
@@ -1551,6 +1559,52 @@ impl KvRpcClient {
             event_listener: Arc::new(RwLock::new(None)),
             connection: Arc::new(RwLock::new(None)),
             open_tracing_enable: false,
+        }
+    }
+
+    /// The pool's channels, slot for slot.
+    pub(crate) fn with_channels(mut self, channels: Vec<Channel>) -> Self {
+        assert_eq!(
+            channels.len(),
+            self.rpc_clients.len(),
+            "every pooled client has its channel"
+        );
+        self.channels = Some(channels.into());
+        self
+    }
+
+    /// client-go `batchCommandsClient.waitConnReady`: wait, up to the dial
+    /// timeout, until the pooled connection is ready. A tonic channel reports
+    /// ready before connecting, so readiness is one round trip on it, the
+    /// gRPC health check every TiKV serves: any answer means the connection
+    /// is up. A pool without channels is taken as ready.
+    pub(crate) async fn wait_conn_ready(
+        &self,
+        connection_index: usize,
+        dial_timeout: Duration,
+    ) -> Result<()> {
+        let Some(channel) = self
+            .channels
+            .as_ref()
+            .and_then(|channels| channels.get(connection_index))
+            .cloned()
+        else {
+            return Ok(());
+        };
+        match crate::pd::service_discovery::health_check(channel, dial_timeout).await {
+            Ok(_) => Ok(()),
+            Err(status)
+                if matches!(
+                    status.code(),
+                    tonic::Code::Unavailable
+                        | tonic::Code::DeadlineExceeded
+                        | tonic::Code::Cancelled
+                ) =>
+            {
+                // Go returns `dialCtx.Err()`.
+                Err(crate::Error::GrpcAPI(status))
+            }
+            Err(_) => Ok(()),
         }
     }
 

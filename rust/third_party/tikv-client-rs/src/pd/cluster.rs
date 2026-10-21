@@ -4,19 +4,15 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 use async_trait::async_trait;
-use log::error;
-use log::info;
-use log::warn;
 use tonic::transport::Channel;
 use tonic::IntoRequest;
 use tonic::Request;
 
-use super::connectionctx::{ConnectionCtx, Manager};
 use super::service_discovery::{ChannelCache, TsoDiscovery, TsoRoute};
-use super::timestamp::TimestampOracle;
+use super::tso::{Cli as TsoClient, StreamBuilderFactory};
+use crate::async_util::Cancellation;
 use crate::internal_err;
 use crate::proto::keyspacepb;
 use crate::proto::pdpb;
@@ -40,13 +36,147 @@ pub struct Cluster {
     members: pdpb::GetMembersResponse,
     discovery: TsoDiscovery,
     route: TsoRoute,
-    // One timestamp dispatcher owns every admitted wire stream. Its lifetime
-    // belong to the same manager used by Go TSO, independently of metadata RPCs.
-    tso: Manager<TimestampOracle>,
-    tso_order: super::tso_batch::TimestampTracker,
+    /// pd-client `innerClient.tsoClient`: the current TSO client, read by
+    /// every TSO request attempt (Go `getTSOClient()`).
+    tso: TsoSlot,
+    /// The service discovery the current TSO client consumes.
+    tso_view: Arc<TsoDiscoveryView>,
+    /// Membership checks the TSO client can ask for, installed by the
+    /// client that owns this cluster.
+    tso_hooks: Arc<std::sync::RwLock<Option<TsoDiscoveryHooks>>>,
     // Keep joins owned until completion, including when a reconnect/close future
-    // is cancelled after publication. Requests never own stream retirement.
-    retired_tso: Vec<Arc<ConnectionCtx<TimestampOracle>>>,
+    // is cancelled after publication. Requests never own client retirement.
+    retired_tso: Vec<Arc<TsoClient>>,
+}
+
+/// The current TSO client, shared with requests in flight.
+pub(crate) type TsoSlot = Arc<std::sync::RwLock<Option<Arc<TsoClient>>>>;
+
+/// Go `ServiceDiscovery.ScheduleCheckMemberChanged` / `CheckMemberChanged`
+/// as the owning client implements them.
+#[derive(Clone)]
+pub(crate) struct TsoDiscoveryHooks {
+    pub(crate) schedule_check_member_changed: Arc<dyn Fn() + Send + Sync>,
+    pub(crate) check_member_changed:
+        Arc<dyn Fn() -> futures::future::BoxFuture<'static, Result<()>> + Send + Sync>,
+}
+
+/// The `servicediscovery.ServiceDiscovery` a TSO client consumes: PD's
+/// leader and members (PD mode) or a keyspace group's primary and members
+/// (microservice mode), as this cluster last discovered them.
+pub(crate) struct TsoDiscoveryView {
+    cluster_id: u64,
+    keyspace_id: u32,
+    keyspace_group_id: std::sync::atomic::AtomicU32,
+    serving_url: std::sync::RwLock<String>,
+    service_urls: std::sync::RwLock<Vec<String>>,
+    connection: Connection,
+    hooks: Arc<std::sync::RwLock<Option<TsoDiscoveryHooks>>>,
+}
+
+impl TsoDiscoveryView {
+    fn new(
+        cluster_id: u64,
+        route: &TsoRoute,
+        service_urls: Vec<String>,
+        connection: Connection,
+        hooks: Arc<std::sync::RwLock<Option<TsoDiscoveryHooks>>>,
+    ) -> Self {
+        Self {
+            cluster_id,
+            keyspace_id: route.keyspace_id,
+            keyspace_group_id: std::sync::atomic::AtomicU32::new(route.group_id.unwrap_or(0)),
+            serving_url: std::sync::RwLock::new(route.endpoint.clone()),
+            service_urls: std::sync::RwLock::new(service_urls),
+            connection,
+            hooks,
+        }
+    }
+
+    fn factory(route: &TsoRoute) -> StreamBuilderFactory {
+        if route.group_id.is_some() {
+            StreamBuilderFactory::Ms
+        } else {
+            StreamBuilderFactory::Pd
+        }
+    }
+
+    /// Publishes a new observation; answers (serving URL changed, members
+    /// changed).
+    fn update(&self, route: &TsoRoute, service_urls: Vec<String>) -> (bool, bool) {
+        self.keyspace_group_id.store(
+            route.group_id.unwrap_or(0),
+            std::sync::atomic::Ordering::Release,
+        );
+        let leader_changed = {
+            let mut serving = self.serving_url.write().unwrap();
+            let changed = *serving != route.endpoint;
+            serving.clone_from(&route.endpoint);
+            changed
+        };
+        let members_changed = {
+            let mut urls = self.service_urls.write().unwrap();
+            let changed = *urls != service_urls;
+            *urls = service_urls;
+            changed
+        };
+        (leader_changed, members_changed)
+    }
+}
+
+#[async_trait]
+impl super::tso::ServiceDiscovery for TsoDiscoveryView {
+    fn get_cluster_id(&self) -> u64 {
+        self.cluster_id
+    }
+
+    fn get_keyspace_id(&self) -> u32 {
+        self.keyspace_id
+    }
+
+    fn get_keyspace_group_id(&self) -> u32 {
+        self.keyspace_group_id
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn get_service_urls(&self) -> Vec<String> {
+        self.service_urls.read().unwrap().clone()
+    }
+
+    fn get_serving_url(&self) -> String {
+        self.serving_url.read().unwrap().clone()
+    }
+
+    fn get_backup_urls(&self) -> Vec<String> {
+        let serving = self.get_serving_url();
+        self.get_service_urls()
+            .into_iter()
+            .filter(|url| *url != serving)
+            .collect()
+    }
+
+    async fn get_or_create_grpc_conn(&self, url: &str) -> Result<Channel> {
+        Ok(self.connection.channel(url).await?)
+    }
+
+    fn remove_client_conn(&self, url: &str) {
+        self.connection.channels.remove(url);
+    }
+
+    fn schedule_check_member_changed(&self) {
+        let hooks = self.hooks.read().unwrap().clone();
+        if let Some(hooks) = hooks {
+            (hooks.schedule_check_member_changed)();
+        }
+    }
+
+    async fn check_member_changed(&self) -> Result<()> {
+        let hooks = self.hooks.read().unwrap().clone();
+        match hooks {
+            Some(hooks) => (hooks.check_member_changed)().await,
+            None => Ok(()),
+        }
+    }
 }
 
 macro_rules! pd_request {
@@ -90,6 +220,12 @@ impl Cluster {
 
     pub(crate) fn id(&self) -> u64 {
         self.id
+    }
+
+    /// Go `GetKeyspaceID()`: the TSO route's keyspace (the null keyspace
+    /// without one).
+    pub(crate) fn keyspace_id(&self) -> u32 {
+        self.route.keyspace_id
     }
 
     pub fn get_region(
@@ -250,6 +386,12 @@ impl Cluster {
         req.limit = i32::try_from(limit).unwrap_or(i32::MAX);
         req.need_buckets = options.need_buckets;
         req.contain_all_key_range = options.output_must_contain_all_key_range;
+        // pd-client `getServiceClient`: router-service handling first.
+        let router_node = options
+            .allow_router_service_handle
+            .then(|| self.connection.router_node())
+            .flatten();
+        let routed_req = router_node.as_ref().map(|_| req.clone());
         let future = self.region_request(
             req,
             timeout,
@@ -262,6 +404,21 @@ impl Cluster {
             },
         );
         async move {
+            if let (Some(node), Some(req)) = (router_node, routed_req) {
+                let mut request = super::region_service::region_request(req, true);
+                request.set_timeout(timeout);
+                let routed =
+                    crate::proto::routerpb::router_client::RouterClient::new(node.channel.clone())
+                        .batch_scan_regions(request)
+                        .await
+                        .map(tonic::Response::into_inner);
+                // `serviceClient.NeedRetry`: any error falls back to PD.
+                if let Ok(response) = routed {
+                    if response.header.as_ref().is_none_or(|h| h.error.is_none()) {
+                        return Ok(response);
+                    }
+                }
+            }
             match future.await {
                 Err(Error::GrpcAPI(status)) if status.code() == tonic::Code::Unimplemented => {
                     Err(Error::Unimplemented)
@@ -400,13 +557,54 @@ impl Cluster {
         }
     }
 
-    pub fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> + Send + 'static {
-        let connection = self.tso.randomly_pick();
+    /// pd-client `GetAllStores(ctx, WithExcludeTombstone(),
+    /// WithAllowRouterServiceHandleStoreRequest())`: a healthy router node
+    /// answers (`routerpb.Router/GetAllStores`, as a follower-handled
+    /// request) when there is one; PD otherwise, and when the node fails
+    /// (`serviceClient.NeedRetry`).
+    pub fn get_all_stores_allowing_router_service(
+        &self,
+        timeout: Duration,
+    ) -> impl Future<Output = Result<pdpb::GetAllStoresResponse>> + Send + 'static {
+        let mut req = pd_request!(self.id, pdpb::GetAllStoresRequest);
+        req.exclude_tombstone_stores = true;
+        let node = self.connection.router_node();
+        let leader = self.rpc_client();
         async move {
-            let connection =
-                connection.ok_or_else(|| internal_err!("no TSO connection is registered"))?;
-            connection.stream.clone().get_timestamp().await
+            if let Some(node) = node {
+                let mut request = super::region_service::region_request(req.clone(), true);
+                request.set_timeout(timeout);
+                let routed =
+                    crate::proto::routerpb::router_client::RouterClient::new(node.channel.clone())
+                        .get_all_stores(request)
+                        .await
+                        .map(tonic::Response::into_inner);
+                match routed {
+                    Ok(response) if response.header.as_ref().is_none_or(|h| h.error.is_none()) => {
+                        return Ok(response)
+                    }
+                    _ => {}
+                }
+            }
+            let mut client = leader.await?;
+            req.send(&mut client, timeout).await
         }
+    }
+
+    /// pd-client `GetTSAsync(ctx).Wait()` over the current TSO client.
+    pub fn get_timestamp(&self) -> impl Future<Output = Result<Timestamp>> + Send + 'static {
+        let slot = self.tso.clone();
+        async move { super::tso::get_ts_async(move || slot.read().unwrap().clone()).await }
+    }
+
+    /// The slot holding the current TSO client (Go `getTSOClient()`).
+    pub(crate) fn tso_slot(&self) -> TsoSlot {
+        self.tso.clone()
+    }
+
+    /// Installs the owner's membership-check hooks for every TSO client.
+    pub(crate) fn set_tso_discovery_hooks(&self, hooks: TsoDiscoveryHooks) {
+        *self.tso_hooks.write().unwrap() = Some(hooks);
     }
 
     pub fn get_min_timestamp(
@@ -744,6 +942,29 @@ impl Cluster {
 
     /// pd-client's resource-manager client over the PD leader (the resource
     /// manager is a PD service unless it runs as a microservice).
+    /// pd-client `resourceManagerReadClient`: the standalone resource
+    /// manager once discovered, PD otherwise.
+    fn resource_manager_read_client(
+        &self,
+    ) -> impl Future<
+        Output = Result<
+            crate::proto::resource_manager::resource_manager_client::ResourceManagerClient<Channel>,
+        >,
+    > + Send
+           + 'static {
+        let standalone = self.connection.resource_manager_service();
+        let pd = self.resource_manager_client();
+        async move {
+            match standalone {
+                Some((_, conn)) => Ok(
+                    crate::proto::resource_manager::resource_manager_client::ResourceManagerClient::new(conn),
+                ),
+                None => pd.await,
+            }
+        }
+    }
+
+    /// pd-client `resourceManagerWriteClient`: PD's serving member.
     fn resource_manager_client(
         &self,
     ) -> impl Future<
@@ -772,7 +993,8 @@ impl Cluster {
         timeout: Duration,
     ) -> impl Future<Output = Result<Vec<crate::proto::resource_manager::ResourceGroup>>> + Send + 'static
     {
-        let client = self.resource_manager_client();
+        let client = self.resource_manager_read_client();
+        let connection = self.connection.clone();
         async move {
             let mut client = client.await?;
             let mut req = crate::proto::resource_manager::ListResourceGroupsRequest {
@@ -785,6 +1007,7 @@ impl Cluster {
                 .list_resource_groups(req)
                 .await
                 .map_err(|status| {
+                    connection.resource_manager_error_handler(&status);
                     internal_err!("get all resource group failed, {}", status.message())
                 })?
                 .into_inner();
@@ -869,9 +1092,14 @@ impl Cluster {
         }
     }
 
-    /// The leader URL the resource-manager token stream connects to.
+    /// The URL the resource-manager token stream connects to: the
+    /// standalone resource manager once discovered, PD's leader otherwise
+    /// (Go `resourceManagerTokenClient`).
     pub(crate) fn resource_manager_leader_url(&self) -> Option<String> {
-        self.leader_url()
+        match self.connection.resource_manager_service() {
+            Some((url, _)) => Some(url),
+            None => self.leader_url(),
+        }
     }
 
     /// pd-client's resource-manager token client and the leader URL it uses.
@@ -885,8 +1113,15 @@ impl Cluster {
     > + Send
            + 'static {
         let connection = self.connection.clone();
+        let standalone = self.connection.resource_manager_service();
         let leader = self.leader_url();
         async move {
+            if let Some((url, conn)) = standalone {
+                return Ok((
+                    crate::proto::resource_manager::resource_manager_client::ResourceManagerClient::new(conn),
+                    url,
+                ));
+            }
             let leader = leader.ok_or_else(|| internal_err!("no PD leader"))?;
             let channel = connection.channel(&leader).await?;
             Ok((
@@ -909,7 +1144,8 @@ impl Cluster {
     ) -> impl Future<Output = Result<Option<crate::proto::resource_manager::ResourceGroup>>>
            + Send
            + 'static {
-        let client = self.resource_manager_client();
+        let client = self.resource_manager_read_client();
+        let connection = self.connection.clone();
         async move {
             let mut client = client.await?;
             let req = crate::proto::resource_manager::GetResourceGroupRequest {
@@ -920,13 +1156,14 @@ impl Cluster {
             let response = match client.get_resource_group(req).await {
                 Ok(response) => response.into_inner(),
                 Err(status) => {
+                    connection.resource_manager_error_handler(&status);
                     return Err(Error::PdResourceGroup(
                         super::errs::ClientGetResourceGroupError {
                             resource_group_name: name,
                             cause: grpc_error_text(&status),
                             error: Some(Arc::new(status)),
                         },
-                    ))
+                    ));
                 }
             };
             if let Some(error) = response.error {
@@ -1086,60 +1323,131 @@ impl Cluster {
         }
         self.client = Some(leader.client);
         self.keyspace_client = Some(leader.keyspace_client);
-        self.members = leader.members;
+        let previous = std::mem::replace(&mut self.members, leader.members);
+        self.log_member_changes(Some(&previous));
         self.update_region_members();
         Ok(())
     }
 
+    /// The members' client URLs, sorted (pd-client `GetServiceURLs`).
+    pub(crate) fn service_urls(&self) -> Vec<String> {
+        sorted_member_urls(&self.members)
+    }
+
+    /// pd-client `updateURLs` and `switchLeader`'s log lines for a new
+    /// membership observation (`previous` is `None` at initialization).
+    fn log_member_changes(&self, previous: Option<&pdpb::GetMembersResponse>) {
+        let old_urls = previous.map(sorted_member_urls).unwrap_or_default();
+        let new_urls = sorted_member_urls(&self.members);
+        if old_urls != new_urls {
+            log::info!(
+                "old-sorted-urls":serde = old_urls,
+                "new-sorted-urls":serde = new_urls;
+                "[pd] update member urls"
+            );
+        }
+        let leader_url = |members: &pdpb::GetMembersResponse| {
+            members
+                .leader
+                .as_ref()
+                .and_then(|member| self.connection.member_url(member))
+                .unwrap_or_default()
+        };
+        let old_leader = previous.map(leader_url).unwrap_or_default();
+        let new_leader = leader_url(&self.members);
+        if old_leader != new_leader {
+            log::info!(
+                "new-leader" = new_leader.as_str(),
+                "old-leader" = old_leader.as_str();
+                "[pd] switch leader"
+            );
+        }
+    }
+
+    /// Publishes a TSO routing observation. A provider change (PD vs. TSO
+    /// microservice, or another keyspace) is pd-client's
+    /// `resetTSOClientLocked`: a new TSO client replaces the old one. Within
+    /// a provider, a new serving URL is the leader-switched callback and new
+    /// members the members-changed callback of the current client.
     pub(crate) fn install_timestamp(
         &mut self,
-        (discovery, route, routes): TimestampConnection,
+        (discovery, route, service_urls): TimestampConnection,
         timeout: Duration,
     ) -> Result<impl Future<Output = ()> + Send + 'static> {
         if self.client.is_none() {
             return Err(Error::ContextCanceled);
         }
-        let url = route.endpoint.clone();
-        let previous = self.tso.randomly_pick();
-        let reuse = previous
-            .as_ref()
-            .is_some_and(|connection| self.route == route && !connection.ctx.is_cancelled());
-        let mut rejected = None;
-        if !reuse {
-            let candidate = tso_connection(
-                self.id,
-                route.clone(),
-                routes.clone(),
-                discovery.forwarding(),
-                self.connection.options.clone(),
-                timeout,
-                self.tso_order.clone(),
-            )?;
-            // Go's dispatcher releases canceled contexts before reconnecting.
-            // A canceled same-URL entry must not reject its replacement.
-            self.tso.release(&url);
-            if !self.tso.clean_all_and_store(&candidate) {
-                candidate.cancel();
-                rejected = Some(candidate);
+        let current = self.tso.read().unwrap().clone();
+        let provider_changed = TsoDiscoveryView::factory(&route)
+            != TsoDiscoveryView::factory(&self.route)
+            || route.keyspace_id != self.route.keyspace_id
+            || current
+                .as_ref()
+                .is_none_or(|client| client.ctx().is_cancelled());
+        let mut setup = None;
+        if provider_changed {
+            let (client, view) = self.new_tso_client(&route, service_urls, timeout);
+            log::info!(
+                "{}",
+                match TsoDiscoveryView::factory(&route) {
+                    StreamBuilderFactory::Pd => "[pd] tso provider changed to pd",
+                    StreamBuilderFactory::Ms => "[pd] tso provider changed to tso server",
+                }
+            );
+            *self.tso.write().unwrap() = Some(Arc::clone(&client));
+            self.tso_view = view;
+            self.retired_tso.extend(current);
+            setup = Some(client);
+        } else if let Some(client) = &current {
+            let (leader_changed, members_changed) = self.tso_view.update(&route, service_urls);
+            if members_changed {
+                client.schedule_update_tso_connection_ctxs();
             }
-        }
-        if reuse {
-            previous.as_ref().unwrap().stream.update_routes(routes);
+            if leader_changed {
+                client.update_tso_leader_url(&route.endpoint);
+            }
         }
         self.discovery = discovery;
         self.route = route;
-        self.retired_tso.extend(rejected);
-        if !reuse {
-            self.retired_tso.extend(previous);
-        }
-        Ok(self.retire_streams())
+        let retire = self.retire_streams();
+        Ok(async move {
+            if let Some(client) = setup {
+                client.setup().await;
+            }
+            retire.await;
+        })
+    }
+
+    /// pd-client `tso.NewClient` + the leader-switched callback's first run.
+    fn new_tso_client(
+        &self,
+        route: &TsoRoute,
+        service_urls: Vec<String>,
+        timeout: Duration,
+    ) -> (Arc<TsoClient>, Arc<TsoDiscoveryView>) {
+        let view = Arc::new(TsoDiscoveryView::new(
+            self.id,
+            route,
+            service_urls,
+            self.connection.clone(),
+            self.tso_hooks.clone(),
+        ));
+        let client = TsoClient::new(
+            &Cancellation::default(),
+            self.connection.options.clone(),
+            timeout,
+            view.clone(),
+            TsoDiscoveryView::factory(route),
+        );
+        client.update_tso_leader_url(&route.endpoint);
+        (client, view)
     }
 
     fn retire_streams(&self) -> impl Future<Output = ()> + Send + 'static {
         let retired = self.retired_tso.clone();
         async move {
-            for connection in retired {
-                connection.stream.close().await;
+            for client in retired {
+                client.close().await;
             }
         }
     }
@@ -1148,14 +1456,14 @@ impl Cluster {
         self.channels.close();
         self.client.take();
         self.keyspace_client.take();
-        self.retired_tso.extend(self.tso.randomly_pick());
-        self.tso.release_all();
+        let current = self.tso.write().unwrap().take();
+        self.retired_tso.extend(current);
         self.retire_streams()
     }
 
     #[cfg(test)]
-    pub(crate) fn tso_for_test(&self) -> TimestampOracle {
-        self.tso.randomly_pick().unwrap().stream.clone()
+    pub(crate) fn tso_for_test(&self) -> Arc<TsoClient> {
+        self.tso.read().unwrap().clone().unwrap()
     }
 
     pub(crate) fn finish_retirement(&mut self) {
@@ -1166,33 +1474,37 @@ impl Cluster {
 impl Drop for Cluster {
     fn drop(&mut self) {
         self.channels.close();
-        self.tso.release_all();
-        for connection in &self.retired_tso {
-            connection.cancel();
+        if let Some(client) = self.tso.write().unwrap().take() {
+            client.ctx().cancel();
+        }
+        for client in &self.retired_tso {
+            client.ctx().cancel();
         }
     }
 }
 
-fn tso_connection(
-    cluster_id: u64,
-    route: TsoRoute,
-    routes: Vec<(TsoRoute, Channel)>,
-    forwarding: super::service_discovery::TsoForwarding,
-    options: Arc<super::opt::Options>,
-    timeout: Duration,
-    order: super::tso_batch::TimestampTracker,
-) -> Result<Arc<ConnectionCtx<TimestampOracle>>> {
-    let url = route.endpoint.clone();
-    let oracle =
-        TimestampOracle::discovered(cluster_id, routes, forwarding, options, timeout, order)?;
-    let ctx = oracle.cancellation();
-    let cancel = ctx.clone();
-    Ok(Arc::new(ConnectionCtx::new(
-        ctx,
-        move || cancel.cancel(),
-        url,
-        oracle,
-    )))
+fn sorted_member_urls(members: &pdpb::GetMembersResponse) -> Vec<String> {
+    let mut urls = members
+        .members
+        .iter()
+        .flat_map(|member| member.client_urls.iter().cloned())
+        .collect::<Vec<_>>();
+    urls.sort();
+    urls
+}
+
+/// Go `ServiceDiscovery.GetServiceURLs` for the TSO client: PD's sorted
+/// member URLs in PD mode, the keyspace group's members in microservice mode.
+fn tso_service_urls(
+    discovery: &TsoDiscovery,
+    route: &TsoRoute,
+    members: &pdpb::GetMembersResponse,
+) -> Vec<String> {
+    if route.group_id.is_some() {
+        discovery.service_urls().to_vec()
+    } else {
+        sorted_member_urls(members)
+    }
 }
 
 fn keyspace_scope(keyspace_id: u32) -> pdpb::KeyspaceScope {
@@ -1207,7 +1519,7 @@ pub(crate) struct LeaderConnection {
     members: pdpb::GetMembersResponse,
 }
 
-type TimestampConnection = (TsoDiscovery, TsoRoute, Vec<(TsoRoute, Channel)>);
+type TimestampConnection = (TsoDiscovery, TsoRoute, Vec<String>);
 
 /// An object for connecting and reconnecting to a PD cluster.
 #[derive(Clone)]
@@ -1217,6 +1529,15 @@ pub struct Connection {
     channels: Arc<ChannelCache>,
     // Initialization retries share probe selection before a Cluster exists.
     discovery: TsoDiscovery,
+    /// pd-client `innerClient.msDiscovery`: the router service discovery,
+    /// once the owning client has started it.
+    router_discovery: Arc<
+        std::sync::RwLock<Option<Arc<super::router_service_discovery::RouterServiceDiscovery>>>,
+    >,
+    /// pd-client `innerClient.resourceManagerDiscovery` (microservice mode).
+    rm_discovery: Arc<
+        std::sync::RwLock<Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>>>,
+    >,
 }
 
 impl Connection {
@@ -1250,7 +1571,78 @@ impl Connection {
             security_mgr,
             channels: Arc::new(ChannelCache::default()),
             discovery: TsoDiscovery::default(),
+            router_discovery: Arc::default(),
+            rm_discovery: Arc::default(),
         }
+    }
+
+    /// Publishes (or clears) the resource manager discovery.
+    pub(crate) fn set_resource_manager_discovery(
+        &self,
+        discovery: Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>>,
+    ) -> Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>> {
+        std::mem::replace(&mut *self.rm_discovery.write().unwrap(), discovery)
+    }
+
+    /// The resource manager discovery, in microservice mode.
+    pub(crate) fn resource_manager_discovery(
+        &self,
+    ) -> Option<Arc<super::resource_manager_discovery::ResourceManagerDiscovery>> {
+        self.rm_discovery.read().unwrap().clone()
+    }
+
+    /// pd-client `resourceManagerErrorHandler`: an RPC error that suggests
+    /// the resource manager moved asks the discovery to look again.
+    pub(crate) fn resource_manager_error_handler(&self, status: &tonic::Status) {
+        let error = Error::GrpcAPI(status.clone());
+        if !super::resource_manager_discovery::should_update_rm_url(&error) {
+            return;
+        }
+        log::warn!(error:% = error; "[resource-manager] resource manager error");
+        if let Some(discovery) = self.resource_manager_discovery() {
+            discovery.schedule_update_service_url();
+        }
+    }
+
+    /// The standalone resource manager's (URL, connection), once discovered.
+    fn resource_manager_service(&self) -> Option<(String, Channel)> {
+        let discovery = self.resource_manager_discovery()?;
+        let conn = discovery.get_conn()?;
+        Some((discovery.get_service_url(), conn))
+    }
+
+    /// Publishes the router service discovery the owning client started.
+    pub(crate) fn set_router_discovery(
+        &self,
+        discovery: Option<Arc<super::router_service_discovery::RouterServiceDiscovery>>,
+    ) {
+        *self.router_discovery.write().unwrap() = discovery;
+    }
+
+    /// Go `msDiscovery.GetServiceClient()`: a healthy router node, if any.
+    fn router_node(&self) -> Option<Arc<super::router_service_discovery::RouterNode>> {
+        self.router_discovery
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|discovery| discovery.get_service_client())
+    }
+
+    /// Go `GetOrCreateGRPCConn` over the shared connection cache.
+    pub(crate) async fn get_or_create_channel(
+        &self,
+        url: &str,
+    ) -> std::result::Result<Channel, tonic::Status> {
+        self.channel(url).await
+    }
+
+    /// Go `RemoveClientConn` over the shared connection cache.
+    pub(crate) fn remove_channel(&self, url: &str) {
+        self.channels.remove(url);
+    }
+
+    pub(crate) fn tls_configured(&self) -> bool {
+        self.security_mgr.tls_configured()
     }
 
     pub async fn connect_cluster(
@@ -1290,23 +1682,31 @@ impl Connection {
             None
         };
         let (route, _) = self.discover(&mut discovery, id, &url, timeout).await?;
-        let routes = self
-            .stream_routes(&discovery, &route, &members, timeout)
-            .await?;
-        let tso = Manager::new();
-        let tso_order = super::tso_batch::TimestampTracker::default();
-        tso.store(
-            &tso_connection(
-                id,
-                route.clone(),
-                routes,
-                discovery.forwarding(),
-                self.options.clone(),
-                timeout,
-                tso_order.clone(),
-            )?,
-            false,
+        let service_urls = tso_service_urls(&discovery, &route, &members);
+        let tso_hooks = Arc::new(std::sync::RwLock::new(None));
+        let tso_view = Arc::new(TsoDiscoveryView::new(
+            id,
+            &route,
+            service_urls,
+            self.clone(),
+            tso_hooks.clone(),
+        ));
+        let tso_client = TsoClient::new(
+            &Cancellation::default(),
+            self.options.clone(),
+            timeout,
+            tso_view.clone(),
+            TsoDiscoveryView::factory(&route),
         );
+        log::info!(
+            "{}",
+            match TsoDiscoveryView::factory(&route) {
+                StreamBuilderFactory::Pd => "[pd] tso provider changed to pd",
+                StreamBuilderFactory::Ms => "[pd] tso provider changed to tso server",
+            }
+        );
+        tso_client.update_tso_leader_url(&route.endpoint);
+        tso_client.setup().await;
         let cluster = Cluster {
             connection: self.clone(),
             region_service: Arc::default(),
@@ -1317,26 +1717,24 @@ impl Connection {
             members,
             discovery,
             route,
-            tso,
-            tso_order,
+            tso: Arc::new(std::sync::RwLock::new(Some(tso_client))),
+            tso_view,
+            tso_hooks,
             retired_tso: Vec::new(),
         };
+        cluster.log_member_changes(None);
         cluster.update_region_members();
         Ok((cluster, meta))
     }
 
     // Re-establish connection with PD leader in asynchronous fashion.
     pub async fn reconnect(&self, cluster: &mut Cluster, timeout: Duration) -> Result<()> {
-        warn!("updating pd client");
-        let start = Instant::now();
         let leader = self.prepare_reconnect(cluster, timeout).await?;
         cluster.install_leader(leader)?;
         let _ = self.prepare_service_mode(cluster, timeout).await;
         let timestamp = self.prepare_timestamp(cluster, timeout, None).await?;
         cluster.install_timestamp(timestamp, timeout)?.await;
         cluster.finish_retirement();
-
-        info!("updating PD client done, spent {:?}", start.elapsed());
         Ok(())
     }
 
@@ -1425,38 +1823,9 @@ impl Connection {
                     },
                 )
                 .await?;
-            let routes = connection
-                .stream_routes(&discovery, &route, &members, timeout)
-                .await?;
-            Ok((discovery, route, routes))
+            let service_urls = tso_service_urls(&discovery, &route, &members);
+            Ok((discovery, route, service_urls))
         }
-    }
-
-    async fn stream_routes(
-        &self,
-        discovery: &TsoDiscovery,
-        route: &TsoRoute,
-        members: &pdpb::GetMembersResponse,
-        timeout: Duration,
-    ) -> Result<Vec<(TsoRoute, Channel)>> {
-        let urls = members
-            .members
-            .iter()
-            .flat_map(|m| m.client_urls.iter().cloned())
-            .collect::<Vec<_>>();
-        Ok(discovery
-            .stream_routes(
-                route,
-                &urls,
-                self.options.get_enable_tso_follower_proxy(),
-                self.options.enable_forwarding,
-                timeout,
-                |url| {
-                    let connection = self.clone();
-                    async move { connection.channel(&url).await }
-                },
-            )
-            .await?)
     }
 
     async fn discover(
@@ -1517,7 +1886,7 @@ impl Connection {
                 Ok(resp) => resp,
                 // Ignore failed PD node.
                 Err(e) => {
-                    warn!("PD endpoint {} failed to respond: {:?}", ep, e);
+                    log::warn!(url = ep.as_str(), error:% = e; "[pd] failed to get cluster id");
                     continue;
                 }
             };
@@ -1544,7 +1913,7 @@ impl Connection {
 
         match members {
             Some(members) => {
-                info!("All PD endpoints are consistent: {:?}", endpoints);
+                log::info!("cluster-id" = cluster_id.unwrap_or_default(); "[pd] init cluster id");
                 Ok(members)
             }
             _ => Err(internal_err!("PD cluster failed to respond")),
@@ -1685,7 +2054,7 @@ impl Connection {
                         break 'outer;
                     }
                     Err(e) => {
-                        error!("failed to connect to {}, {:?}", ep, e);
+                        log::info!(url = ep.as_str(), error:% = e; "[pd] cannot update member from this url");
                         continue;
                     }
                 }

@@ -400,9 +400,39 @@ pub struct RetryBackoffer {
     /// task's client span scope, replaced by the spans that `bo.SetCtx`
     /// themselves, copied by `Clone` and `Fork`.
     client_spans: crate::trace::BoSpanSlot,
+    /// client-go `b.ctx.Value(util.ExecDetailsKey)`: the statement whose
+    /// `BackoffCount`/`BackoffDuration` every sleep charges, taken from the
+    /// creating task and copied by `Clone` and `Fork`.
+    exec_details: Option<Arc<crate::util::ExecDetails>>,
+    /// client-go `b.ctx.Value(TxnStartKey)`: the transaction start ts its
+    /// `retry later` line reports, taken from the creating task's trace
+    /// context and copied by `Clone` and `Fork`.
+    txn_start_ts: Option<u64>,
 }
 
 static NEXT_BACKOFFER_ID: AtomicU64 = AtomicU64::new(1);
+
+/// client-go `retry.TxnStartKey` (`tikv.TxnStartKey()`): the trace-context
+/// key under which a read's transaction start ts travels, so every Backoffer
+/// created for it reports that ts.
+pub struct TxnStartKey;
+
+/// client-go `context.WithValue(ctx, retry.TxnStartKey, startTS)`.
+pub fn context_with_txn_start_ts(
+    context: &crate::trace::TraceContext,
+    start_ts: u64,
+) -> crate::trace::TraceContext {
+    context.with_value::<TxnStartKey, _>(start_ts)
+}
+
+/// client-go `ctx.Value(retry.TxnStartKey)`.
+pub fn txn_start_ts_from_context(context: &crate::trace::TraceContext) -> Option<u64> {
+    context.value::<TxnStartKey, u64>().copied()
+}
+
+fn current_txn_start_ts() -> Option<u64> {
+    crate::trace::with_active_trace_context(txn_start_ts_from_context).flatten()
+}
 
 impl RetryBackoffer {
     pub fn new(cancellation: Cancellation, max_sleep_ms: u64) -> Self {
@@ -433,7 +463,23 @@ impl RetryBackoffer {
             configs: Vec::new(),
             rpc_interceptor: None,
             client_spans: crate::trace::BoSpanSlot::from_current(),
+            exec_details: crate::util::current_stmt_exec_details(),
+            txn_start_ts: current_txn_start_ts(),
         }
+    }
+
+    /// client-go `NewBackofferWithVars(context.WithValue(ctx,
+    /// retry.TxnStartKey, startTS), ...)` for a caller holding the ts.
+    #[must_use]
+    pub fn with_txn_start_ts(mut self, start_ts: u64) -> Self {
+        self.txn_start_ts = Some(start_ts);
+        self
+    }
+
+    /// The transaction start ts [`Self::with_txn_start_ts`] or the creating
+    /// task's trace context attached.
+    pub fn txn_start_ts(&self) -> Option<u64> {
+        self.txn_start_ts
     }
 
     /// client-go `interceptor.WithRPCInterceptor(bo.GetCtx(), ...)`: every RPC
@@ -592,7 +638,8 @@ impl RetryBackoffer {
     ) -> Result<BackoffWait, RetryError> {
         let reason = reason.into();
         if reason.contains(MISMATCH_CLUSTER_ID) {
-            log::error!("critical error: {reason}");
+            // client-go logs this at fatal and exits; `log` has no fatal level.
+            log::error!(error:% = reason; "critical error");
             return Err(RetryError::ClusterIdMismatch { reason });
         }
         if self.cancellation.is_cancelled() {
@@ -602,16 +649,8 @@ impl RetryBackoffer {
             return Err(RetryError::Noop { reason });
         }
         if self.budget_exhausted(config) {
-            let error = self.exhausted(reason);
-            log::warn!(
-                "{} backoffer.maxSleep {}ms is exceeded; total-backoff-times: {}; backoff-detail: {:?}; recent-errors: {:?}",
-                config,
-                self.max_sleep_ms,
-                self.total_backoff_times(),
-                self.times_by_type,
-                self.errors
-            );
-            return Err(error);
+            log::warn!("{}", self.exceeded_message(config));
+            return Err(self.exhausted(reason));
         }
         self.push_error(reason.clone());
         self.configs.push(config);
@@ -644,15 +683,25 @@ impl RetryBackoffer {
         }
         *self.sleep_by_type.entry(config.name).or_default() += real_sleep_ms;
         *self.times_by_type.entry(config.name).or_default() += 1;
+        if let Some(details) = &self.exec_details {
+            details.add_backoff(Duration::from_millis(real_sleep_ms));
+        }
         if let Some(metric_label) = config.metric_label {
             crate::stats::observe_retry_backoff(metric_label, Duration::from_millis(real_sleep_ms));
         }
         self.check_killed()?;
+        // zap.Reflect("txnStartTS", startTs): the ts, or JSON null without one.
+        let txn_start_ts = self
+            .txn_start_ts
+            .map_or_else(|| "null".to_owned(), |ts| ts.to_string());
         log::debug!(
-            "retry later: totalSleep={}; excludedSleep={}; maxSleep={}; type={config}",
-            self.total_sleep_ms,
-            self.excluded_sleep_ms,
-            self.max_sleep_ms
+            error:% = self.errors.last().map_or("", |error| error.reason.as_str()),
+            totalSleep = self.total_sleep_ms,
+            excludedSleep = self.excluded_sleep_ms,
+            maxSleep = self.max_sleep_ms,
+            type:% = config,
+            txnStartTS:% = txn_start_ts;
+            "retry later"
         );
         Ok(())
     }
@@ -660,7 +709,7 @@ impl RetryBackoffer {
     pub fn check_killed(&self) -> Result<(), RetryError> {
         let signal = self.variables.killed.load(Ordering::Acquire);
         if signal != 0 {
-            log::info!("backoff stops because a killed signal is received: signal={signal}");
+            log::info!(signal = signal; "backoff stops because a killed signal is received");
             return Err(QueryInterruptedWithSignalError { signal }.into());
         }
         if let Some(handler) = &self.variables.kill_signal_handler {
@@ -726,6 +775,8 @@ impl RetryBackoffer {
                 configs: self.configs.clone(),
                 rpc_interceptor: self.rpc_interceptor.clone(),
                 client_spans: self.client_spans.copied(),
+                exec_details: self.exec_details.clone(),
+                txn_start_ts: self.txn_start_ts,
             },
             cancellation,
         )
@@ -784,6 +835,46 @@ impl RetryBackoffer {
             })
     }
 
+    /// client-go `BackoffWithCfgAndMaxSleep`'s budget-exceeded message.
+    fn exceeded_message(&self, config: RetryConfig) -> String {
+        use std::fmt::Write as _;
+
+        let max_backoff_exceeded =
+            self.total_sleep_ms.saturating_sub(self.excluded_sleep_ms) >= self.max_sleep_ms;
+        let max_excluded_exceeded = config.excluded_budget_limit_ms.is_some_and(|limit| {
+            self.excluded_sleep_ms >= limit && self.excluded_sleep_ms >= self.max_sleep_ms
+        });
+        let mut message = format!(
+            "{config} backoffer.maxSleep {}ms is exceeded, errors:",
+            self.max_sleep_ms
+        );
+        for error in &self.errors {
+            let _ = write!(message, "\n{error}");
+        }
+        let detail = self
+            .times_by_type
+            .iter()
+            .map(|(name, times)| format!("{name}:{times}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = write!(
+            message,
+            "\ntotal-backoff-times: {}, backoff-detail: {detail}, maxBackoffTimeExceeded: {max_backoff_exceeded}, maxExcludedTimeExceeded: {max_excluded_exceeded}",
+            self.total_backoff_times()
+        );
+        if let Some(longest) = self.longest_sleep_config() {
+            let time = self
+                .sleep_by_type
+                .get(longest.name)
+                .copied()
+                .unwrap_or_default();
+            if time > 0 {
+                let _ = write!(message, "\nlongest sleep type: {longest}, time: {time}ms");
+            }
+        }
+        message
+    }
+
     fn exhausted(&self, reason: String) -> RetryError {
         let terminal = self
             .longest_sleep_config()
@@ -821,19 +912,14 @@ impl RetryBackoffer {
             .saturating_mul(2u64.saturating_pow(state.attempts))
             .min(config.cap_ms);
         let mut rng = thread_rng();
-        let delay = match config.jitter {
+        match config.jitter {
             Jitter::No => exponential,
             Jitter::Full => rng.gen_range(0..exponential),
             Jitter::Equal => exponential / 2 + rng.gen_range(0..(exponential / 2).max(1)),
             Jitter::Decorrelated => rng
                 .gen_range(base..state.last_sleep_ms.saturating_mul(3).max(base + 1))
                 .min(config.cap_ms),
-        };
-        log::debug!(
-            "backoff: base={base}; sleep={delay}; attempts={}",
-            state.attempts
-        );
-        delay
+        }
     }
 
     fn complete_delay(&mut self, config: RetryConfig, delay_ms: u64) {
@@ -917,6 +1003,8 @@ impl Clone for RetryBackoffer {
             configs: self.configs.clone(),
             rpc_interceptor: self.rpc_interceptor.clone(),
             client_spans: self.client_spans.copied(),
+            exec_details: self.exec_details.clone(),
+            txn_start_ts: self.txn_start_ts,
         }
     }
 }
@@ -1274,6 +1362,47 @@ mod tests {
 
         let small = RetryBackoffer::with_variables(Cancellation::default(), 10, variables);
         assert_eq!(small.max_sleep_ms, 20);
+    }
+
+    /// client-go's `retry later` reports `ctx.Value(TxnStartKey)` as
+    /// `zap.Reflect("txnStartTS", ...)`: the ts inside a read's ctx, JSON
+    /// null outside one. Clone and Fork keep it.
+    #[tokio::test]
+    async fn retry_later_reports_the_contexts_txn_start_ts() {
+        crate::logutil::test_capture::install();
+        let context = context_with_txn_start_ts(&crate::trace::TraceContext::new(), 626_262);
+        let mut backoffer = crate::trace::with_trace_context(context, async {
+            RetryBackoffer::new(Cancellation::default(), 10)
+        })
+        .await;
+        assert_eq!(backoffer.txn_start_ts(), Some(626_262));
+        assert_eq!(backoffer.clone().txn_start_ts(), Some(626_262));
+        assert_eq!(backoffer.fork().0.txn_start_ts(), Some(626_262));
+        backoffer
+            .backoff(BO_REGION_MISS, "retry later marker 626262")
+            .await
+            .unwrap();
+        assert!(
+            crate::logutil::test_capture::any(|line| {
+                line
+                == "DEBUG retry later error=retry later marker 626262 totalSleep=2 excludedSleep=0 maxSleep=20 type=regionMiss txnStartTS=626262"
+            }),
+            "{:?}",
+            crate::logutil::test_capture::lines()
+        );
+        let mut detached = RetryBackoffer::new(Cancellation::default(), 10);
+        assert_eq!(detached.txn_start_ts(), None);
+        detached
+            .backoff(BO_REGION_MISS, "retry later marker detached")
+            .await
+            .unwrap();
+        assert!(
+            crate::logutil::test_capture::any(|line| line
+                .starts_with("DEBUG retry later error=retry later marker detached ")
+                && line.ends_with(" txnStartTS=null")),
+            "{:?}",
+            crate::logutil::test_capture::lines()
+        );
     }
 
     #[tokio::test]

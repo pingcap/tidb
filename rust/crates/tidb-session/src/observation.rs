@@ -56,12 +56,9 @@ pub(crate) struct StatementObservation {
     /// created with its ctx (`execdetails.ContextWithInitializedExecDetails`)
     /// and charged by every TiKV/TiFlash RPC it issues.
     ru_details: Arc<tikv_client::RuDetails>,
-    /// Go `ctx.Value(util.ExecDetailsKey)`: the statement's KV and PD waits
-    /// and backoffs, created with the same ctx.
+    /// Go `ctx.Value(util.ExecDetailsKey)`: the statement's KV and PD waits,
+    /// backoffs and traffic, created with the same ctx.
     exec_details: Arc<tikv_client::util::ExecDetails>,
-    /// The traffic half of Go's `util.ExecDetails`, which client-rust
-    /// collects apart from the `ExecDetails` value.
-    network_traffic_details: Arc<tikv_client::traffic::NetworkTrafficDetails>,
     /// Go `SessionVars.RUV2Metrics`: the statement's TiDB-side RU v2
     /// counters (`RUV2MetricsFromContext`), created with its ctx.
     ruv2_metrics: Arc<tidb_util::ruv2_metrics::RuV2Metrics>,
@@ -114,7 +111,6 @@ pub(crate) struct PendingStatementExecDetails {
     sql: String,
     ru_details: Arc<tikv_client::RuDetails>,
     exec_details: Arc<tikv_client::util::ExecDetails>,
-    network_traffic_details: Arc<tikv_client::traffic::NetworkTrafficDetails>,
     normalized: String,
     digest: tidb_parser::Digest,
 }
@@ -408,7 +404,7 @@ impl Session {
         let text = self.statement_text(sql).into_owned();
         // The details the server's door initialized for this statement, or
         // Go `execdetails.ContextWithInitializedExecDetails`'s fresh ones.
-        let (normalized, digest, ru_details, exec_details, network_traffic_details) = match self
+        let (normalized, digest, ru_details, exec_details) = match self
             .pending_statement_exec_details
             .take()
             .filter(|pending| pending.sql == sql)
@@ -418,7 +414,6 @@ impl Session {
                 pending.digest,
                 pending.ru_details,
                 pending.exec_details,
-                pending.network_traffic_details,
             ),
             None => {
                 let (normalized, digest) = normalize_statement_digest(&text);
@@ -426,7 +421,6 @@ impl Session {
                     normalized,
                     digest,
                     Arc::new(tikv_client::RuDetails::new()),
-                    Arc::default(),
                     Arc::default(),
                 )
             }
@@ -482,7 +476,6 @@ impl Session {
             ),
             ru_details,
             exec_details,
-            network_traffic_details,
             ruv2_metrics,
             record_last_query: false,
             crucial: false,
@@ -508,23 +501,20 @@ impl Session {
         self.publish_kv_context(
             &observation.ru_details,
             &observation.exec_details,
-            &observation.network_traffic_details,
             &observation.normalized,
             &observation.digest,
             Some(Arc::clone(&self.process_plan_info)),
         );
     }
 
-    /// Publishes `ru_details`, `exec_details` (with the client's traffic
-    /// collector `network_traffic_details`) and the taggers of the statement with this
-    /// normalized text and digest. `plan` is where its plan digest will be
+    /// Publishes `ru_details`, `exec_details` and the taggers of the
+    /// statement with this normalized text and digest. `plan` is where its plan digest will be
     /// read; `None` before the statement is planned, whose tags then carry
     /// no plan digest (Go's nil `StmtCtx` plan digest).
     fn publish_kv_context(
         &self,
         ru_details: &Arc<tikv_client::RuDetails>,
         exec_details: &Arc<tikv_client::util::ExecDetails>,
-        network_traffic_details: &Arc<tikv_client::traffic::NetworkTrafficDetails>,
         normalized: &str,
         digest: &tidb_parser::Digest,
         plan: Option<Arc<Mutex<tidb_executor::ProcessPlanInfo>>>,
@@ -548,7 +538,7 @@ impl Session {
             .publish(tidb_txnkv::StatementKvContext {
                 ru_details: Some(Arc::clone(ru_details)),
                 exec_details: Some(Arc::clone(exec_details)),
-                network_traffic_details: Some(Arc::clone(network_traffic_details)),
+                txn_start_ts: None,
                 resource_group_tagger: Some(Arc::new(move || {
                     let mut tagger = tidb_txnkv::ResourceGroupTagBuilder::new(keyspace_name);
                     tagger.set_plan_digest(&plan_digest());
@@ -583,21 +573,12 @@ impl Session {
         }
         let ru_details = Arc::new(tikv_client::RuDetails::new());
         let exec_details = Arc::default();
-        let network_traffic_details = Arc::default();
         let (normalized, digest) = normalize_statement_digest(&self.statement_text(sql));
-        self.publish_kv_context(
-            &ru_details,
-            &exec_details,
-            &network_traffic_details,
-            &normalized,
-            &digest,
-            None,
-        );
+        self.publish_kv_context(&ru_details, &exec_details, &normalized, &digest, None);
         self.pending_statement_exec_details = Some(PendingStatementExecDetails {
             sql: sql.to_owned(),
             ru_details,
             exec_details,
-            network_traffic_details,
             normalized,
             digest,
         });
@@ -980,7 +961,6 @@ impl Session {
             result_rows,
             tikv_exec_details: Some(crate::slow_log::load_tikv_exec_details(
                 &observation.exec_details,
-                &observation.network_traffic_details,
             )),
             prepared: observation.prepared,
             keyspace_name: tidb_config::config_tree::config::get_global_config()
@@ -1216,11 +1196,9 @@ impl Session {
         let mem_max = self.session_memory.session_tracker().max_consumed();
         let disk_max = self.session_memory.session_disk_tracker().max_consumed();
         let durations = self.phase_durations.snapshot();
-        let kv_exec_detail =
-            crate::slow_log::KvExecDetails::from(&crate::slow_log::load_tikv_exec_details(
-                &observation.exec_details,
-                &observation.network_traffic_details,
-            ));
+        let kv_exec_detail = crate::slow_log::KvExecDetails::from(
+            &crate::slow_log::load_tikv_exec_details(&observation.exec_details),
+        );
         if let Some(rules) = rules {
             match_rules = rules.should_write_slow_log(&crate::slow_log_rules::SlowLogRuleValues {
                 conn_id,

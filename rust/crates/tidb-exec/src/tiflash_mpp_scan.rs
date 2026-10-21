@@ -160,14 +160,19 @@ impl<S: tikv_client::PdClient> TiFlashMppScanSource<S> {
     fn classic_tasks(
         &self,
         request: &PushdownScanRequest,
+        kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<Vec<(String, Vec<tidb_proto::coprocessor::RegionInfo>)>, String> {
         let (tasks, warnings) =
             self.store
-                .block_on(crate::batch_cop_tasks::build_batch_cop_tasks_core(
-                    &self.store,
-                    &request.ranges,
-                    &request.statement.memory,
-                    request.statement.tiflash_replica_read,
+                .block_on(tidb_txnkv::driver::cop_store::with_statement_kv_context(
+                    kv_context,
+                    crate::batch_cop_tasks::build_batch_cop_tasks_core(
+                        &self.store,
+                        &request.ranges,
+                        &request.statement.memory,
+                        request.statement.tiflash_replica_read,
+                        kv_context,
+                    ),
                 ))?;
         for warning in warnings {
             request.statement.warnings.append_warning(warning);
@@ -291,10 +296,24 @@ impl<S: tikv_client::PdClient> TiFlashMppScanSource<S> {
             PushdownScannerError::Backend(StorageError::Backend(format!("tiflash mpp: {reason}")))
         };
         let config = tidb_config::config_tree::config::get_global_config();
+        // Go `MPPClient.ConstructMPPTasks`: `ctx = context.WithValue(ctx,
+        // tikv.TxnStartKey(), req.StartTS)` on the statement ctx, whose
+        // `ExecDetails` the task building's region lookups charge.
+        let build_kv_context = request
+            .statement
+            .kv_context
+            .as_ref()
+            .map(tidb_txnkv::StatementKvContextCell::get)
+            .unwrap_or_default()
+            .with_txn_start_ts(request.snapshot_ts);
         let tasks = if config.disaggregated_tiflash {
-            let regions =
-                locate_mpp_region_infos(&self.store, &request.ranges, &request.statement.memory)
-                    .map_err(refuse)?;
+            let regions = locate_mpp_region_infos(
+                &self.store,
+                &request.ranges,
+                &request.statement.memory,
+                &build_kv_context,
+            )
+            .map_err(refuse)?;
             if regions.is_empty() {
                 return Err(refuse(
                     "no region covers the table's record range".to_owned(),
@@ -323,9 +342,10 @@ impl<S: tikv_client::PdClient> TiFlashMppScanSource<S> {
             )
             .map_err(refuse)?
         } else {
-            self.classic_tasks(request).map_err(|message| {
-                mpp_open_error(&request.statement.memory, format!("tiflash mpp: {message}"))
-            })?
+            self.classic_tasks(request, &build_kv_context)
+                .map_err(|message| {
+                    mpp_open_error(&request.statement.memory, format!("tiflash mpp: {message}"))
+                })?
         };
         let (mut meta, receiver_meta) =
             mpp_task_metadata(request.snapshot_ts, &request.statement, &tasks[0].0);
@@ -883,11 +903,13 @@ fn mpp_region_infos(
 }
 
 /// The regions covering `ranges`, from the store's region cache (Go
-/// `buildBatchCopTasks`' `SplitKeyRangesByLocations`).
+/// `buildBatchCopTasks`' `SplitKeyRangesByLocations`), located under the
+/// task building's ctx `kv_context`.
 fn locate_mpp_region_infos<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
     memory: &tidb_executor::StatementMemory,
+    kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<Vec<tidb_proto::coprocessor::RegionInfo>, String> {
     use tidb_txnkv::driver::cop_store::NativeCopStore;
     if ranges.is_empty() {
@@ -898,16 +920,20 @@ fn locate_mpp_region_infos<S: tikv_client::PdClient>(
         .iter()
         .map(|(start, end)| (start.as_slice().to_vec(), end.as_slice().to_vec()))
         .collect::<Vec<_>>();
-    let regions = store.locate(&keys).map_err(|error| error.to_string())?;
+    let regions = store
+        .locate(&keys, kv_context)
+        .map_err(|error| error.to_string())?;
     Ok(mpp_region_infos(ranges, &regions))
 }
 
 /// Go `SplitKeyRangesByLocations` for a batch task: every region covering
-/// `ranges`, with the ranges inside it.
+/// `ranges`, with the ranges inside it, located under the task building's
+/// ctx `kv_context`.
 pub(crate) fn locate_mpp_regions<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
     ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
     memory: &tidb_executor::StatementMemory,
+    kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<Vec<crate::batch_cop_tasks::LocatedRegion>, String> {
     use tidb_txnkv::driver::cop_store::NativeCopStore;
     if ranges.is_empty() {
@@ -918,7 +944,9 @@ pub(crate) fn locate_mpp_regions<S: tikv_client::PdClient>(
         .iter()
         .map(|(start, end)| (start.as_slice().to_vec(), end.as_slice().to_vec()))
         .collect::<Vec<_>>();
-    let regions = store.locate(&keys).map_err(|error| error.to_string())?;
+    let regions = store
+        .locate(&keys, kv_context)
+        .map_err(|error| error.to_string())?;
     Ok(regions
         .into_iter()
         .filter_map(|region| {
@@ -2631,7 +2659,8 @@ mod mpp_read_batch_tests {
             (b"p".to_vec().into(), b"x".to_vec().into()),
         ];
         let memory = tidb_executor::StatementMemory::default();
-        let infos = locate_mpp_region_infos(&store, &ranges, &memory).unwrap();
+        let kv_context = tidb_txnkv::StatementKvContext::default();
+        let infos = locate_mpp_region_infos(&store, &ranges, &memory, &kv_context).unwrap();
         assert_eq!(
             infos.iter().map(|info| info.region_id).collect::<Vec<_>>(),
             region_ids
@@ -2650,7 +2679,7 @@ mod mpp_read_batch_tests {
             }],
         ));
         assert_eq!(
-            locate_mpp_region_infos(&store, &ranges, &memory).unwrap(),
+            locate_mpp_region_infos(&store, &ranges, &memory, &kv_context).unwrap(),
             infos
         );
     }

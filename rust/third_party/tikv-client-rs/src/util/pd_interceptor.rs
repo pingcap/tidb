@@ -15,9 +15,22 @@ use crate::retry::RetryBackoffer;
 use crate::store::{RegionStore, Store};
 use crate::{Key, Result, Timestamp};
 
-use super::execdetails::current_exec_details;
+/// client-go `util.recordPDWaitTime(ctx, start)`: charge the PD wait since
+/// `started` to the statement's `ExecDetails` (`ctx.Value(ExecDetailsKey)`).
+pub(crate) fn record_pd_wait_time(started: Instant) {
+    if let Some(details) = super::execdetails::current_stmt_exec_details() {
+        details.add_wait_pd_response(started.elapsed());
+    }
+}
 
-/// Transparent PD client decorator that records caller-scoped PD wait time.
+/// Transparent PD client decorator.
+///
+/// client-go's `InterceptedPDClient` wraps the raw `pd.Client`; client-rust's
+/// counterpart is the PD RPC client itself, which already charges every
+/// call client-go intercepts (`GetRegion`, `GetPrevRegion`, `GetRegionByID`,
+/// `ScanRegions`, `GetStore`, `GetTS`/`GetTSAsync`) to the statement's
+/// `ExecDetails`. This decorator therefore only forwards; wrapping a client
+/// in it never charges a wait twice.
 pub struct InterceptedPdClient<C> {
     inner: Arc<C>,
 }
@@ -36,12 +49,7 @@ async fn record_wait<F>(future: F) -> F::Output
 where
     F: Future,
 {
-    let started = Instant::now();
-    let output = future.await;
-    if let Some(details) = current_exec_details() {
-        details.add_wait_pd_response(started.elapsed());
-    }
-    output
+    future.await
 }
 
 #[async_trait]
@@ -248,19 +256,37 @@ mod tests {
     use crate::util::{with_exec_details, ExecDetails};
 
     #[tokio::test]
-    async fn selected_pd_calls_accumulate_only_inside_the_scoped_details() {
-        let inner = Arc::new(MockPdClient::default());
-        let client = Arc::new(InterceptedPdClient::new(inner));
+    async fn pd_waits_charge_the_statement_exec_details_once() {
         let details = Arc::new(ExecDetails::default());
+        // The statement ctx's `ExecDetailsKey`, through the trace context.
+        let context = crate::util::context_with_exec_details(
+            &crate::trace::TraceContext::new(),
+            details.clone(),
+        );
+        crate::trace::with_trace_context(context, async {
+            record_pd_wait_time(Instant::now() - std::time::Duration::from_millis(3));
+        })
+        .await;
+        let charged = details.snapshot().wait_pd_response_duration_ns;
+        assert!(charged >= 3_000_000, "{charged}");
+
+        // The task-local scope is honoured too.
+        with_exec_details(details.clone(), async {
+            record_pd_wait_time(Instant::now() - std::time::Duration::from_millis(1));
+        })
+        .await;
+        assert!(details.snapshot().wait_pd_response_duration_ns >= charged + 1_000_000);
+
+        // Outside a statement nothing is charged, and the decorator only
+        // forwards: the PD RPC client underneath does the charging.
+        let before = details.snapshot();
+        record_pd_wait_time(Instant::now());
+        let client = Arc::new(InterceptedPdClient::new(Arc::new(MockPdClient::default())));
         with_exec_details(details.clone(), async {
             client.region_for_key(&Key::from(vec![1])).await.unwrap();
             client.clone().get_timestamp().await.unwrap();
         })
         .await;
-        assert!(details.snapshot().wait_pd_response_duration_ns > 0);
-
-        let before = details.snapshot();
-        client.region_for_id(1).await.unwrap();
         assert_eq!(details.snapshot(), before);
     }
 }

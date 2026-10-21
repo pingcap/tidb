@@ -64,12 +64,22 @@ pub(crate) fn enable_controller_trace_log() -> bool {
     ENABLE_CONTROLLER_TRACE_LOG.load(Ordering::SeqCst)
 }
 
-/// Logs at info level only when controller trace logging is enabled.
-pub(crate) fn log_controller_trace(message: impl FnOnce() -> String) {
-    if enable_controller_trace_log() {
-        log::info!("{}", message());
-    }
+#[cfg(test)]
+pub(crate) fn set_enable_controller_trace_log_for_test(enabled: bool) {
+    ENABLE_CONTROLLER_TRACE_LOG.store(enabled, Ordering::SeqCst);
 }
+
+/// pd-client `logControllerTrace`: an info line, with its zap fields as
+/// structured key-values, only while controller trace logging is enabled.
+/// The arguments are `log::info!`'s and are not evaluated otherwise.
+macro_rules! log_controller_trace {
+    ($($arg:tt)+) => {
+        if super::global_controller::enable_controller_trace_log() {
+            log::info!($($arg)+);
+        }
+    };
+}
+pub(crate) use log_controller_trace;
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
@@ -256,10 +266,10 @@ pub async fn new_resource_group_controller(
         opts,
     );
     log::info!(
-        "load resource controller config, config: {:?}, ru-config: {:?}, keyspace-id: {}",
-        config,
-        controller.ru_config.load_full(),
-        keyspace_id
+        config:% = config.marshal_json(),
+        "ru-config":% = controller.ru_config.load_full().marshal_json(),
+        "keyspace-id" = keyspace_id;
+        "load resource controller config"
     );
     ENABLE_CONTROLLER_TRACE_LOG.store(
         config.base_config.enable_controller_trace_log,
@@ -406,19 +416,12 @@ impl ResourceGroupsController {
                 if let Some(&v) = policy.overrides.get(&self.keyspace_id) {
                     let old = self.ru_version.swap(v, Ordering::SeqCst);
                     if old != v {
-                        log::info!(
-                            "ru version updated from controller config, old: {old}, new: {v}, keyspace-id: {}",
-                            self.keyspace_id
-                        );
+                        log::info!(old = old, new = v, "keyspace-id" = self.keyspace_id; "ru version updated from controller config");
                     }
                 } else if policy.default > 0 {
                     let old = self.ru_version.swap(policy.default, Ordering::SeqCst);
                     if old != policy.default {
-                        log::info!(
-                            "ru version updated to default from controller config, old: {old}, new: {}, keyspace-id: {}",
-                            policy.default,
-                            self.keyspace_id
-                        );
+                        log::info!(old = old, new = policy.default, "keyspace-id" = self.keyspace_id; "ru version updated to default from controller config");
                     }
                 } else {
                     self.ru_version.store(0, Ordering::SeqCst);
@@ -431,17 +434,17 @@ impl ResourceGroupsController {
 
     /// Starts the controller's main loop.
     pub fn start(self: &Arc<Self>) {
+        // pd-client starts a second loop silently; a second start here is a
+        // no-op without a log line.
         let Some(receivers) = lock(&self.receivers).take() else {
-            log::warn!("[resource group controller] the controller is already started");
             return;
         };
         let (loop_ctx, cancel) = Context::with_cancel(&Context::background());
         *lock(&self.loop_ctx) = Some((loop_ctx.clone(), cancel));
         let this = self.clone();
         let handle = tokio::spawn(async move { this.main_loop(loop_ctx, receivers).await });
-        match self.wg.try_lock() {
-            Ok(mut wg) => *wg = Some(handle),
-            Err(_) => log::warn!("[resource group controller] start raced with stop"),
+        if let Ok(mut wg) = self.wg.try_lock() {
+            *wg = Some(handle);
         }
     }
 
@@ -468,7 +471,7 @@ impl ResourceGroupsController {
         {
             Ok(resp) => resp.header.as_ref().map_or(0, |header| header.revision),
             Err(error) => {
-                log::warn!("load resource group revision failed, error: {error}");
+                log::warn!(error:% = error; "load resource group revision failed");
                 0
             }
         };
@@ -489,7 +492,7 @@ impl ResourceGroupsController {
                 .await
             {
                 Ok(channel) => watch_meta_channel = Some(channel),
-                Err(error) => log::warn!("watch resource group meta failed, error: {error}"),
+                Err(error) => log::warn!(error:% = error; "watch resource group meta failed"),
             }
         }
         match self
@@ -501,7 +504,7 @@ impl ResourceGroupsController {
             .await
         {
             Ok(channel) => watch_config_channel = Some(channel),
-            Err(error) => log::warn!("watch resource group config failed, error: {error}"),
+            Err(error) => log::warn!(error:% = error; "watch resource group config failed"),
         }
         let mut watch_retry_at = Some(Instant::now() + WATCH_RETRY_INTERVAL);
 
@@ -547,7 +550,7 @@ impl ResourceGroupsController {
                         {
                             Ok(channel) => watch_meta_channel = Some(channel),
                             Err(error) => {
-                                log::warn!("watch resource group meta failed, error: {error}");
+                                log::warn!(error:% = error; "watch resource group meta failed");
                                 watch_retry_at = Some(watch_retry_after_error());
                             }
                         }
@@ -563,7 +566,7 @@ impl ResourceGroupsController {
                         {
                             Ok(channel) => watch_config_channel = Some(channel),
                             Err(error) => {
-                                log::warn!("watch resource group config failed, error: {error}");
+                                log::warn!(error:% = error; "watch resource group config failed");
                                 watch_retry_at = Some(Instant::now() + WATCH_RETRY_INTERVAL);
                             }
                         }
@@ -647,9 +650,9 @@ impl ResourceGroupsController {
                         config.adjust();
                         self.apply_controller_config(&config);
                         log::info!(
-                            "load resource controller config after config changed, config: {:?}, ruConfig: {:?}",
-                            config,
-                            self.ru_config.load_full()
+                            config:% = config.marshal_json(),
+                            ruConfig:% = self.ru_config.load_full().marshal_json();
+                            "load resource controller config after config changed"
                         );
                     }
                 }
@@ -718,16 +721,12 @@ impl ResourceGroupsController {
                 ) {
                     Ok(new_gc) => new_gc,
                     Err(error) => {
-                        log::warn!(
-                            "[resource group controller] re-create resource group cost controller for tombstone failed, name: {name}, error: {error}"
-                        );
+                        log::warn!(name:% = name, error:% = error; "[resource group controller] re-create resource group cost controller for tombstone failed");
                         continue;
                     }
                 };
                 if self.compare_and_swap_group_controller(&name, &gc, new_gc) {
-                    log::info!(
-                        "[resource group controller] re-create resource group cost controller for tombstone, name: {name}"
-                    );
+                    log::info!(name:% = name; "[resource group controller] re-create resource group cost controller for tombstone");
                 }
             } else if item.r#type == EventType::Delete as i32 {
                 // A compacted prev-kv means an earlier delete event already
@@ -743,9 +742,7 @@ impl ResourceGroupsController {
                             )
                         })
                         .unwrap_or_default();
-                    log::info!(
-                        "[resource group controller] previous key-value pair has been compacted, required-key: {key}, value: {value}"
-                    );
+                    log::info!("required-key":% = key, value:% = value; "[resource group controller] previous key-value pair has been compacted");
                     continue;
                 };
                 let Ok(group) = ResourceGroup::decode(prev_kv.value.as_slice()) else {
@@ -769,8 +766,11 @@ impl ResourceGroupsController {
         cancel.cancel();
         let handle = self.wg.lock().await.take();
         if let Some(handle) = handle {
+            // A panicked loop is re-raised; pd-client has no failure line.
             if let Err(error) = handle.await {
-                log::error!("[resource group controller] main loop failed: {error}");
+                if error.is_panic() {
+                    std::panic::resume_unwind(error.into_panic());
+                }
             }
         }
         Ok(())
@@ -953,9 +953,7 @@ impl ResourceGroupsController {
                     .resource_group_status_gauge
                     .with_label_values(&[name, &group_name])
                     .set(1.0);
-                log::info!(
-                    "[resource group controller] create resource group cost controller, name: {name}"
-                );
+                log::info!(name:% = name; "[resource group controller] create resource group cost controller");
             }
         }
         Ok(gc)
@@ -978,9 +976,7 @@ impl ResourceGroupsController {
         {
             Ok(default_gc) => default_gc,
             Err(error) => {
-                log::warn!(
-                    "[resource group controller] get default resource group meta for tombstone failed, name: {name}, error: {error}"
-                );
+                log::warn!(name:% = name, error:% = error; "[resource group controller] get default resource group meta for tombstone failed");
                 // Without the default group, drop the controller directly.
                 self.cleanup_request_source_metrics_state(name);
                 self.delete_group_controller(name);
@@ -996,9 +992,7 @@ impl ResourceGroupsController {
         ) {
             Ok(gc) => gc,
             Err(error) => {
-                log::warn!(
-                    "[resource group controller] create default resource group cost controller for tombstone failed, name: {name}, error: {error}"
-                );
+                log::warn!(name:% = name, error:% = error; "[resource group controller] create default resource group cost controller for tombstone failed");
                 self.cleanup_request_source_metrics_state(name);
                 self.delete_group_controller(name);
                 return;
@@ -1011,9 +1005,7 @@ impl ResourceGroupsController {
             .resource_group_status_gauge
             .with_label_values(&[name, name])
             .set(2.0);
-        log::info!(
-            "[resource group controller] default resource group controller cost created for tombstone, name: {name}"
-        );
+        log::info!(name:% = name; "[resource group controller] default resource group controller cost created for tombstone");
     }
 
     /// Drops stale groups whose consumption stayed unchanged.
@@ -1056,9 +1048,7 @@ impl ResourceGroupsController {
         for res in &resp {
             let name = &res.resource_group_name;
             let Some(gc) = self.load_group_controller(name) else {
-                log::warn!(
-                    "[resource group controller] a non-existent resource group was found when handle token response, name: {name}"
-                );
+                log::warn!(name:% = name; "[resource group controller] a non-existent resource group was found when handle token response");
                 continue;
             };
             gc.handle_token_bucket_response(res);
@@ -1096,6 +1086,7 @@ impl ResourceGroupsController {
         notify_msg: NotifyMsg,
     ) {
         let now = Instant::now();
+        let sent_at = std::time::SystemTime::now();
         let req = TokenBucketsRequest {
             requests,
             target_request_period_ms: DEFAULT_TARGET_PERIOD.as_millis() as u64,
@@ -1113,12 +1104,12 @@ impl ResourceGroupsController {
         let token_response_chan = self.token_response_chan.clone();
         let ctx = ctx.clone();
         tokio::spawn(async move {
-            log_controller_trace(|| {
-                format!(
-                    "[resource group controller] send token bucket request, now: {now:?}, req: {:?}, source: {source}",
-                    req.requests
-                )
-            });
+            log_controller_trace!(
+                now:% = crate::logutil::zap_time(sent_at),
+                req:% = crate::logutil::go_json_protobuf_slice(Some(req.requests.as_slice())),
+                source = source;
+                "[resource group controller] send token bucket request"
+            );
             let result = tokio::select! {
                 result = provider.acquire_token_buckets(req) => result,
                 _ = ctx.done() => Err(crate::Error::from(ctx.err().unwrap_or(ContextError::Canceled))),
@@ -1136,9 +1127,7 @@ impl ResourceGroupsController {
                     // Errors caused by the stopper cancelling the context are
                     // not logged.
                     if !matches!(error, crate::Error::ContextCanceled) {
-                        log::warn!(
-                            "[resource group controller] token bucket rpc error, error: {error}"
-                        );
+                        log::warn!(error:% = error; "[resource group controller] token bucket rpc error");
                     }
                     metrics
                         .failed_token_request_duration
@@ -1149,19 +1138,16 @@ impl ResourceGroupsController {
             if let Some(start_time) = notify_msg.start_time {
                 let cost = start_time.elapsed();
                 if cost > SLOW_NOTIFY_FILTER_DURATION {
-                    log::warn!(
-                        "[resource group controller] slow token bucket request, source: {source}, cost: {}",
-                        go_duration_string(duration_nanos(cost))
-                    );
+                    log::warn!(source:% = source, cost:% = go_duration_string(duration_nanos(cost)); "[resource group controller] slow token bucket request");
                 }
             }
-            log_controller_trace(|| {
-                format!(
-                    "[resource group controller] token bucket response, now: {:?}, resp: {resp:?}, source: {source}, latency: {}",
-                    Instant::now(),
-                    go_duration_string(duration_nanos(latency))
-                )
-            });
+            log_controller_trace!(
+                now:% = crate::logutil::zap_time(std::time::SystemTime::now()),
+                resp:% = crate::logutil::go_json_protobuf_slice(resp.as_deref()),
+                source = source,
+                latency:% = go_duration_string(duration_nanos(latency));
+                "[resource group controller] token bucket response"
+            );
             let _ = token_response_chan.send(resp).await;
         });
     }
@@ -1188,9 +1174,7 @@ impl ResourceGroupsController {
         resp: &dyn ResponseInfo,
     ) -> crate::Result<Consumption> {
         let Some(gc) = self.load_group_controller(resource_group_name) else {
-            log::warn!(
-                "[resource group controller] resource group name does not exist, name: {resource_group_name}"
-            );
+            log::warn!(name:% = resource_group_name; "[resource group controller] resource group name does not exist");
             return Ok(Consumption::default());
         };
         gc.on_response_impl(req, resp)
@@ -1204,9 +1188,7 @@ impl ResourceGroupsController {
         resp: &dyn ResponseInfo,
     ) -> crate::Result<(Consumption, Duration)> {
         let Some(gc) = self.load_group_controller(resource_group_name) else {
-            log::warn!(
-                "[resource group controller] resource group name does not exist, name: {resource_group_name}"
-            );
+            log::warn!(name:% = resource_group_name; "[resource group controller] resource group name does not exist");
             return Ok((Consumption::default(), Duration::ZERO));
         };
         gc.on_response_wait_impl(&Context::background(), req, resp)
@@ -1335,9 +1317,7 @@ impl ResourceGroupsController {
     /// query finishes.
     pub fn report_consumption(&self, resource_group_name: &str, consumption: &Consumption) {
         let Some(gc) = self.load_group_controller(resource_group_name) else {
-            log::warn!(
-                "[resource group controller] resource group name does not exist, name: {resource_group_name}"
-            );
+            log::warn!(name:% = resource_group_name; "[resource group controller] resource group name does not exist");
             return;
         };
         gc.add_ru_consumption(Some(consumption));
@@ -1353,9 +1333,7 @@ impl ResourceGroupsController {
         tiflash_ruv2: f64,
     ) {
         let Some(gc) = self.load_group_controller(resource_group_name) else {
-            log::warn!(
-                "[resource group controller] resource group name does not exist, name: {resource_group_name}"
-            );
+            log::warn!(name:% = resource_group_name; "[resource group controller] resource group name does not exist");
             return;
         };
         gc.add_ruv2_consumption(tikv_ruv2, tidb_ruv2, tiflash_ruv2);

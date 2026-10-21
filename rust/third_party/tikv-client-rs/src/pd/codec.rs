@@ -220,6 +220,13 @@ where
         self.inner.clone().get_all_stores().await
     }
 
+    async fn get_all_stores_allowing_router_service(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+        self.inner
+            .clone()
+            .get_all_stores_allowing_router_service()
+            .await
+    }
+
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
         self.inner.clone().get_timestamp().await
     }

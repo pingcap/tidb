@@ -259,27 +259,14 @@ pub struct KvExecDetails {
     pub unpacked_bytes_received_mpp_cross_zone: i64,
 }
 
-/// Go `execdetails.LoadTiKVExecDetails(ctx.Value(util.ExecDetailsKey))`.
-/// client-rust charges RPC traffic to its own collector rather than to the
-/// `ExecDetails` value, so the snapshot adds `network_traffic` to the value's
-/// own traffic counters.
+/// Go `execdetails.LoadTiKVExecDetails(ctx.Value(util.ExecDetailsKey))`:
+/// client-rust charges the statement's `ExecDetails` itself, traffic
+/// included, where client-go does.
 #[must_use]
 pub fn load_tikv_exec_details(
     exec_details: &tikv_client::util::ExecDetails,
-    network_traffic: &tikv_client::traffic::NetworkTrafficDetails,
 ) -> tikv_client::util::ExecDetailsSnapshot {
-    let mut snapshot = exec_details.snapshot();
-    let network = network_traffic.snapshot();
-    let traffic = &mut snapshot.traffic;
-    traffic.sent_kv_total += network.sent_kv_total;
-    traffic.received_kv_total += network.received_kv_total;
-    traffic.sent_kv_cross_zone += network.sent_kv_cross_zone;
-    traffic.received_kv_cross_zone += network.received_kv_cross_zone;
-    traffic.sent_mpp_total += network.sent_mpp_total;
-    traffic.received_mpp_total += network.received_mpp_total;
-    traffic.sent_mpp_cross_zone += network.sent_mpp_cross_zone;
-    traffic.received_mpp_cross_zone += network.received_mpp_cross_zone;
-    snapshot
+    exec_details.snapshot()
 }
 
 impl From<&tikv_client::util::ExecDetailsSnapshot> for KvExecDetails {
@@ -1443,8 +1430,7 @@ mod tests {
     }
 
     /// Go `LoadTiKVExecDetails` read into `kvExecDetailFormat`: the
-    /// statement's waits, backoffs and traffic, client-rust's separate
-    /// traffic collector included.
+    /// statement's waits, backoffs and traffic.
     #[test]
     fn kv_exec_details_load_the_statement_exec_details() {
         let exec_details = tikv_client::util::ExecDetails::default();
@@ -1453,8 +1439,7 @@ mod tests {
         exec_details.add_backoff(Duration::from_millis(2));
         exec_details.traffic.add_request(100, true, false);
         exec_details.traffic.add_response(40, true, true);
-        let network = tikv_client::traffic::NetworkTrafficDetails::default();
-        let snapshot = load_tikv_exec_details(&exec_details, &network);
+        let snapshot = load_tikv_exec_details(&exec_details);
         let detail = KvExecDetails::from(&snapshot);
         let mut buf = String::new();
         kv_exec_detail_format(&mut buf, Some(&detail));

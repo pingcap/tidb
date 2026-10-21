@@ -130,20 +130,22 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         self.completed_regions.store(0, Ordering::Release);
         if !end_key.is_empty() && start_key >= end_key {
             info!(
-                "range task ignored empty range; name={}, start_key={}, end_key={}",
-                self.identifier,
-                crate::redact::key(&start_key),
-                crate::redact::key(&end_key)
+                name:% = self.identifier,
+                startKey:% = crate::redact::key(&start_key),
+                endKey:% = crate::redact::key(&end_key);
+                "empty range task executed. ignored"
             );
             return Ok(());
         }
         info!(
-            "range task started; name={}, start_key={}, end_key={}, concurrency={}",
-            self.identifier,
-            crate::redact::key(&start_key),
-            crate::redact::key(&end_key),
-            self.concurrency
+            name:% = self.identifier,
+            startKey:% = crate::redact::key(&start_key),
+            endKey:% = crate::redact::key(&end_key),
+            concurrency = self.concurrency;
+            "range task started"
         );
+        let log_start_key = crate::redact::key(&start_key).to_string();
+        let log_end_key = crate::redact::key(&end_key).to_string();
 
         let cancellation = Cancellation::default();
         // client-go has `concurrency` workers and a channel with the same
@@ -159,6 +161,7 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         for worker_index in 0..self.concurrency {
             let worker = Self::run_worker(
                 self.name.clone(),
+                self.identifier.clone(),
                 self.handler.clone(),
                 receiver.clone(),
                 cancellation.clone(),
@@ -180,10 +183,13 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         let producer_result = loop {
             if progress_ticker.tick().now_or_never().is_some() {
                 info!(
-                    "range task in progress; name={}, elapsed_ms={}, completed_regions={}",
-                    self.identifier,
-                    started_at.elapsed().as_millis(),
-                    self.completed_regions()
+                    name:% = self.identifier,
+                    startKey:% = log_start_key,
+                    endKey:% = log_end_key,
+                    concurrency = self.concurrency,
+                    "cost time":% = crate::logutil::go_duration(started_at.elapsed()),
+                    "completed regions" = self.completed_regions();
+                    "range task in progress"
                 );
             }
             let load_key = next_key.clone().into();
@@ -194,7 +200,18 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
                 .await;
             let regions = match loaded_regions {
                 Ok(regions) => regions,
-                Err(error) => break Err(error),
+                Err(error) => {
+                    info!(
+                        name:% = self.identifier,
+                        startKey:% = log_start_key,
+                        endKey:% = log_end_key,
+                        loadRegionKey:% = crate::redact::key(&next_key),
+                        "cost time":% = crate::logutil::go_duration(started_at.elapsed()),
+                        error:% = error;
+                        "range task try to get range end key failure"
+                    );
+                    break Err(error);
+                }
             };
             let mut task_end: Vec<u8> = regions
                 .last()
@@ -237,35 +254,29 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         }
         let worker_error = worker_errors.into_iter().flatten().next();
         match producer_result {
-            Err(error) => {
-                info!(
-                    "range task failed loading regions; name={}, elapsed_ms={}, completed_regions={}, failed_regions={}, error={}",
-                    self.identifier,
-                    started_at.elapsed().as_millis(),
-                    self.completed_regions(),
-                    self.failed_regions(),
-                    error
-                );
-                Err(error)
-            }
+            Err(error) => Err(error),
             Ok(()) => match worker_error {
                 Some(error) => {
                     info!(
-                        "range task failed; name={}, elapsed_ms={}, completed_regions={}, failed_regions={}, error={}",
-                        self.identifier,
-                        started_at.elapsed().as_millis(),
-                        self.completed_regions(),
-                        self.failed_regions(),
-                        error
+                        name:% = self.identifier,
+                        startKey:% = log_start_key,
+                        endKey:% = log_end_key,
+                        "cost time":% = crate::logutil::go_duration(started_at.elapsed()),
+                        "completed regions" = self.completed_regions(),
+                        "failed regions" = self.failed_regions(),
+                        error:% = error;
+                        "range task failed"
                     );
                     Err(error)
                 }
                 None => {
                     info!(
-                        "range task finished; name={}, elapsed_ms={}, completed_regions={}",
-                        self.identifier,
-                        started_at.elapsed().as_millis(),
-                        self.completed_regions()
+                        name:% = self.identifier,
+                        startKey:% = log_start_key,
+                        endKey:% = log_end_key,
+                        "cost time":% = crate::logutil::go_duration(started_at.elapsed()),
+                        "completed regions" = self.completed_regions();
+                        "range task finished"
                     );
                     Ok(())
                 }
@@ -273,8 +284,10 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_worker(
         name: String,
+        identifier: String,
         handler: H,
         receiver: Arc<AsyncMutex<mpsc::Receiver<(Vec<u8>, Vec<u8>)>>>,
         cancellation: Cancellation,
@@ -306,11 +319,11 @@ impl<PdC: PdClient, H: RangeTaskHandler> Runner<PdC, H> {
             crate::stats::add_range_task_stats(&name, stat.completed_regions, stat.failed_regions);
             if let Err(error) = result {
                 info!(
-                    "range task worker cancelling after error; name={}, start_key={}, end_key={}, error={}",
-                    name,
-                    crate::redact::key(&task.0),
-                    crate::redact::key(&task.1),
-                    error
+                    name:% = identifier,
+                    startKey:% = crate::redact::key(&task.0),
+                    endKey:% = crate::redact::key(&task.1),
+                    error:% = error;
+                    "canceling range task because of error"
                 );
                 cancellation.cancel();
                 stop.send_replace(true);

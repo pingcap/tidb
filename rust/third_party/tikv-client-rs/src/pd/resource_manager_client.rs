@@ -170,7 +170,7 @@ async fn handle_resource_token_dispatcher(
     let mut connection = match try_resource_manager_connect(&connect, &cancellation).await {
         Ok(connection) => Some(connection),
         Err(error) => {
-            log::warn!("[resource_manager] get token stream error, error: {error}");
+            log::warn!(error:% = error; "[resource_manager] get token stream error");
             None
         }
     };
@@ -195,7 +195,8 @@ async fn handle_resource_token_dispatcher(
             match try_resource_manager_connect(&connect, &cancellation).await {
                 Ok(stream) => connection = Some(stream),
                 Err(error) => log::error!(
-                    "[resource_manager] try to connect token leader failed, error: {error}"
+                    error:% = error;
+                    "[resource_manager] try to connect token leader failed"
                 ),
             }
             log::info!("[resource_manager] token leader may change, try to reconnect the stream");
@@ -210,7 +211,7 @@ async fn handle_resource_token_dispatcher(
         if let Err(error) = process_token_requests(stream, first_request).await {
             schedule_check_member_changed();
             connection = None;
-            log::info!("[resource_manager] token request error, error: {error}");
+            log::info!(error:% = error; "[resource_manager] token request error");
         }
     }
     log::info!("[resource manager] exit resource token dispatcher");

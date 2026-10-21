@@ -105,7 +105,7 @@ impl RpcInterceptor for FunctionRpcInterceptor {
 /// # use tikv_client::{new_rpc_interceptor, RpcDispatchResult};
 /// let interceptor = new_rpc_interceptor("log", |target, request, next| {
 ///     Box::pin(async move {
-///         log::debug!("sending {} to {target}", request.label());
+///         
 ///         next().await
 ///     }) as BoxFuture<'_, RpcDispatchResult>
 /// });

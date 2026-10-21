@@ -289,7 +289,7 @@ impl Drop for StoreToken {
         if current > 0 {
             self.count.fetch_sub(1, Ordering::Relaxed);
         } else {
-            log::warn!("source store-token release observed a zero count");
+            log::warn!("release store token failed, count equals to 0");
         }
     }
 }

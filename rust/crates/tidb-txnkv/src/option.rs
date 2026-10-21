@@ -245,13 +245,12 @@ pub struct StatementKvContext {
     /// Go `ctx.Value(util.RUDetailsCtxKey)`.
     pub ru_details: Option<std::sync::Arc<tikv_client::RuDetails>>,
     /// Go `ctx.Value(util.ExecDetailsKey)`: the statement's KV/PD waits,
-    /// backoffs and traffic.
+    /// backoffs and traffic, which client-rust charges where client-go does.
     pub exec_details: Option<std::sync::Arc<tikv_client::util::ExecDetails>>,
-    /// The traffic half of Go's `util.ExecDetails`, which client-rust's
-    /// dispatch charges to its own collector rather than to the context's
-    /// `ExecDetails`.
-    pub network_traffic_details:
-        Option<std::sync::Arc<tikv_client::traffic::NetworkTrafficDetails>>,
+    /// Go `ctx.Value(tikv.TxnStartKey())`, which the coprocessor sets for its
+    /// requests (`CopClient.Send`, `sendBatch`, `ConstructMPPTasks`): every
+    /// Backoffer made under it reports the read's start ts.
+    pub txn_start_ts: Option<u64>,
     /// Go `StmtCtx.GetResourceGroupTagger`.
     pub resource_group_tagger: Option<StatementResourceGroupTagger>,
     /// Go `lockCtx.ResourceGroupTagger`.
@@ -264,7 +263,7 @@ impl std::fmt::Debug for StatementKvContext {
             .debug_struct("StatementKvContext")
             .field("ru_details", &self.ru_details)
             .field("exec_details", &self.exec_details.is_some())
-            .field("network_traffic_details", &self.network_traffic_details)
+            .field("txn_start_ts", &self.txn_start_ts)
             .field(
                 "resource_group_tagger",
                 &self.resource_group_tagger.is_some(),
@@ -274,6 +273,42 @@ impl std::fmt::Debug for StatementKvContext {
                 &self.pessimistic_lock_resource_group_tagger.is_some(),
             )
             .finish()
+    }
+}
+
+impl StatementKvContext {
+    /// Go `context.WithValue(ctx, tikv.TxnStartKey(), startTS)`.
+    #[must_use]
+    pub fn with_txn_start_ts(mut self, start_ts: u64) -> Self {
+        self.txn_start_ts = Some(start_ts);
+        self
+    }
+
+    /// The statement ctx client-rust reads these values from: its trace
+    /// context, carrying `util.RUDetailsCtxKey`, `util.ExecDetailsKey` and
+    /// `retry.TxnStartKey`. `None` when the statement carries none of them.
+    #[must_use]
+    pub fn trace_context(&self) -> Option<tikv_client::trace::TraceContext> {
+        if self.ru_details.is_none() && self.exec_details.is_none() && self.txn_start_ts.is_none() {
+            return None;
+        }
+        let mut context = tikv_client::trace::TraceContext::new();
+        if let Some(ru_details) = &self.ru_details {
+            context = tikv_client::util::context_with_ru_details(
+                &context,
+                std::sync::Arc::clone(ru_details),
+            );
+        }
+        if let Some(exec_details) = &self.exec_details {
+            context = tikv_client::util::context_with_exec_details(
+                &context,
+                std::sync::Arc::clone(exec_details),
+            );
+        }
+        if let Some(start_ts) = self.txn_start_ts {
+            context = tikv_client::retry::context_with_txn_start_ts(&context, start_ts);
+        }
+        Some(context)
     }
 }
 

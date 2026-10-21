@@ -167,12 +167,4 @@ impl RequestInfo {
     pub(super) fn get_url(&self, addr: &str) -> String {
         format!("{addr}{}", self.uri)
     }
-
-    /// Go `logFields`, rendered as zap-style `[key=value]` pairs.
-    pub(super) fn log_fields(&self) -> String {
-        format!(
-            "[caller-id={}] [name={}] [uri={}] [method={}] [target-url={}]",
-            self.caller_id, self.name, self.uri, self.method, self.target_url
-        )
-    }
 }

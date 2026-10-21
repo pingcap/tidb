@@ -10,7 +10,6 @@
 //! hold it themselves.
 
 use async_trait::async_trait;
-use log::{debug, info};
 
 use super::lock::LockResolver;
 use super::range_task::TaskStat;
@@ -307,19 +306,19 @@ pub async fn resolve_locks_for_range(
             key = location
                 .map(|location| location.end_key)
                 .unwrap_or_default();
-            debug!(
-                "resolve one region finshed, identifier: {}, regionID: {}, resolvedLocksNum: {}",
-                resolver.identifier(),
-                resolved_location.region.id,
-                lock_count
+            log::debug!(
+                identifier:% = resolver.identifier(),
+                regionID = resolved_location.region.id,
+                resolvedLocksNum = lock_count;
+                "resolve one region finshed "
             );
         } else {
-            info!(
-                "region has more than limit locks, identifier: {}, regionID: {}, resolvedLocksNum: {}, scan lock limit: {}",
-                resolver.identifier(),
-                resolved_location.region.id,
-                lock_count,
-                scan_limit
+            log::info!(
+                identifier:% = resolver.identifier(),
+                regionID = resolved_location.region.id,
+                resolvedLocksNum = lock_count,
+                "scan lock limit" = scan_limit;
+                "region has more than limit locks"
             );
             key = last_lock_key.unwrap_or_default();
         }

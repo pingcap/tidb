@@ -91,8 +91,10 @@ pub async fn discovery_ms_addrs(service_key: &str, client: &dyn Client) -> Resul
         let mut entry = ServiceRegistryEntry::default();
         if let Err(error) = entry.deserialize(&kv.value) {
             log::warn!(
-                "try to deserialize service registry entry failed, service-key: {service_key}, key: {}, error: {error}",
-                String::from_utf8_lossy(&kv.key)
+                "service-key":% = service_key,
+                key:% = String::from_utf8_lossy(&kv.key),
+                error:% = error;
+                "try to deserialize service registry entry failed"
             );
             continue;
         }
@@ -132,7 +134,7 @@ impl ServiceRegistryEntry {
     /// Go `Deserialize`: JSON fields present in `data` overwrite this entry.
     pub fn deserialize(&mut self, data: &[u8]) -> std::result::Result<(), serde_json::Error> {
         let wire: ServiceRegistryEntryWire = serde_json::from_slice(data).map_err(|error| {
-            log::warn!("json unmarshal the service registry entry failed, error: {error}");
+            log::warn!(error:% = error; "json unmarshal the service registry entry failed");
             error
         })?;
         if let Some(name) = wire.name {

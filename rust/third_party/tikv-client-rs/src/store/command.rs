@@ -460,14 +460,29 @@ impl BatchPendingResponses {
             .count()
     }
 
-    /// Mirrors `inspectPendingBatchRequests`: count old pending entries and
-    /// identify whether the stream has confirmed each one reached TiKV.
-    pub(crate) fn inspect(&self, now: std::time::Instant) -> PendingBatchRequestStats {
+    /// Mirrors `inspectPendingBatchRequests` for every pooled
+    /// `batchCommandsClient`: count old pending entries per connection and
+    /// identify whether the stream has confirmed each one reached TiKV. An
+    /// entry belongs to a client once it is published on that client's
+    /// stream (client-go's `c.batched`); unpublished entries are not counted.
+    pub(crate) fn inspect(
+        &self,
+        now: std::time::Instant,
+    ) -> std::collections::BTreeMap<usize, PendingBatchRequestStats> {
         const SLOW_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(30);
         const HANG_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(90);
 
-        let mut stats = PendingBatchRequestStats::default();
+        let mut by_connection = std::collections::BTreeMap::new();
         for (id, entry) in self.entries.lock().unwrap().iter() {
+            let Some(connection_index) = entry
+                .stream_metrics
+                .as_ref()
+                .map(|metrics| metrics.connection_index)
+            else {
+                continue;
+            };
+            let stats: &mut PendingBatchRequestStats =
+                by_connection.entry(connection_index).or_default();
             let wait = entry.telemetry.wait_duration(now);
             if wait < SLOW_THRESHOLD {
                 continue;
@@ -489,9 +504,14 @@ impl BatchPendingResponses {
             if stats.oldest_wait.is_none_or(|oldest| wait > oldest) {
                 stats.oldest_id = Some(*id);
                 stats.oldest_wait = Some(wait);
+                stats.oldest_received_by_tikv = !unconfirmed;
+                // client-go `entry.canceled`: the caller stopped waiting.
+                stats.oldest_canceled = entry.sender.is_closed();
+                stats.oldest_progress = entry.telemetry.progress(now);
             }
         }
-        stats
+        by_connection.retain(|_, stats| stats.slow_count != 0);
+        by_connection
     }
 
     pub(crate) fn register(
@@ -564,16 +584,19 @@ impl BatchPendingResponses {
         id: u64,
         response: Result<BatchCommandResponse>,
     ) -> BatchResponseDisposition {
-        self.complete_result_observed(id, response, |_| {})
+        self.complete_result_observed(id, response, |_| {}, |_, _| {})
     }
 
     /// [`Self::complete_result`], first showing the retired entry to
     /// `observe` (client-go's receive loop logs on `entry.ctx` there).
+    /// `cancelled` sees the entry and, for a successful response, the
+    /// response its caller no longer waits for (client-go logs both).
     pub(crate) fn complete_result_observed(
         &self,
         id: u64,
         response: Result<BatchCommandResponse>,
         observe: impl FnOnce(&BatchRequestTelemetry),
+        cancelled: impl FnOnce(&BatchRequestTelemetry, Option<BatchCommandResponse>),
     ) -> BatchResponseDisposition {
         match self.entries.lock().unwrap().remove(&id) {
             Some(entry) => {
@@ -584,20 +607,22 @@ impl BatchPendingResponses {
                     metrics.increment(BatchStreamRequestCounter::Retired);
                 }
                 match response {
-                    Ok(response) => {
-                        if entry.sender.send(Ok(response)).is_ok() {
+                    Ok(response) => match entry.sender.send(Ok(response)) {
+                        Ok(()) => {
                             entry.telemetry.complete(None);
                             BatchResponseDisposition::Delivered
-                        } else {
+                        }
+                        Err(returned) => {
                             if let Some(metrics) = entry.stream_metrics.as_ref() {
                                 metrics.observe_cancelled_entry_tail(&entry.telemetry);
                             }
+                            cancelled(&entry.telemetry, returned.ok());
                             entry.telemetry.complete(Some(&Error::StringError(
                                 "batch request cancelled".to_owned(),
                             )));
                             BatchResponseDisposition::Cancelled
                         }
-                    }
+                    },
                     Err(error) => {
                         entry.telemetry.complete(Some(&error));
                         if entry.sender.send(Err(error)).is_ok() {
@@ -606,6 +631,7 @@ impl BatchPendingResponses {
                             if let Some(metrics) = entry.stream_metrics.as_ref() {
                                 metrics.observe_cancelled_entry_tail(&entry.telemetry);
                             }
+                            cancelled(&entry.telemetry, None);
                             BatchResponseDisposition::Cancelled
                         }
                     }
@@ -701,6 +727,12 @@ impl BatchPendingResponses {
 pub(crate) struct PendingBatchRequestStats {
     pub(crate) oldest_id: Option<u64>,
     pub(crate) oldest_wait: Option<std::time::Duration>,
+    /// client-go `batchRequestReceivedByTiKV(stats.oldestEntry)`.
+    pub(crate) oldest_received_by_tikv: bool,
+    /// client-go `stats.oldestEntry.canceled`.
+    pub(crate) oldest_canceled: bool,
+    /// client-go `writeBatchCommandsEntryProgress(nil, stats.oldestEntry, checkTime)`.
+    pub(crate) oldest_progress: String,
     pub(crate) slow_count: usize,
     pub(crate) slow_unconfirmed_count: usize,
     pub(crate) hanging_count: usize,

@@ -371,40 +371,54 @@ async fn resolver_read_cleanup_owns_its_lifetime_and_copies_only_source_metadata
         cancellation.clone(),
         10,
     )));
-    let resolver = LockResolver::new(context.clone()).with_request_context(&kvrpcpb::Context {
-        request_source: "internal_test".to_owned(),
-        resource_control_context: Some(kvrpcpb::ResourceControlContext {
-            resource_group_name: "test-group".to_owned(),
-            ..Default::default()
-        }),
-        ..Default::default()
-    });
+    // client-go's resolver requests take their resource group from the
+    // Backoffer's ctx (`util.ResourceGroupNameFromCtx(bo.GetCtx())`), never
+    // from the request that met the lock; the detached for-read cleanup
+    // (`newAsyncResolveBackoffer`) copies only RequestSource. So the caller's
+    // ctx group reaches CheckTxnStatus, the triggering request's group
+    // reaches nothing, and the cleanup ResolveLock carries no group.
+    let caller_ctx = tikv_client::util::with_resource_group_name(
+        &tikv_client::trace::TraceContext::new(),
+        "ctx-group",
+    );
     let detail = Arc::new(std::sync::Mutex::new(
         tikv_client::util::ResolveLockDetail::default(),
     ));
-    let result = resolver
-        .resolve_locks_with_opts(
-            Arc::new(MockPdClient::new(client)),
-            Keyspace::Disable,
-            None,
-            owner,
-            ResolveLocksOptions {
-                caller_start_ts: 10,
-                for_read: true,
-                detail: Some(detail.clone()),
-                locks: vec![kvrpcpb::LockInfo {
-                    key: b"b".to_vec(),
-                    primary_lock: b"a".to_vec(),
-                    lock_version: 1,
-                    txn_size: 32,
-                    lock_type: kvrpcpb::Op::Put as i32,
-                    ..Default::default()
-                }],
+    let detail_for_read = detail.clone();
+    let result = tikv_client::trace::with_trace_context(caller_ctx, async move {
+        let resolver = LockResolver::new(context.clone()).with_request_context(&kvrpcpb::Context {
+            request_source: "internal_test".to_owned(),
+            resource_control_context: Some(kvrpcpb::ResourceControlContext {
+                resource_group_name: "test-group".to_owned(),
                 ..Default::default()
-            },
-        )
-        .await
-        .unwrap();
+            }),
+            ..Default::default()
+        });
+        resolver
+            .resolve_locks_with_opts(
+                Arc::new(MockPdClient::new(client)),
+                Keyspace::Disable,
+                None,
+                owner,
+                ResolveLocksOptions {
+                    caller_start_ts: 10,
+                    for_read: true,
+                    detail: Some(detail_for_read),
+                    locks: vec![kvrpcpb::LockInfo {
+                        key: b"b".to_vec(),
+                        primary_lock: b"a".to_vec(),
+                        lock_version: 1,
+                        txn_size: 32,
+                        lock_type: kvrpcpb::Op::Put as i32,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+    })
+    .await
+    .unwrap();
     cancellation.cancel();
     tokio::time::timeout(std::time::Duration::from_secs(2), completed.notified())
         .await
@@ -420,7 +434,7 @@ async fn resolver_read_cleanup_owns_its_lifetime_and_copies_only_source_metadata
             .as_ref()
             .unwrap()
             .resource_group_name,
-        "test-group"
+        "ctx-group"
     );
     assert_eq!(contexts[1].request_source, "internal_test");
     assert!(contexts[1]

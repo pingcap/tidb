@@ -68,7 +68,7 @@ tidb-error = { path = "../tidb-error" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-allocator-stats = { path = "../tidb-allocator-stats" }
 tracing = "0.1"
-log = "0.4"
+log = { version = "0.4", features = ["kv_serde"] }
 tonic.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

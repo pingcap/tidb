@@ -52,6 +52,7 @@ mod real_tikv_clustered_pk_range_source;
 mod real_tikv_read_source;
 mod real_tikv_session_authority_source;
 mod result_metadata_source;
+mod statement_exec_details_source;
 mod system_index_entry_go_bytes;
 mod tikv_scan_dag_lowering_source;
 mod tikv_selection_dag_lowering_source;

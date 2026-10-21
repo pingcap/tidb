@@ -47,7 +47,7 @@ either = "1.6"
 fail = "0.4"
 futures = { version = "0.3" }
 lazy_static = "1"
-log = "0.4"
+log = { version = "0.4", features = ["kv_std", "kv_serde"] }
 openssl = "0.10"
 pin-project = "1"
 prometheus = { version = "0.13", default-features = false }

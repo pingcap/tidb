@@ -535,8 +535,8 @@ impl GroupCostController {
             .limiter
             .reconfigure(now, cfg, &[reset_low_process()]);
         log::info!(
-            "[resource group controller] resource token bucket enter degraded mode, name: {}",
-            self.name
+            name = self.name.as_str();
+            "[resource group controller] resource token bucket enter degraded mode"
         );
     }
 
@@ -550,14 +550,12 @@ impl GroupCostController {
             }
             run.consumption = mu.consumption.clone();
         }
-        log_controller_trace(|| {
-            format!(
-                "[resource group controller] update run state, name: {}, request-unit-consumption: {:?}, is-throttled: {}",
-                self.name,
-                run.consumption,
-                self.is_throttled.load(Ordering::SeqCst)
-            )
-        });
+        log_controller_trace!(
+            name = self.name.as_str(),
+            "request-unit-consumption":% = crate::error::protobuf_text(&run.consumption),
+            "is-throttled" = self.is_throttled.load(Ordering::SeqCst);
+            "[resource group controller] update run state"
+        );
         run.now = new_time;
     }
 
@@ -573,14 +571,12 @@ impl GroupCostController {
         ) {
             return;
         }
-        log_controller_trace(|| {
-            format!(
-                "[resource group controller] update avg ru per sec, name: {}, avg-ru-per-sec: {}, is-throttled: {}",
-                self.name,
-                lock(&counter.state).avg_ru_per_sec,
-                self.is_throttled.load(Ordering::SeqCst)
-            )
-        });
+        log_controller_trace!(
+            name = self.name.as_str(),
+            "avg-ru-per-sec" = lock(&counter.state).avg_ru_per_sec,
+            "is-throttled" = self.is_throttled.load(Ordering::SeqCst);
+            "[resource group controller] update avg ru per sec"
+        );
     }
 
     pub(crate) fn reset_emergency_token_acquisition(&self) {

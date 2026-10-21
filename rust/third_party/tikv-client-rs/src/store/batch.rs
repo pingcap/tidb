@@ -674,17 +674,31 @@ impl BatchRequestTelemetry {
     }
 
     fn timeout_reason(&self, timeout: Duration, now: Instant) -> String {
-        use std::fmt::Write;
-
         let mut out = format!(
-            "wait recvLoop timeout, timeout:{}, EntryProgress{{",
+            "wait recvLoop timeout, timeout:{}, ",
             crate::util::format_duration(timeout)
         );
+        self.write_progress(&mut out, now);
+        out
+    }
+
+    /// client-go `writeBatchCommandsEntryProgress(nil, entry, now).String()`.
+    pub(crate) fn progress(&self, now: Instant) -> String {
+        let mut out = String::new();
+        self.write_progress(&mut out, now);
+        out
+    }
+
+    /// client-go `writeBatchCommandsEntryProgress`: `EntryProgress{...}`.
+    fn write_progress(&self, out: &mut String, now: Instant) {
+        use std::fmt::Write;
+
+        out.push_str("EntryProgress{");
         let now_ns = self.elapsed_ns(now);
         let batched_ns = self.selected_after_arrival_ns.load(Ordering::Acquire);
         if batched_ns == 0 {
             out.push('}');
-            return out;
+            return;
         }
         let received_ns = self.received_after_arrival_ns.load(Ordering::Acquire);
         let (batch_size, mut sent_ns, first_response_ns) = self
@@ -752,7 +766,7 @@ impl BatchRequestTelemetry {
                 out.push_str(", ack:yes");
             }
             out.push('}');
-            return out;
+            return;
         }
         let _ = write!(
             out,
@@ -788,7 +802,6 @@ impl BatchRequestTelemetry {
             let _ = write!(out, ", fwd:{}", published.forwarded_host);
         }
         out.push('}');
-        out
     }
 
     pub(crate) fn complete(&self, error: Option<&Error>) {
@@ -1091,11 +1104,21 @@ impl BatchCommandGroup {
             .map_or(0, |duration| {
                 u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
             });
+        let forwarded_host = self.forwarded_host.clone();
         outbound.send(self.request).await.map_err(|_| {
+            let error =
+                Error::StringError("BatchCommands stream request channel closed".to_owned());
+            log::info!(
+                target = target,
+                forwardedHost = forwarded_host.as_str(),
+                requestIDs:serde = ids,
+                error:% = error;
+                "sending batch commands meets error"
+            );
             pending.fail_ids(&ids, || {
                 Error::StringError("BatchCommands stream request channel closed".to_owned())
             });
-            Error::StringError("BatchCommands stream request channel closed".to_owned())
+            error
         })?;
         pending.mark_sent(&ids, Instant::now());
         Ok(())
@@ -1241,6 +1264,16 @@ fn duplicate_batch_failure(error: &Error) -> Error {
     }
 }
 
+/// client-go's `batchRecvLoop re-create streaming fail` line.
+fn log_recreate_streaming_fail(target: &str, forwarded_host: &str, error: &Error) {
+    log::info!(
+        target = target,
+        forwardedHost = forwarded_host,
+        error:% = error;
+        "batchRecvLoop re-create streaming fail"
+    );
+}
+
 fn claim_batch_recovery_epoch(epoch: &AtomicU64, observed_epoch: &mut u64) -> bool {
     match epoch.compare_exchange(
         *observed_epoch,
@@ -1268,6 +1301,37 @@ fn receive_batch_response(
     response: tikvpb::BatchCommandsResponse,
     target: &str,
 ) -> std::result::Result<BatchReceiveSummary, BatchReceiveError> {
+    receive_batch_response_logged(
+        pending,
+        response,
+        &mut BatchRecvLog {
+            target,
+            connection_index: 0,
+            forwarded_host: "",
+            estimated_one_way_delay: Duration::ZERO,
+            last_canceled_entry_log_time: None,
+        },
+    )
+}
+
+/// The `logger.With(target, conn, forwardedHost)` of client-go's
+/// `batchRecvLoop` and the state its per-response warnings use.
+struct BatchRecvLog<'a> {
+    target: &'a str,
+    connection_index: usize,
+    forwarded_host: &'a str,
+    estimated_one_way_delay: Duration,
+    /// Go `lastCanceledEntryLogTime`: canceled-response lines at most once a
+    /// second per receive loop.
+    last_canceled_entry_log_time: Option<Instant>,
+}
+
+fn receive_batch_response_logged(
+    pending: &BatchPendingResponses,
+    response: tikvpb::BatchCommandsResponse,
+    log_context: &mut BatchRecvLog<'_>,
+) -> std::result::Result<BatchReceiveSummary, BatchReceiveError> {
+    let target = log_context.target;
     let request_id_count = response.request_ids.len();
     let response_count = response.responses.len();
     let mut responses = response.responses.into_iter();
@@ -1288,6 +1352,7 @@ fn receive_batch_response(
         };
         summary.highest_request_id = Some(summary.highest_request_id.map_or(id, |max| max.max(id)));
         let cmd_type = BatchCommandResponse::go_cmd_type(response.cmd.as_ref());
+        let response_received_at = Instant::now();
         let disposition = pending.complete_result_observed(
             id,
             BatchCommandResponse::from_proto(response),
@@ -1298,11 +1363,50 @@ fn receive_batch_response(
                     ));
                 }
             },
+            |telemetry, response| {
+                if log_context
+                    .last_canceled_entry_log_time
+                    .is_some_and(|last| response_received_at.duration_since(last) <= Duration::from_secs(1))
+                {
+                    return;
+                }
+                let tikv_details = response
+                    .map(BatchCommandResponse::into_any)
+                    .and_then(|response| {
+                        super::request::exec_details_v2(response.as_ref())
+                            .and_then(|details| details.time_detail_v2.as_ref())
+                            .map(crate::error::protobuf_text)
+                    })
+                    .unwrap_or_default();
+                log::warn!(
+                    target = log_context.target,
+                    conn:% = log_context.connection_index,
+                    forwardedHost = log_context.forwarded_host,
+                    requestID = id,
+                    estimatedOneWayDelay:% = crate::logutil::go_duration(log_context.estimated_one_way_delay),
+                    tidbDetails:% = telemetry.progress(response_received_at),
+                    tikvDetails:% = tikv_details;
+                    "batchRecvLoop receives response for canceled request"
+                );
+                log_context.last_canceled_entry_log_time = Some(response_received_at);
+            },
         );
         match disposition {
             BatchResponseDisposition::Delivered => summary.delivered += 1,
             BatchResponseDisposition::Cancelled => summary.cancelled += 1,
-            BatchResponseDisposition::Outdated => summary.outdated += 1,
+            BatchResponseDisposition::Outdated => {
+                // A response for a request already failed by an ambiguous
+                // send error.
+                log::warn!(
+                    target = log_context.target,
+                    conn:% = log_context.connection_index,
+                    forwardedHost = log_context.forwarded_host,
+                    requestID = id,
+                    estimatedOneWayDelay:% = crate::logutil::go_duration(log_context.estimated_one_way_delay);
+                    "batchRecvLoop receives outdated response"
+                );
+                summary.outdated += 1
+            }
         }
     }
     Ok(summary)
@@ -1359,6 +1463,7 @@ where
     use futures::StreamExt;
 
     let forwarded = !forwarded_host.is_empty();
+    let mut last_canceled_entry_log_time = None;
     loop {
         let receive_started = Instant::now();
         let response = tokio::select! {
@@ -1389,6 +1494,7 @@ where
         };
         match response {
             Ok(response) => {
+                let mut one_way_delay = Duration::ZERO;
                 if response.tikv_send_time_ns != 0 {
                     let tikv_send_time = Duration::from_nanos(response.tikv_send_time_ns);
                     if let Ok(elapsed_since_epoch) =
@@ -1396,6 +1502,7 @@ where
                     {
                         let estimated_one_way_delay =
                             elapsed_since_epoch.saturating_sub(tikv_send_time);
+                        one_way_delay = estimated_one_way_delay;
                         if estimated_one_way_delay > BATCH_RECV_TAIL_LATENCY_THRESHOLD / 2 {
                             observe_batch_stream_tail(
                                 target,
@@ -1413,7 +1520,15 @@ where
                         listener.on_health_feedback(feedback);
                     }
                 }
-                let result = receive_batch_response(pending, response, target);
+                let mut log_context = BatchRecvLog {
+                    target,
+                    connection_index,
+                    forwarded_host,
+                    estimated_one_way_delay: one_way_delay,
+                    last_canceled_entry_log_time,
+                };
+                let result = receive_batch_response_logged(pending, response, &mut log_context);
+                last_canceled_entry_log_time = log_context.last_canceled_entry_log_time;
                 if let Ok(summary) = &result {
                     if let Some(highest_request_id) = summary.highest_request_id {
                         progress.observe_response_ids(&[highest_request_id]);
@@ -1494,12 +1609,23 @@ where
         .await;
         match result {
             Ok(stop) => return stop,
-            Err(_) => {
+            Err(panic) => {
                 // client-go's deferred recovery starts another recv loop over
                 // the existing stream. Pending requests remain owned by that
                 // stream and are retired only by a later response, stream
                 // error, explicit close, or caller timeout.
                 crate::stats::increment_batch_receive_loop_panic();
+                let value = panic
+                    .downcast_ref::<&str>()
+                    .map(|value| (*value).to_owned())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_default();
+                log::error!(
+                    r:% = value,
+                    stack:% = std::backtrace::Backtrace::force_capture();
+                    "batchRecvLoop"
+                );
+                log::info!("restart batchRecvLoop");
             }
         }
     }
@@ -1662,6 +1788,13 @@ impl BatchCommandsStream {
                 }
                 Err(error) => error,
             };
+            log::debug!(
+                target:% = target,
+                conn:% = connection_index,
+                forwardedHost = forwarded_host.as_str(),
+                error:% = failure;
+                "batchRecvLoop fails when receiving, needs to reconnect"
+            );
             client.mark_connection_transient_failure(connection_index);
 
             // client-go advances one epoch per pooled connection, so sibling
@@ -1682,7 +1815,9 @@ impl BatchCommandsStream {
                 if cancellation.is_cancelled() {
                     return;
                 }
-                let establish_started = Instant::now();
+                // client-go `streamClient.recreate`: a new stream on the
+                // same connection, opened without waiting for TiKV; an open
+                // that fails surfaces as this stream's next receive error.
                 let (outbound, reopen) = Self::start_generation(
                     &client,
                     connection_index,
@@ -1691,31 +1826,9 @@ impl BatchCommandsStream {
                 );
                 state.lock().await.outbound = Some(outbound);
                 ready.notify_waiters();
-                let reopened = tokio::time::timeout(TIKV_DIAL_TIMEOUT, reopen).await;
-                observe_batch_client_wait_establish(establish_started.elapsed());
+                progress.reset();
                 observe_batch_client_unavailable(unavailable_started.elapsed());
-                match reopened {
-                    Ok(Ok(reopened)) => {
-                        progress.reset();
-                        opening = futures::future::ready(Ok(reopened)).boxed();
-                    }
-                    Ok(Err(error)) => {
-                        state.lock().await.outbound = None;
-                        ready.notify_waiters();
-                        opening = futures::future::ready(Err(error)).boxed();
-                    }
-                    Err(_) => {
-                        state.lock().await.outbound = None;
-                        ready.notify_waiters();
-                        opening = futures::future::ready(Err(Error::GrpcAPI(
-                            tonic::Status::deadline_exceeded(format!(
-                                "BatchCommands reconnect timed out after {:?}",
-                                TIKV_DIAL_TIMEOUT
-                            )),
-                        )))
-                        .boxed();
-                    }
-                }
+                opening = reopen;
                 continue;
             }
 
@@ -1725,46 +1838,37 @@ impl BatchCommandsStream {
                 if cancellation.is_cancelled() {
                     return;
                 }
+                // client-go `recreateStreamingClientOnce`: wait for the
+                // connection to be ready, then recreate the stream.
                 let establish_started = Instant::now();
-                let (outbound, reopen) = Self::start_generation(
-                    &client,
-                    connection_index,
-                    &forwarded_host,
-                    queue_capacity,
-                );
-                state.lock().await.outbound = Some(outbound);
-                ready.notify_waiters();
-                let reopen = tokio::time::timeout(TIKV_DIAL_TIMEOUT, reopen).await;
+                let ready_result = client
+                    .wait_conn_ready(connection_index, TIKV_DIAL_TIMEOUT)
+                    .await;
                 observe_batch_client_wait_establish(establish_started.elapsed());
-                match reopen {
-                    Ok(Ok(reopened)) => {
+                match ready_result {
+                    Ok(()) => {
+                        let (outbound, reopen) = Self::start_generation(
+                            &client,
+                            connection_index,
+                            &forwarded_host,
+                            queue_capacity,
+                        );
+                        state.lock().await.outbound = Some(outbound);
+                        ready.notify_waiters();
+                        log::info!(
+                            target:% = target,
+                            forwardedHost = forwarded_host.as_str();
+                            "batchRecvLoop re-create streaming success"
+                        );
                         progress.reset();
-                        opening = futures::future::ready(Ok(reopened)).boxed();
+                        opening = reopen;
                         observe_batch_client_unavailable(unavailable_started.elapsed());
                         break;
                     }
-                    Ok(Err(error)) => {
-                        state.lock().await.outbound = None;
-                        ready.notify_waiters();
+                    Err(error) => {
+                        log_recreate_streaming_fail(&target, &forwarded_host, &error);
                         if backoffer
                             .backoff(BO_TIKV_RPC, error.to_string())
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                    Err(_) => {
-                        state.lock().await.outbound = None;
-                        ready.notify_waiters();
-                        if backoffer
-                            .backoff(
-                                BO_TIKV_RPC,
-                                format!(
-                                    "BatchCommands reconnect timed out after {:?}",
-                                    TIKV_DIAL_TIMEOUT
-                                ),
-                            )
                             .await
                             .is_err()
                         {
@@ -2235,18 +2339,27 @@ impl BatchCommandsDispatcher {
             .fail_all(|| Error::StringError("batch client closed".to_owned()));
     }
 
+    /// client-go `batchConn.inspectPendingRequests`: one
+    /// `logPendingBatchRequests` line per pooled `batchCommandsClient`.
     fn inspect_pending_requests(&self, now: Instant) {
-        let stats = self.pending.inspect(now);
-        if let (Some(oldest_id), Some(oldest_wait)) = (stats.oldest_id, stats.oldest_wait) {
+        let target = self.client.batch_metric_target();
+        for (connection_index, stats) in self.pending.inspect(now) {
+            let (Some(oldest_id), Some(oldest_wait)) = (stats.oldest_id, stats.oldest_wait) else {
+                continue;
+            };
             log::warn!(
-                "BatchCommands detects slow pending request: target={}, request_id={}, wait={:?}, slow_count={}, slow_unconfirmed_count={}, hanging_count={}, hanging_unconfirmed_count={}",
-                self.client.batch_metric_target(),
-                oldest_id,
-                oldest_wait,
-                stats.slow_count,
-                stats.slow_unconfirmed_count,
-                stats.hanging_count,
-                stats.hanging_unconfirmed_count,
+                target:% = target,
+                conn:% = connection_index,
+                requestID = oldest_id,
+                waitTime:% = crate::logutil::go_duration(oldest_wait),
+                canceled = stats.oldest_canceled,
+                progress:% = stats.oldest_progress,
+                receivedByTiKV = stats.oldest_received_by_tikv,
+                slowCount = stats.slow_count,
+                slowUnconfirmedCount = stats.slow_unconfirmed_count,
+                hangingCount = stats.hanging_count,
+                hangingUnconfirmedCount = stats.hanging_unconfirmed_count;
+                "batchRecvLoop detects slow pending request"
             );
         }
     }
@@ -2424,7 +2537,6 @@ mod tests {
     use std::task::{Context, Poll};
     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
     use tonic::transport::{Channel, Endpoint, Server};
-    use tonic_prost::ProstCodec;
 
     type BatchResponseStream = Pin<
         Box<
@@ -2618,7 +2730,8 @@ mod tests {
                 "/tikvpb.Tikv/BatchCommands" => {
                     let service = self.service.clone();
                     Box::pin(async move {
-                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
+                        let mut grpc =
+                            tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
                         Ok(grpc.streaming(service, request).await)
                     })
                 }
@@ -2782,6 +2895,81 @@ mod tests {
         );
         policy.observe_batch_size(5);
         assert!((policy.average_batch_wait_size - 3.4).abs() < 1e-12);
+    }
+
+    /// client-go logs one `batchRecvLoop detects slow pending request` line
+    /// per pooled client, with its `conn`, the oldest entry's `canceled` flag
+    /// and its `EntryProgress`.
+    #[tokio::test]
+    async fn slow_pending_request_lines_are_per_connection_with_progress() {
+        crate::logutil::test_capture::install();
+        let clients = vec![
+            TikvClient::new(Channel::from_static("http://127.0.0.1:1").connect_lazy()),
+            TikvClient::new(Channel::from_static("http://127.0.0.1:2").connect_lazy()),
+        ];
+        let dispatcher = BatchCommandsDispatcher::new_with_concurrency(
+            KvRpcClient::new(clients, Duration::from_secs(1)),
+            8,
+            1,
+        );
+        let now = Instant::now();
+        let mut kept = Vec::new();
+        for (id, connection_index, wait_secs, cancel) in
+            [(71_001, 0, 40, false), (71_002, 1, 100, true)]
+        {
+            let arrived_at = now - Duration::from_secs(wait_secs);
+            let telemetry = Arc::new(BatchRequestTelemetry::new(0, arrived_at));
+            telemetry.mark_selected(arrived_at);
+            let (sender, receiver) = oneshot::channel();
+            dispatcher.pending.register_sender_with_telemetry(
+                id,
+                "",
+                sender,
+                telemetry,
+                Some(BatchStreamMetricLabels::new(
+                    String::new(),
+                    connection_index,
+                    false,
+                )),
+            );
+            if cancel {
+                drop(receiver);
+            } else {
+                kept.push(receiver);
+            }
+        }
+        dispatcher.inspect_pending_requests(now);
+        let lines = crate::logutil::test_capture::lines();
+        let line = |id: u64| {
+            lines
+                .iter()
+                .find(|line| {
+                    line.starts_with("WARN batchRecvLoop detects slow pending request")
+                        && line.contains(&format!(" requestID={id} "))
+                })
+                .unwrap_or_else(|| panic!("no line for {id}: {lines:?}"))
+                .clone()
+        };
+        let first = line(71_001);
+        assert!(first.contains(" conn=0 requestID=71001 waitTime=40s canceled=false progress=EntryProgress{batch:1ns, send:40s} "), "{first}");
+        assert!(
+            first.ends_with(
+                "slowCount=1 slowUnconfirmedCount=1 hangingCount=0 hangingUnconfirmedCount=0"
+            ),
+            "{first}"
+        );
+        let second = line(71_002);
+        assert!(
+            second.contains(" conn=1 requestID=71002 waitTime=1m40s canceled=true "),
+            "{second}"
+        );
+        assert!(
+            second.ends_with(
+                "slowCount=1 slowUnconfirmedCount=1 hangingCount=1 hangingUnconfirmedCount=1"
+            ),
+            "{second}"
+        );
+        drop(kept);
     }
 
     #[tokio::test]
@@ -3331,6 +3519,52 @@ mod tests {
         ));
     }
 
+    /// client-go's `batchRecvLoop` warns about a response nobody waits for:
+    /// outdated (no entry) or for a canceled request, with its progress.
+    #[tokio::test]
+    async fn receive_loop_warns_about_outdated_and_canceled_responses() {
+        crate::logutil::test_capture::install();
+        let pending = BatchPendingResponses::new();
+        let cancelled = pending.register(81_002, "");
+        drop(cancelled);
+        let empty_response = || tikvpb::batch_commands_response::Response {
+            cmd: Some(tikvpb::batch_commands_response::response::Cmd::Empty(
+                tikvpb::BatchCommandsEmptyResponse::default(),
+            )),
+        };
+        let mut log_context = BatchRecvLog {
+            target: "store-81",
+            connection_index: 3,
+            forwarded_host: "",
+            estimated_one_way_delay: Duration::from_millis(2),
+            last_canceled_entry_log_time: None,
+        };
+        let summary = receive_batch_response_logged(
+            &pending,
+            tikvpb::BatchCommandsResponse {
+                request_ids: vec![81_001, 81_002],
+                responses: vec![empty_response(), empty_response()],
+                ..Default::default()
+            },
+            &mut log_context,
+        )
+        .unwrap();
+        assert_eq!((summary.outdated, summary.cancelled), (1, 1));
+        assert!(crate::logutil::test_capture::any(|line| {
+            line
+            == "WARN batchRecvLoop receives outdated response target=store-81 conn=3 forwardedHost= requestID=81001 estimatedOneWayDelay=2ms"
+        }));
+        let cancelled_line = "WARN batchRecvLoop receives response for canceled request target=store-81 conn=3 forwardedHost= requestID=81002 estimatedOneWayDelay=2ms tidbDetails=EntryProgress{";
+        assert!(
+            crate::logutil::test_capture::any(
+                |line| line.starts_with(cancelled_line) && line.ends_with(" tikvDetails=")
+            ),
+            "{:?}",
+            crate::logutil::test_capture::lines()
+        );
+        assert!(log_context.last_canceled_entry_log_time.is_some());
+    }
+
     #[tokio::test]
     async fn source_test_batch_request_terminal_outcome() {
         let pending = BatchPendingResponses::new();
@@ -3712,11 +3946,23 @@ mod tests {
         register(4, Duration::from_secs(4 * 60), confirmed);
         register(5, Duration::from_secs(6 * 60), unconfirmed);
 
+        let mut inspected = pending.inspect(now);
+        assert_eq!(inspected.len(), 1);
+        let mut stats = inspected.remove(&0).unwrap();
+        assert!(
+            stats.oldest_progress.starts_with("EntryProgress{batch:"),
+            "{}",
+            stats.oldest_progress
+        );
+        stats.oldest_progress.clear();
         assert_eq!(
-            pending.inspect(now),
+            stats,
             super::super::command::PendingBatchRequestStats {
                 oldest_id: Some(1),
                 oldest_wait: Some(Duration::from_secs(7 * 60 + 30)),
+                oldest_received_by_tikv: false,
+                oldest_canceled: false,
+                oldest_progress: String::new(),
                 slow_count: 5,
                 slow_unconfirmed_count: 3,
                 hanging_count: 4,
@@ -4133,6 +4379,7 @@ mod tests {
 
     #[tokio::test]
     async fn source_test_batch_client_recover_after_server_restart() {
+        crate::logutil::test_capture::install();
         let metadata = Arc::new(Mutex::new(Vec::new()));
         let client_send_times = Arc::new(Mutex::new(Vec::new()));
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server port");
@@ -4204,6 +4451,28 @@ mod tests {
             tokio::time::timeout(Duration::from_secs(1), reopened.recv()).await,
             Ok(Ok(Ok(BatchCommandResponse::Empty(response)))) if response.test_id == 0
         ));
+        // client-go `recreateStreamingClientOnce`'s success line. The
+        // recreated stream opens once a request reaches it (the test server
+        // answers headers with its first response), so send a few more.
+        for id in 34..38 {
+            let mut more = worker.submit(empty(id), 0, "").await;
+            let _ = tokio::time::timeout(Duration::from_secs(1), more.recv()).await;
+        }
+        let target = dispatcher.client.batch_metric_target();
+        let recreated = format!(
+            "INFO batchRecvLoop re-create streaming success target={target} forwardedHost="
+        );
+        for _ in 0..700 {
+            if crate::logutil::test_capture::any(|line| line.starts_with(&recreated)) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            crate::logutil::test_capture::any(|line| line.starts_with(&recreated)),
+            "{:?}",
+            crate::logutil::test_capture::lines()
+        );
 
         let direct_client = KvRpcClient::new(
             vec![TikvClient::new(channel.clone())],

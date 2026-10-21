@@ -1,92 +1,8 @@
-diff --git a/src/store/batch.rs b/src/store/batch.rs
-index 1e99822..63e9730 100644
---- a/src/store/batch.rs
-+++ b/src/store/batch.rs
-@@ -2401,6 +2401,7 @@ mod tests {
-     use std::task::{Context, Poll};
-     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
-     use tonic::transport::{Channel, Endpoint, Server};
-+    use tonic_prost::ProstCodec;
- 
-     type BatchResponseStream = Pin<
-         Box<
-@@ -2578,7 +2579,7 @@ mod tests {
-         B: Body + Send + 'static,
-         B::Error: Into<StdError> + Send + 'static,
-     {
--        type Response = http::Response<tonic::body::BoxBody>;
-+        type Response = http::Response<tonic::body::Body>;
-         type Error = Infallible;
-         type Future = BoxFuture<Self::Response, Self::Error>;
- 
-@@ -2594,8 +2595,7 @@ mod tests {
-                 "/tikvpb.Tikv/BatchCommands" => {
-                     let service = self.service.clone();
-                     Box::pin(async move {
--                        let mut grpc =
--                            tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
-+                        let mut grpc = tonic::server::Grpc::new(ProstCodec::default());
-                         Ok(grpc.streaming(service, request).await)
-                     })
-                 }
-@@ -2604,7 +2604,7 @@ mod tests {
-                         .status(200)
-                         .header("grpc-status", "12")
-                         .header("content-type", "application/grpc")
--                        .body(tonic::body::empty_body())
-+                        .body(tonic::body::Body::empty())
-                         .unwrap())
-                 }),
-             }
-diff --git a/src/store/client.rs b/src/store/client.rs
-index 620f443..c8949fa 100644
---- a/src/store/client.rs
-+++ b/src/store/client.rs
-@@ -289,6 +289,7 @@ mod tests {
-     use std::task::{Context, Poll};
-     use tokio_stream::wrappers::TcpListenerStream;
-     use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
-+    use tonic_prost::ProstCodec;
- 
-     #[derive(Clone)]
-     struct LargeDebugServer {
-@@ -304,7 +305,7 @@ mod tests {
-         B: Body + Send + 'static,
-         B::Error: Into<StdError> + Send + 'static,
-     {
--        type Response = http::Response<tonic::body::BoxBody>;
-+        type Response = http::Response<tonic::body::Body>;
-         type Error = Infallible;
-         type Future = BoxFuture<Self::Response, Self::Error>;
- 
-@@ -321,11 +322,9 @@ mod tests {
-                     payload_len: self.payload_len,
-                 };
-                 return Box::pin(async move {
--                    Ok(
--                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
--                            .unary(service, request)
--                            .await,
--                    )
-+                    Ok(tonic::server::Grpc::new(ProstCodec::default())
-+                        .unary(service, request)
-+                        .await)
-                 });
-             }
-             Box::pin(async move {
-@@ -333,7 +332,7 @@ mod tests {
-                     .status(200)
-                     .header("grpc-status", "12")
-                     .header("content-type", "application/grpc")
--                    .body(tonic::body::empty_body())
-+                    .body(tonic::body::Body::empty())
-                     .unwrap())
-             })
-         }
-diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
---- a/src/pd/timestamp_tests.rs
-+++ b/src/pd/timestamp_tests.rs
-@@ -92,7 +92,7 @@
+diff --git a/src/pd/tso/tests.rs b/src/pd/tso/tests.rs
+index d18013c..db466db 100644
+--- a/src/pd/tso/tests.rs
++++ b/src/pd/tso/tests.rs
+@@ -105,7 +105,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -95,7 +11,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
  
-@@ -121,7 +121,7 @@
+@@ -134,7 +134,7 @@ where
          let service = self.clone();
          match request.uri().path() {
              "/pdpb.PD/GetMinTS" => Box::pin(async move {
@@ -104,7 +20,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      pdpb::GetMinTsResponse,
                      pdpb::GetMinTsRequest,
                  >::default())
-@@ -129,7 +129,7 @@
+@@ -142,7 +142,7 @@ where
                  .await)
              }),
              "/pdpb.PD/GetClusterInfo" => Box::pin(async move {
@@ -113,7 +29,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      pdpb::GetClusterInfoResponse,
                      pdpb::GetClusterInfoRequest,
                  >::default())
-@@ -137,7 +137,7 @@
+@@ -150,7 +150,7 @@ where
                  .await)
              }),
              "/pdpb.PD/GetMembers" => Box::pin(async move {
@@ -122,7 +38,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      pdpb::GetMembersResponse,
                      pdpb::GetMembersRequest,
                  >::default())
-@@ -145,7 +145,7 @@
+@@ -158,7 +158,7 @@ where
                  .await)
              }),
              "/pdpb.PD/GetRegion" => Box::pin(async move {
@@ -131,7 +47,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      pdpb::GetRegionResponse,
                      pdpb::GetRegionRequest,
                  >::default())
-@@ -153,7 +153,7 @@
+@@ -166,7 +166,7 @@ where
                  .await)
              }),
              "/pdpb.PD/GetAllStores" => Box::pin(async move {
@@ -140,7 +56,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      pdpb::GetAllStoresResponse,
                      pdpb::GetAllStoresRequest,
                  >::default())
-@@ -161,7 +161,7 @@
+@@ -174,7 +174,7 @@ where
                  .await)
              }),
              "/pdpb.PD/GetOperator" => Box::pin(async move {
@@ -149,7 +65,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      pdpb::GetOperatorResponse,
                      pdpb::GetOperatorRequest,
                  >::default())
-@@ -169,7 +169,7 @@
+@@ -182,7 +182,7 @@ where
                  .await)
              }),
              "/pdpb.PD/ScanRegions" => Box::pin(async move {
@@ -158,7 +74,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      pdpb::ScanRegionsResponse,
                      pdpb::ScanRegionsRequest,
                  >::default())
-@@ -178,7 +178,7 @@
+@@ -191,7 +191,7 @@ where
              }),
              "/pdpb.PD/Tso" => Box::pin(async move {
                  Ok(
@@ -167,7 +83,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                          .streaming(service, request)
                          .await,
                  )
-@@ -188,7 +188,7 @@
+@@ -201,7 +201,7 @@ where
                      .status(200)
                      .header("grpc-status", "12")
                      .header("content-type", "application/grpc")
@@ -176,7 +92,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      .unwrap())
              }),
          }
-@@ -474,7 +474,7 @@
+@@ -489,7 +489,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -185,7 +101,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
      fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
-@@ -484,7 +484,7 @@
+@@ -499,7 +499,7 @@ where
          let service = self.clone();
          Box::pin(async move {
              Ok(
@@ -194,7 +110,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      .unary(service, request)
                      .await,
              )
-@@ -1740,7 +1740,7 @@
+@@ -1933,7 +1933,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -203,7 +119,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
      fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
-@@ -1760,14 +1760,14 @@
+@@ -1953,14 +1953,14 @@ where
          match request.uri().path() {
              "/tsopb.TSO/FindGroupByKeyspaceID" => Box::pin(async move {
                  Ok(
@@ -220,7 +136,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                          .streaming(service, request)
                          .await,
                  )
-@@ -2067,7 +2067,7 @@
+@@ -2291,7 +2291,7 @@ where
      B: Body + Send + 'static,
      B::Error: Into<StdError> + Send + 'static,
  {
@@ -229,7 +145,7 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
      type Error = Infallible;
      type Future = BoxFuture<Self::Response, Self::Error>;
      fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<std::result::Result<(), Self::Error>> {
-@@ -2078,7 +2078,7 @@
+@@ -2302,7 +2302,7 @@ where
          assert_eq!(request.uri().path(), "/keyspacepb.Keyspace/LoadKeyspace");
          Box::pin(async move {
              Ok(
@@ -238,3 +154,65 @@ diff --git a/src/pd/timestamp_tests.rs b/src/pd/timestamp_tests.rs
                      .unary(service, request)
                      .await,
              )
+diff --git a/src/store/batch.rs b/src/store/batch.rs
+index 301478c..9a32822 100644
+--- a/src/store/batch.rs
++++ b/src/store/batch.rs
+@@ -2714,7 +2714,7 @@ mod tests {
+         B: Body + Send + 'static,
+         B::Error: Into<StdError> + Send + 'static,
+     {
+-        type Response = http::Response<tonic::body::BoxBody>;
++        type Response = http::Response<tonic::body::Body>;
+         type Error = Infallible;
+         type Future = BoxFuture<Self::Response, Self::Error>;
+ 
+@@ -2731,7 +2731,7 @@ mod tests {
+                     let service = self.service.clone();
+                     Box::pin(async move {
+                         let mut grpc =
+-                            tonic::server::Grpc::new(tonic::codec::ProstCodec::default());
++                            tonic::server::Grpc::new(tonic_prost::ProstCodec::default());
+                         Ok(grpc.streaming(service, request).await)
+                     })
+                 }
+@@ -2740,7 +2740,7 @@ mod tests {
+                         .status(200)
+                         .header("grpc-status", "12")
+                         .header("content-type", "application/grpc")
+-                        .body(tonic::body::empty_body())
++                        .body(tonic::body::Body::empty())
+                         .unwrap())
+                 }),
+             }
+diff --git a/src/store/client.rs b/src/store/client.rs
+index 62786b7..8ce45c2 100644
+--- a/src/store/client.rs
++++ b/src/store/client.rs
+@@ -363,7 +363,7 @@ mod tests {
+         B: Body + Send + 'static,
+         B::Error: Into<StdError> + Send + 'static,
+     {
+-        type Response = http::Response<tonic::body::BoxBody>;
++        type Response = http::Response<tonic::body::Body>;
+         type Error = Infallible;
+         type Future = BoxFuture<Self::Response, Self::Error>;
+ 
+@@ -381,7 +381,7 @@ mod tests {
+                 };
+                 return Box::pin(async move {
+                     Ok(
+-                        tonic::server::Grpc::new(tonic::codec::ProstCodec::default())
++                        tonic::server::Grpc::new(tonic_prost::ProstCodec::default())
+                             .unary(service, request)
+                             .await,
+                     )
+@@ -392,7 +392,7 @@ mod tests {
+                     .status(200)
+                     .header("grpc-status", "12")
+                     .header("content-type", "application/grpc")
+-                    .body(tonic::body::empty_body())
++                    .body(tonic::body::Body::empty())
+                     .unwrap())
+             })
+         }

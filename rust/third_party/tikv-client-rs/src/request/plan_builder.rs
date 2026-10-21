@@ -112,6 +112,7 @@ impl<PdC: PdClient, Req: KvRequest> PlanBuilder<PdC, Dispatch<Req>, NoTarget> {
                 client_span_context: crate::trace::current_client_span_context(),
                 trace_context: crate::trace::current_trace_context(),
                 network_traffic_details: crate::traffic::current_network_traffic_details(),
+                exec_details: crate::util::current_stmt_exec_details(),
                 network_stale_read: false,
                 resource_control: None,
                 response_codec,
@@ -1101,6 +1102,28 @@ where
                 pd_client: self.pd_client,
                 backoff,
                 tikv_only: false,
+            },
+            keyspace_name: self.keyspace_name,
+            rpc_interceptor: self.rpc_interceptor,
+            resource_group_name: self.resource_group_name,
+            resource_control: self.resource_control,
+            ru_details: self.ru_details,
+            phantom: PhantomData,
+        }
+    }
+
+    /// client-go `broadcastToAllStores`: one attempt per TiKV store, each
+    /// within `timeout`, every store's outcome reported separately.
+    pub fn broadcast_tikv_stores(
+        self,
+        timeout: Duration,
+    ) -> PlanBuilder<PdC, crate::request::plan::BroadcastTiKvStores<P, PdC>, Targetted> {
+        PlanBuilder {
+            pd_client: self.pd_client.clone(),
+            plan: crate::request::plan::BroadcastTiKvStores {
+                inner: self.plan,
+                pd_client: self.pd_client,
+                timeout,
             },
             keyspace_name: self.keyspace_name,
             rpc_interceptor: self.rpc_interceptor,

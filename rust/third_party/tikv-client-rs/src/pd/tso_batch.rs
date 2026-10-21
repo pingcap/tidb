@@ -5,7 +5,6 @@
 //! rejects malformed ranges before signed arithmetic or timestamp composition.
 
 use crate::proto::pdpb;
-use std::sync::{Arc, Mutex};
 
 const PHYSICAL_SHIFT_BITS: u32 = 18;
 const MAX_LOGICAL: i64 = (1_i64 << PHYSICAL_SHIFT_BITS) - 1;
@@ -131,36 +130,6 @@ impl TsoBatch {
     }
 }
 
-/// Go dispatcher latestTSOInfo outlives individual streams. Capture a snapshot
-/// before sending; overlapping RPCs may complete out of order, but each must
-/// advance past all allocations completed before it began.
-#[derive(Clone, Default)]
-pub struct TimestampTracker(Arc<Mutex<Option<TimestampParts>>>);
-
-impl TimestampTracker {
-    pub fn snapshot(&self) -> Option<TimestampParts> {
-        *self.0.lock().expect("TSO order poisoned")
-    }
-
-    pub fn accept(
-        &self,
-        batch: TsoBatch,
-        before_request: Option<TimestampParts>,
-    ) -> Result<(), BatchError> {
-        if before_request.is_some_and(|previous| batch.split(0) <= previous) {
-            return Err(invalid(
-                "tso_fallback",
-                "PD Tso batch is not after the previously allocated timestamp",
-            ));
-        }
-        let mut latest = self.0.lock().expect("TSO order poisoned");
-        if latest.is_none_or(|previous| batch.last() > previous) {
-            *latest = Some(batch.last());
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,24 +174,5 @@ mod tests {
                 kind
             );
         }
-    }
-
-    #[test]
-    fn source_completion_checks_pre_request_order_and_keeps_maximum_across_overlaps() {
-        let tracker = TimestampTracker::default();
-        let batch = |logical| TsoBatch::from_response(&response(100, logical, 2, 0), 2).unwrap();
-        tracker.accept(batch(2), None).unwrap();
-        let before = tracker.snapshot();
-        tracker.accept(batch(8), before).unwrap();
-        tracker.accept(batch(4), before).unwrap();
-        assert_eq!(tracker.snapshot().unwrap().logical, 8);
-        assert_eq!(
-            tracker
-                .accept(batch(9), tracker.snapshot())
-                .unwrap_err()
-                .kind,
-            "tso_fallback"
-        );
-        tracker.accept(batch(10), tracker.snapshot()).unwrap();
     }
 }

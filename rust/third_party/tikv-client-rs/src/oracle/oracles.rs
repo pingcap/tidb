@@ -297,7 +297,7 @@ impl PdOracle {
         let (physical, logical) = self.state.source.get_timestamp().await?;
         let elapsed = started.elapsed();
         if elapsed > SLOW_TIMESTAMP_FETCH {
-            log::warn!("get timestamp too slow: {elapsed:?}");
+            log::warn!("cost time":% = crate::logutil::go_duration(elapsed); "get timestamp too slow");
         }
         Ok(super::compose_timestamp(physical, logical))
     }
@@ -790,7 +790,7 @@ impl Oracle for PdOracle {
         let (physical, logical) = self.state.source.get_min_timestamp().await?;
         let elapsed = started.elapsed();
         if elapsed > SLOW_TIMESTAMP_FETCH {
-            log::warn!("get minimum timestamp too slow: {elapsed:?}");
+            log::warn!("cost time":% = crate::logutil::go_duration(elapsed); "get minimum timestamp too slow");
         }
         Ok(super::compose_timestamp(physical, logical))
     }

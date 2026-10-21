@@ -5,8 +5,6 @@ use std::sync::RwLock;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use log::debug;
-use log::info;
 
 use crate::async_util::Cancellation;
 use crate::backoff::{DEFAULT_REGION_BACKOFF, DEFAULT_STORE_BACKOFF};
@@ -238,7 +236,6 @@ impl Client {
         config: Config,
     ) -> Result<Client> {
         let latches = transaction_latches(&config)?;
-        debug!("creating new transactional client");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let configured_keyspace = config.keyspace.as_deref().map(build_keyspace_name);
         let pd = match &configured_keyspace {
@@ -292,7 +289,6 @@ impl Client {
         }
         let latches = transaction_latches(&config)?;
 
-        debug!("creating new transactional client (api-v2-no-prefix)");
         let pd_endpoints: Vec<String> = pd_endpoints.into_iter().map(Into::into).collect();
         let pd = Arc::new(PdRpcClient::connect(&pd_endpoints, config.clone(), true).await?);
         let (read_timestamp_validator, lock_resolver_context) = store_oracle_parts(&pd).await?;
@@ -379,10 +375,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn begin_optimistic(&self) -> Result<Transaction<PdC>> {
         let timestamp = self.current_timestamp().await?;
-        debug!(
-            "began optimistic transaction, start_ts: {}",
-            timestamp.version()
-        );
         Ok(self.new_transaction(timestamp, TransactionOptions::new_optimistic()))
     }
 
@@ -405,10 +397,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn begin_pessimistic(&self) -> Result<Transaction<PdC>> {
         let timestamp = self.current_timestamp().await?;
-        debug!(
-            "began pessimistic transaction, start_ts: {}",
-            timestamp.version()
-        );
         Ok(self.new_transaction(timestamp, TransactionOptions::new_pessimistic()))
     }
 
@@ -438,13 +426,11 @@ impl<PdC: PdClient> Client<PdC> {
             Some(timestamp) => timestamp,
             None => self.current_timestamp().await?,
         };
-        debug!("began transaction, start_ts: {}", timestamp.version());
         Ok(self.new_transaction(timestamp, options))
     }
 
     /// Create a new [`Snapshot`] at the given [`Timestamp`].
     pub fn snapshot(&self, timestamp: Timestamp, options: TransactionOptions) -> Snapshot<PdC> {
-        debug!("creating new snapshot");
         Snapshot::new(self.new_transaction(timestamp, options.read_only()))
     }
 
@@ -498,8 +484,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// This is a simplified version of [GC in TiDB](https://docs.pingcap.com/tidb/stable/garbage-collection-overview).
     /// We skip the second step "delete ranges" which is an optimization for TiDB.
     pub async fn gc(&self, safepoint: Timestamp) -> Result<bool> {
-        debug!("invoking transactional gc request");
-
         let options = ResolveLocksOptions {
             batch_size: SCAN_LOCK_BATCH_SIZE,
             ..Default::default()
@@ -507,17 +491,12 @@ impl<PdC: PdClient> Client<PdC> {
         self.cleanup_locks(.., &safepoint, options).await?;
 
         // update safepoint to PD
+        // client-go's GC logs nothing when PD keeps a newer safepoint.
         let res: bool = self
             .pd
             .clone()
             .update_safepoint(safepoint.version())
             .await?;
-        if !res {
-            info!(
-                "GC safepoint not updated: PD already holds a safepoint newer than the requested {}",
-                safepoint.version()
-            );
-        }
         Ok(res)
     }
 
@@ -527,7 +506,6 @@ impl<PdC: PdClient> Client<PdC> {
         safepoint: &Timestamp,
         options: ResolveLocksOptions,
     ) -> Result<CleanupLocksResult> {
-        debug!("invoking cleanup async commit locks");
         // scan all locks with ts <= safepoint
         let ctx = self.lock_resolver_context.clone();
         let backoff = Backoff::equal_jitter_backoff(100, 10000, 50);

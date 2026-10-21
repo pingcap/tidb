@@ -146,6 +146,13 @@ pub trait RetryClientTrait {
 
     async fn get_all_stores(self: Arc<Self>) -> Result<Vec<metapb::Store>>;
 
+    /// pd-client `GetAllStores(ctx, WithExcludeTombstone(),
+    /// WithAllowRouterServiceHandleStoreRequest())`, the store-list refresh's
+    /// first attempt. Clients without a router service answer from PD.
+    async fn get_all_stores_allowing_router_service(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+        self.get_all_stores().await
+    }
+
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp>;
 
     async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
@@ -343,6 +350,9 @@ struct DiscoveryRefresh {
     members: tokio::sync::Mutex<()>,
     timestamp: tokio::sync::Mutex<()>,
     members_changed: tokio::sync::Notify,
+    /// The TSO client's `ScheduleCheckMemberChanged`: also re-check the TSO
+    /// routing (a keyspace group's members in microservice mode).
+    tso_members_changed: tokio::sync::Notify,
 }
 
 /// Client for communication with a PD cluster. Has the facility to reconnect to the cluster.
@@ -357,6 +367,9 @@ pub struct RetryClient<Cl = Cluster> {
     initial_keyspace: Option<keyspacepb::KeyspaceMeta>,
     // pd-client's token dispatcher, created on the first token request.
     token_dispatcher: tokio::sync::OnceCell<super::resource_manager_client::TokenDispatcher>,
+    /// pd-client `innerClient.msDiscovery`.
+    router_discovery:
+        tokio::sync::Mutex<Option<Arc<super::router_service_discovery::RouterServiceDiscovery>>>,
 }
 
 impl<Cl> RetryClient<Cl> {
@@ -375,6 +388,7 @@ impl<Cl> RetryClient<Cl> {
             timeout,
             initial_keyspace: None,
             token_dispatcher: tokio::sync::OnceCell::new(),
+            router_discovery: tokio::sync::Mutex::new(None),
         }
     }
 }
@@ -421,6 +435,18 @@ macro_rules! retry_core {
             result = request => result,
         };
         stats.done(result)
+    }};
+}
+
+/// [`retry!`] for a call client-go's `util.InterceptedPDClient` wraps: the
+/// whole wait, retries included, is charged to the statement's
+/// `ExecDetails.WaitPDRespDuration` (Go `recordPDWaitTime`).
+macro_rules! retry_recording_pd_wait {
+    ($self: ident, $tag: literal, |$cluster: ident| $call: expr) => {{
+        let started = std::time::Instant::now();
+        let result = retry!($self, $tag, |$cluster| $call);
+        crate::util::record_pd_wait_time(started);
+        result
     }};
 }
 
@@ -511,18 +537,174 @@ impl RetryClient<Cluster> {
         client.connection = connection;
         client.initial_keyspace = initial_keyspace;
         client.start_discovery().await;
+        client.start_router_service_discovery().await;
         Ok(client)
     }
 
+    /// A meta-storage read through this client's current cluster, of one key
+    /// or (`prefix`) of every key under it.
+    fn meta_get(
+        &self,
+        prefix: bool,
+    ) -> Arc<
+        dyn Fn(
+                Vec<u8>,
+            ) -> futures::future::BoxFuture<
+                'static,
+                Result<crate::proto::meta_storagepb::GetResponse>,
+            > + Send
+            + Sync,
+    > {
+        let meta_cluster = Arc::downgrade(&self.cluster);
+        let timeout = self.timeout;
+        Arc::new(move |key| {
+            let cluster = meta_cluster.clone();
+            async move {
+                let cluster = cluster.upgrade().ok_or(Error::ContextCanceled)?;
+                let request = {
+                    let guard = cluster.read().await;
+                    let request = crate::proto::meta_storagepb::GetRequest {
+                        header: Some(crate::proto::meta_storagepb::RequestHeader {
+                            cluster_id: guard.0.id(),
+                            ..Default::default()
+                        }),
+                        range_end: if prefix {
+                            super::meta_storage_client::get_prefix(&key)
+                        } else {
+                            Vec::new()
+                        },
+                        key,
+                        ..Default::default()
+                    };
+                    guard.0.meta_storage_get(request, timeout)
+                };
+                request.await
+            }
+            .boxed()
+        })
+    }
+
+    fn get_or_create_conn(&self) -> super::router_service_discovery::GetOrCreateConn {
+        let connection = self.connection.clone();
+        Arc::new(move |url| {
+            let connection = connection.clone();
+            async move { connection.get_or_create_channel(&url).await }.boxed()
+        })
+    }
+
+    /// pd-client `innerClient.init`'s `NewRouterServiceDiscovery`.
+    async fn start_router_service_discovery(&self) {
+        let (cluster_id, keyspace_id) = {
+            let guard = self.cluster.read().await;
+            (guard.0.id(), guard.0.keyspace_id())
+        };
+        let meta_get = self.meta_get(true);
+        let connect = self.get_or_create_conn();
+        let connection = self.connection.clone();
+        let remove: super::router_service_discovery::RemoveConn =
+            Arc::new(move |url| connection.remove_channel(url));
+        let discovery = super::router_service_discovery::RouterServiceDiscovery::new(
+            &self.cancellation,
+            cluster_id,
+            keyspace_id,
+            self.connection.tls_configured(),
+            self.connection.options.max_retry_times,
+            meta_get,
+            connect,
+            remove,
+        )
+        .await;
+        self.connection
+            .set_router_discovery(Some(discovery.clone()));
+        *self.router_discovery.lock().await = Some(discovery);
+    }
+
+    /// The TSO client's `ScheduleCheckMemberChanged` / `CheckMemberChanged`
+    /// over this client's membership refresh.
+    fn tso_discovery_hooks(&self) -> super::cluster::TsoDiscoveryHooks {
+        let refresh = Arc::downgrade(&self.reconnect);
+        let check_cluster = Arc::downgrade(&self.cluster);
+        let check_refresh = Arc::downgrade(&self.reconnect);
+        let connection = self.connection.clone();
+        let timeout = self.timeout;
+        super::cluster::TsoDiscoveryHooks {
+            schedule_check_member_changed: Arc::new(move || {
+                if let Some(refresh) = refresh.upgrade() {
+                    refresh.members_changed.notify_one();
+                    refresh.tso_members_changed.notify_one();
+                }
+            }),
+            check_member_changed: Arc::new(move || {
+                let cluster = check_cluster.clone();
+                let refresh = check_refresh.clone();
+                let connection = connection.clone();
+                // The refresh may replace and close the very TSO client that
+                // asked for it, which joins the asking task; run it in its own
+                // task so the asker can be abandoned meanwhile.
+                let refresh_task = tokio::spawn(async move {
+                    let (Some(cluster), Some(refresh)) = (cluster.upgrade(), refresh.upgrade())
+                    else {
+                        return Err(Error::ContextCanceled);
+                    };
+                    refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None, true).await
+                });
+                async move {
+                    refresh_task
+                        .await
+                        .unwrap_or_else(|error| Err(Error::JoinError(error)))
+                }
+                .boxed()
+            }),
+        }
+    }
+
     async fn start_discovery(&self) {
+        self.cluster
+            .read()
+            .await
+            .0
+            .set_tso_discovery_hooks(self.tso_discovery_hooks());
         let cluster = Arc::downgrade(&self.cluster);
         let connection = self.connection.clone();
         let refresh = self.reconnect.clone();
         let cancellation = self.cancellation.clone();
         let timeout = self.timeout;
         let mode = self.cluster.read().await.0.service_mode();
+        let cluster_id = self.cluster.read().await.0.id();
+        let rm_meta_get = self.meta_get(false);
+        let rm_connect = self.get_or_create_conn();
+        let rm_connection = self.connection.clone();
+        let rm_cancellation = self.cancellation.clone();
+        let rm_mode = mode.clone();
         let worker = tokio::spawn(async move {
             let mut mode_changes = mode.subscribe();
+            // pd-client `setServiceMode`: each new service mode resets the
+            // resource manager discovery (`resetResourceManagerDiscoveryLocked`).
+            let watch_mode = async {
+                let mut changes = rm_mode.subscribe();
+                let mut applied = pdpb::ServiceMode::UnknownSvcMode;
+                loop {
+                    let observed = rm_mode
+                        .snapshot()
+                        .and_then(|info| info.service_modes.first().copied())
+                        .and_then(|mode| pdpb::ServiceMode::try_from(mode).ok());
+                    if let Some(new_mode) = observed.filter(|mode| *mode != applied) {
+                        set_service_mode(
+                            new_mode,
+                            cluster_id,
+                            &rm_connection,
+                            &rm_cancellation,
+                            &rm_meta_get,
+                            &rm_connect,
+                        )
+                        .await;
+                        applied = new_mode;
+                    }
+                    if changes.changed().await.is_err() {
+                        break;
+                    }
+                }
+            };
             let observe_mode = async {
                 let mut ticks = tokio::time::interval_at(
                     tokio::time::Instant::now() + super::service_discovery::UPDATE_INTERVAL,
@@ -536,8 +718,13 @@ impl RetryClient<Cluster> {
                     };
                     let observe = connection.prepare_service_mode(&cluster.read().await.0, timeout);
                     if let Err(error) = observe.await {
+                        let urls = cluster.read().await.0.service_urls();
+                        log::warn!(
+                            "sorted-urls":serde = urls,
+                            error:% = error;
+                            "[pd] failed to update service mode"
+                        );
                         refresh.members_changed.notify_one();
-                        log::warn!("PD service mode observation: {error}");
                     }
                 }
             };
@@ -546,16 +733,17 @@ impl RetryClient<Cluster> {
                     tokio::select! {
                         _ = sleep(super::service_discovery::UPDATE_INTERVAL) => {},
                         _ = mode_changes.changed() => {},
-                        _ = async { connection.options.enable_tso_follower_proxy_ch.receiver.lock().await.recv().await } => {},
+                        _ = refresh.tso_members_changed.notified() => {},
                     }
                     let Some(cluster) = cluster.upgrade() else {
                         break;
                     };
+                    // pd-client `tsoServiceDiscovery.startCheckMemberLoop`.
                     if let Err(error) =
                         refresh_timestamp_cached(&cluster, &connection, &refresh, timeout, None)
                             .await
                     {
-                        log::warn!("PD service discovery refresh: {error}");
+                        log::warn!(error:% = error; "[tso] failed to update member");
                     }
                 }
             };
@@ -576,7 +764,12 @@ impl RetryClient<Cluster> {
                         refresh_cluster(&cluster, &connection, &refresh, timeout, 0, None, false)
                             .await
                     {
-                        log::warn!("PD membership refresh: {error}");
+                        let urls = cluster.read().await.0.service_urls();
+                        log::warn!(
+                            "sorted-urls":serde = urls,
+                            error:% = error;
+                            "[pd] failed to update member"
+                        );
                     }
                 }
             };
@@ -597,7 +790,7 @@ impl RetryClient<Cluster> {
             tokio::select! {
                 biased;
                 _ = cancellation.cancelled() => {},
-                _ = async { tokio::join!(observe_mode, discover, members, health); } => {},
+                _ = async { tokio::join!(observe_mode, discover, members, health, watch_mode); } => {},
             }
         });
         *self.discovery_worker.lock().await = Some(worker);
@@ -623,10 +816,15 @@ impl RetryClient<Cluster> {
         self.cancellation.cancel();
         let mut worker = self.discovery_worker.lock().await;
         if let Some(handle) = worker.as_mut() {
-            if let Err(error) = handle.await {
-                log::error!("PD discovery worker failed: {error}");
-            }
+            let _ = handle.await;
             worker.take();
+        }
+        if let Some(discovery) = self.router_discovery.lock().await.take() {
+            self.connection.set_router_discovery(None);
+            discovery.close().await;
+        }
+        if let Some(discovery) = self.connection.set_resource_manager_discovery(None) {
+            discovery.close().await;
         }
         let _members = self.reconnect.members.lock().await;
         let _timestamp = self.reconnect.timestamp.lock().await;
@@ -636,7 +834,7 @@ impl RetryClient<Cluster> {
     }
 
     #[cfg(test)]
-    pub(crate) async fn tso_for_test(&self) -> super::timestamp::TimestampOracle {
+    pub(crate) async fn tso_for_test(&self) -> Arc<super::tso::Cli> {
         self.cluster.read().await.0.tso_for_test()
     }
 
@@ -755,7 +953,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     // These get_* functions will try multiple times to make a request, reconnecting as necessary.
     // It does not know about encoding. Caller should take care of it.
     async fn get_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry!(self, "get_region", |cluster| {
+        retry_recording_pd_wait!(self, "get_region", |cluster| {
             let key = key.clone();
             cluster
                 .get_region(key.clone(), self.timeout)
@@ -773,7 +971,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         previous: bool,
         leader_only: bool,
     ) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_for_cache", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_for_cache", |cluster| {
             let key = key.clone();
             cluster
                 .get_region_routed(key.clone(), self.timeout, true, previous, !leader_only)
@@ -786,7 +984,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_region_with_buckets(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_with_buckets", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_with_buckets", |cluster| {
             let key = key.clone();
             cluster
                 .get_region_with_buckets(key.clone(), self.timeout, true)
@@ -799,7 +997,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_prev_region(self: Arc<Self>, key: Vec<u8>) -> Result<RegionWithLeader> {
-        retry!(self, "get_prev_region", |cluster| {
+        retry_recording_pd_wait!(self, "get_prev_region", |cluster| {
             let key = key.clone();
             cluster
                 .get_prev_region(key.clone(), self.timeout)
@@ -815,7 +1013,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         key: Vec<u8>,
     ) -> Result<RegionWithLeader> {
-        retry!(self, "get_prev_region_with_buckets", |cluster| {
+        retry_recording_pd_wait!(self, "get_prev_region_with_buckets", |cluster| {
             let key = key.clone();
             cluster
                 .get_prev_region_with_buckets(key.clone(), self.timeout, true)
@@ -828,7 +1026,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_region_by_id(self: Arc<Self>, region_id: RegionId) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_by_id", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_by_id", |cluster| {
             cluster
                 .get_region_by_id(region_id, self.timeout)
                 .map(move |result| {
@@ -843,7 +1041,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         self: Arc<Self>,
         region_id: RegionId,
     ) -> Result<RegionWithLeader> {
-        retry!(self, "get_region_by_id_with_buckets", |cluster| {
+        retry_recording_pd_wait!(self, "get_region_by_id_with_buckets", |cluster| {
             cluster
                 .get_region_by_id_with_buckets(region_id, self.timeout, true)
                 .map(move |result| {
@@ -860,7 +1058,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
         end_key: Vec<u8>,
         limit: usize,
     ) -> Result<Vec<RegionWithLeader>> {
-        retry!(self, "scan_regions", |cluster| {
+        retry_recording_pd_wait!(self, "scan_regions", |cluster| {
             cluster
                 .scan_regions_routed(
                     start_key.clone(),
@@ -898,7 +1096,7 @@ impl RetryClientTrait for RetryClient<Cluster> {
     }
 
     async fn get_store(self: Arc<Self>, id: StoreId) -> Result<Option<metapb::Store>> {
-        retry!(self, "get_store", |cluster| {
+        retry_recording_pd_wait!(self, "get_store", |cluster| {
             cluster
                 .get_store(id, self.timeout)
                 .map(|result| result.map(|resp| resp.store))
@@ -913,8 +1111,59 @@ impl RetryClientTrait for RetryClient<Cluster> {
         })
     }
 
+    async fn get_all_stores_allowing_router_service(self: Arc<Self>) -> Result<Vec<metapb::Store>> {
+        retry!(self, "get_all_stores", |cluster| {
+            cluster
+                .get_all_stores_allowing_router_service(self.timeout)
+                .map(|result| result.map(|resp| resp.stores))
+        })
+    }
+
+    /// pd-client `client.GetTS`: re-dispatch on a leader change or a callee
+    /// mismatch, at once the first time and then every `retryInterval`, at
+    /// most `maxTSORetryTimes` times. The TSO client recovers its own streams;
+    /// this path never reconnects PD.
     async fn get_timestamp(self: Arc<Self>) -> Result<Timestamp> {
-        retry!(self, "get_timestamp", |cluster| cluster.get_timestamp())
+        const MAX_TSO_RETRY_TIMES: usize = 20;
+        const RETRY_INTERVAL: Duration = Duration::from_millis(100);
+        let started = Instant::now();
+        let stats = pd_stats("get_timestamp");
+        let slot = self.cluster.read().await.0.tso_slot();
+        let request = async {
+            let mut retry_count = 0;
+            loop {
+                let result = super::tso::get_ts_async(|| slot.read().unwrap().clone()).await;
+                let error = match result {
+                    Ok(timestamp) => return Ok(timestamp),
+                    Err(error) => error,
+                };
+                let error_ref: &(dyn std::error::Error + 'static) = &error;
+                let retryable = super::errs::is_leader_change(Some(error_ref))
+                    || super::errs::is_callee_mismatch(Some(error_ref));
+                if !retryable || retry_count + 1 >= MAX_TSO_RETRY_TIMES {
+                    super::metrics::global_metrics()
+                        .tso_retry_count
+                        .observe(retry_count as f64);
+                    return Err(error);
+                }
+                log::debug!(
+                    "retry-count" = retry_count,
+                    error:% = error;
+                    "[pd] get tso failed, retrying"
+                );
+                if retry_count != 0 {
+                    sleep(RETRY_INTERVAL).await;
+                }
+                retry_count += 1;
+            }
+        };
+        let result = tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => Err(Error::ContextCanceled),
+            result = request => result,
+        };
+        crate::util::record_pd_wait_time(started);
+        stats.done(result)
     }
 
     async fn get_min_timestamp(self: Arc<Self>) -> Result<Timestamp> {
@@ -1313,6 +1562,44 @@ impl<Cl> Drop for RetryClient<Cl> {
     }
 }
 
+/// pd-client `innerClient.setServiceMode`'s resource-manager half
+/// (`resetResourceManagerDiscoveryLocked`) and its line.
+async fn set_service_mode(
+    new_mode: pdpb::ServiceMode,
+    cluster_id: u64,
+    connection: &Connection,
+    cancellation: &Cancellation,
+    meta_get: &super::resource_manager_discovery::MetaGet,
+    connect: &super::router_service_discovery::GetOrCreateConn,
+) {
+    match new_mode {
+        pdpb::ServiceMode::PdSvcMode => {
+            if let Some(old) = connection.set_resource_manager_discovery(None) {
+                old.close().await;
+            }
+        }
+        pdpb::ServiceMode::ApiSvcMode => {
+            let discovery = super::resource_manager_discovery::ResourceManagerDiscovery::new(
+                cancellation,
+                cluster_id,
+                meta_get.clone(),
+                connect.clone(),
+                // The token dispatcher reconnects when the URL it reads
+                // differs from its stream's.
+                Arc::new(|| {}),
+            );
+            discovery.init().await;
+            if let Some(old) = connection.set_resource_manager_discovery(Some(discovery)) {
+                old.close().await;
+            }
+        }
+        pdpb::ServiceMode::UnknownSvcMode => {
+            log::warn!("[pd] intend to switch to unknown service mode, just return");
+        }
+    }
+    log::info!("new-mode" = new_mode.as_str_name(); "[pd] service mode changed");
+}
+
 async fn refresh_cluster(
     cluster: &RwLock<(Cluster, Instant)>,
     connection: &Connection,
@@ -1448,7 +1735,8 @@ pub(crate) fn spawn_watch_forwarder<S: WatchStream + 'static>(
         let mut stream = match opened {
             Ok(stream) => stream,
             Err(error) => {
-                log::warn!("watch stream open failed, error: {error}");
+                // pd-client returns the open error to its caller unlogged.
+                let _ = error;
                 return;
             }
         };
@@ -1462,11 +1750,12 @@ pub(crate) fn spawn_watch_forwarder<S: WatchStream + 'static>(
             let resp = match message {
                 Ok(Some(resp)) => resp,
                 Ok(None) => {
-                    log::warn!("watch stream closed");
+                    // Go's `Recv` reports the stream end as `io.EOF`.
+                    log::warn!(error = "EOF"; "watch stream closed");
                     return;
                 }
                 Err(error) => {
-                    log::warn!("watch stream closed, error: {error}");
+                    log::warn!(error:% = error; "watch stream closed");
                     return;
                 }
             };
@@ -1481,8 +1770,9 @@ pub(crate) fn spawn_watch_forwarder<S: WatchStream + 'static>(
                 if error.r#type == crate::proto::meta_storagepb::ErrorType::DataCompacted as i32 {
                     compact_revision = resp.compact_revision;
                     log::info!(
-                        "watch stream closed due to data compacted, required watch revision: {compact_revision}, err: {}",
-                        super::meta_storage_client::meta_storage_error_text(error)
+                        "required watch revision" = compact_revision,
+                        err:% = super::meta_storage_client::meta_storage_error_text(error);
+                        "watch stream closed due to data compacted"
                     );
                 }
             }

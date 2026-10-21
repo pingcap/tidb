@@ -209,9 +209,11 @@ impl<S: PdClient> ClientTransaction<S> {
     }
     /// Installs the statement values in force on the client transaction
     /// before a call: client-rust charges its `RuDetails` on every RPC (Go's
-    /// resource-control interceptor reading the ctx's `RUDetails`) and tags
-    /// every request with the statement's tagger (Go
-    /// `KVTxn.SetResourceGroupTagger`).
+    /// resource-control interceptor reading the ctx's `RUDetails`), charges
+    /// its `ExecDetails` where client-go charges the ctx's
+    /// `util.ExecDetailsKey` (the statement ctx Go passes `KVTxn.Get`,
+    /// `BatchGet`, `LockKeys`, `Commit`), and tags every request with the
+    /// statement's tagger (Go `KVTxn.SetResourceGroupTagger`).
     fn apply_statement_kv_context(&mut self) {
         let Some(cell) = &self.kv_context else {
             return;
@@ -227,6 +229,18 @@ impl<S: PdClient> ClientTransaction<S> {
                 self.engine
                     .transaction_mut()
                     .set_ru_details(Arc::clone(ru_details));
+            }
+        }
+        if let Some(exec_details) = &context.exec_details {
+            let applied = self
+                .applied_kv_context
+                .exec_details
+                .as_ref()
+                .is_some_and(|applied| Arc::ptr_eq(applied, exec_details));
+            if !applied {
+                self.engine
+                    .transaction_mut()
+                    .set_exec_details(Arc::clone(exec_details));
             }
         }
         if let Some(tagger) = &context.resource_group_tagger {
@@ -578,6 +592,9 @@ impl<S: PdClient> ClientTransaction<S> {
         // Go `KVTxn.GetSnapshot` shares the transaction's options and ctx.
         if let Some(ru_details) = &self.applied_kv_context.ru_details {
             transaction.set_ru_details(Arc::clone(ru_details));
+        }
+        if let Some(exec_details) = &self.applied_kv_context.exec_details {
+            transaction.set_exec_details(Arc::clone(exec_details));
         }
         if let Some(tagger) = &self.applied_kv_context.resource_group_tagger {
             let tagger = Arc::clone(tagger);

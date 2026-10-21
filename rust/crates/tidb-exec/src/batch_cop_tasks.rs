@@ -91,6 +91,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
     memory: &tidb_executor::StatementMemory,
     mut tiflash_replica_read_policy: ReplicaRead,
+    kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<(Vec<BatchCopTask>, Vec<String>), String> {
     let mut warnings = Vec::new();
     let pd = store.store().pd_client();
@@ -102,7 +103,7 @@ pub(crate) async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     let tidb_zone = tidb_zone.unwrap_or_default();
     let mut budget = RegionBackoffBudget::new(COP_BUILD_TASK_MAX_BACKOFF);
     loop {
-        let tasks = crate::tiflash_mpp_scan::locate_mpp_regions(store, ranges, memory)?;
+        let tasks = crate::tiflash_mpp_scan::locate_mpp_regions(store, ranges, memory, kv_context)?;
         let mut rpc_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores = Vec::with_capacity(tasks.len());
         let mut used_tiflash_stores_map = BTreeSet::new();

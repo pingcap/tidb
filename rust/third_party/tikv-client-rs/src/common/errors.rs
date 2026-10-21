@@ -310,6 +310,15 @@ impl From<ProtoKeyError> for Error {
         if let Some(not_found) = error.txn_not_found.take() {
             return Error::TxnNotFound(not_found);
         }
+        // client-go `ExtractKeyErr` logs these two before returning them.
+        if !error.abort.is_empty() {
+            log::warn!(error:% = format_args!("tikv aborts txn: {}", error.abort); "2PC failed");
+        } else if let Some(too_large) = &error.commit_ts_too_large {
+            log::warn!(
+                error:% = format_args!("commit TS {} is too large", too_large.commit_ts);
+                "2PC failed"
+            );
+        }
         Error::KeyError(Box::new(error))
     }
 }

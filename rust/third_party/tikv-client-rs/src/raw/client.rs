@@ -8,8 +8,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use log::debug;
-
 use crate::async_util::Cancellation;
 use crate::backoff::DEFAULT_REGION_BACKOFF;
 use crate::common::Error;
@@ -486,7 +484,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn get(&self, key: impl Into<Key>) -> Result<Option<Value>> {
         let _metric = RawKvMetricTimer::command("get");
-        debug!("invoking raw get request");
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let request = new_raw_get_request(key, self.cf.clone());
         let plan = self
@@ -526,7 +523,6 @@ impl<PdC: PdClient> Client<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<Option<Value>>> {
         let _metric = RawKvMetricTimer::command("batch_get");
-        debug!("invoking raw batch_get request");
         let keys = keys.into_iter().map(Into::into).collect::<Vec<Key>>();
         let request_keys = keys
             .iter()
@@ -561,7 +557,6 @@ impl<PdC: PdClient> Client<PdC> {
         keys: impl IntoIterator<Item = impl Into<Key>>,
     ) -> Result<Vec<KvPair>> {
         let _metric = RawKvMetricTimer::command("batch_get");
-        debug!("invoking raw batch_get_pairs request");
         let keys = keys
             .into_iter()
             .map(|key| key.into().encode_keyspace(self.keyspace, KeyMode::Raw));
@@ -593,7 +588,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// # });
     /// ```
     pub async fn get_key_ttl_secs(&self, key: impl Into<Key>) -> Result<Option<u64>> {
-        debug!("invoking raw get_key_ttl_secs request");
         let key = key.into();
         crate::stats::observe_rawkv_size("key", key.len());
         let key = key.encode_keyspace(self.keyspace, KeyMode::Raw);
@@ -635,7 +629,6 @@ impl<PdC: PdClient> Client<PdC> {
         ttl_secs: u64,
     ) -> Result<()> {
         let _metric = RawKvMetricTimer::command("batch_put");
-        debug!("invoking raw put request");
         let key = key.into();
         let value = value.into();
         crate::stats::observe_rawkv_size("key", key.len());
@@ -711,7 +704,6 @@ impl<PdC: PdClient> Client<PdC> {
     }
 
     async fn batch_put_encoded(&self, pairs: Vec<KvPair>, ttls: Vec<u64>) -> Result<()> {
-        debug!("invoking raw batch_put request");
         // client-go builds key-to-value and key-to-TTL maps before grouping.
         // Duplicate input keys are therefore all sent with the final value and
         // TTL for that key. Retain that observable edge case.
@@ -764,7 +756,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn delete(&self, key: impl Into<Key>) -> Result<()> {
         let _metric = RawKvMetricTimer::command("delete");
-        debug!("invoking raw delete request");
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let request = new_raw_delete_request(key, self.cf.clone(), self.atomic);
         let plan = self
@@ -796,7 +787,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn batch_delete(&self, keys: impl IntoIterator<Item = impl Into<Key>>) -> Result<()> {
         let _metric = RawKvMetricTimer::command("batch_delete");
-        debug!("invoking raw batch_delete request");
         let keys = keys
             .into_iter()
             .map(|k| k.into().encode_keyspace(self.keyspace, KeyMode::Raw));
@@ -840,7 +830,6 @@ impl<PdC: PdClient> Client<PdC> {
     }
 
     async fn delete_range_inner(&self, range: BoundRange) -> Result<()> {
-        debug!("invoking raw delete_range request");
         let (start_key, end_key) = range.clone().into_keys();
         // Client-go's `for startKey < endKey` loop performs no routing or RPC
         // for an empty bounded half-open range. An inclusive Rust range has
@@ -887,7 +876,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// keyspace.
     pub async fn checksum(&self, range: impl Into<BoundRange>) -> Result<crate::RawChecksum> {
         let _metric = RawKvMetricTimer::checksum();
-        debug!("invoking raw checksum request");
         let range = range.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let (mut start_key, end_key) = range.into_keys();
         let mut checksum = crate::RawChecksum::default();
@@ -939,7 +927,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn scan(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<KvPair>> {
         let _metric = RawKvMetricTimer::command("raw_scan");
-        debug!("invoking raw scan request");
         self.scan_inner(range.into(), limit, false, false).await
     }
 
@@ -974,7 +961,6 @@ impl<PdC: PdClient> Client<PdC> {
         limit: u32,
     ) -> Result<Vec<KvPair>> {
         let _metric = RawKvMetricTimer::command("raw_reverse_scan");
-        debug!("invoking raw reverse scan request");
         self.scan_inner(range.into(), limit, false, true).await
     }
 
@@ -999,7 +985,6 @@ impl<PdC: PdClient> Client<PdC> {
     /// ```
     pub async fn scan_keys(&self, range: impl Into<BoundRange>, limit: u32) -> Result<Vec<Key>> {
         let _metric = RawKvMetricTimer::command("raw_scan");
-        debug!("invoking raw scan_keys request");
         Ok(self
             .scan_inner(range, limit, true, false)
             .await?
@@ -1033,7 +1018,6 @@ impl<PdC: PdClient> Client<PdC> {
         limit: u32,
     ) -> Result<Vec<Key>> {
         let _metric = RawKvMetricTimer::command("raw_reverse_scan");
-        debug!("invoking raw scan_keys_reverse request");
         Ok(self
             .scan_inner(range, limit, true, true)
             .await?
@@ -1070,7 +1054,6 @@ impl<PdC: PdClient> Client<PdC> {
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<KvPair>> {
-        debug!("invoking raw batch_scan request");
         self.batch_scan_inner(ranges, each_limit, false).await
     }
 
@@ -1102,7 +1085,6 @@ impl<PdC: PdClient> Client<PdC> {
         ranges: impl IntoIterator<Item = impl Into<BoundRange>>,
         each_limit: u32,
     ) -> Result<Vec<Key>> {
-        debug!("invoking raw batch_scan_keys request");
         Ok(self
             .batch_scan_inner(ranges, each_limit, true)
             .await?
@@ -1129,7 +1111,6 @@ impl<PdC: PdClient> Client<PdC> {
         previous_value: impl Into<Option<Value>>,
         new_value: impl Into<Value>,
     ) -> Result<(Option<Value>, bool)> {
-        debug!("invoking raw compare_and_swap request");
         self.assert_atomic()?;
         let key = key.into().encode_keyspace(self.keyspace, KeyMode::Raw);
         let req = new_cas_request(

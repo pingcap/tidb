@@ -115,13 +115,35 @@ pub fn with_span_ctx<F: Future>(span: Option<Span>, future: F) -> impl Future<Ou
 /// client spans of every send on it report under `span` (and, after
 /// `bo.SetCtx`, under the spans those sends opened).
 pub fn build_in_span_ctx<T>(span: Option<Span>, build: impl FnOnce() -> T) -> T {
-    match span {
-        Some(span) => futures::executor::block_on(tikv_client::trace::with_client_spans(
-            client_span_handler(span),
-            async move { build() },
-        )),
-        None => build(),
+    build_in_ctx(span, None, build)
+}
+
+/// [`build_in_span_ctx`] for a `ctx` that also carries the statement's
+/// values (`context`, client-rust's trace context: Go
+/// `util.ExecDetailsKey`, `util.RUDetailsCtxKey`, `retry.TxnStartKey`): a
+/// `RetryBackoffer` takes them from the task it is made in, so its sleeps
+/// charge the statement's `ExecDetails` and its `retry later` lines report
+/// the start ts, as Go's `bo.ctx` does.
+pub fn build_in_ctx<'a, T: 'a>(
+    span: Option<Span>,
+    context: Option<tikv_client::trace::TraceContext>,
+    build: impl FnOnce() -> T + 'a,
+) -> T {
+    if span.is_none() && context.is_none() {
+        return build();
     }
+    let mut future: std::pin::Pin<Box<dyn Future<Output = T> + 'a>> =
+        Box::pin(async move { build() });
+    if let Some(span) = span {
+        future = Box::pin(tikv_client::trace::with_client_spans(
+            client_span_handler(span),
+            future,
+        ));
+    }
+    if let Some(context) = context {
+        future = Box::pin(tikv_client::trace::with_trace_context(context, future));
+    }
+    futures::executor::block_on(future)
 }
 
 #[cfg(test)]

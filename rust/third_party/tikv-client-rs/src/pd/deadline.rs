@@ -105,11 +105,11 @@ impl Watcher {
         let worker_queue = queue.clone();
         let source = source.into();
         let worker = tokio::spawn(async move {
-            log::info!("[pd] start the deadline watcher, source={source}");
+            log::info!(source:% = source; "[pd] start the deadline watcher");
             while let Some(deadline) = worker_queue.receive(&worker_cancellation).await {
                 tokio::select! {
                     _ = tokio::time::sleep_until(deadline.at) => {
-                        log::error!("[pd] the deadline is reached, source={source}");
+                        log::error!(source:% = source; "[pd] the deadline is reached");
                         (deadline.cancel)();
                     }
                     _ = deadline.done.cancelled() => {}
@@ -119,7 +119,7 @@ impl Watcher {
             // Rust can release queued callbacks as soon as their owner ends;
             // there is no Go timer/channel object that needs pooling or draining.
             worker_queue.state.lock().unwrap().entries.clear();
-            log::info!("[pd] exit the deadline watcher, source={source}");
+            log::info!(source:% = source; "[pd] exit the deadline watcher");
         });
         Self {
             inner: Arc::new(Inner {
@@ -182,11 +182,11 @@ impl Watcher {
         if let Some(handle) = worker.as_mut() {
             // Keep the handle until joining finishes, even if this close future
             // is dropped. Concurrent close callers wait for the same completion.
+            // An aborted worker is a shutdown; pd-client logs nothing for it.
             if let Err(error) = handle.await {
                 if error.is_panic() {
                     std::panic::resume_unwind(error.into_panic());
                 }
-                log::error!("[pd] deadline watcher cancelled: {error}");
             }
             worker.take();
         }

@@ -302,6 +302,379 @@ fn go_field_name(json_name: &str) -> String {
     first.to_uppercase().chain(characters).collect()
 }
 
+/// zap's `zap.Duration` value as TiDB's logger encodes it (Go
+/// `time.Duration.String()`), for structured log fields.
+pub(crate) fn go_duration(duration: std::time::Duration) -> String {
+    crate::trace::format_go_duration(duration)
+}
+
+/// zap's `zap.Time` value as TiDB's logger encodes it: pingcap/log's
+/// `DefaultTimeEncoder` layout (`2006/01/02 15:04:05.000 -07:00`) in Go's
+/// `time.Local`.
+pub(crate) fn zap_time(time: std::time::SystemTime) -> String {
+    let utc: chrono::DateTime<chrono::Utc> = time.into();
+    utc.with_timezone(&crate::error::go_time_local())
+        .format("%Y/%m/%d %H:%M:%S%.3f %:z")
+        .to_string()
+}
+
+/// zap's `zap.Reflect` (and `zap.Any` of a non-Stringer) rendering of a
+/// generated protobuf message: Go `encoding/json` over the gogo struct, whose
+/// fields carry `json:"<proto name>,omitempty"` tags. `None` is a nil pointer.
+pub(crate) fn go_json_protobuf<M>(message: Option<&M>) -> String
+where
+    M: Message + Name,
+{
+    let mut output = String::new();
+    match message {
+        Some(message) => append_go_json_message(&mut output, &reflect(message)),
+        None => output.push_str("null"),
+    }
+    output
+}
+
+/// [`go_json_protobuf`] for a `[]*T` slice; `None` is a nil slice.
+pub(crate) fn go_json_protobuf_slice<M>(messages: Option<&[M]>) -> String
+where
+    M: Message + Name,
+{
+    let Some(messages) = messages else {
+        return "null".to_owned();
+    };
+    let mut output = String::from("[");
+    for (index, message) in messages.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        append_go_json_message(&mut output, &reflect(message));
+    }
+    output.push(']');
+    output
+}
+
+fn reflect<M>(message: &M) -> DynamicMessage
+where
+    M: Message + Name,
+{
+    let full_name = M::full_name();
+    let descriptor = PROTOBUF_DESCRIPTORS
+        .get_message_by_name(&full_name)
+        .unwrap_or_else(|| panic!("protobuf descriptor missing for {full_name}"));
+    DynamicMessage::decode(descriptor, message.encode_to_vec().as_slice())
+        .unwrap_or_else(|error| panic!("cannot reflect {full_name}: {error}"))
+}
+
+fn append_go_json_message(output: &mut String, message: &DynamicMessage) {
+    output.push('{');
+    let mut wrote = false;
+    let mut emitted_oneofs = Vec::new();
+    // Go struct fields follow the declaration order of the .proto file.
+    for field in message.descriptor().fields() {
+        if let Some(oneof) = field.containing_oneof() {
+            if !field
+                .field_descriptor_proto()
+                .proto3_optional
+                .unwrap_or(false)
+            {
+                // The oneof is one interface field, with no json tag (so no
+                // omitempty), holding a pointer to a one-field wrapper struct.
+                let name = oneof.full_name().to_owned();
+                if emitted_oneofs.contains(&name) {
+                    continue;
+                }
+                emitted_oneofs.push(name);
+                if wrote {
+                    output.push(',');
+                }
+                wrote = true;
+                append_go_json_string(output, &go_field_name(&lower_camel(oneof.name())));
+                output.push(':');
+                match oneof
+                    .fields()
+                    .find(|candidate| message.has_field(candidate))
+                {
+                    Some(active) => {
+                        // The wrapper's one field is itself `omitempty`.
+                        output.push('{');
+                        let value = message.get_field(&active);
+                        if !go_json_is_empty(value.as_ref(), false) {
+                            append_go_json_string(output, active.name());
+                            output.push(':');
+                            append_go_json_value(output, value.as_ref());
+                        }
+                        output.push('}');
+                    }
+                    None => output.push_str("null"),
+                }
+                continue;
+            }
+        }
+        let value = message.get_field(&field);
+        if go_json_is_empty(
+            value.as_ref(),
+            field.supports_presence() && !message.has_field(&field),
+        ) {
+            continue;
+        }
+        if wrote {
+            output.push(',');
+        }
+        wrote = true;
+        append_go_json_string(output, field.name());
+        output.push(':');
+        append_go_json_value(output, value.as_ref());
+    }
+    output.push('}');
+}
+
+fn lower_camel(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    let mut upper = false;
+    for character in name.chars() {
+        if character == '_' {
+            upper = true;
+        } else if upper {
+            result.extend(character.to_uppercase());
+            upper = false;
+        } else {
+            result.push(character);
+        }
+    }
+    result
+}
+
+/// `omitempty`: false, 0, "", nil pointers and empty slices/maps.
+fn go_json_is_empty(value: &Value, absent: bool) -> bool {
+    if absent {
+        return true;
+    }
+    match value {
+        Value::Bool(value) => !value,
+        Value::I32(value) | Value::EnumNumber(value) => *value == 0,
+        Value::I64(value) => *value == 0,
+        Value::U32(value) => *value == 0,
+        Value::U64(value) => *value == 0,
+        Value::F32(value) => *value == 0.0,
+        Value::F64(value) => *value == 0.0,
+        Value::String(value) => value.is_empty(),
+        Value::Bytes(value) => value.is_empty(),
+        Value::Message(_) => false,
+        Value::List(values) => values.is_empty(),
+        Value::Map(values) => values.is_empty(),
+    }
+}
+
+fn append_go_json_value(output: &mut String, value: &Value) {
+    match value {
+        Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+        // gogo enums have no MarshalJSON, so encoding/json writes the number.
+        Value::I32(value) | Value::EnumNumber(value) => output.push_str(&value.to_string()),
+        Value::I64(value) => output.push_str(&value.to_string()),
+        Value::U32(value) => output.push_str(&value.to_string()),
+        Value::U64(value) => output.push_str(&value.to_string()),
+        Value::F32(value) => output.push_str(&go_json_float(f64::from(*value), 32)),
+        Value::F64(value) => output.push_str(&go_json_float(*value, 64)),
+        Value::String(value) => append_go_json_string(output, value),
+        Value::Bytes(value) => {
+            output.push('"');
+            output.push_str(&base64_std(value));
+            output.push('"');
+        }
+        Value::Message(value) => append_go_json_message(output, value),
+        Value::List(values) => {
+            output.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                append_go_json_value(output, value);
+            }
+            output.push(']');
+        }
+        Value::Map(values) => {
+            // encoding/json sorts map keys by their string form.
+            let mut values: Vec<_> = values
+                .iter()
+                .map(|(key, value)| (map_key_text(key), value))
+                .collect();
+            values.sort_by(|left, right| left.0.cmp(&right.0));
+            output.push('{');
+            for (index, (key, value)) in values.into_iter().enumerate() {
+                if index != 0 {
+                    output.push(',');
+                }
+                append_go_json_string(output, &key);
+                output.push(':');
+                append_go_json_value(output, value);
+            }
+            output.push('}');
+        }
+    }
+}
+
+/// encoding/json's float encoding: shortest round-trip digits, plain
+/// notation for 1e-6 <= |f| < 1e21, otherwise exponent form with a
+/// two-digit-minimum exponent trimmed to Go's `e-07` -> `e-7` style.
+fn go_json_float(value: f64, bits: u32) -> String {
+    if value.is_nan() || value.is_infinite() {
+        // encoding/json refuses these; zap then records the error text.
+        return format!("\"json: unsupported value: {}\"", go_float_word(value));
+    }
+    let absolute = value.abs();
+    let plain = absolute == 0.0 || (1e-6..1e21).contains(&absolute);
+    if bits == 32 {
+        let narrow = value as f32;
+        if plain {
+            return format!("{narrow}");
+        }
+        return go_exponent(&format!("{narrow:e}"));
+    }
+    if plain {
+        return format!("{value}");
+    }
+    go_exponent(&format!("{value:e}"))
+}
+
+fn go_float_word(value: f64) -> &'static str {
+    if value.is_nan() {
+        "NaN"
+    } else if value.is_sign_positive() {
+        "+Inf"
+    } else {
+        "-Inf"
+    }
+}
+
+fn go_exponent(rust: &str) -> String {
+    let Some((mantissa, exponent)) = rust.split_once('e') else {
+        return rust.to_owned();
+    };
+    let (sign, digits) = match exponent.strip_prefix('-') {
+        Some(digits) => ('-', digits),
+        None => ('+', exponent),
+    };
+    format!("{mantissa}e{sign}{digits}")
+}
+
+/// encoding/json string escaping, including its default HTML-safe escapes.
+fn append_go_json_string(output: &mut String, value: &str) {
+    output.push('"');
+    for character in value.chars() {
+        match character {
+            '"' => output.push_str("\\\""),
+            '\\' => output.push_str("\\\\"),
+            '\n' => output.push_str("\\n"),
+            '\r' => output.push_str("\\r"),
+            '\t' => output.push_str("\\t"),
+            '<' | '>' | '&' | '\u{2028}' | '\u{2029}' => {
+                output.push_str(&format!("\\u{:04x}", character as u32))
+            }
+            character if (character as u32) < 0x20 => {
+                output.push_str(&format!("\\u{:04x}", character as u32))
+            }
+            character => output.push(character),
+        }
+    }
+    output.push('"');
+}
+
+fn base64_std(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let triple = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for index in 0..4 {
+            if index <= chunk.len() {
+                output.push(ALPHABET[((triple >> (18 - 6 * index)) & 0x3f) as usize] as char);
+            } else {
+                output.push('=');
+            }
+        }
+    }
+    output
+}
+
+/// A process-wide capturing logger for tests that assert client-go's log
+/// lines arrive with their structured fields, the way TiDB's `log` bridge
+/// receives them: `"LEVEL message key=value ..."`. Only one logger can be
+/// installed per process, so every test module shares this one.
+#[cfg(test)]
+pub(crate) mod test_capture {
+    use std::sync::{Mutex, Once};
+
+    static CAPTURED_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static LOGGER: CaptureLogger = CaptureLogger;
+    static LOGGER_INIT: Once = Once::new();
+
+    struct CaptureLogger;
+
+    struct CaptureFields<'a>(&'a mut String);
+
+    impl<'kvs> log::kv::VisitSource<'kvs> for CaptureFields<'_> {
+        fn visit_pair(
+            &mut self,
+            key: log::kv::Key<'kvs>,
+            value: log::kv::Value<'kvs>,
+        ) -> Result<(), log::kv::Error> {
+            self.0.push_str(&format!(" {key}={value}"));
+            Ok(())
+        }
+    }
+
+    impl log::Log for CaptureLogger {
+        fn enabled(&self, _metadata: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            let mut line = format!("{} {}", record.level(), record.args());
+            let _ = record.key_values().visit(&mut CaptureFields(&mut line));
+            if let Ok(mut logs) = CAPTURED_LOGS.lock() {
+                logs.push(line);
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    /// Installs the capturing logger once; a foreign logger installed first
+    /// is kept, and assertions then fail to find their markers.
+    pub(crate) fn install() {
+        LOGGER_INIT.call_once(|| {
+            let _ = log::set_logger(&LOGGER);
+            log::set_max_level(log::LevelFilter::Debug);
+        });
+    }
+
+    /// The lines captured so far, across every test in the process.
+    pub(crate) fn lines() -> Vec<String> {
+        CAPTURED_LOGS.lock().unwrap().clone()
+    }
+
+    /// Whether a captured line satisfies `matches`.
+    pub(crate) fn any(matches: impl Fn(&str) -> bool) -> bool {
+        CAPTURED_LOGS
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| matches(line))
+    }
+
+    /// Waits up to a second for a line satisfying `matches`, then panics with
+    /// every captured line.
+    pub(crate) async fn wait_for(description: &str, matches: impl Fn(&str) -> bool) {
+        for _ in 0..200 {
+            if any(&matches) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        panic!("expected {description}; captured: {:?}", lines());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -491,5 +864,58 @@ mod tests {
                 <crate::proto::pdpb::GlobalGcBarriersInfo as Name>::full_name().as_str()
             )
             .is_some());
+    }
+}
+
+#[cfg(test)]
+mod go_encoding_tests {
+    use super::*;
+    use crate::proto::resource_manager as rmpb;
+
+    /// zap.Reflect of `[]*rmpb.TokenBucketRequest`: encoding/json over the
+    /// gogo structs -- proto field names, omitempty, the oneof as a named
+    /// interface field holding its wrapper struct.
+    #[test]
+    fn protobuf_slices_render_as_go_encoding_json() {
+        let request = rmpb::TokenBucketRequest {
+            resource_group_name: "rg<1>".to_owned(),
+            request: Some(rmpb::token_bucket_request::Request::RuItems(
+                rmpb::token_bucket_request::RequestRu {
+                    request_r_u: vec![rmpb::RequestUnitItem {
+                        r#type: 0,
+                        value: 1.5,
+                    }],
+                },
+            )),
+            keyspace_id: Some(rmpb::KeyspaceIdValue {
+                keyspace: Some(rmpb::keyspace_id_value::Keyspace::Value(7)),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            go_json_protobuf_slice(Some(&[request][..])),
+            r#"[{"resource_group_name":"rg\u003c1\u003e","Request":{"ru_items":{"request_r_u":[{"value":1.5}]}},"keyspace_id":{"Keyspace":{"value":7}}}]"#
+        );
+        assert_eq!(
+            go_json_protobuf_slice::<rmpb::TokenBucketResponse>(None),
+            "null"
+        );
+        assert_eq!(
+            go_json_protobuf(Some(&rmpb::TokenBucketRequest::default())),
+            r#"{"Request":null}"#
+        );
+        assert_eq!(go_json_float(1e21, 64), "1e+21");
+        assert_eq!(go_json_float(1e-7, 64), "1e-7");
+        assert_eq!(go_json_float(0.25, 64), "0.25");
+        assert_eq!(base64_std(b"ab"), "YWI=");
+    }
+
+    #[test]
+    fn zap_time_uses_pingcap_logs_layout() {
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_millis(1_234);
+        let rendered = zap_time(time);
+        // `1970/01/01 00:00:01.234 +00:00` in UTC; the zone follows time.Local.
+        assert_eq!(rendered.len(), "1970/01/01 00:00:01.234 +00:00".len());
+        assert!(rendered.contains(":01.234 "), "{rendered}");
     }
 }

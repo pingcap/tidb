@@ -19,6 +19,23 @@ use crate::pd::backoff::Backoffer;
 use crate::pd::errs;
 use crate::{Error, Result, SecurityManager};
 
+/// pd-client's `requestInfo.logFields()` plus `source` and the extra
+/// fields of one log line.
+macro_rules! log_request {
+    ($level:ident, $info:expr, $source:expr, [$($extra:tt)*], $message:literal) => {
+        log::$level!(
+            "caller-id":% = $info.caller_id,
+            name:% = $info.name,
+            uri:% = $info.uri,
+            method:% = $info.method,
+            "target-url":% = $info.target_url,
+            source:% = $source,
+            $($extra)*;
+            $message
+        )
+    };
+}
+
 /// Go `defaultCallerID`: the default caller ID of the PD HTTP client.
 pub(super) const DEFAULT_CALLER_ID: &str = "pd-http-client";
 /// Go `defaultInnerCallerID`: the default caller ID of the inner PD HTTP
@@ -341,15 +358,18 @@ impl ClientInner {
         if code == STATUS_SERVICE_UNAVAILABLE || leader_change.load(Ordering::SeqCst) {
             self.sd.schedule_check_member_changed();
         }
-        log::debug!(
-            "[pd] http request finished {} [source={}] [server-url={}] [is-leader={}] [status-code={}] [error={}]",
-            req_info.log_fields(),
-            self.source,
-            server_url,
-            is_leader,
-            code,
-            error_text(&result),
-        );
+        match &result {
+            Ok(()) => log_request!(
+                debug, req_info, self.source,
+                ["server-url":% = server_url, "is-leader" = is_leader, "status-code" = code],
+                "[pd] http request finished"
+            ),
+            Err(error) => log_request!(
+                debug, req_info, self.source,
+                ["server-url":% = server_url, "is-leader" = is_leader, "status-code" = code, error:% = error],
+                "[pd] http request finished"
+            ),
+        }
         result
     }
 
@@ -403,14 +423,10 @@ impl ClientInner {
             if no_need_retry_for_request(req_info, code) {
                 return (Err(error), server_url, is_leader);
             }
-            log::debug!(
-                "[pd] http request url failed {} [source={}] [server-url={}] [is-leader={}] [status-code={}] [error={}]",
-                req_info.log_fields(),
-                self.source,
-                server_url,
-                is_leader,
-                code,
-                error,
+            log_request!(
+                debug, req_info, self.source,
+                ["server-url":% = server_url, "is-leader" = is_leader, "status-code" = code, error:% = error],
+                "[pd] http request url failed"
             );
             last_error = Some(error);
         }
@@ -438,13 +454,7 @@ impl ClientInner {
     {
         let name = req_info.name.as_str();
         let url = req_info.get_url(server_url);
-        let log_fields = format!(
-            "{} [source={}] [url={}]",
-            req_info.log_fields(),
-            self.source,
-            url
-        );
-        log::debug!("[pd] request the http url {log_fields}");
+        log_request!(debug, req_info, self.source, [url:% = url], "[pd] request the http url");
         let mut headers = HeaderMap::new();
         for opt in header_opts {
             opt(&mut headers);
@@ -454,13 +464,16 @@ impl ClientInner {
                 headers.insert(header_name(X_CALLER_ID_KEY), value);
             }
             Err(error) => {
-                log::error!("[pd] create http request failed {log_fields} [error={error}]");
+                log_request!(
+                    error, req_info, self.source, [url:% = url, error:% = error],
+                    "[pd] create http request failed"
+                );
                 return (-1, Err(Error::StringError(error.to_string())));
             }
         }
         let req = HttpRequest {
             method: req_info.method.clone(),
-            url,
+            url: url.clone(),
             headers,
             body: req_info.body.clone(),
         };
@@ -470,7 +483,10 @@ impl ClientInner {
             Ok(resp) => resp,
             Err(error) => {
                 self.req_counter(name, NETWORK_ERROR_STATUS);
-                log::warn!("[pd] do http request failed {log_fields} [error={error}]");
+                log_request!(
+                    warn, req_info, self.source, [url:% = url, error:% = error],
+                    "[pd] do http request failed"
+                );
                 return (-1, Err(error));
             }
         };
@@ -492,9 +508,10 @@ impl ClientInner {
             // PD will return a JSON body containing the detailed error message
             // when the status code is not `http.StatusOK` 200.
             let body = String::from_utf8_lossy(resp.body.trim_ascii()).into_owned();
-            log::warn!(
-                "[pd] request failed with a non-200 status {log_fields} [status={}] [body={body}]",
-                resp.status
+            log_request!(
+                warn, req_info, self.source,
+                [url:% = url, status:% = resp.status, body:% = body],
+                "[pd] request failed with a non-200 status"
             );
             return (
                 status_code,
@@ -509,13 +526,6 @@ impl ClientInner {
             return (status_code, Ok(None));
         }
         (status_code, decode_first_json_value::<T>(&resp.body))
-    }
-}
-
-fn error_text(result: &Result<()>) -> String {
-    match result {
-        Ok(()) => "<nil>".to_owned(),
-        Err(error) => error.to_string(),
     }
 }
 
@@ -688,7 +698,10 @@ pub async fn new_client(
         Ok(sd) => sd,
         Err(error) => {
             log::error!(
-                "[pd] init service discovery failed [source={source}] [pd-addrs={pd_addrs:?}] [error={error}]"
+                source:% = source,
+                "pd-addrs":serde = pd_addrs,
+                error:% = error;
+                "[pd] init service discovery failed"
             );
             return Err(error);
         }
@@ -743,7 +756,7 @@ impl Client {
     /// when the last clone is dropped.
     pub async fn close(&self) {
         self.inner.close().await;
-        log::info!("[pd] http client closed [source={}]", self.inner.source);
+        log::info!(source:% = self.inner.source; "[pd] http client closed");
     }
 
     /// Go `WithCallerID`: sets and returns a new client with the given caller ID.

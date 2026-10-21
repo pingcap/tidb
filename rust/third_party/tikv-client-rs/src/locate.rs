@@ -243,6 +243,8 @@ impl SlowScoreStat {
 #[derive(Debug)]
 #[doc(hidden)]
 pub struct StoreHealthStatus {
+    /// Go `storeID`, reported when the slow flag flips.
+    store_id: u64,
     client_side_slow_score: SlowScoreStat,
     tikv_side_slow_score: TikvSideSlowScore,
     is_slow: AtomicBool,
@@ -341,6 +343,17 @@ pub struct HealthStatusDetail {
     pub tikv_side_slow_score: i64,
 }
 
+impl std::fmt::Display for HealthStatusDetail {
+    /// Go `HealthStatusDetail.String()`.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{{ ClientSideSlowScore: {}, TiKVSideSlowScore: {} }}",
+            self.client_side_slow_score, self.tikv_side_slow_score
+        )
+    }
+}
+
 impl HealthStatusDetail {
     pub fn is_slow(self) -> bool {
         self.client_side_slow_score as u64 >= SLOW_SCORE_THRESHOLD
@@ -350,7 +363,15 @@ impl HealthStatusDetail {
 
 impl Default for StoreHealthStatus {
     fn default() -> Self {
+        Self::new(0)
+    }
+}
+
+impl StoreHealthStatus {
+    /// Go `newStoreHealthStatus(storeID)`.
+    pub fn new(store_id: u64) -> Self {
         Self {
+            store_id,
             client_side_slow_score: SlowScoreStat::default(),
             tikv_side_slow_score: TikvSideSlowScore::default(),
             is_slow: AtomicBool::new(false),
@@ -423,9 +444,18 @@ impl StoreHealthStatus {
         self.tikv_side_slow_score.feedback.lock().unwrap()
     }
 
+    /// Go `updateSlowFlag`.
     fn update_slow_flag(&self) {
-        self.is_slow
-            .store(self.detail().is_slow(), Ordering::Release);
+        let detail = self.detail();
+        let is_slow = detail.is_slow();
+        if self.is_slow.swap(is_slow, Ordering::AcqRel) != is_slow {
+            log::info!(
+                storeID = self.store_id,
+                isSlow = is_slow,
+                healthDetail:% = detail;
+                "store health status changed"
+            );
+        }
     }
 }
 

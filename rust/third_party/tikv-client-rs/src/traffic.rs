@@ -101,6 +101,11 @@ pub(crate) struct NetworkCollector {
     pub(crate) stale_read: bool,
     pub(crate) access_location: crate::kv::AccessLocationType,
     pub(crate) endpoint_type: crate::store::EndpointType,
+    /// client-go's `details *util.ExecDetails`: the statement's traffic.
+    pub(crate) exec_details: Option<Arc<crate::util::ExecDetails>>,
+    /// The legacy [`with_network_traffic_details`] scope, charged only when
+    /// the statement has no `ExecDetails`, so a caller that installs both and
+    /// adds them never counts a byte twice.
     pub(crate) details: Option<Arc<NetworkTrafficDetails>>,
 }
 
@@ -111,12 +116,12 @@ impl NetworkCollector {
             return;
         }
         let cross_zone = self.access_location == crate::kv::AccessLocationType::CrossZone;
-        if let Some(details) = &self.details {
-            details.add_request(
-                i64::try_from(size).unwrap_or(i64::MAX),
-                self.endpoint_type == crate::store::EndpointType::TiFlash,
-                cross_zone,
-            );
+        let size_i64 = i64::try_from(size).unwrap_or(i64::MAX);
+        let mpp = self.endpoint_type == crate::store::EndpointType::TiFlash;
+        if let Some(exec_details) = &self.exec_details {
+            exec_details.traffic.add_request(size_i64, mpp, cross_zone);
+        } else if let Some(details) = &self.details {
+            details.add_request(size_i64, mpp, cross_zone);
         }
         if self.stale_read {
             crate::stats::observe_stale_read_request(size, cross_zone);
@@ -133,12 +138,12 @@ impl NetworkCollector {
             return;
         }
         let cross_zone = self.access_location == crate::kv::AccessLocationType::CrossZone;
-        if let Some(details) = &self.details {
-            details.add_response(
-                i64::try_from(size).unwrap_or(i64::MAX),
-                self.endpoint_type == crate::store::EndpointType::TiFlash,
-                cross_zone,
-            );
+        let size_i64 = i64::try_from(size).unwrap_or(i64::MAX);
+        let mpp = self.endpoint_type == crate::store::EndpointType::TiFlash;
+        if let Some(exec_details) = &self.exec_details {
+            exec_details.traffic.add_response(size_i64, mpp, cross_zone);
+        } else if let Some(details) = &self.details {
+            details.add_response(size_i64, mpp, cross_zone);
         }
         if self.stale_read {
             crate::stats::observe_stale_read_response(size, cross_zone);
@@ -174,6 +179,7 @@ mod tests {
             stale_read,
             access_location,
             endpoint_type,
+            exec_details: None,
             details: Some(details),
         }
     }

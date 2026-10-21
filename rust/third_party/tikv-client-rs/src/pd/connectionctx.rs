@@ -180,6 +180,16 @@ impl<T> Manager<T> {
             .len()
     }
 
+    /// The registered URLs.
+    pub fn urls(&self) -> Vec<String> {
+        self.connections
+            .read()
+            .expect("PD connection manager poisoned")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
     /// Reports whether no context is registered.
     pub fn is_empty(&self) -> bool {
         self.len() == 0

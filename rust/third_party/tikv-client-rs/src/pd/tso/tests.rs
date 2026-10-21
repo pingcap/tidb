@@ -11,10 +11,21 @@ use tokio::task::JoinHandle;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::codegen::{http, Body, BoxFuture, Service, StdError};
 
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Instant;
+
+use futures::prelude::*;
+use tonic::transport::Channel;
+
+use super::dispatcher::DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
 use super::*;
+use crate::async_util::Cancellation;
 use crate::pd::{Connection, RetryClient, RetryClientTrait};
+use crate::proto::pdpb::*;
 use crate::proto::{keyspacepb, metapb, pdpb, tsopb};
 use crate::SecurityManager;
+use crate::{Error, Timestamp};
 
 #[derive(Clone, Copy)]
 enum Reply {
@@ -73,6 +84,8 @@ struct PdServer {
     stall_mode: Arc<std::sync::atomic::AtomicBool>,
     mode_requests: Arc<AtomicUsize>,
     received: Arc<AtomicUsize>,
+    /// Every TSO request's count, in arrival order.
+    request_counts: Arc<StdMutex<Vec<u32>>>,
     dropped: Arc<AtomicUsize>,
 }
 
@@ -386,8 +399,9 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
             let mut requests = request.into_inner();
             // A server is allowed to wait for the first request before returning headers.
             let first = requests.message().await?;
-            if first.is_some() {
+            if let Some(first) = &first {
                 service.received.fetch_add(1, Ordering::SeqCst);
+                service.request_counts.lock().unwrap().push(first.count);
             }
             if matches!(service.reply, Reply::StallHeaders) {
                 futures::future::pending::<()>().await;
@@ -412,6 +426,7 @@ impl tonic::server::StreamingService<TsoRequest> for PdServer {
                         None => match requests.message().await {
                             Ok(Some(request)) => {
                                 service.received.fetch_add(1, Ordering::SeqCst);
+                                service.request_counts.lock().unwrap().push(request.count);
                                 request
                             }
                             Ok(None) => return None,
@@ -574,6 +589,7 @@ impl Server {
             stall_mode: Arc::default(),
             mode_requests: Arc::default(),
             received: Arc::new(AtomicUsize::new(0)),
+            request_counts: Arc::default(),
             dropped: Arc::new(AtomicUsize::new(0)),
         };
         let task_service = service.clone();
@@ -602,6 +618,303 @@ impl Server {
             .await
             .unwrap()
     }
+}
+
+/// A fixed `ServiceDiscovery` over one PD server (the TSO client's view of a
+/// single-member cluster).
+struct FixedDiscovery {
+    url: String,
+    channel: Channel,
+    schedules: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl ServiceDiscovery for FixedDiscovery {
+    fn get_cluster_id(&self) -> u64 {
+        42
+    }
+    fn get_keyspace_id(&self) -> u32 {
+        0
+    }
+    fn get_keyspace_group_id(&self) -> u32 {
+        0
+    }
+    fn get_service_urls(&self) -> Vec<String> {
+        vec![self.url.clone()]
+    }
+    fn get_serving_url(&self) -> String {
+        self.url.clone()
+    }
+    fn get_backup_urls(&self) -> Vec<String> {
+        Vec::new()
+    }
+    async fn get_or_create_grpc_conn(&self, _url: &str) -> crate::Result<Channel> {
+        Ok(self.channel.clone())
+    }
+    fn remove_client_conn(&self, _url: &str) {}
+    fn schedule_check_member_changed(&self) {
+        self.schedules.fetch_add(1, Ordering::SeqCst);
+    }
+    async fn check_member_changed(&self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
+fn fixed_discovery(server: &Server) -> Arc<FixedDiscovery> {
+    Arc::new(FixedDiscovery {
+        url: server.service.endpoint.clone(),
+        channel: Channel::from_shared(server.service.endpoint.clone())
+            .unwrap()
+            .connect_lazy(),
+        schedules: AtomicUsize::new(0),
+    })
+}
+
+/// A started TSO client over one PD server.
+async fn test_cli(
+    server: &Server,
+    timeout: Duration,
+    mut options: crate::pd::opt::Options,
+) -> Arc<Cli> {
+    options.timeout = timeout;
+    let cli = Cli::new(
+        &Cancellation::default(),
+        Arc::new(options),
+        timeout,
+        fixed_discovery(server),
+        StreamBuilderFactory::Pd,
+    );
+    cli.update_tso_leader_url(&server.service.endpoint);
+    cli.setup().await;
+    cli
+}
+
+/// The dispatcher's provider without a `Cli`: one stream to one server.
+struct TestProvider {
+    options: crate::pd::opt::Options,
+    discovery: Arc<dyn ServiceDiscovery>,
+    manager: crate::pd::connectionctx::Manager<Arc<super::stream::TsoStream>>,
+    url: String,
+    channel: Channel,
+}
+
+impl TestProvider {
+    fn new(server: &Server, options: crate::pd::opt::Options) -> Arc<Self> {
+        let discovery = fixed_discovery(server);
+        Arc::new(Self {
+            options,
+            url: discovery.url.clone(),
+            channel: discovery.channel.clone(),
+            discovery,
+            manager: crate::pd::connectionctx::Manager::new(),
+        })
+    }
+
+    fn manager(&self) -> &crate::pd::connectionctx::Manager<Arc<super::stream::TsoStream>> {
+        &self.manager
+    }
+}
+
+#[async_trait::async_trait]
+impl super::dispatcher::TsoServiceProvider for TestProvider {
+    fn get_option(&self) -> &crate::pd::opt::Options {
+        &self.options
+    }
+    fn get_timeout(&self) -> Duration {
+        self.options.timeout
+    }
+    fn get_service_discovery(&self) -> &Arc<dyn ServiceDiscovery> {
+        &self.discovery
+    }
+    fn get_connection_ctx_mgr(
+        &self,
+    ) -> &crate::pd::connectionctx::Manager<Arc<super::stream::TsoStream>> {
+        &self.manager
+    }
+    async fn update_connection_ctxs(&self, ctx: &Cancellation) -> bool {
+        let cctx = ctx.child();
+        let Ok(stream) = StreamBuilderFactory::Pd
+            .make_builder(self.channel.clone(), &self.url)
+            .build(&cctx, None, self.options.timeout)
+            .await
+        else {
+            return false;
+        };
+        let cancel = cctx.clone();
+        self.manager
+            .clean_all_and_store(&Arc::new(crate::pd::connectionctx::ConnectionCtx::new(
+                cctx,
+                move || cancel.cancel(),
+                self.url.clone(),
+                stream,
+            )));
+        true
+    }
+}
+
+/// A dispatcher for RPC-concurrency checks alone, with its options.
+fn concurrency_dispatcher() -> (
+    Arc<super::dispatcher::TsoDispatcher>,
+    Arc<crate::pd::opt::Options>,
+    Cancellation,
+) {
+    struct OptionsProvider {
+        options: Arc<crate::pd::opt::Options>,
+        discovery: Arc<dyn ServiceDiscovery>,
+        manager: crate::pd::connectionctx::Manager<Arc<super::stream::TsoStream>>,
+    }
+    #[async_trait::async_trait]
+    impl super::dispatcher::TsoServiceProvider for OptionsProvider {
+        fn get_option(&self) -> &crate::pd::opt::Options {
+            &self.options
+        }
+        fn get_timeout(&self) -> Duration {
+            self.options.timeout
+        }
+        fn get_service_discovery(&self) -> &Arc<dyn ServiceDiscovery> {
+            &self.discovery
+        }
+        fn get_connection_ctx_mgr(
+            &self,
+        ) -> &crate::pd::connectionctx::Manager<Arc<super::stream::TsoStream>> {
+            &self.manager
+        }
+        async fn update_connection_ctxs(&self, _ctx: &Cancellation) -> bool {
+            false
+        }
+    }
+    let options = Arc::new(crate::pd::opt::Options::new());
+    let provider = Arc::new(OptionsProvider {
+        options: options.clone(),
+        discovery: Arc::new(FixedDiscovery {
+            url: "http://127.0.0.1:1".to_owned(),
+            channel: Channel::from_static("http://127.0.0.1:1").connect_lazy(),
+            schedules: AtomicUsize::new(0),
+        }),
+        manager: crate::pd::connectionctx::Manager::new(),
+    });
+    let cancellation = Cancellation::default();
+    (
+        super::dispatcher::TsoDispatcher::new(&cancellation, provider),
+        options,
+        cancellation,
+    )
+}
+
+/// Waits until the TSO client's connection contexts are exactly `urls`.
+async fn wait_for_streams(cli: &Arc<Cli>, urls: &[String]) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let mut current = cli.connection_urls_for_test();
+            current.sort();
+            let mut want = urls.to_vec();
+            want.sort();
+            if current == want {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "streams {:?}, want {urls:?}",
+            cli.connection_urls_for_test()
+        )
+    });
+}
+
+/// A leader/follower `ServiceDiscovery` whose leader connection a test can
+/// swap, to make the leader unreachable at the transport and back.
+struct PairDiscovery {
+    leader_url: String,
+    follower_url: String,
+    leader_channel: StdMutex<Channel>,
+    follower_channel: Channel,
+}
+
+impl PairDiscovery {
+    fn new(leader: &Server, follower: &Server, leader_channel: Channel) -> Arc<Self> {
+        Arc::new(Self {
+            leader_url: leader.service.endpoint.clone(),
+            follower_url: follower.service.endpoint.clone(),
+            leader_channel: StdMutex::new(leader_channel),
+            follower_channel: Channel::from_shared(follower.service.endpoint.clone())
+                .unwrap()
+                .connect_lazy(),
+        })
+    }
+
+    fn set_leader_channel(&self, channel: Channel) {
+        *self.leader_channel.lock().unwrap() = channel;
+    }
+}
+
+#[async_trait::async_trait]
+impl ServiceDiscovery for PairDiscovery {
+    fn get_cluster_id(&self) -> u64 {
+        42
+    }
+    fn get_keyspace_id(&self) -> u32 {
+        0
+    }
+    fn get_keyspace_group_id(&self) -> u32 {
+        0
+    }
+    fn get_service_urls(&self) -> Vec<String> {
+        vec![self.leader_url.clone(), self.follower_url.clone()]
+    }
+    fn get_serving_url(&self) -> String {
+        self.leader_url.clone()
+    }
+    fn get_backup_urls(&self) -> Vec<String> {
+        vec![self.follower_url.clone()]
+    }
+    async fn get_or_create_grpc_conn(&self, url: &str) -> crate::Result<Channel> {
+        if url == self.leader_url {
+            Ok(self.leader_channel.lock().unwrap().clone())
+        } else {
+            Ok(self.follower_channel.clone())
+        }
+    }
+    fn remove_client_conn(&self, _url: &str) {}
+    fn schedule_check_member_changed(&self) {}
+    async fn check_member_changed(&self) -> crate::Result<()> {
+        Ok(())
+    }
+}
+
+/// A channel to a port nothing listens on: building a stream fails with
+/// `Unavailable`.
+fn dead_channel() -> Channel {
+    Channel::from_static("http://127.0.0.1:1").connect_lazy()
+}
+
+async fn pair_cli(discovery: Arc<PairDiscovery>, forwarding: bool, timeout: Duration) -> Arc<Cli> {
+    let mut options = crate::pd::opt::Options::new();
+    options.enable_forwarding = forwarding;
+    let cli = Cli::new(
+        &Cancellation::default(),
+        Arc::new(options),
+        timeout,
+        discovery.clone(),
+        StreamBuilderFactory::Pd,
+    );
+    cli.update_tso_leader_url(&discovery.leader_url);
+    cli.setup().await;
+    cli
+}
+
+/// Asks for timestamps until one is served or `within` elapses.
+async fn get_timestamp_eventually(cli: &Arc<Cli>, within: Duration) -> bool {
+    let deadline = std::time::Instant::now() + within;
+    while std::time::Instant::now() < deadline {
+        if let Ok(Ok(_)) = tokio::time::timeout(Duration::from_secs(2), cli.get_timestamp()).await {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    false
 }
 
 async fn metadata_client(server: &Server) -> Arc<RetryClient> {
@@ -838,14 +1151,16 @@ async fn source_tso_shared_stream_completes_concurrent_batches() {
 #[tokio::test]
 async fn source_tso_close_joins_worker_and_deadline_watcher() {
     let server = Server::start(Reply::StallBody).await;
-    let channel = tonic::transport::Channel::from_shared(server.service.endpoint.clone())
-        .unwrap()
-        .connect()
-        .await
-        .unwrap();
-    let client = PdClient::new(channel);
-    let oracle = TimestampOracle::new(42, &client, Duration::from_secs(100)).unwrap();
-    let pending = tokio::spawn(oracle.clone().get_timestamp());
+    let cli = test_cli(
+        &server,
+        Duration::from_secs(100),
+        crate::pd::opt::Options::new(),
+    )
+    .await;
+    let pending = tokio::spawn({
+        let cli = cli.clone();
+        async move { cli.get_timestamp().await }
+    });
     tokio::time::timeout(Duration::from_secs(1), async {
         while server.service.received.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
@@ -854,13 +1169,13 @@ async fn source_tso_close_joins_worker_and_deadline_watcher() {
     .await
     .unwrap();
     tokio::time::timeout(Duration::from_secs(1), async {
-        tokio::join!(oracle.close(), oracle.close());
+        tokio::join!(cli.close(), cli.close());
     })
     .await
     .unwrap();
     assert!(pending.await.unwrap().is_err());
-    assert!(oracle.inner.worker.lock().await.is_none());
-    assert!(oracle.get_timestamp().await.is_err());
+    assert!(cli.is_closed_for_test());
+    assert!(cli.get_timestamp().await.is_err());
 }
 
 #[tokio::test]
@@ -868,31 +1183,16 @@ async fn source_tso_completed_result_survives_stream_retirement() {
     // Go Request waits for request/client context, not a retired stream's
     // context. An already completed batch must retain its timestamp.
     for _ in 0..64 {
-        let (request_tx, mut request_rx) = mpsc::channel(1);
-        let cancellation = Cancellation::default();
-        let oracle = TimestampOracle {
-            inner: Arc::new(OracleInner {
-                request_tx,
-                cancellation: cancellation.clone(),
-                worker: Mutex::new(None),
-                routes: None,
-            }),
-        };
-        let request = oracle.get_timestamp();
-        tokio::pin!(request);
-        assert!(futures::poll!(request.as_mut()).is_pending());
+        let client_ctx = Cancellation::default();
+        let (mut request, future) = super::request::Request::new();
         let timestamp = Timestamp {
             physical: 123,
             logical: 456,
             suffix_bits: 0,
         };
-        request_rx
-            .try_recv()
-            .unwrap()
-            .send(timestamp.clone())
-            .unwrap();
-        cancellation.cancel();
-        assert_eq!(request.await.unwrap(), timestamp);
+        request.try_done(Ok(timestamp.clone()));
+        client_ctx.cancel();
+        assert_eq!(future.wait(&client_ctx).await.unwrap(), timestamp);
     }
 }
 
@@ -923,11 +1223,15 @@ async fn source_connectionctx_changed_leader_releases_old_stream() {
     let mut cluster = first.cluster(Duration::from_secs(1)).await;
     cluster.get_timestamp().await.unwrap();
     *first.service.leader_urls.write().unwrap() = vec![second.service.endpoint.clone()];
+    let tso = cluster.tso_for_test();
     Connection::new(Arc::new(SecurityManager::default()))
         .reconnect(&mut cluster, Duration::from_secs(1))
         .await
         .unwrap();
-    cluster.get_timestamp().await.unwrap();
+    // pd-client: the leader switch is the TSO client's leader-switched
+    // callback; its connection-contexts updater replaces the stream.
+    assert!(Arc::ptr_eq(&tso, &cluster.tso_for_test()));
+    wait_for_streams(&tso, &[second.service.endpoint.clone()]).await;
     tokio::time::timeout(Duration::from_secs(1), async {
         while first.service.dropped.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
@@ -935,6 +1239,7 @@ async fn source_connectionctx_changed_leader_releases_old_stream() {
     })
     .await
     .expect("changing leaders must retire the previous stream");
+    cluster.get_timestamp().await.unwrap();
     assert_eq!(first.service.received.load(Ordering::SeqCst), 1);
     assert_eq!(second.service.received.load(Ordering::SeqCst), 1);
     assert_eq!(second.service.dropped.load(Ordering::SeqCst), 0);
@@ -1018,29 +1323,17 @@ async fn source_connectionctx_retains_selected_url_without_alias_failover() {
 
 #[tokio::test]
 async fn source_connectionctx_release_cancels_retained_pending_stream_and_joins() {
-    use crate::pd::connectionctx::{ConnectionCtx, Manager};
-
     let server = Server::start(Reply::StallBody).await;
-    let channel = tonic::transport::Channel::from_shared(server.service.endpoint.clone())
-        .unwrap()
-        .connect()
-        .await
-        .unwrap();
-    let oracle =
-        TimestampOracle::new(42, &PdClient::new(channel), Duration::from_secs(100)).unwrap();
-    let ctx = oracle.cancellation();
-    let cancel = ctx.clone();
-    let entry = Arc::new(ConnectionCtx::new(
-        ctx,
-        move || cancel.cancel(),
-        server.service.endpoint.clone(),
-        oracle,
-    ));
-    let manager = Manager::new();
-    assert!(manager.store(&entry, false));
-    drop(entry);
-    let retained = manager.randomly_pick().unwrap();
-    let pending = tokio::spawn(retained.stream.clone().get_timestamp());
+    let cli = test_cli(
+        &server,
+        Duration::from_secs(100),
+        crate::pd::opt::Options::new(),
+    )
+    .await;
+    let pending = tokio::spawn({
+        let cli = cli.clone();
+        async move { cli.get_timestamp().await }
+    });
     tokio::time::timeout(Duration::from_secs(1), async {
         while server.service.received.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
@@ -1048,64 +1341,41 @@ async fn source_connectionctx_release_cancels_retained_pending_stream_and_joins(
     })
     .await
     .unwrap();
-    manager.release_all();
-    assert!(retained.ctx.is_cancelled());
+    // Go `conCtxMgr.ReleaseAll`: cancelling the stream's connection ctx ends
+    // its receive loop, which fails the batch it was waiting on.
+    let urls = cli.connection_urls_for_test();
+    assert_eq!(urls, vec![server.service.endpoint.clone()]);
+    cli.release_all_for_test();
     assert!(tokio::time::timeout(Duration::from_secs(1), pending)
         .await
         .unwrap()
         .unwrap()
         .is_err());
-    tokio::time::timeout(Duration::from_secs(1), retained.stream.close())
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while server.service.dropped.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("a released stream is retired on the wire");
+    tokio::time::timeout(Duration::from_secs(1), cli.close())
         .await
         .unwrap();
-    assert!(retained.stream.inner.worker.lock().await.is_none());
-    assert!(manager.is_empty());
+    assert!(cli.is_closed_for_test());
 }
 
 #[tokio::test]
 async fn tso_requests_report_get_ts_async_and_process_requests_spans() {
-    let (request_tx, request_rx) = mpsc::channel(1);
-    let oracle = TimestampOracle {
-        inner: Arc::new(OracleInner {
-            request_tx,
-            cancellation: Cancellation::default(),
-            worker: Mutex::new(None),
-            routes: None,
-        }),
-    };
-    let cancellation = Cancellation::default();
-    let watcher = Watcher::new(&cancellation, 64, "client-span-test");
-    let pending = Arc::new(Mutex::new(VecDeque::new()));
-    let stream = request_stream(
-        42,
-        request_rx,
-        pending.clone(),
-        watcher.clone(),
+    let server = Server::start(Reply::Timestamp).await;
+    let cli = test_cli(
+        &server,
         Duration::from_secs(10),
-        cancellation,
-    );
-    tokio::pin!(stream);
+        crate::pd::opt::Options::new(),
+    )
+    .await;
     let (handler, recorded) = crate::trace::client_span_testing::recorder();
-    let (timestamp, ()) = crate::trace::with_client_spans(handler, async {
-        tokio::join!(
-            crate::trace::client_span("TiKVStore.getTimestampWithRetry", oracle.get_timestamp()),
-            async {
-                let request = stream.next().await.unwrap();
-                allocate_timestamps(
-                    &TsoResponse {
-                        count: request.count,
-                        timestamp: Some(Timestamp {
-                            physical: 1,
-                            logical: 1,
-                            suffix_bits: 0,
-                        }),
-                        ..Default::default()
-                    },
-                    &mut *pending.lock().await,
-                )
-                .unwrap();
-            }
-        )
+    let timestamp = crate::trace::with_client_spans(handler, async {
+        crate::trace::client_span("TiKVStore.getTimestampWithRetry", cli.get_timestamp()).await
     })
     .await;
     assert_eq!(timestamp.unwrap().logical, 1);
@@ -1119,197 +1389,129 @@ async fn tso_requests_report_get_ts_async_and_process_requests_spans() {
             "  pdclient.processRequests",
         ]
     );
-    watcher.close().await;
+    cli.close().await;
 }
 
 #[tokio::test]
 async fn source_batch_default_tso_collects_twenty_thousand_prequeued_requests() {
-    let (tx, rx) = mpsc::channel(20_001);
-    let mut responses = Vec::new();
-    for _ in 0..20_001 {
-        let (request, response) = oneshot::channel();
-        tx.send(request.into()).await.unwrap();
-        responses.push(response);
+    let server = Server::start(Reply::Timestamp).await;
+    let provider = TestProvider::new(&server, crate::pd::opt::Options::new());
+    let ctx = Cancellation::default();
+    let dispatcher = super::dispatcher::TsoDispatcher::new(&ctx, provider.clone());
+    // Go's request channel holds defaultMaxTSOBatchSize*2 requests.
+    let mut futures = Vec::new();
+    for _ in 0..20_000 {
+        let (request, future) = super::request::Request::new();
+        assert!(dispatcher.push(request).await.is_ok());
+        futures.push(future);
     }
-    let cancellation = Cancellation::default();
-    let watcher = Watcher::new(&cancellation, 64, "source-batch-test");
-    let pending = Arc::new(Mutex::new(VecDeque::new()));
-    let stream = request_stream(
-        42,
-        rx,
-        pending.clone(),
-        watcher.clone(),
-        Duration::from_secs(10),
-        cancellation,
-    );
-    tokio::pin!(stream);
-    let first = stream.next().await.unwrap();
+    let worker = tokio::spawn(dispatcher.clone().handle_dispatcher());
+    let (request, future) = super::request::Request::new();
+    assert!(dispatcher.push(request).await.is_ok());
+    futures.push(future);
+    for (index, future) in futures.into_iter().enumerate() {
+        assert_eq!(future.wait(&ctx).await.unwrap().logical, index as i64 + 1);
+    }
     assert_eq!(
-        first.count, 20_000,
+        *server.service.request_counts.lock().unwrap(),
+        vec![20_000, 1],
         "Go's default TSO controller takes the full prequeued source-sized batch"
     );
-    allocate_timestamps(
-        &TsoResponse {
-            count: first.count,
-            timestamp: Some(Timestamp {
-                physical: 1,
-                logical: 20_000,
-                suffix_bits: 0,
-            }),
-            ..Default::default()
-        },
-        &mut *pending.lock().await,
-    )
-    .unwrap();
-    let second = stream.next().await.unwrap();
-    assert_eq!(second.count, 1);
-    allocate_timestamps(
-        &TsoResponse {
-            count: second.count,
-            timestamp: Some(Timestamp {
-                physical: 1,
-                logical: 20_001,
-                suffix_bits: 0,
-            }),
-            ..Default::default()
-        },
-        &mut *pending.lock().await,
-    )
-    .unwrap();
-    for (index, response) in responses.into_iter().enumerate() {
-        assert_eq!(response.await.unwrap().logical, index as i64 + 1);
-    }
-    watcher.close().await;
+    ctx.cancel();
+    worker.await.unwrap();
 }
 
-#[tokio::test(start_paused = true)]
+#[tokio::test]
 async fn source_batch_default_tso_holds_one_rpc_token_until_completion() {
-    let (tx, rx) = mpsc::channel(2);
-    let (first, _first_response) = oneshot::channel();
-    tx.send(first.into()).await.unwrap();
-    let cancellation = Cancellation::default();
-    let watcher = Watcher::new(&cancellation, 64, "source-token-test");
-    let pending = Arc::new(Mutex::new(VecDeque::new()));
-    let stream = request_stream(
-        42,
-        rx,
-        pending.clone(),
-        watcher.clone(),
-        Duration::from_secs(10),
-        cancellation,
-    );
-    tokio::pin!(stream);
-    assert_eq!(stream.next().await.unwrap().count, 1);
-    let (second, _second_response) = oneshot::channel();
-    tx.send(second.into()).await.unwrap();
-    assert!(
-        tokio::time::timeout(Duration::from_millis(20), stream.next())
-            .await
-            .is_err(),
+    let server = Server::start(Reply::DrainRequests).await;
+    let provider = TestProvider::new(&server, crate::pd::opt::Options::new());
+    let ctx = Cancellation::default();
+    let dispatcher = super::dispatcher::TsoDispatcher::new(&ctx, provider);
+    let worker = tokio::spawn(dispatcher.clone().handle_dispatcher());
+    let (first, _first) = super::request::Request::new();
+    assert!(dispatcher.push(first).await.is_ok());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while server.service.received.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (second, _second) = super::request::Request::new();
+    assert!(dispatcher.push(second).await.is_ok());
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        server.service.received.load(Ordering::SeqCst),
+        1,
         "default Go TSO mode must not send a second RPC before completing the first"
     );
-    allocate_timestamps(
-        &TsoResponse {
-            count: 1,
-            timestamp: Some(Timestamp {
-                physical: 1,
-                logical: 1,
-                suffix_bits: 0,
-            }),
-            ..Default::default()
-        },
-        &mut *pending.lock().await,
-    )
-    .unwrap();
-    assert_eq!(stream.next().await.unwrap().count, 1);
-    allocate_timestamps(
-        &TsoResponse {
-            count: 1,
-            timestamp: Some(Timestamp {
-                physical: 1,
-                logical: 2,
-                suffix_bits: 0,
-            }),
-            ..Default::default()
-        },
-        &mut *pending.lock().await,
-    )
-    .unwrap();
-    watcher.close().await;
+    assert_eq!(dispatcher.concurrency_for_test().await, (1, 1));
+    assert_eq!(dispatcher.available_tokens_for_test(), 0);
+    ctx.cancel();
+    worker.await.unwrap();
 }
 
+/// Go `cancelCollectedRequests` returns the RPC token as it fails the batch,
+/// so the dispatcher can put the next batch on the wire right away.
 #[tokio::test]
 async fn source_batch_discard_returns_rpc_token_before_request_completion() {
-    let cancellation = Cancellation::default();
-    let watcher = Watcher::new(&cancellation, 64, "source-discard-test");
-    let tokens = Arc::new(Semaphore::new(1));
-    let callback_tokens = tokens.clone();
-    let controller = Controller::new(
-        20,
-        Some(Box::new(move |_, request, error| {
-            assert!(matches!(error, Some(Error::ContextCanceled)));
-            assert_eq!(
-                callback_tokens.available_permits(),
-                1,
-                "Go returns the RPC token before finishing discarded requests"
-            );
-            drop(request);
-        })),
-        None,
-    );
-    let pool = Arc::new(StdMutex::new(Vec::new()));
-    let mut requests = RequestBatch {
-        controller: Some(controller),
-        pool: pool.clone(),
+    let server = Server::start(Reply::StallBody).await;
+    let provider = TestProvider::new(&server, crate::pd::opt::Options::new());
+    let ctx = Cancellation::default();
+    let dispatcher = super::dispatcher::TsoDispatcher::new(&ctx, provider.clone());
+    let worker = tokio::spawn(dispatcher.clone().handle_dispatcher());
+    let (request, future) = super::request::Request::new();
+    assert!(dispatcher.push(request).await.is_ok());
+    let received = |want: usize| {
+        let received = server.service.received.clone();
+        async move {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while received.load(Ordering::SeqCst) < want {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .is_ok()
+        }
     };
-    let (tx, mut rx) = mpsc::channel(1);
-    let (request, response) = oneshot::channel();
-    tx.send(request.into()).await.unwrap();
-    let permit = requests
-        .fetch_pending_requests(&cancellation, &mut rx, Some(&tokens), Duration::ZERO)
-        .await
-        .unwrap()
-        .unwrap();
-    let done = watcher
-        .start(&cancellation, Duration::from_secs(1), || {})
-        .await
-        .unwrap();
-    drop(RequestGroup {
-        count: 1,
-        requests,
-        done,
-        _permit: permit,
-        order: TimestampTracker::default(),
-        before_request: None,
-        process_spans: Vec::new(),
-    });
-    assert!(response.await.is_err());
-    assert_eq!(tokens.available_permits(), 1);
-    assert_eq!(pool.lock().unwrap().len(), 1);
-    assert_eq!(pool.lock().unwrap()[0].get_collected_request_count(), 0);
-    watcher.close().await;
+    assert!(received(1).await);
+    assert_eq!(
+        dispatcher.available_tokens_for_test(),
+        0,
+        "the batch holds the token"
+    );
+    // Retire the stream under the batch: its receive loop fails the batch.
+    provider.manager().release_all();
+    assert!(future.wait(&ctx).await.is_err());
+    let (request, _future) = super::request::Request::new();
+    assert!(dispatcher.push(request).await.is_ok());
+    assert!(
+        received(2).await,
+        "the failed batch returned its token, so the next batch is sent"
+    );
+    ctx.cancel();
+    worker.await.unwrap();
 }
 
+/// Go puts a finished batch's controller back into `batchBufferPool`; the
+/// next batch reuses it, without the finished requests.
 #[tokio::test]
 async fn source_batch_completed_controller_reuses_its_buffer_without_old_senders() {
-    let cancellation = Cancellation::default();
-    let pool = Arc::new(StdMutex::new(Vec::new()));
-    let mut batch = RequestBatch::new(pool.clone());
-    let allocation = batch.get_collected_requests().as_ptr();
-    let (tx, mut rx) = mpsc::channel(1);
-    let (request, response) = oneshot::channel();
-    tx.send(request.into()).await.unwrap();
-    batch
-        .fetch_pending_requests(&cancellation, &mut rx, None, Duration::ZERO)
-        .await
-        .unwrap();
-    batch.finish_collected_requests(None, Some(&Error::ContextCanceled));
-    drop(batch);
-    assert!(response.await.is_err());
-    let batch = RequestBatch::new(pool.clone());
-    assert_eq!(batch.get_collected_requests().as_ptr(), allocation);
-    assert_eq!(batch.get_collected_request_count(), 0);
-    assert!(pool.lock().unwrap().is_empty());
+    let server = Server::start(Reply::Timestamp).await;
+    let provider = TestProvider::new(&server, crate::pd::opt::Options::new());
+    let ctx = Cancellation::default();
+    let dispatcher = super::dispatcher::TsoDispatcher::new(&ctx, provider);
+    let worker = tokio::spawn(dispatcher.clone().handle_dispatcher());
+    for expected in 1..=3 {
+        let (request, future) = super::request::Request::new();
+        assert!(dispatcher.push(request).await.is_ok());
+        assert_eq!(future.wait(&ctx).await.unwrap().logical, expected);
+    }
+    // One controller collects while the other's batch is in flight.
+    assert!(dispatcher.pooled_controllers_for_test() <= 2);
+    assert_eq!(dispatcher.pooled_requests_for_test(), 0);
+    ctx.cancel();
+    worker.await.unwrap();
 }
 
 #[tokio::test]
@@ -1354,29 +1556,16 @@ async fn source_retry_member_probe_honors_its_timeout() {
 #[tokio::test]
 async fn source_pd_error_owner_reports_stream_eof() {
     let server = Server::start(Reply::End).await;
-    let channel = Channel::from_shared(server.service.endpoint.clone())
-        .unwrap()
-        .connect()
-        .await
-        .unwrap();
-    let (tx, rx) = mpsc::channel(1);
-    let (request, _response) = oneshot::channel();
-    tx.send(request.into()).await.unwrap();
-    let error = tokio::time::timeout(
-        Duration::from_secs(5),
-        run_tso(
-            42,
-            Transport::Pd(PdClient::new(channel)),
-            rx,
-            Arc::new(crate::pd::opt::Options::new()),
-            Duration::from_secs(2),
-            Cancellation::default(),
-            TimestampTracker::default(),
-        ),
+    let cli = test_cli(
+        &server,
+        Duration::from_secs(2),
+        crate::pd::opt::Options::new(),
     )
-    .await
-    .unwrap()
-    .unwrap_err();
+    .await;
+    let error = tokio::time::timeout(Duration::from_secs(5), cli.get_timestamp())
+        .await
+        .unwrap()
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "[PD:client:ErrClientTSOStreamClosed]encountered TSO stream being closed unexpectedly"
@@ -1388,28 +1577,18 @@ async fn source_pd_error_owner_reports_stream_eof() {
         !crate::pd::errs::is_leader_change(Some(&error)),
         "Go's EOF path adds a stack wrapper; the helper compares the direct sentinel"
     );
+    cli.close().await;
 }
 
 #[tokio::test]
 async fn source_pd_error_owner_reports_tso_length() {
-    let (tx, rx) = mpsc::channel(1);
-    let (request, _response) = oneshot::channel();
-    tx.send(request.into()).await.unwrap();
-    let cancellation = Cancellation::default();
-    let watcher = Watcher::new(&cancellation, 1, "source-errs-test");
-    let pending = Arc::new(Mutex::new(VecDeque::new()));
-    let stream = request_stream(
-        42,
-        rx,
-        pending.clone(),
-        watcher.clone(),
-        Duration::from_secs(5),
-        cancellation,
-    );
-    tokio::pin!(stream);
-    assert_eq!(stream.next().await.unwrap().count, 1);
-    let error = allocate_timestamps(
-        &TsoResponse {
+    let server = Server::start(Reply::Timestamp).await;
+    server
+        .service
+        .scripted_tso
+        .lock()
+        .unwrap()
+        .push_back(TsoResponse {
             count: 2,
             timestamp: Some(Timestamp {
                 physical: 1,
@@ -1417,11 +1596,17 @@ async fn source_pd_error_owner_reports_tso_length() {
                 suffix_bits: 0,
             }),
             ..Default::default()
-        },
-        &mut *pending.lock().await,
+        });
+    let cli = test_cli(
+        &server,
+        Duration::from_secs(5),
+        crate::pd::opt::Options::new(),
     )
-    .unwrap_err();
-    watcher.close().await;
+    .await;
+    let error = tokio::time::timeout(Duration::from_secs(5), cli.get_timestamp())
+        .await
+        .unwrap()
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "[pd] tso length in rpc response is incorrect"
@@ -1429,6 +1614,7 @@ async fn source_pd_error_owner_reports_tso_length() {
     assert!(
         matches!(error, Error::Pd(owner) if owner.definition() == crate::pd::errs::ERR_TSO_LENGTH && owner.backtrace().is_some())
     );
+    cli.close().await;
 }
 
 async fn owning_pd_client(
@@ -1590,7 +1776,7 @@ async fn source_pd_shutdown_cancels_metadata_and_discovery_without_reconnecting(
         refresh.await.unwrap(),
         Err(Error::ContextCanceled)
     ));
-    assert!(retained_oracle.inner.worker.lock().await.is_none());
+    assert!(retained_oracle.is_closed_for_test());
     let members_after = server.service.member_requests.load(Ordering::SeqCst);
     assert!(matches!(
         client.reconnect_for_test().await,
@@ -1624,11 +1810,18 @@ async fn source_pd_shutdown_joins_retirement_after_interrupted_reconnect() {
     client.clone().get_timestamp().await.unwrap();
     let old = client.tso_for_test().await;
     // Stop retirement at its join, after replacement has already been published.
-    let held_join = old.inner.worker.lock().await;
-    *first.service.leader_urls.write().unwrap() = vec![second.service.endpoint.clone()];
+    let held_join = old.close_gate_for_test().lock().await;
+    // A new keyspace is a new TSO provider: pd-client replaces the client
+    // (`resetTSOClientLocked`), retiring the old one. A leader change alone
+    // only switches the same client's leader.
+    let _ = &second;
+    let meta = crate::proto::keyspacepb::KeyspaceMeta {
+        keyspace: Some(crate::proto::keyspacepb::keyspace_meta::Keyspace::Id(5)),
+        ..Default::default()
+    };
     let refreshing = client.clone();
-    let refresh = tokio::spawn(async move { refreshing.reconnect_for_test().await });
-    tokio::time::timeout(Duration::from_secs(1), old.inner.cancellation.cancelled())
+    let refresh = tokio::spawn(async move { refreshing.set_keyspace(&meta).await });
+    tokio::time::timeout(Duration::from_secs(1), old.ctx().cancelled())
         .await
         .unwrap();
     refresh.abort();
@@ -1650,8 +1843,8 @@ async fn source_pd_shutdown_joins_retirement_after_interrupted_reconnect() {
         !early,
         "close must retain and join the retired connection too"
     );
-    assert!(old.inner.worker.lock().await.is_none());
-    assert!(current.inner.worker.lock().await.is_none());
+    assert!(old.is_closed_for_test());
+    assert!(current.is_closed_for_test());
 }
 
 #[tokio::test]
@@ -1892,6 +2085,7 @@ fn api_mode(pd: &Server, tso: &Server) {
 
 #[tokio::test]
 async fn source_service_routes_keyspace_and_retires_on_group_move() {
+    crate::logutil::test_capture::install();
     let pd = Server::start(Reply::Timestamp).await;
     let first = Server::start(Reply::Timestamp).await;
     let second =
@@ -1904,7 +2098,7 @@ async fn source_service_routes_keyspace_and_retires_on_group_move() {
     let old = client.tso_for_test().await;
     client.reconnect_for_test().await.unwrap();
     assert!(
-        !old.cancellation().is_cancelled(),
+        !old.ctx().is_cancelled(),
         "unchanged route must retain stream"
     );
     let meta = crate::proto::keyspacepb::KeyspaceMeta {
@@ -1913,7 +2107,7 @@ async fn source_service_routes_keyspace_and_retires_on_group_move() {
         ..Default::default()
     };
     client.set_keyspace(&meta).await.unwrap();
-    assert!(old.cancellation().is_cancelled());
+    assert!(old.ctx().is_cancelled());
     client.clone().get_timestamp().await.unwrap();
     let headers = first.service.tso_headers.lock().unwrap().clone();
     assert_eq!(
@@ -1931,12 +2125,42 @@ async fn source_service_routes_keyspace_and_retires_on_group_move() {
     };
     first.service.revision.store(2, Ordering::SeqCst);
     client.reconnect_for_test().await.unwrap();
-    assert!(old.cancellation().is_cancelled());
+    // pd-client: a primary switch is the TSO client's leader-switched
+    // callback; the same client moves its stream to the new primary.
+    let current = client.tso_for_test().await;
+    assert!(Arc::ptr_eq(&old, &current));
+    assert_eq!(current.leader_url(), second.service.endpoint);
+    wait_for_streams(&current, &[second.service.endpoint.clone()]).await;
     client.clone().get_timestamp().await.unwrap();
     assert_eq!(
         second.service.tso_headers.lock().unwrap()[0].keyspace_group_id,
         9
     );
+    // pd-client tsoServiceDiscovery's lines for the primary switch.
+    for expected in [
+        format!(
+            "INFO [tso] switch primary new-primary={} old-primary={}",
+            second.service.endpoint, first.service.endpoint
+        ),
+        format!(
+            "INFO [tso] switch the tso leader serving url new-url={}",
+            second.service.endpoint
+        ),
+    ] {
+        assert!(
+            crate::logutil::test_capture::any(|line| line == expected),
+            "{expected:?} not in {:?}",
+            crate::logutil::test_capture::lines()
+        );
+    }
+    let group_changed = "INFO [tso] the keyspace group changed keyspace-id=27 new-keyspace-group-id=9 old-keyspace-group-id=";
+    assert!(crate::logutil::test_capture::any(
+        |line| line.starts_with(group_changed)
+    ));
+    let updated = "INFO [tso] updated keyspace group service discovery info keyspace-id-in-request=27 keyspace-group-service=id:9 ";
+    assert!(crate::logutil::test_capture::any(
+        |line| line.starts_with(updated)
+    ));
     first.service.revision.store(1, Ordering::SeqCst);
     assert!(client.reconnect_for_test().await.is_err());
     // A stale observation must not replace the accepted route.
@@ -1963,7 +2187,7 @@ async fn source_service_background_mode_switch_and_close() {
     let old = client.tso_for_test().await;
     api_mode(&pd, &tso);
     tokio::time::timeout(Duration::from_secs(6), async {
-        while !old.cancellation().is_cancelled() {
+        while !old.ctx().is_cancelled() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -1972,7 +2196,7 @@ async fn source_service_background_mode_switch_and_close() {
     assert_eq!(client.clone().get_timestamp().await.unwrap().physical, 200);
     let active = client.tso_for_test().await;
     client.close().await;
-    assert!(active.cancellation().is_cancelled());
+    assert!(active.ctx().is_cancelled());
     let probes = tso.service.discovery_requests.load(Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(3100)).await;
     assert_eq!(
@@ -2586,10 +2810,13 @@ async fn pd_availability_batch_health_recovers_and_close_joins_stalled_probe() {
 }
 
 async fn unavailable_leader(leader: &Server) {
-    let previous = leader.service.health_requests.load(Ordering::SeqCst);
     leader.service.health_status.store(2, Ordering::SeqCst);
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while leader.service.health_requests.load(Ordering::SeqCst) == previous {
+    // The TSO client's stream build probes health too, so wait for two more
+    // probes: at least one is the member health loop's tick (every second)
+    // after the status changed.
+    let previous = leader.service.health_requests.load(Ordering::SeqCst);
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while leader.service.health_requests.load(Ordering::SeqCst) < previous + 2 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         tokio::time::sleep(Duration::from_millis(30)).await;
@@ -2748,15 +2975,18 @@ async fn tso_proxy_batch_healthy_follower_receives_logical_leader_metadata() {
     client.reconnect_for_test().await.unwrap();
     let retained = client.tso_for_test().await;
     assert!(
-        Arc::ptr_eq(&old.inner, &retained.inner),
+        Arc::ptr_eq(&old, &retained),
         "unchanged healthy proxy is reused"
     );
     client.set_enable_tso_follower_proxy(false);
     client.reconnect_for_test().await.unwrap();
     assert!(
-        !old.inner.cancellation.is_cancelled(),
+        !old.ctx().is_cancelled(),
         "proxy changes retain the single dispatcher"
     );
+    // The client's connection-contexts updater reacts to the option change
+    // (Go `EnableTSOFollowerProxyCh`) by connecting to the leader alone.
+    wait_for_streams(&old, &[leader.service.endpoint.clone()]).await;
     client.clone().get_timestamp().await.unwrap();
     wait_for_proxy_drop(&follower).await;
     assert_eq!(leader.service.received.load(Ordering::SeqCst), 1);
@@ -2773,9 +3003,9 @@ async fn tso_proxy_batch_healthy_follower_receives_logical_leader_metadata() {
     client.clone().get_timestamp().await.unwrap();
     let active = client.tso_for_test().await;
     client.close().await;
-    assert!(active.inner.cancellation.is_cancelled());
-    assert!(active.inner.worker.lock().await.is_none());
-    assert!(active.inner.routes.as_ref().unwrap().borrow().is_empty());
+    assert!(active.ctx().is_cancelled());
+    assert!(active.is_closed_for_test());
+    assert!(active.connection_urls_for_test().is_empty());
 }
 
 #[tokio::test]
@@ -2839,7 +3069,7 @@ async fn tso_proxy_batch_microservice_group_and_health_retirement() {
     secondary.service.health_status.store(2, Ordering::SeqCst);
     client.reconnect_for_test().await.unwrap();
     assert!(
-        !old.inner.cancellation.is_cancelled(),
+        !old.ctx().is_cancelled(),
         "proxy changes retain the single dispatcher"
     );
     wait_for_proxy_drop(&secondary).await;
@@ -3003,93 +3233,135 @@ async fn bootstrap_policy_batch_dial_options_apply_once_in_order() {
     cluster.start_close().await;
 }
 
+/// pd-client `tryConnectToTSO`: after `MaxRetryTimes` failures to build the
+/// leader's stream for network reasons, a healthy follower forwards to the
+/// leader (`[tso] fall back to use follower to forward tso stream`), and
+/// `checkLeader` restores the leader's own stream once it is healthy again.
 #[tokio::test]
 async fn tso_failure_batch_forwards_after_network_failures_and_recovers() {
-    let (leader, follower, client) = availability_pair_with_forwarding(true).await;
-    leader.service.health_status.store(2, Ordering::SeqCst);
-    *leader.service.tso_failure.lock().unwrap() = Some(tonic::Code::Unavailable);
-    for _ in 0..6 {
-        assert!(client.tso_for_test().await.get_timestamp().await.is_err());
-        client.reconnect_for_test().await.unwrap();
-    }
-    let oracle = client.tso_for_test().await;
+    crate::logutil::test_capture::install();
+    let leader = Server::start(Reply::Timestamp).await;
+    let follower =
+        Server::start_with_clock(Reply::Timestamp, leader.service.next_logical.clone()).await;
+    let discovery = PairDiscovery::new(&leader, &follower, dead_channel());
+    let cli = pair_cli(discovery.clone(), true, Duration::from_secs(1)).await;
     assert!(
-        oracle.clone().get_timestamp().await.is_ok(),
-        "six network failures must admit a healthy backup"
+        get_timestamp_eventually(&cli, Duration::from_secs(10)).await,
+        "six network failures must admit a healthy backup: {:?}",
+        crate::logutil::test_capture::lines()
+            .into_iter()
+            .filter(|line| line.contains("tso"))
+            .collect::<Vec<_>>()
     );
     let routes = follower.service.wire_routes.lock().unwrap().clone();
     assert!(routes.iter().any(|(path, host, _)| path == "/pdpb.PD/Tso"
         && host.as_deref() == Some(leader.service.endpoint.as_str())));
-    client.reconnect_for_test().await.unwrap();
-    assert!(oracle.clone().get_timestamp().await.is_ok());
-    assert_eq!(
-        follower
-            .service
-            .wire_routes
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(path, _, _)| path == "/pdpb.PD/Tso")
-            .count(),
-        1,
-        "healthy fallback stream is retained"
+    let fallback = format!(
+        "INFO [tso] fall back to use follower to forward tso stream follower-url={}",
+        follower.service.endpoint
     );
-    *leader.service.tso_failure.lock().unwrap() = None;
-    leader.service.health_status.store(1, Ordering::SeqCst);
-    client.reconnect_for_test().await.unwrap();
-    assert!(oracle.clone().get_timestamp().await.is_ok());
-    wait_for_proxy_drop(&follower).await;
+    assert!(crate::logutil::test_capture::any(|line| line == fallback));
+    assert!(cli.get_timestamp().await.is_ok());
+
+    // Let the connection attempts already scheduled (the updater's pending
+    // wake-up retries the leader `MaxRetryTimes` times) run out first, so
+    // only checkLeader can bring the leader back.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    wait_for_streams(&cli, &[follower.service.endpoint.clone()]).await;
+    // The leader becomes reachable again: checkLeader switches back.
+    discovery.set_leader_channel(
+        Channel::from_shared(leader.service.endpoint.clone())
+            .unwrap()
+            .connect_lazy(),
+    );
+    wait_for_streams(&cli, &[leader.service.endpoint.clone()]).await;
+    let recovered = format!(
+        "INFO [tso] recover the original tso stream since the network has become normal url={}",
+        leader.service.endpoint
+    );
+    assert!(
+        crate::logutil::test_capture::any(|line| line == recovered),
+        "{:?}",
+        crate::logutil::test_capture::lines()
+            .into_iter()
+            .filter(|line| line.contains("tso"))
+            .collect::<Vec<_>>()
+    );
+    assert!(cli.get_timestamp().await.is_ok());
     assert_eq!(leader.service.received.load(Ordering::SeqCst), 1);
-    client.close().await;
-    assert!(oracle.inner.routes.as_ref().unwrap().borrow().is_empty());
+    cli.close().await;
+    assert!(cli.connection_urls_for_test().is_empty());
 }
 
+/// Only a stream that cannot be built for network reasons (Go
+/// `errs.IsNetworkError(code) || code == codes.Canceled`, where Canceled is the
+/// build's own timeout) counts towards forwarding, and only with
+/// `EnableForwarding`.
 #[tokio::test]
 async fn tso_failure_batch_error_codes_and_disabled_policy() {
-    for (enabled, code, forwards) in [
-        (true, tonic::Code::Cancelled, true),
-        (true, tonic::Code::DeadlineExceeded, true),
-        (true, tonic::Code::PermissionDenied, false),
-        (false, tonic::Code::Unavailable, false),
-    ] {
-        let (leader, follower, client) = availability_pair_with_forwarding(enabled).await;
-        leader.service.health_status.store(2, Ordering::SeqCst);
-        *leader.service.tso_failure.lock().unwrap() = Some(code);
-        for _ in 0..6 {
-            assert!(client.tso_for_test().await.get_timestamp().await.is_err());
-            client.reconnect_for_test().await.unwrap();
+    crate::logutil::test_capture::install();
+    // A leader that accepts TCP but never speaks HTTP/2: the build times out.
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let silent_url = format!("http://{}", silent.local_addr().unwrap());
+    let silent_task = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((socket, _)) = silent.accept().await {
+            held.push(socket);
         }
+    });
+    for (enabled, leader_channel_name, leader_channel, forwards) in [
+        (true, "dead", dead_channel(), true),
+        (
+            true,
+            "silent",
+            Channel::from_shared(silent_url.clone())
+                .unwrap()
+                .connect_lazy(),
+            true,
+        ),
+        (false, "dead", dead_channel(), false),
+    ] {
+        let leader = Server::start(Reply::Timestamp).await;
+        let follower =
+            Server::start_with_clock(Reply::Timestamp, leader.service.next_logical.clone()).await;
+        let discovery = PairDiscovery::new(&leader, &follower, leader_channel);
+        let cli = pair_cli(discovery, enabled, Duration::from_millis(200)).await;
         assert_eq!(
-            client.tso_for_test().await.get_timestamp().await.is_ok(),
+            get_timestamp_eventually(&cli, Duration::from_secs(8)).await,
             forwards,
-            "{enabled} {code:?}"
+            "{enabled} {:?} {:?}",
+            leader_channel_name,
+            crate::logutil::test_capture::lines()
+                .into_iter()
+                .filter(|line| line.contains("tso"))
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             follower.service.received.load(Ordering::SeqCst) > 0,
             forwards
         );
-        client.close().await;
+        assert_eq!(leader.service.received.load(Ordering::SeqCst), 0);
+        cli.close().await;
     }
+    silent_task.abort();
 }
 
 #[tokio::test]
 async fn tso_failure_batch_retains_provider_when_mode_observation_fails() {
-    let (leader, follower, client) = availability_pair_with_forwarding(true).await;
+    let (leader, _follower, client) = availability_pair_with_forwarding(true).await;
     leader
         .service
         .cluster_info_failure
         .store(true, Ordering::SeqCst);
-    leader.service.health_status.store(2, Ordering::SeqCst);
-    *leader.service.tso_failure.lock().unwrap() = Some(tonic::Code::Unavailable);
-    for _ in 0..6 {
-        assert!(client.tso_for_test().await.get_timestamp().await.is_err());
+    let original = client.tso_for_test().await;
+    for _ in 0..3 {
         client
             .reconnect_for_test()
             .await
             .expect("failed mode observation must preserve accepted provider");
+        assert!(Arc::ptr_eq(&original, &client.tso_for_test().await));
+        assert!(client.tso_for_test().await.get_timestamp().await.is_ok());
     }
-    assert!(client.tso_for_test().await.get_timestamp().await.is_ok());
-    assert_eq!(follower.service.received.load(Ordering::SeqCst), 1);
     leader.service.health_stall.store(true, Ordering::SeqCst);
     let checks = leader.service.health_requests.load(Ordering::SeqCst);
     let probe = tokio::spawn({
@@ -3178,10 +3450,7 @@ async fn observation_batch_failed_modes_preserve_accepted_provider() {
                 result.is_ok(),
                 "failed observation revoked accepted provider: {result:?}"
             );
-            assert!(Arc::ptr_eq(
-                &original.inner,
-                &client.tso_for_test().await.inner
-            ));
+            assert!(Arc::ptr_eq(&original, &client.tso_for_test().await));
             assert_eq!(
                 client.clone().get_timestamp().await.unwrap().physical,
                 if microservice { 200 } else { 100 }
@@ -3213,12 +3482,16 @@ async fn independent_observation_mode_failure_does_not_freeze_group() {
         .cluster_info_failure
         .store(true, Ordering::SeqCst);
     client.reconnect_for_test().await.unwrap();
-    let retired = old.cancellation().is_cancelled();
+    // The group's new primary is the TSO client's leader switch.
+    let switched = old.leader_url() == second.service.endpoint;
+    if switched {
+        wait_for_streams(&old, &[second.service.endpoint.clone()]).await;
+    }
     client.clone().get_timestamp().await.unwrap();
     let headers = second.service.tso_headers.lock().unwrap().clone();
     client.close().await;
     assert!(
-        retired,
+        switched,
         "failed PD mode observation froze the accepted TSO group"
     );
     assert_eq!(headers[0].keyspace_group_id, 9);
@@ -3251,7 +3524,7 @@ async fn independent_observation_stalled_members_do_not_block_mode_switch() {
     .unwrap();
     api_mode(&pd, &tso);
     let switched = tokio::time::timeout(Duration::from_secs(6), async {
-        while !old.cancellation().is_cancelled() {
+        while !old.ctx().is_cancelled() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -3291,10 +3564,7 @@ async fn observation_batch_secondary_must_reach_newly_observed_revision() {
         *secondary.service.requested_revisions.lock().unwrap(),
         vec![20]
     );
-    assert!(Arc::ptr_eq(
-        &original.inner,
-        &client.tso_for_test().await.inner
-    ));
+    assert!(Arc::ptr_eq(&original, &client.tso_for_test().await));
     // A failed follow-up must not roll back the observed floor in a clone.
     let primaryless = discovery.service.group.read().unwrap().clone();
     discovery.service.revision.store(19, Ordering::SeqCst);
@@ -3376,13 +3646,22 @@ async fn completion_batch_rejects_regression_and_invalid_timestamp_ranges() {
     }
 }
 
+/// pd-client's dispatcher keeps `latestTSOInfo` and rejects a batch that is
+/// not after the ts allocated before its request began (Go `log.Panic`s
+/// `[tso] timestamp fallback`; here the batch fails with that line). The
+/// record belongs to the dispatcher, so a replaced TSO client starts afresh,
+/// as Go's does.
 #[tokio::test]
-async fn completion_batch_order_survives_dispatcher_replacement() {
+async fn completion_batch_rejects_a_fallen_back_batch() {
+    crate::logutil::test_capture::install();
     let server = Server::start(Reply::Timestamp).await;
-    let client = metadata_client(&server).await;
-    let first = client.clone().get_timestamp().await.unwrap();
-    client.tso_for_test().await.close().await;
-    client.reconnect_for_test().await.unwrap();
+    let cli = test_cli(
+        &server,
+        Duration::from_secs(5),
+        crate::pd::opt::Options::new(),
+    )
+    .await;
+    let first = cli.get_timestamp().await.unwrap();
     server
         .service
         .scripted_tso
@@ -3390,11 +3669,22 @@ async fn completion_batch_order_survives_dispatcher_replacement() {
         .unwrap()
         .push_back(TsoResponse {
             count: 1,
-            timestamp: Some(first),
+            timestamp: Some(first.clone()),
             ..Default::default()
         });
-    assert!(client.tso_for_test().await.get_timestamp().await.is_err());
-    client.close().await;
+    assert!(cli.get_timestamp().await.is_err());
+    let expected = format!(
+        "last-ts=({}, {}) cur-ts=({}, {})",
+        first.physical, first.logical, first.physical, first.logical
+    );
+    assert!(
+        crate::logutil::test_capture::any(|line| line
+            .starts_with("ERROR [tso] timestamp fallback keyspace=0 ")
+            && line.contains(&expected)),
+        "{:?}",
+        crate::logutil::test_capture::lines()
+    );
+    cli.close().await;
 }
 
 #[tokio::test]
@@ -3423,7 +3713,7 @@ async fn mode_scheduling_stalled_mode_does_not_freeze_group() {
     };
     first.service.revision.store(20, Ordering::SeqCst);
     let switched = tokio::time::timeout(Duration::from_secs(7), async {
-        while !old.cancellation().is_cancelled() {
+        while old.leader_url() != second.service.endpoint {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -3464,7 +3754,7 @@ async fn mode_scheduling_provider_change_cancels_stalled_group() {
         ..Default::default()
     });
     let switched = tokio::time::timeout(Duration::from_secs(7), async {
-        while !old.cancellation().is_cancelled() {
+        while !old.ctx().is_cancelled() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
@@ -3509,44 +3799,61 @@ async fn mode_scheduling_failed_mode_wakes_member_refresh() {
 
 /// Go sizes the token pool at the concurrency itself when that is 1, and at
 /// twice the concurrency above 1, so the count of ongoing requests may
-/// fluctuate around the target while an RPC's duration jitters.
+/// fluctuate around the target while an RPC's duration jitters. The first
+/// dispatcher circle adopts the option from Go's zero state, logging
+/// `switching tso rpc concurrency old=0 new=1`.
 #[tokio::test]
 async fn rpc_concurrency_adopts_the_option_and_sizes_gos_token_pool() {
-    let options = crate::pd::opt::Options::new();
-    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
-    let cancellation = Cancellation::default();
-    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
-    assert_eq!(capacity.available_permits(), 1, "Go's default concurrency");
+    crate::logutil::test_capture::install();
+    let (dispatcher, options, cancellation) = concurrency_dispatcher();
+    assert_eq!(
+        dispatcher.available_tokens_for_test(),
+        0,
+        "Go starts without tokens"
+    );
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, Instant::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        dispatcher.available_tokens_for_test(),
+        1,
+        "Go's default concurrency"
+    );
+    assert!(crate::logutil::test_capture::any(
+        |line| line == "INFO [tso] switching tso rpc concurrency old=0 new=1"
+    ));
 
     options.set_tso_client_rpc_concurrency(2);
-    owner
-        .check(&options, Duration::ZERO, &cancellation, Instant::now())
-        .await;
+    let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, later)
+        .await
+        .unwrap();
     assert_eq!(
-        capacity.available_permits(),
+        dispatcher.available_tokens_for_test(),
         4,
         "two concurrency, 2x tokens"
     );
 
-    // A later change is rate-limited: Go checks at most once per interval, so
-    // a second adoption inside the window keeps the previous pool.
+    // A later change is rate-limited: Go checks at most once per interval.
     options.set_tso_client_rpc_concurrency(4);
-    owner
-        .check(&options, Duration::ZERO, &cancellation, Instant::now())
-        .await;
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, later)
+        .await
+        .unwrap();
     assert_eq!(
-        capacity.available_permits(),
+        dispatcher.available_tokens_for_test(),
         4,
         "the interval has not elapsed, so Go does not re-check"
     );
-
-    // Once the interval has elapsed, the same option is adopted.
-    let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
-    owner
-        .check(&options, Duration::ZERO, &cancellation, later)
-        .await;
+    let later = later + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, later)
+        .await
+        .unwrap();
     assert_eq!(
-        capacity.available_permits(),
+        dispatcher.available_tokens_for_test(),
         8,
         "four concurrency, 2x tokens"
     );
@@ -3558,27 +3865,19 @@ async fn rpc_concurrency_adopts_the_option_and_sizes_gos_token_pool() {
 /// enabled over a concurrency above 1.
 #[tokio::test]
 async fn a_collection_wait_disables_concurrent_rpcs_immediately() {
-    let options = crate::pd::opt::Options::new();
-    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
-    let cancellation = Cancellation::default();
-    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    let (dispatcher, options, cancellation) = concurrency_dispatcher();
     options.set_tso_client_rpc_concurrency(4);
-    owner
-        .check(&options, Duration::ZERO, &cancellation, Instant::now())
-        .await;
-    assert_eq!(capacity.available_permits(), 8);
-
-    // No interval has elapsed, but the wait just turned positive.
-    owner
-        .check(
-            &options,
-            Duration::from_millis(1),
-            &cancellation,
-            Instant::now(),
-        )
-        .await;
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, Instant::now())
+        .await
+        .unwrap();
+    assert_eq!(dispatcher.available_tokens_for_test(), 8);
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::from_millis(1), Instant::now())
+        .await
+        .unwrap();
     assert_eq!(
-        capacity.available_permits(),
+        dispatcher.available_tokens_for_test(),
         1,
         "a positive collection wait forces Go's single ongoing request"
     );
@@ -3588,17 +3887,15 @@ async fn a_collection_wait_disables_concurrent_rpcs_immediately() {
 /// streams a single batch already fans out to.
 #[tokio::test]
 async fn follower_proxy_disables_concurrent_rpcs() {
-    let options = crate::pd::opt::Options::new();
-    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
-    let cancellation = Cancellation::default();
-    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    let (dispatcher, options, cancellation) = concurrency_dispatcher();
     options.set_tso_client_rpc_concurrency(2);
     options.set_enable_tso_follower_proxy(true);
-    owner
-        .check(&options, Duration::ZERO, &cancellation, Instant::now())
-        .await;
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, Instant::now())
+        .await
+        .unwrap();
     assert_eq!(
-        capacity.available_permits(),
+        dispatcher.available_tokens_for_test(),
         1,
         "follower proxy keeps one ongoing request"
     );
@@ -3609,22 +3906,20 @@ async fn follower_proxy_disables_concurrent_rpcs() {
 /// default of one ongoing request rather than draining the pool forever.
 #[tokio::test]
 async fn a_nonpositive_concurrency_keeps_one_ongoing_request() {
-    let options = crate::pd::opt::Options::new();
-    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
-    let cancellation = Cancellation::default();
-    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    let (dispatcher, options, cancellation) = concurrency_dispatcher();
     options.set_tso_client_rpc_concurrency(0);
-    owner
-        .check(&options, Duration::ZERO, &cancellation, Instant::now())
-        .await;
-    assert_eq!(capacity.available_permits(), 1);
-
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, Instant::now())
+        .await
+        .unwrap();
+    assert_eq!(dispatcher.available_tokens_for_test(), 1);
     options.set_tso_client_rpc_concurrency(-4);
     let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
-    owner
-        .check(&options, Duration::ZERO, &cancellation, later)
-        .await;
-    assert_eq!(capacity.available_permits(), 1);
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, later)
+        .await
+        .unwrap();
+    assert_eq!(dispatcher.available_tokens_for_test(), 1);
 }
 
 /// Cancellation abandons a reduction instead of waiting for tokens that an
@@ -3632,120 +3927,202 @@ async fn a_nonpositive_concurrency_keeps_one_ongoing_request() {
 /// dispatcher context.
 #[tokio::test]
 async fn cancellation_abandons_a_pending_token_reduction() {
-    let options = crate::pd::opt::Options::new();
-    let capacity = Arc::new(Semaphore::new(DEFAULT_RPC_CONCURRENCY));
-    let cancellation = Cancellation::default();
-    let mut owner = RpcConcurrency::new(Arc::clone(&capacity));
+    let (dispatcher, options, cancellation) = concurrency_dispatcher();
     options.set_tso_client_rpc_concurrency(4);
-    owner
-        .check(&options, Duration::ZERO, &cancellation, Instant::now())
-        .await;
-    assert_eq!(capacity.available_permits(), 8);
-
+    dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, Instant::now())
+        .await
+        .unwrap();
+    assert_eq!(dispatcher.available_tokens_for_test(), 8);
     // Hold every token, so a reduction cannot make progress.
-    let held = Arc::clone(&capacity).acquire_many_owned(8).await.unwrap();
+    let held = dispatcher.hold_tokens_for_test(8).await;
     options.set_tso_client_rpc_concurrency(1);
     cancellation.cancel();
     let later = Instant::now() + DISPATCHER_CHECK_RPC_CONCURRENCY_INTERVAL;
-    owner
-        .check(&options, Duration::ZERO, &cancellation, later)
-        .await;
+    assert!(dispatcher
+        .check_tso_rpc_concurrency(&cancellation, Duration::ZERO, later)
+        .await
+        .is_err());
     drop(held);
     assert_eq!(
-        capacity.available_permits(),
+        dispatcher.available_tokens_for_test(),
         8,
         "the abandoned reduction left the pool as it stood"
     );
 }
 
 /// A granted concurrency above 1 must put a second batch on the wire while the
-/// first is unanswered, which is what Go's separate send and collect loops do.
-///
-/// A dispatcher that awaited each response before the next send cannot do this
-/// however many tokens it holds, so the token accounting alone changes nothing
-/// without the split. The server reads every request and answers none, so
-/// `received` counts the batches the client was willing to leave outstanding.
+/// first is unanswered, which is what Go's separate send and receive loops do.
+/// The server reads every request and answers none, so `received` counts the
+/// batches the client was willing to leave outstanding.
 #[tokio::test]
 async fn concurrent_rpcs_put_a_second_batch_on_the_wire_before_the_first_answers() {
-    type Pending<'a> =
-        std::pin::Pin<&'a mut (dyn std::future::Future<Output = Result<Timestamp>> + Send)>;
-
-    /// Waits for the server's count without busy-spinning. The batches are
-    /// driven while this sleeps, and neither can finish because the server
-    /// answers nothing.
-    async fn reached(
-        server: &Server,
-        want: usize,
-        first: &mut Pending<'_>,
-        second: Option<&mut Pending<'_>>,
-    ) -> bool {
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        let mut second = second;
-        while std::time::Instant::now() < deadline {
-            if server.service.received.load(Ordering::SeqCst) >= want {
-                return true;
-            }
-            match second.as_mut() {
-                Some(second) => {
-                    tokio::select! {
-                        _ = &mut *first => unreachable!("the server answers nothing"),
-                        _ = second.as_mut() => unreachable!("the server answers nothing"),
-                        () = tokio::time::sleep(Duration::from_millis(5)) => {}
-                    }
-                }
-                None => {
-                    tokio::select! {
-                        _ = &mut *first => unreachable!("the server answers nothing"),
-                        () = tokio::time::sleep(Duration::from_millis(5)) => {}
-                    }
-                }
-            }
-        }
-        server.service.received.load(Ordering::SeqCst) >= want
-    }
-
     let server = Server::start(Reply::DrainRequests).await;
-    let channel = tonic::transport::Channel::from_shared(server.service.endpoint.clone())
-        .unwrap()
-        .connect()
-        .await
-        .unwrap();
-    let route = crate::pd::service_discovery::TsoRoute {
-        endpoint: server.service.endpoint.clone(),
-        keyspace_id: 0,
-        group_id: None,
-        forwarded_host: None,
-    };
-    let options = Arc::new(crate::pd::opt::Options::new());
+    let options = crate::pd::opt::Options::new();
     options.set_tso_client_rpc_concurrency(2);
-    let oracle = TimestampOracle::discovered(
-        1,
-        vec![(route, channel)],
-        crate::pd::service_discovery::TsoForwarding::default(),
-        options,
-        Duration::from_secs(30),
-        TimestampTracker::default(),
-    )
-    .unwrap();
-
-    let first = oracle.clone().get_timestamp();
-    tokio::pin!(first);
-    let mut first_dyn: Pending<'_> = first;
-    // Phase one drives only the first batch, so the second timestamp is asked
-    // for after the first is already on the wire. Requesting both up front
-    // would let the collector merge them into ONE batch -- correct batching,
-    // but it would prove nothing about concurrency.
+    let cli = test_cli(&server, Duration::from_secs(30), options).await;
+    let first = tokio::spawn({
+        let cli = cli.clone();
+        async move { cli.get_timestamp().await }
+    });
+    let reached = |want: usize| {
+        let received = server.service.received.clone();
+        async move {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if received.load(Ordering::SeqCst) >= want {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            received.load(Ordering::SeqCst) >= want
+        }
+    };
+    // The second timestamp is asked for after the first is on the wire;
+    // asking both up front would let the collector merge them into one batch.
+    assert!(reached(1).await, "the first batch must reach the server");
+    let second = tokio::spawn({
+        let cli = cli.clone();
+        async move { cli.get_timestamp().await }
+    });
     assert!(
-        reached(&server, 1, &mut first_dyn, None).await,
-        "the first batch must reach the server"
-    );
-    let second = oracle.clone().get_timestamp();
-    tokio::pin!(second);
-    let mut second_dyn: Pending<'_> = second;
-    assert!(
-        reached(&server, 2, &mut first_dyn, Some(&mut second_dyn)).await,
+        reached(2).await,
         "a granted concurrency of 2 must send a second batch while the first is \
          unanswered; the server saw {} request(s)",
         server.service.received.load(Ordering::SeqCst)
     );
+    first.abort();
+    second.abort();
+    cli.close().await;
+}
+
+/// pd-client's TSO client lifecycle lines, with their zap fields.
+#[tokio::test]
+async fn tso_client_lifecycle_logs_pd_clients_lines() {
+    crate::logutil::test_capture::install();
+    let server = Server::start(Reply::Timestamp).await;
+    let cli = test_cli(
+        &server,
+        Duration::from_secs(5),
+        crate::pd::opt::Options::new(),
+    )
+    .await;
+    cli.get_timestamp().await.unwrap();
+    // A stream that ends is logged by its receive loop, and the batch error
+    // by the dispatcher.
+    cli.release_all_for_test();
+    cli.close().await;
+    let endpoint = &server.service.endpoint;
+    for expected in [
+        format!("INFO [tso] switch the tso leader serving url new-url={endpoint}"),
+        "INFO [tso] tso dispatcher created".to_owned(),
+        "INFO [tso] start tso connection contexts updater".to_owned(),
+        "INFO [tso] closing tso client".to_owned(),
+        "INFO [tso] exit tso connection contexts updater".to_owned(),
+        "INFO [tso] exit tso dispatcher".to_owned(),
+        "INFO [tso] close tso client".to_owned(),
+        "INFO [tso] tso client is closed".to_owned(),
+    ] {
+        assert!(
+            crate::logutil::test_capture::any(|line| line == expected),
+            "{expected:?} not in {:?}",
+            crate::logutil::test_capture::lines()
+        );
+    }
+    let stream_end = format!("INFO tsoStream.recvLoop ended stream={endpoint}-");
+    assert!(crate::logutil::test_capture::any(|line| line
+        .starts_with(&stream_end)
+        && line.ends_with(" error=context canceled")));
+}
+
+/// Go `rcFilter`: the first sample passes through; later ones move by at most
+/// the configured weight.
+#[test]
+fn rc_filter_follows_gos_low_pass() {
+    let start = Instant::now();
+    let mut filter = super::stream::RcFilter::new(1.0, 0.2);
+    assert_eq!(filter.update(start, 10.0), 10.0);
+    // dt = 1s is far above rc = 1/(2*pi): alpha is capped at 0.2.
+    let value = filter.update(start + Duration::from_secs(1), 20.0);
+    assert!((value - 12.0).abs() < 1e-9, "{value}");
+}
+
+/// Go `checkMonotonicity`: a batch must start after the latest ts allocated
+/// before its RPC began; overlapping RPCs may finish out of order, and
+/// `latestTSOInfo` keeps the largest; a keyspace-group change is logged.
+#[tokio::test]
+async fn check_monotonicity_keeps_the_maximum_across_overlaps() {
+    use super::dispatcher::TsoInfo;
+    crate::logutil::test_capture::install();
+    let (dispatcher, _, _) = concurrency_dispatcher();
+    // A batch of 2 ending at logical 2, then two overlapping batches that
+    // both began after it.
+    dispatcher
+        .check_monotonicity(None, TsoInfo::for_test(100, 2, 0), 1)
+        .unwrap();
+    let before = dispatcher.latest_tso_info_for_test();
+    dispatcher
+        .check_monotonicity(before.clone(), TsoInfo::for_test(100, 8, 0), 7)
+        .unwrap();
+    dispatcher
+        .check_monotonicity(before, TsoInfo::for_test(100, 4, 0), 3)
+        .unwrap();
+    assert_eq!(dispatcher.latest_tso_info_for_test().unwrap().logical, 8);
+    // A batch starting at 8 is not after 8.
+    assert!(dispatcher
+        .check_monotonicity(
+            dispatcher.latest_tso_info_for_test(),
+            TsoInfo::for_test(100, 9, 0),
+            8
+        )
+        .is_err());
+    dispatcher
+        .check_monotonicity(
+            dispatcher.latest_tso_info_for_test(),
+            TsoInfo::for_test(100, 10, 7),
+            9,
+        )
+        .unwrap();
+    assert!(crate::logutil::test_capture::any(|line| {
+        line == "INFO [tso] keyspace group changed old-group-id=0 new-group-id=7"
+    }));
+}
+
+/// pd-client's client-level discovery lines: the service mode it adopts
+/// (`[pd] service mode changed`), the router service discovery created at
+/// init, and the resource manager discovery created for microservice mode.
+#[tokio::test]
+async fn client_discovery_lines_follow_the_service_mode() {
+    crate::logutil::test_capture::install();
+    let pd = Server::start(Reply::Timestamp).await;
+    let tso = Server::start(Reply::Timestamp).await;
+    let client = RetryClient::connect(
+        &[pd.service.endpoint.clone()],
+        Arc::new(SecurityManager::default()),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    let pd_mode = "INFO [pd] service mode changed new-mode=PD_SVC_MODE";
+    crate::logutil::test_capture::wait_for(pd_mode, |line| line == pd_mode).await;
+    assert!(crate::logutil::test_capture::any(|line| line.starts_with(
+        "INFO [router service] created router service discovery cluster-id=42 "
+    )));
+    api_mode(&pd, &tso);
+    let api_mode_line = "INFO [pd] service mode changed new-mode=API_SVC_MODE";
+    tokio::time::timeout(Duration::from_secs(6), async {
+        while !crate::logutil::test_capture::any(|line| line == api_mode_line) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("API mode is adopted");
+    assert!(crate::logutil::test_capture::any(|line| {
+        line
+        == "INFO [resource-manager] created resource manager discovery cluster-id=42 discovery-key=/ms/42/resource_manager/primary"
+    }));
+    client.close().await;
+    assert!(crate::logutil::test_capture::any(
+        |line| line == "INFO [router service] is closed"
+    ));
 }

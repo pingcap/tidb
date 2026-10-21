@@ -437,6 +437,38 @@ pub struct RUConfig {
     pub degraded_mode_wait_duration: StdDuration,
 }
 
+impl RUConfig {
+    /// Go `json.Marshal(ruConfig)` (zap's `zap.Reflect`): the exported
+    /// fields by Go name, durations as nanoseconds.
+    pub fn marshal_json(&self) -> String {
+        format!(
+            "{{\"ReadBaseCost\":{},\"ReadPerBatchBaseCost\":{},\"ReadBytesCost\":{},\"WriteBaseCost\":{},\"WritePerBatchBaseCost\":{},\"WriteBytesCost\":{},\"CPUMsCost\":{},\"LTBMaxWaitDuration\":{},\"WaitRetryInterval\":{},\"WaitRetryTimes\":{},\"DegradedModeWaitDuration\":{}}}",
+            go_json_float(self.read_base_cost),
+            go_json_float(self.read_per_batch_base_cost),
+            go_json_float(self.read_bytes_cost),
+            go_json_float(self.write_base_cost),
+            go_json_float(self.write_per_batch_base_cost),
+            go_json_float(self.write_bytes_cost),
+            go_json_float(self.cpu_ms_cost),
+            self.ltb_max_wait_duration.as_nanos(),
+            self.wait_retry_interval.as_nanos(),
+            self.wait_retry_times,
+            self.degraded_mode_wait_duration.as_nanos(),
+        )
+    }
+}
+
+/// Go `encoding/json`'s float64 form: shortest digits, exponent form only
+/// outside [1e-6, 1e21).
+fn go_json_float(value: f64) -> String {
+    let abs = value.abs();
+    if abs != 0.0 && !(1e-6..1e21).contains(&abs) {
+        format!("{value:e}")
+    } else {
+        format!("{value}")
+    }
+}
+
 /// Go `DefaultRUConfig`.
 pub fn default_ru_config() -> RUConfig {
     generate_ru_config(&default_config())

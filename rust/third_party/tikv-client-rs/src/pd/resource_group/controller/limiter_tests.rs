@@ -623,3 +623,34 @@ async fn test_qps_case(concurrency: usize, reserve_n: i64, limit: i64) -> (f64, 
     let wait = *wait.lock().unwrap();
     (qps, qps * reserve_n as f64, wait)
 }
+
+/// pd-client logs `Reconfigure` under controller trace logging with zap
+/// fields, not a formatted message.
+#[test]
+#[serial]
+fn reconfigure_trace_logs_carry_pd_clients_fields() {
+    crate::logutil::test_capture::install();
+    super::global_controller::set_enable_controller_trace_log_for_test(true);
+    let times = Times::reset();
+    let (nc, _rx) = notify_channel();
+    let lim = new_limiter(times.t(0), 1.0, 0, 2.0, &nc);
+    let args = TokenBucketReconfigureArgs {
+        new_tokens: 6.0,
+        new_fill_rate: 2.5,
+        new_notify_threshold: 4321.5,
+        ..TokenBucketReconfigureArgs::default()
+    };
+    lim.reconfigure(times.t(0), args, &[]);
+    super::global_controller::set_enable_controller_trace_log_for_test(false);
+    let lines = crate::logutil::test_capture::lines();
+    assert!(
+        lines.iter().any(|line| line
+            == "INFO [resource group controller] before reconfigure name= old-tokens=2 old-rate=1 old-notify-threshold=0 old-burst=0"),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line
+            == "INFO [resource group controller] after reconfigure name= tokens=8 rate=2.5 notify-threshold=4321.5 burst=0"),
+        "{lines:?}"
+    );
+}

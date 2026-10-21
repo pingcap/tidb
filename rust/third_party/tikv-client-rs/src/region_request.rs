@@ -1569,4 +1569,48 @@ mod send_req_tests {
         );
         assert_eq!(sent.load(AtomicOrdering::SeqCst), 1);
     }
+
+    /// TiKV reports a split's regions with memcomparable-encoded bounds. A
+    /// Cop request's epoch mismatch must reach the region cache decoded, as
+    /// client-go's V1 codec decodes it in place: an encoded `[t2896, tBC)`
+    /// region otherwise "contains" every raw key `t\x80\x00\xff..\xff<id>`
+    /// of the reserved system tables, and their reads go to it until restart.
+    #[tokio::test]
+    async fn a_coprocessor_epoch_mismatch_installs_decoded_region_bounds() {
+        let codec = crate::request::ApiV1Codec::new(crate::request::KeyMode::Txn);
+        let (start, end) = codec.encode_region_range(b"t2896", b"tBC");
+        let (pd, _) = client(move |_| {
+            region_error(errorpb::Error {
+                epoch_not_match: Some(errorpb::EpochNotMatch {
+                    current_regions: vec![metapb::Region {
+                        id: 1,
+                        start_key: start.clone(),
+                        end_key: end.clone(),
+                        region_epoch: Some(metapb::RegionEpoch {
+                            conf_ver: 0,
+                            version: 1,
+                        }),
+                        ..Default::default()
+                    }],
+                }),
+                ..Default::default()
+            })
+        });
+        send_req(
+            pd.clone(),
+            Keyspace::Disable,
+            request_to_region1(0),
+            std::sync::Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                crate::async_util::Cancellation::default(),
+                1_000,
+            ))),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap_err();
+        let installed = pd.epoch_not_match_regions();
+        assert_eq!(installed.len(), 1);
+        assert_eq!(installed[0].region.start_key, b"t2896");
+        assert_eq!(installed[0].region.end_key, b"tBC");
+    }
 }

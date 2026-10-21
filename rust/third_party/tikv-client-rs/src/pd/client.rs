@@ -8,7 +8,6 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::prelude::*;
 use futures::stream::BoxStream;
-use log::info;
 use tokio::sync::{watch, Mutex, RwLock};
 
 use crate::compat::stream_fn;
@@ -1106,24 +1105,69 @@ fn source_health_status_liveness(status: i32) -> StoreLiveness {
     }
 }
 
+/// client-go `invokeKVStatusAPI`.
 async fn probe_store_liveness(
     security_mgr: Arc<SecurityManager>,
     target: String,
     timeout: Duration,
 ) -> StoreLiveness {
     let request = async {
-        let channel = security_mgr.connect(&target, |channel| channel).await?;
-        crate::pd::service_discovery::health_check(channel, timeout)
-            .await
-            .map_err(crate::Error::from)
+        let channel = match security_mgr.connect(&target, |channel| channel).await {
+            Ok(channel) => channel,
+            Err(error) => {
+                log::info!(
+                    store = target.as_str(),
+                    error:% = error;
+                    "[health check] create grpc connection failed"
+                );
+                return StoreLiveness::Unreachable;
+            }
+        };
+        let status = match crate::pd::service_discovery::health_check(channel, timeout).await {
+            Ok(status) => status,
+            Err(error) => {
+                log::info!(
+                    store = target.as_str(),
+                    error:% = crate::Error::from(error);
+                    "[health check] check health error"
+                );
+                return StoreLiveness::Unreachable;
+            }
+        };
+        let liveness = source_health_status_liveness(status);
+        match liveness {
+            StoreLiveness::Unknown => {
+                log::info!(store = target.as_str(); "[health check] check health returns unknown")
+            }
+            StoreLiveness::Unreachable => log::info!(
+                status = health_serving_status_name(status);
+                "[health check] service not serving"
+            ),
+            StoreLiveness::Reachable => {}
+        }
+        liveness
     };
     match tokio::time::timeout(timeout, request).await {
-        Ok(Ok(response)) => source_health_status_liveness(response),
-        Ok(Err(error)) => {
-            log::debug!("source store liveness check failed for {target}: {error}");
+        Ok(liveness) => liveness,
+        Err(_) => {
+            log::info!(
+                store = target.as_str(),
+                error = "context deadline exceeded";
+                "[health check] check health error"
+            );
             StoreLiveness::Unreachable
         }
-        Err(_) => StoreLiveness::Unreachable,
+    }
+}
+
+/// Go `healthpb.HealthCheckResponse_ServingStatus.String()`.
+fn health_serving_status_name(status: i32) -> String {
+    match status {
+        0 => "UNKNOWN".to_owned(),
+        1 => "SERVING".to_owned(),
+        2 => "NOT_SERVING".to_owned(),
+        3 => "SERVICE_UNKNOWN".to_owned(),
+        status => status.to_string(),
     }
 }
 
@@ -1317,7 +1361,7 @@ where
                     client.region_cache.finish_store_health_check(store_id);
                     return;
                 }
-                if last_resolve.elapsed() >= STORE_RE_RESOLVE_INTERVAL {
+                if last_resolve.elapsed() > STORE_RE_RESOLVE_INTERVAL {
                     last_resolve = std::time::Instant::now();
                     match client.region_cache.refresh_store_by_id(store_id).await {
                         Ok(Some(store)) => {
@@ -1326,19 +1370,29 @@ where
                             route.physical_endpoint_type = endpoint_type;
                         }
                         Ok(None) => {
+                            let state = client
+                                .region_cache
+                                .store_resolve_state(store_id)
+                                .map_or_else(|| "unresolved".to_owned(), |state| state.to_string());
+                            log::info!(
+                                storeID = store_id,
+                                addr = route.target.as_str(),
+                                state = state.as_str();
+                                "[health check] store is invalid(tombstone or removed), stop checking"
+                            );
                             client.region_cache.finish_store_health_check(store_id);
                             return;
                         }
-                        Err(error) => {
-                            log::debug!(
-                                "source store liveness re-resolution failed for {store_id}: {error}"
-                            );
-                        }
+                        Err(error) => log::warn!(
+                            error:% = error;
+                            "[health check] failed to re-resolve unhealthy store"
+                        ),
                     }
                 }
                 let liveness = client.request_store_liveness(&route).await;
                 client.region_cache.set_store_liveness(store_id, liveness);
                 if liveness == StoreLiveness::Reachable {
+                    log::info!(storeID = store_id; "[health check] store became reachable");
                     client.region_cache.finish_store_health_check(store_id);
                     return;
                 }
@@ -1408,6 +1462,15 @@ where
             self.region_cache
                 .invalidate_store_epoch_for_region(&route.region_with_leader.ver_id(), store_id)
                 .await;
+        }
+        if liveness != StoreLiveness::Reachable
+            && route.physical_endpoint_type != crate::store::EndpointType::TiKv
+        {
+            log::info!(
+                storeID = store_id,
+                addr = route.target.as_str();
+                "[health check] skip running health check loop for non-tikv store"
+            );
         }
         if liveness != StoreLiveness::Reachable
             && route.physical_endpoint_type == crate::store::EndpointType::TiKv
@@ -2185,9 +2248,11 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         if enable_preload {
             let mut backoffer =
                 RetryBackoffer::new(crate::async_util::Cancellation::default(), 20_000);
+            log::info!("preload region index start");
             if let Err(error) = self.region_cache.refresh_region_index(&mut backoffer).await {
-                log::debug!("preload region index failed: {error}");
+                log::error!(error:% = error; "refresh region index failed");
             }
+            log::info!("preload region index finish");
         }
         if regions_refresh_interval > 0 {
             self.region_cache
@@ -2323,7 +2388,6 @@ impl<KvC: KvConnect + Send + Sync + 'static, P> PdRpcClient<KvC, P> {
         // client-go `recycleIdleConnArray`: an idle pool is closed by its
         // version (`CloseAddrVer`) and the request gets a new one.
         recycle_idle_kv_client(&self.kv_client_cache, address).await;
-        info!("connect to tikv endpoint: {:?}", address);
         let client = self
             .kv_connect
             .connect_with_store_type(address, store_type)
@@ -3491,5 +3555,25 @@ pub mod test {
         assert_eq!(ranges2.0, vec![make_key_range(k3, k4)]);
         assert_eq!(ranges3.1.id(), 3);
         assert_eq!(ranges3.0, vec![make_key_range(k5, k6)]);
+    }
+    /// client-go `invokeKVStatusAPI` logs why a store is not reachable.
+    #[tokio::test]
+    async fn store_liveness_probe_logs_client_gos_health_check_lines() {
+        crate::logutil::test_capture::install();
+        let target = "127.0.0.1:1".to_owned();
+        let liveness = super::probe_store_liveness(
+            Arc::new(crate::SecurityManager::default()),
+            target.clone(),
+            Duration::from_millis(500),
+        )
+        .await;
+        assert_eq!(liveness, StoreLiveness::Unreachable);
+        assert!(
+            crate::logutil::test_capture::any(|line| line.starts_with("INFO [health check] ")
+                && line.contains(&format!(" store={target} error="))),
+            "{:?}",
+            crate::logutil::test_capture::lines()
+        );
+        assert_eq!(super::health_serving_status_name(2), "NOT_SERVING");
     }
 }

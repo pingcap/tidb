@@ -85,6 +85,12 @@ impl<PdC: PdClient> SyncTransaction<PdC> {
         self.inner.set_ru_details(ru_details);
     }
 
+    /// Charge subsequent operations to client-go's statement `util.ExecDetails`
+    /// (see [`crate::Transaction::set_exec_details`]).
+    pub fn set_exec_details(&mut self, exec_details: Arc<crate::util::ExecDetails>) {
+        self.inner.set_exec_details(exec_details);
+    }
+
     /// Get the value associated with the given key.
     pub fn get(&mut self, key: impl Into<Key>) -> Result<Option<Value>> {
         safe_block_on(&self.runtime, self.inner.get(key))

@@ -46,10 +46,12 @@ pub trait NativeCopStore: Send + Sync + 'static {
     fn cluster_id(&self) -> u64;
 
     /// Go `RegionCache.SplitKeyRangesByLocations`' locations: the regions
-    /// covering `ranges`, in key order.
+    /// covering `ranges`, in key order, located with the `bo` whose ctx
+    /// holds `kv_context` (its PD waits are the statement's).
     fn locate(
         &self,
         ranges: &[(Vec<u8>, Vec<u8>)],
+        kv_context: &crate::StatementKvContext,
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error>;
 
     /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
@@ -126,11 +128,11 @@ pub async fn with_ru_details<F: std::future::Future>(
     }
 }
 
-/// Runs `future` under Go's statement ctx: client-rust's dispatch charges the
-/// trace context's `RuDetails` (Go `util.RUDetailsCtxKey`), its intercepted
-/// PD client the task's `ExecDetails` (Go `util.ExecDetailsKey`, which the
-/// trace context also carries), and its network collector the task's
-/// traffic details.
+/// Runs `future` under Go's statement ctx ([`crate::StatementKvContext::trace_context`]):
+/// client-rust charges the trace context's `RuDetails` (Go
+/// `util.RUDetailsCtxKey`) on every RPC, and its `ExecDetails` (Go
+/// `util.ExecDetailsKey`) where client-go does -- KV waits and traffic per
+/// send, PD waits, backoff sleeps of the Backoffers made under it.
 pub async fn with_statement_kv_context<'a, F>(
     kv_context: &crate::StatementKvContext,
     future: F,
@@ -138,37 +140,12 @@ pub async fn with_statement_kv_context<'a, F>(
 where
     F: std::future::Future + Send + 'a,
 {
-    // Erased once, so the three ctx scopes below do not nest the caller's
-    // future type three levels deeper.
+    // Erased, so the ctx scope does not hold the caller's (possibly large)
+    // future inline on the blocking caller's stack.
     let future: std::pin::Pin<Box<dyn std::future::Future<Output = F::Output> + Send + 'a>> =
         Box::pin(future);
-    let future = async {
-        if kv_context.ru_details.is_none() && kv_context.exec_details.is_none() {
-            return future.await;
-        }
-        let mut context = tikv_client::trace::TraceContext::new();
-        if let Some(ru_details) = &kv_context.ru_details {
-            context = tikv_client::util::context_with_ru_details(&context, Arc::clone(ru_details));
-        }
-        if let Some(exec_details) = &kv_context.exec_details {
-            context =
-                tikv_client::util::context_with_exec_details(&context, Arc::clone(exec_details));
-        }
-        tikv_client::trace::with_trace_context(context, future).await
-    };
-    let future = async {
-        match &kv_context.network_traffic_details {
-            Some(details) => {
-                tikv_client::traffic::with_network_traffic_details(Arc::clone(details), future)
-                    .await
-            }
-            None => future.await,
-        }
-    };
-    match &kv_context.exec_details {
-        Some(exec_details) => {
-            tikv_client::util::with_exec_details(Arc::clone(exec_details), future).await
-        }
+    match kv_context.trace_context() {
+        Some(context) => tikv_client::trace::with_trace_context(context, future).await,
         None => future.await,
     }
 }
@@ -181,8 +158,9 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
     fn locate(
         &self,
         ranges: &[(Vec<u8>, Vec<u8>)],
+        kv_context: &crate::StatementKvContext,
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error> {
-        self.block_on(async {
+        self.block_on(with_statement_kv_context(kv_context, async {
             let pd = self.store().pd_client();
             let mut regions: Vec<tikv_client::RegionWithLeader> = Vec::new();
             for (start, end) in ranges {
@@ -203,7 +181,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
                 }
             }
             Ok(regions)
-        })
+        }))
     }
 
     fn send(

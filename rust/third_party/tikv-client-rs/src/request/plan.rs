@@ -8,10 +8,6 @@ use std::time::{Duration, Instant};
 use async_recursion::async_recursion;
 use async_trait::async_trait;
 use futures::prelude::*;
-use log::debug;
-use log::error;
-use log::info;
-use log::warn;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time::sleep;
@@ -222,6 +218,9 @@ pub struct Dispatch<Req: KvRequest> {
     /// fan-out task. It supplies client events and TiKV trace metadata.
     pub(crate) trace_context: crate::trace::TraceContext,
     pub(crate) network_traffic_details: Option<Arc<crate::traffic::NetworkTrafficDetails>>,
+    /// The `with_exec_details` scope's `ExecDetails` captured when the
+    /// request was built, for shards sent from spawned tasks.
+    pub(crate) exec_details: Option<Arc<crate::util::ExecDetails>>,
     /// Original request invariant retained when a stale read falls back to a
     /// normal leader read after meeting a lock.
     pub(crate) network_stale_read: bool,
@@ -241,6 +240,15 @@ pub(crate) struct ReadTimestampValidation {
 }
 
 impl<Req: KvRequest> Dispatch<Req> {
+    /// client-go `ctx.Value(util.ExecDetailsKey)` for this send: the
+    /// statement's `ExecDetails` in the trace context the request was built
+    /// in, else the one current when it was built.
+    fn exec_details(&self) -> Option<Arc<crate::util::ExecDetails>> {
+        crate::util::exec_details_from_context(&self.trace_context)
+            .cloned()
+            .or_else(|| self.exec_details.clone())
+    }
+
     /// The `RuDetails` this send charges: the plan's own, else the one in its
     /// trace context, as client-go's resource-control interceptor charges the
     /// `util.RUDetailsCtxKey` value of the request's ctx.
@@ -404,15 +412,12 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }) as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         });
-        let (result, transport_attempted) = match admission_result {
-            Ok(()) => {
-                let result = match &self.interceptor {
-                    Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
-                    None => next().await,
-                };
-                (result, true)
-            }
-            Err(error) => (Err(error), false),
+        let result = match admission_result {
+            Ok(()) => match &self.interceptor {
+                Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
+                None => next().await,
+            },
+            Err(error) => Err(error),
         };
         if let Some(runtime_stats) = &self.region_request_runtime_stats {
             if let Some(command) = CommandType::from_request_label(self.request.label()) {
@@ -434,20 +439,27 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 }
             }
         }
+        // client-go `sendReqToRegion`: the whole `SendRequest` (resource
+        // control wait included) is charged to the statement's
+        // `ExecDetails.WaitKVRespDuration`, then the network collector charges
+        // its traffic, whether or not the send succeeded.
+        let exec_details = self.exec_details();
+        if let Some(exec_details) = &exec_details {
+            exec_details.add_wait_kv_response(started_at.elapsed());
+        }
         let network_collector = crate::traffic::NetworkCollector {
             stale_read: self.network_stale_read || self.replica_read_config.stale_read,
             access_location: self.resource_control_access_location,
             endpoint_type: self.physical_endpoint_type,
+            exec_details,
             details: self
                 .network_traffic_details
                 .clone()
                 .or_else(crate::traffic::current_network_traffic_details),
         };
-        if transport_attempted {
-            network_collector.on_request(&request);
-            if let Ok(response) = &result {
-                network_collector.on_response(&request, response.as_ref());
-            }
+        network_collector.on_request(&request);
+        if let Ok(response) = &result {
+            network_collector.on_response(&request, response.as_ref());
         }
         let result = match result {
             Ok(response) => match selected_resource_control {
@@ -476,8 +488,12 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                                 .is_some_and(|request| request.is_txn_file) =>
                         {
                             log::warn!(
-                                "txn file: resource control accounting failed after commit: {}",
-                                error
+                                txnStartTS = request
+                                    .as_any()
+                                    .downcast_ref::<kvrpcpb::CommitRequest>()
+                                    .map_or(0, |request| request.start_version),
+                                error:% = error;
+                                "txn file: resource control accounting failed after commit"
                             );
                             Ok(response)
                         }
@@ -688,7 +704,7 @@ pub(crate) async fn invalidate_connection_for_error<PdC: PdClient>(
 async fn collect_join_set_results<T>(
     mut join_set: JoinSet<(usize, T)>,
     task_count: usize,
-    handler_name: &str,
+    _handler_name: &str,
 ) -> Result<Vec<T>>
 where
     T: Send + 'static,
@@ -698,10 +714,6 @@ where
         match join_result {
             Ok((idx, val)) => results[idx] = Some(val),
             Err(e) => {
-                error!(
-                    "{}: failed to join task ({} tasks): {}",
-                    handler_name, task_count, e
-                );
                 join_set.shutdown().await;
                 return Err(Error::JoinError(e));
             }
@@ -1247,7 +1259,6 @@ where
         let shards_len = shards.len();
         let record_async_batch_get_metric =
             snapshot_region_scope.is_some() && snapshot_async_batch_get && shards_len > 1;
-        debug!("single_plan_handler, shards: {}", shards_len);
         if shards_len == 0 {
             return (Ok(Vec::new()), backoff);
         }
@@ -1549,10 +1560,6 @@ where
         }
         let region_ver_id = region.ver_id();
         let store_id = region.get_store_id().ok();
-        debug!(
-            "single_shard_handler, region: {:?}, store: {:?}",
-            region_ver_id, store_id
-        );
         let replica_read_config = plan.replica_read_config();
         let replica_selector_state = plan.replica_selector_state();
         let is_read_request = plan.is_read_request();
@@ -1607,7 +1614,6 @@ where
                 return SendReqOutcome::Done(Err(err), backoff);
             }
             Err(err) => {
-                debug!("single_shard_handler::sharding, error: {:?}", err);
                 return Self::handle_other_error(
                     pd_client,
                     plan,
@@ -1682,10 +1688,6 @@ where
                 if let Some(peer) = region_store.target_peer.as_ref() {
                     plan.mark_replica_deadline_exceeded(peer.id);
                 }
-                debug!(
-                    "single_shard_handler: configurable read timeout, reselection without backoff: {:?}",
-                    e
-                );
                 plan.mark_retry_request();
                 return Self::single_shard_handler(
                     pd_client,
@@ -1699,7 +1701,6 @@ where
                 .await;
             }
             Err(e) if is_grpc_error(&e) => {
-                debug!("single_shard_handler:execute: grpc error: {:?}", e);
                 return Self::handle_other_error(
                     pd_client,
                     plan,
@@ -1717,26 +1718,20 @@ where
                 .await;
             }
             Err(e) => {
-                debug!("single_shard_handler:execute: error: {:?}", e);
                 return SendReqOutcome::Done(Err(e), backoff);
             }
         };
 
         if let Some(e) = resp.key_errors() {
-            debug!("single_shard_handler:execute: key errors: {:?}", e);
             SendReqOutcome::Done(Ok(vec![Err(Error::MultipleKeyErrors(e))]), backoff)
         } else if let Some(e) = resp.region_error() {
             // client-go `RegionRequestSender.onRegionError`: its span becomes
             // the Backoffer's ctx, so its backoff, its cache loads and the
             // retry that follows report under it.
             let on_region_error_span = crate::trace::start_bo_client_span("tikv.onRegionError");
-            debug!(
-                "single_shard_handler:execute: region error: {:?}, region: {:?}",
-                e, region_ver_id
-            );
             let region_error_label = region_error_label(&e);
             if region_error_label == "unknown" {
-                info!("unknown region error: {e:?}");
+                log::info!(error:% = crate::error::protobuf_text(&e); "unknown region error");
             }
             crate::stats::increment_region_error(
                 region_error_label,
@@ -1765,10 +1760,6 @@ where
                 if let Some(peer) = region_store.target_peer.as_ref() {
                     plan.mark_replica_deadline_exceeded(peer.id);
                 }
-                debug!(
-                    "single_shard_handler: configurable server-busy deadline, reselection without backoff: {:?}",
-                    e
-                );
                 plan.mark_retry_request();
                 drop(on_region_error_span);
                 return Self::single_shard_handler(
@@ -1971,10 +1962,6 @@ where
                             .await;
                         }
                         Ok(false) => {
-                            warn!(
-                                "giving up after exhausting retries on region error, region: {:?}",
-                                region_ver_id
-                            );
                             return SendReqOutcome::Done(
                                 Err(Error::RegionError(Box::new(e))),
                                 backoff,
@@ -2041,15 +2028,10 @@ where
                 // after a forced follower leader-read succeeds. Cache update
                 // failure is advisory and must not turn a successful user RPC
                 // into an error.
-                if let Err(error) = pd_client
+                // client-go logs nothing here.
+                let _ = pd_client
                     .update_leader(region_store.region_with_leader.ver_id(), leader)
-                    .await
-                {
-                    warn!(
-                        "failed to update cached leader after successful forced leader read: {:?}",
-                        error
-                    );
-                }
+                    .await;
             }
             SendReqOutcome::Done(Ok(vec![Ok(resp)]), backoff)
         }
@@ -2068,7 +2050,6 @@ where
         one_region: Option<bool>,
         e: Error,
     ) -> SendReqOutcome<P, <Self as Plan>::Result, R> {
-        debug!("handle_other_error: {:?}", e);
         // client-go `RegionRequestSender.onSendFail`: its span becomes the
         // Backoffer's ctx, so the TiKV-RPC backoff below and everything the
         // request reports afterwards hang under it.
@@ -2336,7 +2317,6 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
 ) -> Result<RegionErrorRetry> {
     let ver_id = region_store.region_with_leader.ver_id();
     let store_id = region_store.region_with_leader.get_store_id();
-    debug!("handling region error: {:?}, region: {:?}", e, ver_id);
     // Source checks this flag before the ordered errorpb branch chain. A
     // malformed response can carry several optional errors, so preserving the
     // precedence prevents an indeterminate write from being retried.
@@ -2479,10 +2459,6 @@ pub(crate) async fn handle_region_error<PdC: PdClient>(
         // fallback returns true here so `next` can select another replica
         // without cache eviction or backoff. Rust routes the next attempt
         // through the retained `ReplicaSelectorState` in `Dispatch`.
-        debug!(
-            "unknown region error, retrying source replica selection, region: {:?}: {:?}",
-            ver_id, e
-        );
         Ok(RegionErrorRetry::Immediate)
     }
 }
@@ -2744,6 +2720,81 @@ where
                 Err(e) => return Err(e),
             }
         }
+    }
+}
+
+/// client-go `broadcastToAllStores`'s sending half: one attempt per TiKV
+/// store (`GetStoresByType(tikvrpc.TiKV)`), at most `broadcastMaxConcurrency`
+/// at a time, each bounded by `broadcastRpcTimeout`. Every store's outcome is
+/// reported with its identity, since Go handles (logs) each store's failure on
+/// its own and never retries.
+pub struct BroadcastTiKvStores<P: Plan, PdC: PdClient> {
+    pub(super) inner: P,
+    pub pd_client: Arc<PdC>,
+    pub timeout: Duration,
+}
+
+impl<P: Plan, PdC: PdClient> Clone for BroadcastTiKvStores<P, PdC> {
+    fn clone(&self) -> Self {
+        BroadcastTiKvStores {
+            inner: self.inner.clone(),
+            pd_client: self.pd_client.clone(),
+            timeout: self.timeout,
+        }
+    }
+}
+
+/// client-go `broadcastMaxConcurrency`.
+pub const BROADCAST_MAX_CONCURRENCY: usize = 10;
+
+/// One store's outcome in [`BroadcastTiKvStores`].
+pub struct StoreBroadcastResult<T> {
+    /// client-go `target.StoreID()`.
+    pub store_id: StoreId,
+    /// client-go `target.GetAddr()`.
+    pub store_addr: String,
+    pub result: Result<T>,
+}
+
+#[async_trait]
+impl<P: Plan + StoreRequest, PdC: PdClient> Plan for BroadcastTiKvStores<P, PdC> {
+    type Result = Vec<StoreBroadcastResult<P::Result>>;
+
+    async fn execute(&self) -> Result<Self::Result> {
+        let mut stores = self.pd_client.clone().all_stores().await?;
+        stores.retain(|store| store.endpoint_type == crate::store::EndpointType::TiKv);
+        let permits = Arc::new(Semaphore::new(
+            BROADCAST_MAX_CONCURRENCY.min(stores.len()).max(1),
+        ));
+        let stores_len = stores.len();
+        let mut join_set = JoinSet::new();
+        for (idx, store) in stores.into_iter().enumerate() {
+            let mut plan = self.inner.clone();
+            plan.apply_store(&store);
+            let permits = permits.clone();
+            let timeout = self.timeout;
+            let (store_id, store_addr) = (store.id, store.target.clone());
+            join_set.spawn(crate::async_util::inherit_background_rpc_context(
+                crate::trace::inherit_client_spans(async move {
+                    let _permit = permits.acquire_owned().await;
+                    let result = match tokio::time::timeout(timeout, plan.execute()).await {
+                        Ok(result) => result,
+                        Err(_) => Err(Error::GrpcAPI(tonic::Status::deadline_exceeded(
+                            "context deadline exceeded",
+                        ))),
+                    };
+                    (
+                        idx,
+                        StoreBroadcastResult {
+                            store_id,
+                            store_addr,
+                            result,
+                        },
+                    )
+                }),
+            ));
+        }
+        collect_join_set_results(join_set, stores_len, "broadcast_tikv_store").await
     }
 }
 
@@ -3390,11 +3441,9 @@ where
 
             // Propagate errors to `retry_multi_region` for retry.
             if let Some(e) = scan_lock_resp.key_errors() {
-                info!("CleanupLocks::execute, inner key errors:{:?}", e);
                 result.key_error = Some(e);
                 return Ok(result);
             } else if let Some(e) = scan_lock_resp.region_error() {
-                info!("CleanupLocks::execute, inner region error:{}", e.message);
                 result.region_error = Some(e);
                 return Ok(result);
             }
@@ -3406,7 +3455,6 @@ where
                         .encode_keyspace(self.keyspace, KeyMode::Txn)
                         .into();
                     if region.contains(start.as_ref()) {
-                        debug!("CleanupLocks::execute, next range:{:?}", (&start, &end));
                         inner.next_batch((start, end));
                     } else {
                         has_more_batch = false;
@@ -3434,7 +3482,6 @@ where
                     .collect::<Vec<_>>();
             }
             locks = locks.encode_keyspace(self.keyspace, KeyMode::Txn);
-            debug!("CleanupLocks::execute, meet locks:{}", locks.len());
 
             let lock_size = locks.len();
             match lock_resolver

@@ -26,6 +26,7 @@ pub use misc::{
     bytes_to_string, compatible_parse_gc_time, format_bytes, get_max_start_key, get_min_end_key,
     session_id, with_recovery, with_session_id, GC_TIME_FORMAT,
 };
+pub(crate) use pd_interceptor::record_pd_wait_time;
 pub use pd_interceptor::InterceptedPdClient;
 pub use rate_limit::RateLimit;
 pub use request_source::*;
