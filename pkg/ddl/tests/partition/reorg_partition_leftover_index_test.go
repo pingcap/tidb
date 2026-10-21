@@ -55,8 +55,21 @@ func TestReorgPartitionCancelNonUniqueGlobalIndex(t *testing.T) {
 	baseMutations := countUpdateMutations(t, tk)
 
 	var cancelState model.SchemaState
+	var lastRollbackStates []model.SchemaState
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if cancelState == model.StateNone || job.Type != model.ActionReorganizePartition || job.SchemaState != cancelState {
+		if job.Type != model.ActionReorganizePartition {
+			return
+		}
+		if job.IsRollingback() {
+			lastRollbackStates = lastRollbackStates[:0]
+			for _, idx := range external.GetTableByName(t, testkit.NewTestKit(t, store), "test", "t").Meta().Indices {
+				if idx.State != model.StatePublic {
+					lastRollbackStates = append(lastRollbackStates, idx.State)
+				}
+			}
+			return
+		}
+		if cancelState == model.StateNone || job.SchemaState != cancelState {
 			return
 		}
 		cancelState = model.StateNone
@@ -71,8 +84,14 @@ func TestReorgPartitionCancelNonUniqueGlobalIndex(t *testing.T) {
 		model.StateDeleteReorganization,
 	} {
 		cancelState = state
+		lastRollbackStates = nil
 		tk.MustGetErrCode("alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (maxvalue))", errno.ErrCancelledDDLJob)
 		tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+		// The copies must be delete only in the step that removes them.
+		require.NotEmpty(t, lastRollbackStates, "cancel at %s", state)
+		for _, s := range lastRollbackStates {
+			require.Equal(t, model.StateDeleteOnly, s, "cancel at %s", state)
+		}
 		require.Len(t, tblInfo.Indices, baseIndices, "cancel at %s", state)
 		for _, idx := range tblInfo.Indices {
 			require.Equal(t, model.StatePublic, idx.State, "cancel at %s, index %s", state, idx.Name.O)
