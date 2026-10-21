@@ -124,6 +124,8 @@ func (ran *Range) collectFixedNotNullColumns(tc types.Context, idxCols []*expres
 	return true
 }
 
+// coversAnyKey reports whether fixed contains every column of at least one key. fixed may have more columns
+// than the key: a range fixing (a, b) covers uk(a), because a row set unique on a is unique on (a, b) too.
 func coversAnyKey(fixed map[int64]struct{}, keys [][]int64) bool {
 	for _, key := range keys {
 		covered := true
