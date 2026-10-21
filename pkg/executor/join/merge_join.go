@@ -291,6 +291,9 @@ func (t *MergeJoinTable) hasNullInJoinKey(row chunk.Row) bool {
 
 // Close implements the Executor Close interface.
 func (e *MergeJoinExec) Close() error {
+	defer func() {
+		e.Joiner.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+	}()
 	if err := e.InnerTable.finish(); err != nil {
 		return err
 	}
@@ -307,6 +310,7 @@ func (e *MergeJoinExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *MergeJoinExec) Open(ctx context.Context) error {
+	e.Joiner.resetJoinedRows(e.RuntimeStats() != nil)
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}

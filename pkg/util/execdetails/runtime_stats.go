@@ -76,6 +76,8 @@ const (
 	TpHashStateRuntimeStats
 	// TpWriteRuntimeStats is the type for processed DML work.
 	TpWriteRuntimeStats
+	// TpJoinedRowsRuntimeStats is the type for join pairs before residual filtering.
+	TpJoinedRowsRuntimeStats
 )
 
 // RuntimeStats is used to express the executor runtime information.
@@ -105,6 +107,40 @@ func (s *WriteRuntimeStats) Clone() RuntimeStats { return &WriteRuntimeStats{CPU
 func (s *WriteRuntimeStats) Merge(other RuntimeStats) {
 	if other, ok := other.(*WriteRuntimeStats); ok {
 		s.CPUWork += other.CPUWork
+	}
+}
+
+// JoinedRowsRuntimeStats counts candidate pairs processed before other conditions.
+// Each join worker owns its counter until Close; it is not concurrency-safe.
+// Null-extension rows and pairs skipped by semi-join short circuit are excluded.
+type JoinedRowsRuntimeStats struct {
+	Rows int64
+}
+
+// AddRows preserves a negative overflow sentinel through subsequent updates.
+func (s *JoinedRowsRuntimeStats) AddRows(rows int64) {
+	if s.Rows < 0 || rows < 0 || rows > math.MaxInt64-s.Rows {
+		s.Rows = -1
+		return
+	}
+	s.Rows += rows
+}
+
+// String keeps accounting evidence out of EXPLAIN runtime-stat rendering.
+func (*JoinedRowsRuntimeStats) String() string { return "" }
+
+// Tp implements RuntimeStats.
+func (*JoinedRowsRuntimeStats) Tp() int { return TpJoinedRowsRuntimeStats }
+
+// Clone implements RuntimeStats.
+func (s *JoinedRowsRuntimeStats) Clone() RuntimeStats {
+	return &JoinedRowsRuntimeStats{Rows: s.Rows}
+}
+
+// Merge implements RuntimeStats.
+func (s *JoinedRowsRuntimeStats) Merge(other RuntimeStats) {
+	if other, ok := other.(*JoinedRowsRuntimeStats); ok {
+		s.AddRows(other.Rows)
 	}
 }
 
@@ -865,6 +901,21 @@ func (e *RuntimeStatsColl) GetRootWriteCPUWork(planID int) (float64, bool) {
 		for _, stats := range root.groupRss {
 			if provider, ok := stats.(*WriteRuntimeStats); ok {
 				return provider.CPUWork, true
+			}
+		}
+	}
+	return 0, false
+}
+
+// GetRootJoinedRows returns candidate pairs, distinguishing missing evidence from zero.
+// Like the producer counters, this evidence is consumed after executor teardown.
+func (e *RuntimeStatsColl) GetRootJoinedRows(planID int) (int64, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if root := e.rootStats[planID]; root != nil {
+		for _, stats := range root.groupRss {
+			if provider, ok := stats.(*JoinedRowsRuntimeStats); ok {
+				return provider.Rows, true
 			}
 		}
 	}

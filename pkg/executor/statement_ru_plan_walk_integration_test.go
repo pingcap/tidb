@@ -606,6 +606,8 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t(a int primary key, b int, c int, index idx_b(b), index idx_c(c))")
 		tk.MustExec("insert into t values (1, 10, 100), (2, 20, 200), (3, 30, 300)")
+		tk.MustExec("create table ru_join(a int, b int, index(a))")
+		tk.MustExec("insert into ru_join values (1,1), (1,2), (1,3), (2,null), (null,1)")
 		tk.MustExec("create table nullable_join(a int)")
 		tk.MustExec("insert into nullable_join values (1), (null), (2)")
 		tk.MustExec("create table naaj_a(a int, b int, c int)")
@@ -654,7 +656,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			calibration.joinOutputRows = joinOutputRows
 		})
 		type operatorExpectation func(base.Plan) bool
-		testCases := []struct {
+		type operatorTestCase struct {
 			name           string
 			before         []string
 			after          []string
@@ -664,11 +666,15 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			sortRows       bool
 			wantPublish    bool
 			wantCPUWork    bool
+			wantExactCPU   float64
 			wantHashState  bool
 			wantHashRows   float64
 			wantJoinOutput bool
+			wantJoinedRows float64
 			wantRootAndCop bool
-		}{
+			wantBuildSide  string
+		}
+		testCases := []operatorTestCase{
 			{name: "MemTable", query: "select concat(table_name, '') from information_schema.tables where table_schema = 'test' and table_name = 't'", rows: testkit.Rows("t"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMemTable], wantPublish: true, wantCPUWork: true},
 			{name: "Selection", query: "select * from t ignore index (idx_b) where b > 10", rows: testkit.Rows("2 20 200", "3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSelection], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "Sort", query: "select * from t ignore index (idx_b) order by b desc", rows: testkit.Rows("3 30 300", "2 20 200", "1 10 100"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalSort], wantPublish: true, wantCPUWork: true},
@@ -685,12 +691,57 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			{name: "MergeJoin", query: "select /*+ MERGE_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMergeJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
 			{name: "IndexJoin", query: "select /*+ INL_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
 			{name: "IndexHashJoin", query: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a", rows: testkit.Rows("1 10 100 1 10 100", "2 20 200 2 20 200", "3 30 300 3 30 300"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexHashJoin], sortRows: true, wantPublish: true, wantCPUWork: true, wantJoinOutput: true},
+			{name: "HashJoin optimized other condition", before: []string{"set tidb_hash_join_version = 'optimized'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from ru_join t1 join ru_join t2 on t1.a = t2.a and t1.b + t2.b < 0", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], wantPublish: true, wantCPUWork: true, wantJoinedRows: 10},
+			{name: "HashJoin legacy other condition", before: []string{"set tidb_hash_join_version = 'legacy'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ HASH_JOIN(t1, t2) */ * from ru_join t1 join ru_join t2 on t1.a = t2.a and t1.b + t2.b < 0", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], wantPublish: true, wantCPUWork: true, wantJoinedRows: 10},
+			{name: "MergeJoin other condition", before: []string{"set tidb_hash_join_version = 'optimized'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ MERGE_JOIN(t1, t2) */ * from ru_join t1 join ru_join t2 on t1.a = t2.a and t1.b + t2.b < 0", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalMergeJoin], wantPublish: true, wantCPUWork: true, wantJoinedRows: 10},
+			{name: "IndexJoin other condition", before: []string{"set tidb_hash_join_version = 'optimized'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ INL_JOIN(t1, t2) */ * from ru_join t1 join ru_join t2 on t1.a = t2.a and t1.b + t2.b < 0", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexJoin], wantPublish: true, wantCPUWork: true, wantJoinedRows: 10},
+			{name: "IndexHashJoin other condition", before: []string{"set tidb_hash_join_version = 'optimized'"}, after: []string{"set tidb_hash_join_version = 'optimized'"}, query: "select /*+ INL_HASH_JOIN(t1, t2) */ * from ru_join t1 join ru_join t2 on t1.a = t2.a and t1.b + t2.b < 0", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalIndexHashJoin], wantPublish: true, wantCPUWork: true, wantJoinedRows: 10},
+			{name: "HashJoin Cartesian other condition", query: "select /*+ HASH_JOIN(t1,t2) */ * from t t1 join t t2 on t1.b+t2.b<0", rows: testkit.Rows(), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin], wantPublish: true, wantJoinedRows: 9, wantExactCPU: 9},
 			{name: "HashAgg parallel", query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
 			{name: "HashAgg serial", before: []string{"set tidb_hashagg_partial_concurrency = 1", "set tidb_hashagg_final_concurrency = 1"}, after: []string{"set tidb_hashagg_partial_concurrency = default", "set tidb_hashagg_final_concurrency = default"}, query: "select /*+ HASH_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantHashState: true, wantHashRows: 6, wantRootAndCop: true},
 			{name: "StreamAgg", query: "select /*+ STREAM_AGG() */ count(*) from t group by b", rows: testkit.Rows("1", "1", "1"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalStreamAgg], sortRows: true, wantPublish: true, wantCPUWork: true, wantRootAndCop: true},
 			{name: "Projection", query: "select b + 1 from t ignore index (idx_b)", rows: testkit.Rows("11", "21", "31"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalProjection], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "Window", query: "select row_number() over () from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalWindow], sortRows: true, wantPublish: true, wantCPUWork: true},
 			{name: "Shuffle Window", query: "select sum(a) over(partition by a order by b) from t ignore index (idx_b, idx_c)", rows: testkit.Rows("1", "2", "3"), expectOperator: isStatementRUPlanType[*physicalop.PhysicalShuffle], sortRows: true, wantPublish: true, wantCPUWork: true},
+		}
+		for _, version := range []string{"legacy", "optimized"} {
+			for _, buildSide := range []string{"t1", "t2"} {
+				for _, tc := range []struct {
+					name       string
+					query      string
+					rows       [][]any
+					joinedRows float64
+				}{
+					{"outer other condition", "select %s t1.a,t1.b,t2.a from ru_join t1 left join ru_join t2 on t1.a=t2.a and t1.b+t2.b<0", testkit.Rows("1 1 <nil>", "1 2 <nil>", "1 3 <nil>", "2 <nil> <nil>", "<nil> 1 <nil>"), 10},
+					{"semi short circuit", "select %s t1.a,t1.b from ru_join t1 where exists(select 1 from ru_join t2 where t1.a=t2.a)", testkit.Rows("1 1", "1 2", "1 3", "2 <nil>"), 4},
+					{"anti semi short circuit", "select %s t1.a,t1.b from ru_join t1 where not exists(select 1 from ru_join t2 where t1.a=t2.a)", testkit.Rows("<nil> 1"), 4},
+					{"left outer semi other condition", "select %s t1.a,t1.b,exists(select 1 from ru_join t2 where t1.a=t2.a and t1.b+t2.b<0) from ru_join t1", testkit.Rows("1 1 0", "1 2 0", "1 3 0", "2 <nil> 0", "<nil> 1 0"), 10},
+					{"left outer semi short circuit", "select %s t1.a,t1.b,exists(select 1 from ru_join t2 where t1.a=t2.a) from ru_join t1", testkit.Rows("1 1 1", "1 2 1", "1 3 1", "2 <nil> 1", "<nil> 1 0"), 4},
+					{"semi other condition", "select %s t1.a,t1.b from ru_join t1 where exists(select 1 from ru_join t2 where t1.a=t2.a and t1.b+t2.b<0)", testkit.Rows(), 10},
+					{"anti semi other condition", "select %s t1.a,t1.b from ru_join t1 where not exists(select 1 from ru_join t2 where t1.a=t2.a and t1.b+t2.b<0)", testkit.Rows("1 1", "1 2", "1 3", "2 <nil>", "<nil> 1"), 10},
+				} {
+					if version == "legacy" && buildSide == "t1" && tc.name != "outer other condition" {
+						// The legacy planner only builds the inner side for semi joins.
+						continue
+					}
+					if buildSide == "t1" && (tc.name == "left outer semi other condition" || tc.name == "left outer semi short circuit") {
+						continue // Left outer semi joins only support building the right side.
+					}
+					buildHint := buildSide
+					if buildSide == "t2" && tc.name != "outer other condition" {
+						buildHint += "@sel_2"
+					}
+					testCases = append(testCases, operatorTestCase{
+						name:   "HashJoin " + version + " build " + buildSide + " " + tc.name,
+						before: []string{"set tidb_hash_join_version='" + version + "'"},
+						after:  []string{"set tidb_hash_join_version='optimized'"},
+						query:  fmt.Sprintf(tc.query, "/*+ HASH_JOIN_BUILD("+buildHint+") */"),
+						rows:   tc.rows, sortRows: true, wantPublish: true,
+						expectOperator: isStatementRUPlanType[*physicalop.PhysicalHashJoin],
+						wantJoinedRows: tc.joinedRows, wantBuildSide: buildSide,
+					})
+				}
+			}
 		}
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
@@ -723,6 +774,9 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 					if operator == nil || operator.Origin == nil {
 						planSummary = append(planSummary, fmt.Sprintf("%d:<nil>", index))
 						continue
+					}
+					if hashJoin, ok := operator.Origin.(*physicalop.PhysicalHashJoin); ok && tc.wantBuildSide != "" {
+						require.Equal(t, tc.wantBuildSide == "t2", hashJoin.RightIsBuildSide())
 					}
 					rootRows := runtimeStats.GetPlanActRows(operator.Origin.ID())
 					_, copRows := runtimeStats.GetCopCountAndRows(operator.Origin.ID())
@@ -771,6 +825,9 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				require.Equal(t, float64(len(normalizedSQL)), published.frontendBytes)
 				require.GreaterOrEqual(t, published.scanBytes, float64(0))
 				require.GreaterOrEqual(t, published.netBytes, float64(0))
+				if tc.wantExactCPU > 0 {
+					require.Equal(t, tc.wantExactCPU, published.cpuWork)
+				}
 				if tc.wantCPUWork {
 					require.Positive(t, published.cpuWork)
 				}
@@ -779,6 +836,9 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 				}
 				if tc.wantHashRows > 0 {
 					require.Equal(t, tc.wantHashRows, published.hashStateRows)
+				}
+				if tc.wantJoinedRows > 0 {
+					require.Equal(t, tc.wantJoinedRows, published.joinOutputRows)
 				}
 				if tc.wantJoinOutput {
 					require.Positive(t, published.joinOutputRows)
