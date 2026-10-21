@@ -16,14 +16,14 @@ format coverage; TiDB's //... pattern alone does not include external tests.
 The gcimporter tests still require the manual compiler-specific checks below.
 Whenever x/tools or this patch changes, reapply it to a pristine, writable
 checkout of the selected x/tools module and run both commands from that module
-root. Replace <go1.25.14> and <go1.27.2> with those exact SDK directories;
+root. Replace <go1.25.14> and <go1.27.3> with those exact SDK directories;
 GOTOOLCHAIN=local prevents an implicit compiler upgrade. Keep the command logs
 and actual compiler versions as manual importer compatibility evidence, separate
 from the automated pkgbits format test.
 
     GOTOOLCHAIN=local <go1.25.14>/bin/go test ./internal/pkgbits ./internal/gcimporter \
         -run '^(TestRoundTrip|TestVersions|TestImportTestdata)$' -count=1 -v
-    GOTOOLCHAIN=local <go1.27.2>/bin/go test ./internal/pkgbits ./internal/gcimporter \
+    GOTOOLCHAIN=local <go1.27.3>/bin/go test ./internal/pkgbits ./internal/gcimporter \
         -run '^(TestGo127MethodOrder|TestRoundTrip|TestVersions)$' -count=1 -v
 
 diff --git a/internal/pkgbits/version.go b/internal/pkgbits/version.go
