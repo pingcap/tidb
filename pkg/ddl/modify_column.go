@@ -2245,6 +2245,12 @@ func GetModifiableColumnJob(
 	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if err = checkGeometryColumn(newCol.ColumnInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err = checkGeometryModify(col.ColumnInfo, newCol.ColumnInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		return nil, errors.Trace(err)
@@ -2709,6 +2715,22 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 	return nil
 }
 
+// checkGeometryModify allows MODIFY and CHANGE COLUMN on a geometry column, or to one,
+// only if the type, subtype and SRID attribute stay, so stored values are never rewritten.
+func checkGeometryModify(from, to *model.ColumnInfo) error {
+	if from.GetType() != mysql.TypeGeometry && to.GetType() != mysql.TypeGeometry {
+		return nil
+	}
+	if from.GetType() != to.GetType() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't convert a column to or from a geometry type")
+	}
+	if from.FieldType.GetGeometryType() != to.FieldType.GetGeometryType() ||
+		from.HasSRID != to.HasSRID || from.SRID != to.SRID {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("a geometry column can only change its name, comment, position, nullability and default")
+	}
+	return nil
+}
+
 // checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
 // or change by reorg. It returns error if the two types are incompatible and correlated change are not
 // supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
@@ -2812,10 +2834,12 @@ func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, optio
 		case ast.ColumnOptionCheck:
 			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't modify with check"))
 		case ast.ColumnOptionSRID:
-			// A geometry column is rejected by checkColumnAttributes.
 			if col.GetType() != mysql.TypeGeometry {
 				return errors.Trace(dbterror.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column"))
 			}
+			// The last SRID wins, as in MySQL.
+			col.HasSRID = true
+			col.SRID = opt.SRID
 		// Ignore ColumnOptionAutoRandom. It will be handled later.
 		case ast.ColumnOptionAutoRandom:
 		default:

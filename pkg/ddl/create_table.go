@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/geosrs"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
@@ -600,7 +601,7 @@ func CheckTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo, s *ast.CreateTableStmt) (err error) {
 	// All of these rely on the AST structure of expressions, which were
 	// lost in the model (got serialized into strings).
-	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo.Name, s.Cols); err != nil {
+	if err := checkGeneratedColumn(ctx, s.Table.Schema, tbInfo, s.Cols); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -637,14 +638,14 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 	return nil
 }
 
-func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableName ast.CIStr, colDefs []*ast.ColumnDef) error {
+func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tbInfo *model.TableInfo, colDefs []*ast.ColumnDef) error {
 	var colName2Generation = make(map[string]columnGenerationInDDL, len(colDefs))
 	var exists bool
 	var autoIncrementColumn string
 	for i, colDef := range colDefs {
 		for _, option := range colDef.Options {
 			if option.Tp == ast.ColumnOptionGenerated {
-				if err := checkIllegalFn4Generated(colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
+				if err := checkIllegalFn4Generated(ctx.GetExprCtx(), schemaName, tbInfo, colDef.Name.Name.L, typeColumn, option.Expr); err != nil {
 					return errors.Trace(err)
 				}
 				if err := checkEmbedTextGeneratedColumn(colDef.Name.Name.L, option.Expr, option.Stored); err != nil {
@@ -655,7 +656,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 		if containsColumnOption(colDef, ast.ColumnOptionAutoIncrement) {
 			exists, autoIncrementColumn = true, colDef.Name.Name.L
 		}
-		generated, depCols, err := findDependedColumnNames(schemaName, tableName, colDef)
+		generated, depCols, err := findDependedColumnNames(schemaName, tbInfo.Name, colDef)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -846,6 +847,21 @@ func checkColumnsAttributes(colDefs []*model.ColumnInfo) error {
 		if err := checkColumnAttributes(colDef.Name.O, &colDef.FieldType); err != nil {
 			return errors.Trace(err)
 		}
+		if err := checkGeometryColumn(colDef); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// checkGeometryColumn checks the SRID attribute of a geometry column against the spatial
+// reference systems TiDB supports. Generated geometry columns are not supported yet.
+func checkGeometryColumn(col *model.ColumnInfo) error {
+	if col.HasSRID && !geosrs.Supported(col.SRID) {
+		return types.ErrSRSNotFound.GenWithStackByArgs(col.SRID)
+	}
+	if col.GetType() == mysql.TypeGeometry && col.IsGenerated() {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Geometry type")
 	}
 	return nil
 }
@@ -862,7 +878,9 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetDecimal(), colName, types.MaxFsp)
 		}
 	case mysql.TypeGeometry:
-		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
+		if !types.GeometryEnabled {
+			return dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
+		}
 	}
 	return nil
 }
@@ -1677,9 +1695,13 @@ func BuildTableInfo(
 }
 
 func precheckBuildHiddenColumnInfo(
+	ctx *metabuild.Context,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexName ast.CIStr,
+	tblInfo *model.TableInfo,
 ) error {
+	exprCtx := ctx.GetExprCtx()
+	schemaName := ast.NewCIStr(exprCtx.GetEvalCtx().CurrentDB())
 	for i, idxPart := range indexPartSpecifications {
 		if idxPart.Expr == nil {
 			continue
@@ -1690,7 +1712,7 @@ func precheckBuildHiddenColumnInfo(
 			return dbterror.ErrTooLongIdent.GenWithStackByArgs("hidden column")
 		}
 		// TODO: Refine the error message.
-		if err := checkIllegalFn4Generated(indexName.L, typeIndex, idxPart.Expr); err != nil {
+		if err := checkIllegalFn4Generated(exprCtx, schemaName, tblInfo, indexName.L, typeIndex, idxPart.Expr); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1698,7 +1720,7 @@ func precheckBuildHiddenColumnInfo(
 }
 
 func buildHiddenColumnInfoWithCheck(ctx *metabuild.Context, indexPartSpecifications []*ast.IndexPartSpecification, indexName ast.CIStr, tblInfo *model.TableInfo, existCols []*table.Column) ([]*model.ColumnInfo, error) {
-	if err := precheckBuildHiddenColumnInfo(indexPartSpecifications, indexName); err != nil {
+	if err := precheckBuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, tblInfo); err != nil {
 		return nil, err
 	}
 	return BuildHiddenColumnInfo(ctx, indexPartSpecifications, indexName, tblInfo, existCols)

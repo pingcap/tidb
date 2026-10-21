@@ -940,6 +940,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrWindowExplainJson:                                     Message("To get information about window functions use EXPLAIN FORMAT=JSON", nil),
 	ErrWindowFunctionIgnoresFrame:                            Message("Window function '%s' ignores the frame clause of window '%s' and aggregates over the whole partition", nil),
 	ErrRoleNotGranted:                                        Message("%s is not granted to %s", nil),
+	ErrSRSNotFound:                                           Message("There's no spatial reference system with SRID %d.", nil),
 	ErrMaxExecTimeExceeded:                                   Message("Query execution was interrupted, maximum statement execution time exceeded", nil),
 	ErrLockAcquireFailAndNoWaitSet:                           Message("Statement aborted because lock(s) could not be acquired immediately and NOWAIT is set.", nil),
 	ErrDataTruncatedFunctionalIndex:                          Message("Data truncated for functional index '%s' at row %d", nil),

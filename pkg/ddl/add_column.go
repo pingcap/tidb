@@ -273,9 +273,17 @@ func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model
 	}
 
 	newCol, err := CreateNewColumn(ctx, schema, spec, t, specNewColumn)
-	if err == nil {
-		err = checkUnsupportedCharsetForTiFlash(t.Meta(), newCol.Name, newCol.FieldType)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
+	if err = checkGeometryColumn(newCol.ColumnInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Existing rows would read a zero value, and geometry has none.
+	if newCol.GetType() == mysql.TypeGeometry && newCol.GetDefaultValue() == nil && mysql.HasNotNullFlag(newCol.GetFlag()) {
+		return nil, dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' constraint NOT NULL without a default value on a geometry column when altering '%s.%s'", newCol.Name, ti.Schema, ti.Name)
+	}
+	err = checkUnsupportedCharsetForTiFlash(t.Meta(), newCol.Name, newCol.FieldType)
 	return newCol, errors.Trace(err)
 }
 
@@ -286,6 +294,10 @@ func checkUnsupportedCharsetForTiFlash(tbl *model.TableInfo, colName ast.CIStr, 
 
 	if _, isSupported := charset.TiFlashSupportedCharsets[colTp.GetCharset()]; !isSupported {
 		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and %s encoding", colName, tbl.Name, colTp.GetCharset())
+	}
+	// TiFlash does not support geometry values.
+	if colTp.GetType() == mysql.TypeGeometry {
+		return dbterror.ErrUnsupportedAddColumn.GenWithStack("unsupported add column '%s' when altering '%s' with TiFlash replicas and geometry type", colName, tbl.Name)
 	}
 	return nil
 }
@@ -315,7 +327,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 	// columns occurring later in a table, but we don't handle the col offset.
 	for _, option := range specNewColumn.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
-			if err := checkIllegalFn4Generated(specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
+			if err := checkIllegalFn4Generated(ctx.GetExprCtx(), schema.Name, t.Meta(), specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
 				return nil, errors.Trace(err)
 			}
 			if err := checkEmbedTextGeneratedColumn(specNewColumn.Name.Name.L, option.Expr, option.Stored); err != nil {
@@ -572,8 +584,9 @@ func checkTooBigFieldLengthAndTryAutoConvert(ctx *metabuild.Context, tp *types.F
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
-	// Reject geometry columns before their options, since a default value can't be converted to geometry yet.
-	if colDef.Tp.GetType() == mysql.TypeGeometry {
+	// Without the gate, reject geometry columns before their options, so that every
+	// option, a default value included, gets the same error.
+	if colDef.Tp.GetType() == mysql.TypeGeometry && !types.GeometryEnabled {
 		return nil, nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
 	}
 	var constraints = make([]*ast.Constraint, 0)
@@ -684,10 +697,12 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 			case ast.ColumnOptionFulltext:
 				ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionSRID:
-				// A geometry column was rejected at the start of columnDefToCol.
 				if col.GetType() != mysql.TypeGeometry {
 					return nil, nil, dbterror.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column")
 				}
+				// The last SRID wins, as in MySQL; checkGeometryColumn validates it.
+				col.HasSRID = true
+				col.SRID = v.SRID
 			case ast.ColumnOptionCheck:
 				if !vardef.EnableCheckConstraint.Load() {
 					ctx.AppendWarning(errCheckConstraintIsOff)
@@ -967,8 +982,8 @@ func getDefaultValue(ctx exprctx.BuildContext, col *table.Column, option *ast.Co
 	}
 
 	if v.Kind() == types.KindBinaryLiteral || v.Kind() == types.KindMysqlBit {
-		if types.IsTypeBlob(tp) || tp == mysql.TypeJSON || tp == mysql.TypeTiDBVectorFloat32 {
-			// BLOB/TEXT/JSON column cannot have a default value.
+		if types.IsTypeBlob(tp) || tp == mysql.TypeJSON || tp == mysql.TypeTiDBVectorFloat32 || tp == mysql.TypeGeometry {
+			// BLOB/TEXT/JSON/GEOMETRY column cannot have a default value.
 			// Skip the unnecessary decode procedure.
 			return v.GetString(), false, err
 		}
@@ -1322,6 +1337,7 @@ func checkColumnValueConstraint(col *table.Column, collation string) error {
 // checkColumnDefaultValue checks the default value of the column.
 // In non-strict SQL mode, if the default value of the column is an empty string, the default value can be ignored.
 // In strict SQL mode, TEXT/BLOB/JSON can't have not null default values.
+// In any SQL mode, GEOMETRY can't have a not null default value.
 // In NO_ZERO_DATE SQL mode, TIMESTAMP/DATE/DATETIME type can't have zero date like '0000-00-00' or '0000-00-00 00:00:00'.
 func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value any) (bool, any, error) {
 	hasDefaultValue := true
@@ -1330,6 +1346,10 @@ func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value 
 		// In any SQL mode we don't allow VECTOR column to have a default value.
 		// Note that expression default is still supported.
 		return hasDefaultValue, value, errors.Errorf("VECTOR column '%-.192s' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))", col.Name.O)
+	}
+	if value != nil && col.GetType() == mysql.TypeGeometry {
+		// Rejected in any SQL mode, as in MySQL: '' is not a valid geometry.
+		return hasDefaultValue, value, dbterror.ErrBlobCantHaveDefault.GenWithStackByArgs(col.Name.O)
 	}
 	if value != nil && (col.GetType() == mysql.TypeJSON ||
 		col.GetType() == mysql.TypeTinyBlob || col.GetType() == mysql.TypeMediumBlob ||

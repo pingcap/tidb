@@ -1292,6 +1292,10 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 		if colType == mysql.TypeVarString {
 			colType = mysql.TypeVarchar
 		}
+		var srsID any
+		if col.HasSRID {
+			srsID = uint64(col.SRID)
+		}
 		record := types.MakeDatums(
 			infoschema.CatalogVal, // TABLE_CATALOG
 			schema.O,              // TABLE_SCHEMA
@@ -1300,7 +1304,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			ordinalPos[i],         // ORDINAL_POSITION
 			columnDefault,         // COLUMN_DEFAULT
 			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(colType, ft.GetCharset()), // DATA_TYPE
+			types.TypeToStrWithSubtype(colType, ft.GetCharset(), ft.GetGeometryType()), // DATA_TYPE
 			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
 			charOctLen,           // CHARACTER_OCTET_LENGTH
 			numericPrecision,     // NUMERIC_PRECISION
@@ -1314,7 +1318,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
 			columnDesc.Comment,      // COLUMN_COMMENT
 			col.GeneratedExprString, // GENERATION_EXPRESSION
-			nil,                     // SRS_ID
+			srsID,                   // SRS_ID
 		)
 		e.rows = append(e.rows, record)
 	}

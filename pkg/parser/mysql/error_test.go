@@ -31,4 +31,7 @@ func TestSQLError(t *testing.T) {
 
 	e = NewErr(0, "customized error", nil)
 	require.Greater(t, len(e.Error()), 0)
+
+	e = NewErrf(ErrSRSNotFound, "no srs", nil)
+	require.Equal(t, "SR001", e.State)
 }

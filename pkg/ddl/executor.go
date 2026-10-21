@@ -3443,6 +3443,7 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 func checkFieldTypeCompatible(ft *types.FieldType, other *types.FieldType) bool {
 	// int(1) could match the type with int(8)
 	partialEqual := ft.GetType() == other.GetType() &&
+		ft.GetGeometryType() == other.GetGeometryType() &&
 		ft.GetDecimal() == other.GetDecimal() &&
 		ft.GetCharset() == other.GetCharset() &&
 		ft.GetCollate() == other.GetCollate() &&
@@ -3514,6 +3515,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		if sourceCol.Name.L != targetCol.Name.L ||
 			sourceCol.Hidden != targetCol.Hidden ||
 			!checkFieldTypeCompatible(&sourceCol.FieldType, &targetCol.FieldType) ||
+			sourceCol.HasSRID != targetCol.HasSRID || sourceCol.SRID != targetCol.SRID ||
 			sourceCol.GeneratedExprString != targetCol.GeneratedExprString {
 			return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 		}
@@ -4460,6 +4462,10 @@ func isTableTiFlashSupported(dbName ast.CIStr, tbl *model.TableInfo) error {
 		_, ok := charset.TiFlashSupportedCharsets[col.GetCharset()]
 		if !ok {
 			return dbterror.ErrUnsupportedTiFlashOperationForUnsupportedCharsetTable.GenWithStackByArgs(col.GetCharset())
+		}
+		// TiFlash does not support geometry values.
+		if col.GetType() == mysql.TypeGeometry {
+			return dbterror.ErrUnsupportedTiFlashOperationForGeometryTable.GenWithStackByArgs(col.Name.O)
 		}
 	}
 
