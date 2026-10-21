@@ -2225,7 +2225,8 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	return ver, errors.Trace(err)
 }
 
-// RemoveDependentHiddenColumns removes hidden columns by the indexInfo.
+// RemoveDependentHiddenColumns removes the hidden columns used by the index, except those still
+// used by another index, e.g. a copy of the index made by a partition reorganization.
 func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
