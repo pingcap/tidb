@@ -426,7 +426,7 @@ func (e *RefreshMaterializedViewDryRunExec) loadFastRefreshImplementOptionsForDr
 	refreshExec := &RefreshMaterializedViewExec{
 		BaseExecutor: exec.NewBaseExecutor(e.Ctx(), nil, 0),
 	}
-	schemaName, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
+	_, tblInfo, err := refreshExec.resolveRefreshMaterializedViewTarget(refreshStmt)
 	if err != nil {
 		return refreshImplementOptions{}, err
 	}
@@ -463,7 +463,6 @@ func (e *RefreshMaterializedViewDryRunExec) loadFastRefreshImplementOptionsForDr
 		ctx,
 		sctx.GetSQLExecutor(),
 		is,
-		schemaName,
 		tblInfo,
 		opts.lastSuccessfulRefreshReadTSO,
 	)

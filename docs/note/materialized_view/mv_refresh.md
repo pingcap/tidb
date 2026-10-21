@@ -12,6 +12,25 @@ At the moment:
 - `FAST` refresh is implemented and uses the same outer transactional refresh framework as
   `COMPLETE IN PLACE` / `COMPLETE DELTA APPLY`.
 
+## Nested materialized view refresh
+
+A ready materialized view can be the single source of another materialized view when it owns
+a matching MLog that tracks the columns referenced by the child. FAST planning and the outer
+refresh integrity check share source/MLog resolution, including public state, source readiness,
+and the MLog's owner ID. The persisted `BaseTableIDs` field can refer to either an ordinary table
+or a materialized view.
+
+Parent `FAST` and `COMPLETE DELTA APPLY` refreshes write row-level I/U/D changes into the parent's
+MLog in the same transaction as the parent data. A subsequent child `FAST` consumes those changes;
+MIN/MAX fallback lookups read the parent MV through its supporting group-key index.
+
+Refresh the parent before the child to propagate base-table changes. Refreshing the child first
+only consumes already committed parent changes; refresh does not cascade or enforce ancestor
+freshness. Purging the parent's MLog retains changes needed by the child's last successful read TSO.
+
+A target with its own MLog still rejects `COMPLETE IN PLACE`. A target with its own MLog or direct
+child MVs still rejects `COMPLETE OUT OF PLACE`; this change does not migrate dependency metadata.
+
 ## Runtime `NEXT_REFRESH_UNIX_SECONDS` Update (Internal SQL Success Path)
 
 - For **internal SQL** triggered refresh (identified by `SessionVars.InRestrictedSQL`), after a successful refresh commit, `mysql.tidb_mview_refresh_info.NEXT_REFRESH_UNIX_SECONDS` should be updated together with success metadata.

@@ -173,6 +173,89 @@ func TestBuildCountSum(t *testing.T) {
 	})
 }
 
+func TestBuildMaterializedViewSource(t *testing.T) {
+	sctx := core.MockContext()
+
+	parentID := int64(1)
+	mlogID := int64(2)
+	childID := int64(3)
+
+	parent := &model.TableInfo{
+		ID:    parentID,
+		Name:  pmodel.NewCIStr("mv_parent"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView:     &model.MaterializedViewInfo{},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  pmodel.NewCIStr("$mlog$mv_parent"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, model.MaterializedViewLogDMLTypeColumnName, 1, mysql.TypeVarchar),
+			mkCol(3, model.MaterializedViewLogOldNewColumnName, 2, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: parentID,
+			Columns:     []pmodel.CIStr{pmodel.NewCIStr("a")},
+		},
+	}
+	child := &model.TableInfo{
+		ID:    childID,
+		Name:  pmodel.NewCIStr("mv_child"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "cnt", 1, mysql.TypeLonglong),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{parentID},
+			SQLContent:   "select a, count(1) from mv_parent group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{parent, mlog, child})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(sctx.GetPlanCtx(), is, child, mview.BuildOptions{FromTS: 10}, nil)
+	require.NoError(t, err)
+	require.Equal(t, parentID, res.SourceTableID)
+	require.Equal(t, mlogID, res.MLogTableID)
+	require.Equal(t, []string{"a"}, res.GroupKeySourceCols)
+
+	t.Run("source not ready", func(t *testing.T) {
+		defer func() { parent.MaterializedView.InitBuildState = model.MViewInitBuildReady }()
+		for _, state := range []model.MViewInitBuildState{model.MViewInitBuildDeferred, model.MViewInitBuildBuilding} {
+			parent.MaterializedView.InitBuildState = state
+			_, err := mview.Build(sctx.GetPlanCtx(), is, child, mview.BuildOptions{FromTS: 10}, nil)
+			require.ErrorContains(t, err, "source materialized view mv_parent is not ready")
+		}
+	})
+	t.Run("source not public", func(t *testing.T) {
+		parent.State = model.StateWriteOnly
+		defer func() { parent.State = model.StatePublic }()
+		_, err := mview.ResolveFastRefreshSource(is, child)
+		require.ErrorContains(t, err, "source object mv_parent is not public")
+	})
+	t.Run("log not public", func(t *testing.T) {
+		mlog.State = model.StateWriteOnly
+		defer func() { mlog.State = model.StatePublic }()
+		_, err := mview.ResolveFastRefreshSource(is, child)
+		require.ErrorContains(t, err, "materialized view log $mlog$mv_parent is not public")
+	})
+	t.Run("log owner mismatch", func(t *testing.T) {
+		mlog.MaterializedViewLog.BaseTableID = childID
+		defer func() { mlog.MaterializedViewLog.BaseTableID = parentID }()
+		_, err := mview.ResolveFastRefreshSource(is, child)
+		require.ErrorContains(t, err, "does not belong to source object")
+	})
+}
+
 func TestBuildCountExprSumExpr(t *testing.T) {
 	sctx := core.MockContext()
 
@@ -758,7 +841,7 @@ func TestFullUpdateLookupIndexHintUsesAllSupportingIndexes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res.FullUpdateLookupTemplateSelect)
 
-	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(base, res.GroupKeyBaseCols)
+	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(base, res.GroupKeySourceCols)
 	require.Equal(t, []pmodel.CIStr{pmodel.NewCIStr("idx_a"), pmodel.NewCIStr("idx_a_b")}, indexNames)
 	require.NoError(t, mview.SetFullUpdateLookupIndexHint(res.FullUpdateLookupTemplateSelect, indexNames))
 

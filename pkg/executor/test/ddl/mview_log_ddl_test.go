@@ -2400,6 +2400,65 @@ func TestPurgeMaterializedViewLogSkipsWhenCutoffFenceWouldGoBackward(t *testing.
 		Check(testkit.Rows("1"))
 }
 
+func TestPurgeMaterializedViewLogPreservesNestedChildDelta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_nested_purge (a int not null, b int not null, v int not null)")
+	tk.MustExec("insert into t_nested_purge values (1, 1, 10), (2, 1, 20)")
+	tk.MustExec("create materialized view log on t_nested_purge (a, b, v)")
+	tk.MustExec("create materialized view mv_nested_purge_parent (a, b, s, cnt) refresh fast as select a, b, sum(v), count(1) from t_nested_purge group by a, b")
+	tk.MustExec("create materialized view log on mv_nested_purge_parent (a, b, s, cnt)")
+	tk.MustExec("create materialized view mv_nested_purge_child (a, s, cnt, cnt_s) refresh fast as select a, sum(s), count(1), count(s) from mv_nested_purge_parent group by a")
+
+	is := dom.InfoSchema()
+	parentMLog, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$mv_nested_purge_parent"))
+	require.NoError(t, err)
+	parentMLogID := parentMLog.Meta().ID
+	childMV, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("mv_nested_purge_child"))
+	require.NoError(t, err)
+	childReadTSORow := tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", childMV.Meta().ID)).Rows()
+	require.Len(t, childReadTSORow, 1)
+	childReadTSO, err := strconv.ParseUint(fmt.Sprint(childReadTSORow[0][0]), 10, 64)
+	require.NoError(t, err)
+	beforeDeltaRows := tk.MustQuery("select count(*) from `$mlog$mv_nested_purge_parent`").Rows()
+	require.Len(t, beforeDeltaRows, 1)
+	beforeDeltaCount, err := strconv.ParseInt(fmt.Sprint(beforeDeltaRows[0][0]), 10, 64)
+	require.NoError(t, err)
+
+	tk.MustExec("insert into t_nested_purge values (1, 2, 7)")
+	tk.MustExec("refresh materialized view mv_nested_purge_parent fast")
+
+	afterParentRefreshRows := tk.MustQuery("select count(*) from `$mlog$mv_nested_purge_parent`").Rows()
+	require.Len(t, afterParentRefreshRows, 1)
+	afterParentRefreshCount, err := strconv.ParseInt(fmt.Sprint(afterParentRefreshRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, afterParentRefreshCount, beforeDeltaCount)
+
+	// The child has not consumed the parent refresh yet. PURGE must stop at the child's
+	// LAST_SUCCESS_READ_TSO and retain the parent delta for the subsequent FAST refresh.
+	tk.MustExec("purge materialized view log on mv_nested_purge_parent")
+	afterPurgeRows := tk.MustQuery("select count(*) from `$mlog$mv_nested_purge_parent`").Rows()
+	require.Len(t, afterPurgeRows, 1)
+	afterPurgeCount, err := strconv.ParseInt(fmt.Sprint(afterPurgeRows[0][0]), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, afterParentRefreshCount, afterPurgeCount)
+	tk.MustQuery(fmt.Sprintf("select LAST_PURGED_TSO from mysql.tidb_mlog_purge_info where MLOG_ID = %d", parentMLogID)).
+		Check(testkit.Rows(fmt.Sprintf("%d", childReadTSO)))
+
+	tk.MustExec("refresh materialized view mv_nested_purge_child fast")
+	tk.MustQuery("select a, s, cnt, cnt_s from mv_nested_purge_child order by a").Check(testkit.Rows(
+		"1 17 2 2",
+		"2 20 1 1",
+	))
+
+	tk.MustExec("drop materialized view mv_nested_purge_child")
+	tk.MustExec("drop materialized view log on mv_nested_purge_parent")
+	tk.MustExec("drop materialized view mv_nested_purge_parent")
+	tk.MustExec("drop materialized view log on t_nested_purge")
+	tk.MustExec("drop table t_nested_purge")
+}
+
 func TestPurgeMaterializedViewLogDeleteErrorNoDirtyWrite(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

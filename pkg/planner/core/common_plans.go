@@ -606,9 +606,9 @@ type MViewDeltaMerge struct {
 	// It is only set for bounded FAST refresh that needs MIN/MAX full-update lookup.
 	FullUpdateSnapshot *DataReaderSnapshot `plan-cache-clone:"shallow"`
 
-	MVTableID   int64
-	BaseTableID int64
-	MLogTableID int64
+	MVTableID     int64
+	SourceTableID int64
+	MLogTableID   int64
 
 	MVColumnCount    int
 	DeltaColumnCount int

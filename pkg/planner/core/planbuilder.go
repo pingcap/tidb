@@ -4091,8 +4091,8 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			supportingIndexNames, err := validateMVFullUpdateSupportingIndex(
 				ctx,
 				fullUpdateLookupIS,
-				res.BaseTableID,
-				res.GroupKeyBaseCols,
+				res.SourceTableID,
+				res.GroupKeySourceCols,
 			)
 			if err != nil {
 				return nil, err
@@ -4141,7 +4141,7 @@ func (b *PlanBuilder) buildRefreshMaterializedViewImplement(ctx context.Context,
 			FullUpdateOutputMVOffsets:   fullUpdateOutputMVOffsets,
 			FullUpdateSnapshot:          fullUpdateSnapshot,
 			MVTableID:                   res.MVTableID,
-			BaseTableID:                 res.BaseTableID,
+			SourceTableID:               res.SourceTableID,
 			MLogTableID:                 res.MLogTableID,
 			MVColumnCount:               res.MVColumnCount,
 			DeltaColumnCount:            res.DeltaColumnCount,
@@ -4207,19 +4207,19 @@ type mvFullUpdateLookupTemplate struct {
 func validateMVFullUpdateSupportingIndex(
 	ctx context.Context,
 	is infoschema.InfoSchema,
-	baseTableID int64,
-	groupKeyBaseCols []string,
+	sourceTableID int64,
+	groupKeySourceCols []string,
 ) ([]pmodel.CIStr, error) {
-	if len(groupKeyBaseCols) == 0 {
-		return nil, errors.New("mview full-update lookup template: group key base columns are empty")
+	if len(groupKeySourceCols) == 0 {
+		return nil, errors.New("mview full-update lookup template: group key source columns are empty")
 	}
-	baseTable, ok := is.TableByID(ctx, baseTableID)
-	if !ok || baseTable == nil {
-		return nil, errors.Errorf("mview full-update lookup template: base table id %d not found in infoschema", baseTableID)
+	sourceTable, ok := is.TableByID(ctx, sourceTableID)
+	if !ok || sourceTable == nil {
+		return nil, errors.Errorf("mview full-update lookup template: source object id %d not found in infoschema", sourceTableID)
 	}
-	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(baseTable.Meta(), groupKeyBaseCols)
+	indexNames := mview.FindVisibleIndexesWithPrefixCoveringColumns(sourceTable.Meta(), groupKeySourceCols)
 	if len(indexNames) == 0 {
-		return nil, errors.New("refresh materialized view fast with MIN/MAX requires base table index whose leading columns cover all GROUP BY columns")
+		return nil, errors.New("refresh materialized view fast with MIN/MAX requires source object index whose leading columns cover all GROUP BY columns")
 	}
 	return indexNames, nil
 }
