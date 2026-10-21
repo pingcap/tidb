@@ -184,6 +184,13 @@ func TestStatementRUMPPPublication(t *testing.T) {
 	finalized, operators, ok := calculateStatementRUWithOperators(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
 	require.True(t, ok)
 	require.Equal(t, float64(19), finalized.units.CPUWork)
+	// Without candidate-pair evidence, MPP retains input-based residual work.
+	join.OtherConditions = make(expression.CNFExprs, 2)
+	withResidual, ok := calculateStatementRU(flat, sc.RuntimeStatsColl, ctx.GetSessionVars().RUV2Metrics, statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+	require.True(t, ok)
+	require.Equal(t, float64(19*3), withResidual.units.CPUWork)
+	require.Equal(t, float64(9), withResidual.units.JoinOutputRows)
+	join.OtherConditions = nil
 	require.Equal(t, float64(300), finalized.units.ScanBytes)
 	require.Equal(t, float64(50), finalized.units.NetBytes)
 	require.Equal(t, float64(30), finalized.units.CrossAZNetBytes)
