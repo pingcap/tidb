@@ -96,6 +96,8 @@ func (s *jobScheduler) dropLeftoverGlobalIndexes(dbID, tableID int64) error {
 // behind by a cancelled partition reorganization. Requiring the public twin keeps an index being
 // added by ADD INDEX ... GLOBAL, which has a new name, from being treated as a leftover.
 // DDLChangedIndex is not checked, since a successful REORGANIZE PARTITION keeps it.
+// Unique copies are skipped: a rollback never leaves them behind, and removing a writable unique
+// index without a delete only step can raise false duplicate key errors on stale schemas.
 func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || pi.DDLState != model.StateNone || len(pi.AddingDefinitions) > 0 || len(pi.DroppingDefinitions) > 0 {
@@ -103,7 +105,7 @@ func leftoverGlobalIndexes(tblInfo *model.TableInfo) []*model.IndexInfo {
 	}
 	var leftovers []*model.IndexInfo
 	for _, idx := range tblInfo.Indices {
-		if !idx.Global || idx.State == model.StatePublic {
+		if !idx.Global || idx.Unique || idx.State == model.StatePublic {
 			continue
 		}
 		if slices.ContainsFunc(tblInfo.Indices, func(other *model.IndexInfo) bool {

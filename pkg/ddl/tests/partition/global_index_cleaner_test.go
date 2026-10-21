@@ -171,3 +171,26 @@ func TestCleanupLeftoverIndexesAfterReorganizePartition(t *testing.T) {
 	checkLeftoverGlobalIndexesDropped(t, tk, tblInfo.ID, leftoverIDs)
 	checkPublicGlobalIndex(t, tk, tblInfo)
 }
+
+func TestCleanupLeftoverIndexesSkipsUnique(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (id bigint not null, a int, ct int not null,
+		unique key uk_g (id) global,
+		key idx_g (a) global)
+		partition by range (ct) (
+		partition p0 values less than (10),
+		partition pMax values less than (maxvalue))`)
+	tk.MustExec("insert into t values (1, 0, 5), (2, 0, 15)")
+	_, _, uniqueCopyIDs := addIndexCopies(t, store, dom, tk, "uk_g", model.StateWriteReorganization)
+	dbInfo, tblInfo, leftoverIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+
+	indexIDs, _, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.ElementsMatch(t, leftoverIDs, indexIDs)
+	require.NoError(t, dom.Reload())
+	after := external.GetTableByName(t, tk, "test", "t").Meta()
+	require.Nil(t, after.FindIndexByID(leftoverIDs[0]))
+	require.NotNil(t, after.FindIndexByID(uniqueCopyIDs[0]))
+}
