@@ -176,6 +176,10 @@ type innerWorker struct {
 
 // Open implements the Executor interface.
 func (e *IndexLookUpJoin) Open(ctx context.Context) error {
+	if e.RuntimeStats() != nil {
+		e.stats = &indexLookUpJoinRuntimeStats{}
+	}
+	e.Joiner.resetJoinedRows(e.RuntimeStats() != nil)
 	err := exec.Open(ctx, e.Children(0))
 	if err != nil {
 		return err
@@ -187,9 +191,6 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
 	e.Finished.Store(false)
-	if e.RuntimeStats() != nil {
-		e.stats = &indexLookUpJoinRuntimeStats{}
-	}
 	e.cancelFunc = nil
 	return nil
 }
@@ -843,6 +844,9 @@ func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
 
 // Close implements the Executor interface.
 func (e *IndexLookUpJoin) Close() error {
+	defer func() {
+		e.Joiner.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+	}()
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
