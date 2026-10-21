@@ -510,6 +510,11 @@ func (d *Checker) AlterTableMode(ctx sessionctx.Context, args *model.AlterTableM
 	return d.realExecutor.AlterTableMode(ctx, args)
 }
 
+// CleanupGlobalIndexes implements the DDL interface.
+func (d *Checker) CleanupGlobalIndexes(ctx sessionctx.Context, tableID int64) error {
+	return d.realExecutor.CleanupGlobalIndexes(ctx, tableID)
+}
+
 // RefreshMeta implements the DDL interface.
 func (d *Checker) RefreshMeta(ctx sessionctx.Context, args *model.RefreshMetaArgs) error {
 	return d.realExecutor.RefreshMeta(ctx, args)

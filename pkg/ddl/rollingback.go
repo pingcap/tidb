@@ -251,7 +251,7 @@ func rollingbackDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *mode
 		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
 		job.State = model.JobStateRunning
 		return ver, nil
-	case model.StatePublic:
+	case model.StatePublic, model.StateWriteReorganization:
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	default:

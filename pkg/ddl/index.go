@@ -2169,6 +2169,16 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+	case model.StateWriteReorganization:
+		// Only reachable by CleanupGlobalIndexes.
+		// write reorganization -> delete only
+		for _, indexInfo := range allIndexInfos {
+			indexInfo.State = model.StateDeleteOnly
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	case model.StateDeleteOnly:
 		// delete only -> reorganization
 		for _, indexInfo := range allIndexInfos {
@@ -2247,6 +2257,9 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 				return ver, errors.Trace(err)
 			}
 			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
+			for _, id := range indexIDs[1:] {
+				dropArgs.IndexArgs = append(dropArgs.IndexArgs, &model.IndexArg{IndexID: id})
+			}
 			dropArgs.IndexArgs[0].IsColumnar = allIndexInfos[0].IsColumnarIndex()
 			dropArgs.IndexArgs[0].ColumnarIndexType = allIndexInfos[0].GetColumnarIndexType()
 			if !allIndexInfos[0].Global {
@@ -2259,6 +2272,38 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 	}
 	job.SchemaState = allIndexInfos[0].State
 	return ver, errors.Trace(err)
+}
+
+// dropNonPublicGlobalIndexesID is the index ID of a drop index job that drops all
+// non-public global indexes of the table.
+const dropNonPublicGlobalIndexesID = -1
+
+// CleanupGlobalIndexes implements the Executor interface.
+func (e *executor) CleanupGlobalIndexes(sctx sessionctx.Context, tableID int64) error {
+	is := e.infoCache.GetLatest()
+	tbl, ok := is.TableByID(context.Background(), tableID)
+	if !ok {
+		return errors.Errorf("table %d does not exist", tableID)
+	}
+	tblInfo := tbl.Meta()
+	dbInfo, ok := infoschema.SchemaByTable(is, tblInfo)
+	if !ok {
+		return errors.Errorf("database of table %d does not exist", tableID)
+	}
+	job := &model.Job{
+		Version:    model.JobVersion2,
+		SchemaID:   dbInfo.ID,
+		TableID:    tableID,
+		SchemaName: dbInfo.Name.L,
+		TableName:  tblInfo.Name.L,
+		Type:       model.ActionDropIndex,
+		BinlogInfo: &model.HistoryInfo{},
+	}
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{IndexID: dropNonPublicGlobalIndexesID}},
+		OpType:    model.OpDropIndex,
+	}
+	return errors.Trace(e.doDDLJob2(sctx, job, args))
 }
 
 // RemoveDependentHiddenColumns removes hidden columns by the indexInfo.
@@ -2308,6 +2353,20 @@ func checkDropIndex(sctx sessionctx.Context, infoCache *infoschema.InfoCache, t 
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return nil, nil, false, errors.Trace(err)
+	}
+	if len(args.IndexArgs) == 1 && args.IndexArgs[0].IndexID == dropNonPublicGlobalIndexesID {
+		// All earlier DDL jobs on this table have finished, so no job owns these indexes.
+		var indexInfos []*model.IndexInfo
+		for _, idx := range tblInfo.Indices {
+			if idx.Global && idx.State != model.StatePublic {
+				indexInfos = append(indexInfos, idx)
+			}
+		}
+		if len(indexInfos) == 0 {
+			job.State = model.JobStateCancelled
+			return nil, nil, false, dbterror.ErrCantDropFieldOrKey.GenWithStack("table %s has no non-public global index", tblInfo.Name)
+		}
+		return tblInfo, indexInfos, false, nil
 	}
 
 	indexInfos := make([]*model.IndexInfo, 0, len(args.IndexArgs))

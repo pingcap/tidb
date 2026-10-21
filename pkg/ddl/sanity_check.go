@@ -150,7 +150,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if args.IndexArgs[0].IsColumnar {
 			return 0, nil
 		}
-		return max(len(args.PartitionIDs), 1), nil
+		return max(len(args.PartitionIDs), 1) * len(args.IndexArgs), nil
 	case model.ActionDropColumn:
 		args, err := model.GetTableColumnArgs(job)
 		if err != nil {

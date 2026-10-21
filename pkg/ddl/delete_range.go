@@ -399,7 +399,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 
 		tableID := job.TableID
 		partitionIDs := args.PartitionIDs
-		indexIDs := []int64{args.IndexArgs[0].IndexID}
+		indexIDs := make([]int64, 0, len(args.IndexArgs))
+		for _, idxArg := range args.IndexArgs {
+			indexIDs = append(indexIDs, idxArg.IndexID)
+		}
 
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) == 0 {
