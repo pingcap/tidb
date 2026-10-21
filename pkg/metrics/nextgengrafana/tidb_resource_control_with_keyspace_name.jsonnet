@@ -250,7 +250,7 @@ local RUPanel = graphPanel.new(
 local RUPeakSelector = '{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", resource_group=~"$resource_group"}';
 local RUPeakRange = 'resource_manager_resource_unit_peak_per_second_rolling_60s' + RUPeakSelector + '[$__interval]';
 local RUMaxPanel = graphPanel.new(
-  title="RU Max - 1s",
+  title="Peak RU/s",
   datasource=myDS,
   format="short",
   interval="1m",
