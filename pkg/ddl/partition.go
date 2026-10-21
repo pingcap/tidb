@@ -2147,7 +2147,6 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 		return ver, errors.Trace(err)
 	}
 	tblInfo.Partition.DroppingDefinitions = nil
-	changedIndexes := tblInfo.Partition.DDLChangedIndex
 	// Collect table/partition ids to clean up, through args.OldPhysicalTblIDs
 	// GC will later also drop matching Placement bundles.
 	// If we delete them now, it could lead to non-compliant placement or failure during flashback
@@ -2178,8 +2177,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 
 	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
-		// Index copies created by this job must never survive the rollback, whatever their state.
-		if changedIndexes[indexInfo.ID] || indexInfo.State == model.StateWriteOnly {
+		if indexInfo.State == model.StateWriteOnly || indexInfo.State == model.StateDeleteOnly {
 			dropIndices = append(dropIndices, indexInfo)
 		}
 	}

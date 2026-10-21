@@ -54,25 +54,30 @@ func TestReorgPartitionCancelNonUniqueGlobalIndex(t *testing.T) {
 	baseIndices := len(external.GetTableByName(t, tk, "test", "t").Meta().Indices)
 	baseMutations := countUpdateMutations(t, tk)
 
-	cancelAtWriteReorg := false
+	var cancelState model.SchemaState
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if !cancelAtWriteReorg || job.Type != model.ActionReorganizePartition || job.SchemaState != model.StateWriteReorganization {
+		if cancelState == model.StateNone || job.Type != model.ActionReorganizePartition || job.SchemaState != cancelState {
 			return
 		}
-		cancelAtWriteReorg = false
+		cancelState = model.StateNone
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 	})
 
-	for i := 1; i <= 2; i++ {
-		cancelAtWriteReorg = true
+	for _, state := range []model.SchemaState{
+		model.StateDeleteOnly,
+		model.StateWriteOnly,
+		model.StateWriteReorganization,
+		model.StateDeleteReorganization,
+	} {
+		cancelState = state
 		tk.MustGetErrCode("alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (maxvalue))", errno.ErrCancelledDDLJob)
 		tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
-		require.Len(t, tblInfo.Indices, baseIndices, "cancel #%d", i)
+		require.Len(t, tblInfo.Indices, baseIndices, "cancel at %s", state)
 		for _, idx := range tblInfo.Indices {
-			require.Equal(t, model.StatePublic, idx.State, "cancel #%d, index %s", i, idx.Name.O)
+			require.Equal(t, model.StatePublic, idx.State, "cancel at %s, index %s", state, idx.Name.O)
 		}
-		require.Equal(t, baseMutations, countUpdateMutations(t, tk), "cancel #%d", i)
+		require.Equal(t, baseMutations, countUpdateMutations(t, tk), "cancel at %s", state)
 		tk.MustExec("admin check table t")
 	}
 }
