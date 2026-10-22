@@ -357,14 +357,19 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
 		// Rollback the changes, note that no new partitions has been used yet!
 		// so only metadata rollback and we can cancel the DDL
-		if tblInfo.Affinity != nil && len(pi.NewPartitionIDs) != 0 {
-			replacementDefs := make([]model.PartitionDefinition, 0, len(pi.NewPartitionIDs))
-			for _, id := range pi.NewPartitionIDs {
+		replacementIDs := pi.NewPartitionIDs
+		if len(replacementIDs) == 0 {
+			if args, argsErr := model.GetTruncateTableArgs(job); argsErr == nil {
+				replacementIDs = args.NewPartitionIDs
+			}
+		}
+		if tblInfo.Affinity != nil && len(replacementIDs) != 0 {
+			replacementDefs := make([]model.PartitionDefinition, 0, len(replacementIDs))
+			for _, id := range replacementIDs {
 				replacementDefs = append(replacementDefs, model.PartitionDefinition{ID: id})
 			}
 			if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, replacementDefs); deleteErr != nil {
 				logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
-				return ver, errors.Trace(deleteErr)
 			}
 		}
 		tblInfo.Partition.NewPartitionIDs = nil
