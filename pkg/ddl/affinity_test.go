@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -48,6 +49,7 @@ type truncateAffinityPDClient struct {
 	pdhttp.Client
 	manager        affinity.Manager
 	failCreate     atomic.Bool
+	failDelete     atomic.Bool
 	failOnce       atomic.Bool
 	createCalls    atomic.Int64
 	createFailures atomic.Int64
@@ -63,6 +65,9 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 }
 
 func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
+	if c.failDelete.Load() {
+		return fmt.Errorf("injected affinity deletion failure")
+	}
 	return c.manager.DeleteAffinityGroups(ctx, ids)
 }
 
@@ -125,6 +130,41 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 	}, 5*time.Second, 10*time.Millisecond)
 	// Both the failed attempt and the successful retry should reach PD.
 	require.Greater(t, cli.createCalls.Load(), int64(2))
+
+	// Cancelling after replacement metadata is published must remove the new
+	// affinity groups before restoring the original partition metadata.
+	tk.MustExec("create table pc(a int, b int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	beforeCancel, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pc"))
+	require.NoError(t, err)
+	oldCancelID := beforeCancel.Meta().Partition.Definitions[0].ID
+	cli.failDelete.Store(true)
+	var cancelOnce atomic.Bool
+	var replacementCancelID atomic.Int64
+	const cancelHook = "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"
+	testfailpoint.EnableCall(t, cancelHook, func(job *model.Job) {
+		if job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateWriteOnly && cancelOnce.CompareAndSwap(false, true) {
+			if args, argsErr := model.GetTruncateTableArgs(job); argsErr == nil && len(args.NewPartitionIDs) > 0 {
+				replacementCancelID.Store(args.NewPartitionIDs[0])
+			}
+			tk.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
+		}
+	})
+	require.Error(t, tk.ExecToErr("alter table pc truncate partition p0"))
+	testfailpoint.Disable(t, cancelHook)
+	var afterCancel table.Table
+	require.Eventually(t, func() bool {
+		var lookupErr error
+		afterCancel, lookupErr = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pc"))
+		return lookupErr == nil && afterCancel.Meta().Partition.DDLState == model.StateNone
+	}, 5*time.Second, 10*time.Millisecond)
+	require.Equal(t, oldCancelID, afterCancel.Meta().Partition.Definitions[0].ID)
+	require.Empty(t, afterCancel.Meta().Partition.NewPartitionIDs)
+	require.NotZero(t, replacementCancelID.Load())
+	newCancelGroupID := ddl.GetPartitionAffinityGroupID(store.GetCodec(), beforeCancel.Meta().ID, replacementCancelID.Load())
+	groups, err = affinity.GetGroups(context.Background(), []string{newCancelGroupID})
+	require.NoError(t, err)
+	require.Len(t, groups, 1, "failed cleanup must not prevent metadata rollback")
+	cli.failDelete.Store(false)
 }
 
 func (mockCodec) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta {
