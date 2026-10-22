@@ -3137,9 +3137,9 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 	return ver, nil
 }
 
-// getRequestedIndexGlobal returns the GLOBAL setting requested by UPDATE INDEXES,
-// or keeps the index's current setting if no override was specified.
-func getRequestedIndexGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
+// resolveIndexGlobal applies the GLOBAL setting requested by UPDATE INDEXES,
+// falling back to the index's current setting when no override was specified.
+func resolveIndexGlobal(partInfo *model.PartitionInfo, idx *model.IndexInfo) bool {
 	for _, newIdx := range partInfo.DDLUpdateIndexes {
 		if strings.EqualFold(idx.Name.L, newIdx.IndexName) {
 			return newIdx.Global
@@ -3286,6 +3286,7 @@ func (w *worker) prepareReorganizePartition(jobCtx *jobContext, job *model.Job, 
 		job.State = model.JobStateCancelled
 		return ver, err
 	}
+	tblInfo.Partition.DDLAction = job.Type
 	// Stage both partition sets while keeping the original definitions visible.
 	updateAddingPartitionInfo(partInfo, tblInfo)
 	droppingDefs := make([]model.PartitionDefinition, 0, len(partNames))
@@ -3378,8 +3379,8 @@ func (w *worker) prepareReorganizePartition(jobCtx *jobContext, job *model.Job, 
 	return ver, errors.Trace(err)
 }
 
-// validateReorganizePartition rechecks the current schema, stages DDLAction,
-// and normalizes the requested definitions. The caller cancels validation failures.
+// validateReorganizePartition rechecks the current schema and normalizes the
+// requested definitions. The caller cancels validation failures.
 func (w *worker) validateReorganizePartition(job *model.Job, tblInfo *model.TableInfo, partNames []string, partInfo *model.PartitionInfo) error {
 	if tblInfo.Affinity != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
@@ -3387,7 +3388,8 @@ func (w *worker) validateReorganizePartition(job *model.Job, tblInfo *model.Tabl
 
 	// No other DDL can now run on this table, so these checks only need to run
 	// in StateNone. Checks at submission time may have used an older schema.
-	tblInfo.Partition.DDLAction = job.Type
+	// partCount is the final partition count after this reorganization: replace
+	// the named existing partitions with the requested definitions.
 	partCount := len(partInfo.Definitions) - len(partNames) + len(tblInfo.Partition.Definitions)
 	if err := checkAddPartitionTooManyPartitions(uint64(partCount)); err != nil {
 		return errors.Trace(err)
@@ -3427,12 +3429,12 @@ func prepareReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo,
 	// and new sets must coexist in unique indexes during reorganization.
 	// PARTITION BY can also change whether a unique index must be global.
 	for _, index := range tblInfo.Indices {
-		newIndexIsGlobal := getRequestedIndexGlobal(partInfo, index)
+		targetIndexIsGlobal := resolveIndexGlobal(partInfo, index)
 		if job.Type == model.ActionRemovePartitioning {
 			// A non-partitioned table has only local indexes.
-			newIndexIsGlobal = false
+			targetIndexIsGlobal = false
 		}
-		if !index.Global && !newIndexIsGlobal {
+		if !index.Global && !targetIndexIsGlobal {
 			continue
 		}
 		includesAllPartColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
@@ -3441,7 +3443,7 @@ func prepareReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo,
 		}
 		// A unique index missing partition columns must be explicitly GLOBAL,
 		// since uniqueness cannot be enforced separately within each partition.
-		if !includesAllPartColumns && !newIndexIsGlobal && index.Unique {
+		if index.Unique && !includesAllPartColumns && !targetIndexIsGlobal {
 			job.State = model.JobStateCancelled
 			return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
 		}
@@ -3459,7 +3461,7 @@ func prepareReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo,
 		newIndex.ID = AllocateIndexID(tblInfo)
 		tblInfo.Partition.DDLChangedIndex[index.ID] = false
 		tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
-		newIndex.Global = newIndexIsGlobal
+		newIndex.Global = targetIndexIsGlobal
 		setGlobalIndexVersion(tblInfo, newIndex)
 		tblInfo.Indices = append(tblInfo.Indices, newIndex)
 	}
