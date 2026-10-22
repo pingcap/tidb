@@ -262,18 +262,25 @@ func emitMVRefreshStepPlanRows(
 }
 
 func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx context.Context, s *ast.RefreshMaterializedViewStmt) (err error) {
-	const slowRefreshThreshold = 5 * time.Second
+	const slowRefreshOverheadThreshold = 5 * time.Second
 	refreshStart := time.Now()
 	var (
 		lockRefreshInfoRowDur time.Duration
 		executeDataChangesDur time.Duration
 		txnTotalDur           time.Duration
 		mviewID               int64
+		refreshMode           ast.RefreshMaterializedViewMode
 	)
 	isInternalSQL := e.Ctx().GetSessionVars().InRestrictedSQL
 	defer func() {
+		if refreshMode == ast.RefreshMaterializedViewModeCompleteOutOfPlace {
+			return
+		}
 		total := time.Since(refreshStart)
-		if total < slowRefreshThreshold {
+		failpoint.InjectCall("refreshMaterializedViewSlowLogDurations", &total, &executeDataChangesDur)
+		// Data execution has its own slow query entries; diagnose refresh orchestration overhead here.
+		overhead := total - executeDataChangesDur
+		if overhead < slowRefreshOverheadThreshold {
 			return
 		}
 
@@ -288,7 +295,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 		fields := []zap.Field{
 			zap.Duration("total", total),
-			zap.Duration("slowThreshold", slowRefreshThreshold),
+			zap.Duration("overhead", overhead),
+			zap.Duration("slowOverheadThreshold", slowRefreshOverheadThreshold),
 			zap.String("schema", schemaName),
 			zap.String("mview", mviewName),
 			zap.Int64("mviewID", mviewID),
@@ -788,7 +796,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 	}
 
-	executeDataChangesStart := time.Now()
 	if err := executeRefreshMaterializedViewDataChanges(
 		kctx,
 		sqlExec,
@@ -805,11 +812,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		stepSet,
 		e.stepObserver,
 		e.planFormatForObserver,
+		&executeDataChangesDur,
 	); err != nil {
-		executeDataChangesDur = time.Since(executeDataChangesStart)
 		return finalizeFailure(err)
 	}
-	executeDataChangesDur = time.Since(executeDataChangesStart)
 	failpoint.Inject("mockRefreshMaterializedViewErrorAfterDataChanges", func(val failpoint.Value) {
 		if msg, ok := val.(string); ok {
 			failpoint.Return(finalizeFailure(errors.New(msg)))
@@ -906,6 +912,36 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	expectedLastSuccessReadTSONull bool,
 	targetExecutionVars variable.MViewExecutionSessionVars,
 ) (buildReadTSO uint64, err error) {
+	const slowOverheadThreshold = 5 * time.Second
+	refreshStart := time.Now()
+	var createShadowDur, loadShadowDur, cutoverDur, cleanupShadowDur time.Duration
+	defer func() {
+		total := time.Since(refreshStart)
+		failpoint.InjectCall("refreshMaterializedViewSlowLogDurations", &total, &loadShadowDur)
+		overhead := total - loadShadowDur
+		if overhead < slowOverheadThreshold {
+			return
+		}
+		fields := []zap.Field{
+			zap.Duration("total", total),
+			zap.Duration("overhead", overhead),
+			zap.Duration("slowOverheadThreshold", slowOverheadThreshold),
+			zap.String("schema", schemaName.O),
+			zap.String("mview", tblInfo.Name.O),
+			zap.Int64("mviewID", tblInfo.ID),
+			zap.Bool("internalSQL", isInternalSQL),
+			zap.Bool("success", err == nil),
+			zap.Duration("createShadow", createShadowDur),
+			zap.Duration("loadShadow", loadShadowDur),
+			zap.Duration("cutover", cutoverDur),
+			zap.Duration("cleanupShadow", cleanupShadowDur),
+		}
+		if err != nil {
+			fields = append(fields, zap.String("error", err.Error()))
+		}
+		logutil.BgLogger().Info("refresh materialized view complete out-of-place is slow", fields...)
+	}()
+
 	if err := kctx.Err(); err != nil {
 		return 0, err
 	}
@@ -964,13 +1000,16 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	}
 
 	shadowTableName := buildMVRefreshShadowTableName(tblInfo.ID)
-	shadowCreated := false
+	shadowNeedsCleanup := false
 	shadowLoadStmtResult := mvRefreshStmtResult{}
 	buildSQLExec := buildSctx.GetSQLExecutor()
 	defer func() {
-		if err == nil || !shadowCreated {
+		// err can still be nil while a panic unwinds this function.
+		if !shadowNeedsCleanup {
 			return
 		}
+		cleanupShadowStart := time.Now()
+		defer func() { cleanupShadowDur = time.Since(cleanupShadowStart) }()
 		if dropErr := domain.GetDomain(e.Ctx()).DDLExecutor().DropMaterializedViewShadowTable(
 			buildSctx, schemaName, ast.NewCIStr(shadowTableName),
 		); dropErr != nil {
@@ -981,7 +1020,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 				zap.String("shadowTable", shadowTableName),
 				zap.Error(dropErr),
 			)
-			err = errors.Annotatef(err, "cleanup shadow table %s.%s failed: %v", schemaName.O, shadowTableName, dropErr)
+			if err != nil {
+				err = errors.Annotatef(err, "cleanup shadow table %s.%s failed: %v", schemaName.O, shadowTableName, dropErr)
+			}
 		}
 	}()
 
@@ -990,6 +1031,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		return 0, err
 	}
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceCreateShadow, func() error {
+		createShadowStart := time.Now()
+		defer func() { createShadowDur = time.Since(createShadowStart) }()
 		if err := kctx.Err(); err != nil {
 			return err
 		}
@@ -1007,7 +1050,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		); execErr != nil {
 			return execErr
 		}
-		shadowCreated = true
+		shadowNeedsCleanup = true
 		return nil
 	}); err != nil {
 		return 0, err
@@ -1017,6 +1060,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {})
 	storeName := e.Ctx().GetStore().Name()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceLoadShadow, func() error {
+		loadShadowStart := time.Now()
+		defer func() { loadShadowDur = time.Since(loadShadowStart) }()
 		expectedStoreName := mvRefreshImportIntoStoreName
 		caseSensitiveEqual := storeName == expectedStoreName
 		buildMethod := "insert-into"
@@ -1078,6 +1123,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 	var shadowTableID int64
 	expectedOldMViewRevision := tblInfo.Revision
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceCutover, func() error {
+		cutoverStart := time.Now()
+		defer func() { cutoverDur = time.Since(cutoverStart) }()
 		var lookupErr error
 		shadowTableID, lookupErr = getMVRefreshOutOfPlaceShadowTableID(kctx, buildSctx, schemaName, shadowTableName)
 		if lookupErr != nil {
@@ -1114,7 +1161,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if !ok {
 			return errors.New("materialized view complete out-of-place refresh is not supported")
 		}
-		return ddlExecutor.RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		if err := ddlExecutor.RefreshMaterializedViewCompleteOutOfPlaceCutover(
 			e.Ctx(),
 			tblInfo.DBID,
 			schemaName,
@@ -1127,7 +1174,12 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			expectedLastSuccessReadTSONull,
 			nextRefreshUnixSeconds,
 			shouldUpdateNextRefreshUnixSeconds,
-		)
+		); err != nil {
+			return err
+		}
+		// Disarm cleanup before observeMVRefreshStep invokes OnStepEnd.
+		shadowNeedsCleanup = false
+		return nil
 	}); err != nil {
 		return 0, err
 	}
@@ -1883,7 +1935,12 @@ func executeRefreshMaterializedViewDataChanges(
 	stepSet mvRefreshStepSet,
 	stepObserver mvRefreshStepObserver,
 	explainFormat string,
+	executeDataChangesDur *time.Duration,
 ) error {
+	executeDataChangesStart := time.Now()
+	defer func() {
+		*executeDataChangesDur = time.Since(executeDataChangesStart)
+	}()
 	// TiFlash read is blocked for write statements when sql_mode is strict. Refresh prefers TiFlash for the
 	// scan part, so we bypass this guard for MV maintenance statements.
 	origInMViewMaintenance := sessVars.InMViewMaintenance
