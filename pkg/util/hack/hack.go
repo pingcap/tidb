@@ -45,6 +45,7 @@ func init() {
 func GetBytesFromPtr(ptr unsafe.Pointer, length int) []byte {
 	return unsafe.Slice((*byte)(ptr), length)
 }
+<<<<<<< HEAD
 
 // Memory usage constants for swiss map
 const (
@@ -53,3 +54,5 @@ const (
 	DefBucketMemoryUsageForSetFloat64     = 184
 	DefBucketMemoryUsageForSetInt64       = 184
 )
+=======
+>>>>>>> 69d1aac23d4 (util: prepare map ABI support for Go 1.27 (#72081))
