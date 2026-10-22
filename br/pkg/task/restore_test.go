@@ -14,6 +14,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
@@ -36,9 +37,33 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 const pb uint64 = units.PB
+
+func TestStorageCheckpointLog(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	t.Cleanup(log.ReplaceGlobals(zap.New(core), &log.ZapProperties{Core: core, Level: zap.NewAtomicLevelAt(zap.InfoLevel)}))
+	cfg := &task.RestoreConfig{CheckpointStorage: "local://FAKE_CHECKPOINT_USER:FAKE_CHECKPOINT_PASS@" + t.TempDir() + "?access-key=FAKE_CHECKPOINT_AK&secret-access-key=FAKE_CHECKPOINT_SK&sig=FAKE_CHECKPOINT_SAS"}
+	originalStorage := cfg.CheckpointStorage
+
+	err := cfg.CreateStorageCheckpointMetaManagersForTest(context.Background(), 1, 2)
+
+	require.NoError(t, err)
+	require.Equal(t, originalStorage, cfg.CheckpointStorage)
+	entries := logs.FilterMessage("creating storage checkpoint meta managers for PiTR").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, zapcore.InfoLevel, entries[0].Level)
+	field, ok := entries[0].ContextMap()["checkpointStorage"].(string)
+	require.True(t, ok)
+	for _, secret := range []string{"FAKE_CHECKPOINT_USER", "FAKE_CHECKPOINT_PASS", "FAKE_CHECKPOINT_AK", "FAKE_CHECKPOINT_SK", "FAKE_CHECKPOINT_SAS"} {
+		t.Run(secret, func(t *testing.T) { require.NotContains(t, field, secret) })
+	}
+	require.Contains(t, field, "local://")
+}
 
 func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	mockStores := []*metapb.Store{
