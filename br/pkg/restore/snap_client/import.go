@@ -858,14 +858,18 @@ func (importer *SnapFileImporter) batchDownloadSST(
 						defer cancel()
 						if len(req.Ssts) == 0 {
 							// fallback to single download
-							return importer.importClient.DownloadSST(dctx, storeID, req)
+							resp, err := importer.importClient.DownloadSST(dctx, storeID, req)
+							observeDownloadError(storeID, resp, err)
+							return resp, err
 						}
 						logger.Info("Sending batch download SST request.",
 							zap.Uint64("store_id", storeID),
 							logutil.BriefSSTMetas("ssts", maps.Values(req.Ssts)),
 							logutil.Region(regionInfo.Region),
 						)
-						return importer.importClient.BatchDownloadSST(dctx, storeID, req)
+						resp, err := importer.importClient.BatchDownloadSST(dctx, storeID, req)
+						observeDownloadError(storeID, resp, err)
+						return resp, err
 					})
 					if err != nil {
 						return errors.Trace(err)
@@ -984,7 +988,9 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 						logutil.BriefSSTMetas("ssts", maps.Values(downloadReq.Ssts)),
 						logutil.Region(regionInfo.Region),
 					)
-					return importer.importClient.BatchDownloadLatestMVCC(dctx, storeID, downloadReq)
+					resp, err := importer.importClient.BatchDownloadLatestMVCC(dctx, storeID, downloadReq)
+					observeDownloadError(storeID, resp, err)
+					return resp, err
 				})
 				if err != nil {
 					return errors.Trace(err)
@@ -1082,7 +1088,9 @@ func (importer *SnapFileImporter) downloadSST(
 				resp, err = importer.downloadWithOptionalPeerRetry(ectx, nil, func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
-					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+					resp, err := importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+					observeDownloadError(peer.GetStoreId(), resp, err)
+					return resp, err
 				})
 				if err != nil {
 					return errors.Trace(err)
@@ -1177,6 +1185,7 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 				peer := p
 				eg.Go(func() error {
 					resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
+					observeDownloadError(peer.GetStoreId(), resp, err)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1209,6 +1218,14 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 		}
 	}
 	return downloadMetas, nil
+}
+
+func observeDownloadError(storeID uint64, resp *import_sstpb.DownloadResponse, err error) {
+	summary.ObserveError("tikv", "download_sst", storeID, err)
+	if resp.GetError() != nil {
+		summary.ObserveError("tikv", "download_sst", storeID,
+			errors.Annotate(berrors.ErrKVDownloadFailed, resp.GetError().GetMessage()))
+	}
 }
 
 func (importer *SnapFileImporter) ingest(
@@ -1283,6 +1300,12 @@ func (importer *SnapFileImporter) ingest(
 			return errors.Trace(berrors.ErrKVKeyNotInRegion)
 		default:
 			// Other errors like `ServerIsBusy`, `RegionNotFound`, etc. should be retryable
+			diagnosticErr := berrors.ErrKVIngestFailed
+			if errPb.GetDiskFull() != nil {
+				diagnosticErr = berrors.ErrKVDiskFull
+			}
+			summary.ObserveError("tikv", "ingest_sst", info.Leader.GetStoreId(),
+				errors.Annotatef(diagnosticErr, "ingest error %s", errPb))
 			return errors.Annotatef(berrors.ErrKVIngestFailed, "ingest error %s", errPb)
 		}
 	}
@@ -1314,6 +1337,7 @@ func (importer *SnapFileImporter) ingestSSTs(
 	}
 	logutil.CL(ctx).Debug("ingest SSTs", logutil.SSTMetas(sstMetas), logutil.Leader(leader))
 	resp, err := importer.importClient.MultiIngest(ctx, leader.GetStoreId(), req)
+	summary.ObserveError("tikv", "ingest_sst", leader.GetStoreId(), err)
 	return resp, errors.Trace(err)
 }
 

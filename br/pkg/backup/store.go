@@ -15,7 +15,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -238,7 +240,7 @@ func startBackup(
 						logutil.CL(ectx).Info("retry backup to store", zap.Uint64("storeID", storeID),
 							zap.Int("retry", retry), zap.Int("reqIndex", reqIndex))
 					}
-					return doSendBackup(ectx, backupCli, limiter, bkReq, func(resp *backuppb.BackupResponse) error {
+					err := doSendBackup(ectx, backupCli, limiter, bkReq, func(resp *backuppb.BackupResponse) error {
 						// Forward all responses (including error).
 						failpoint.Inject("backup-timeout-error", func(val failpoint.Value) {
 							msg := val.(string)
@@ -273,6 +275,7 @@ func startBackup(
 								},
 							}
 						})
+						observeBackupError(storeID, resp.GetError())
 						select {
 						case <-ectx.Done():
 							return ectx.Err()
@@ -285,11 +288,26 @@ func startBackup(
 						}
 						return nil
 					})
+					summary.ObserveError("tikv", "backup", storeID, err)
+					return err
 				}, utils.NewBackupSSTBackoffStrategy())
 			})
 		}
 		return eg.Wait()
 	}
+}
+
+func observeBackupError(storeID uint64, errPb *backuppb.Error) {
+	if errPb == nil || errPb.GetKvError().GetLocked() != nil {
+		return
+	}
+	diagnosticErr := berrors.ErrKVStorage
+	if errPb.GetClusterIdError() != nil {
+		diagnosticErr = berrors.ErrKVClusterIDMismatch
+	} else if errPb.GetRegionError().GetDiskFull() != nil {
+		diagnosticErr = berrors.ErrKVDiskFull
+	}
+	summary.ObserveError("tikv", "backup", storeID, errors.Annotate(diagnosticErr, errPb.String()))
 }
 
 func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {
