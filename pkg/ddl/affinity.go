@@ -164,31 +164,31 @@ func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 	return affinity.DeleteGroupsWithRetry(ctx, ids)
 }
 
+// collectTableAffinityGroupIDs adds the affinity group IDs of a table to groupIDs.
+func collectTableAffinityGroupIDs(
+	codec tikv.Codec,
+	tblInfo *model.TableInfo,
+	groupIDs map[string]struct{},
+) error {
+	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for id := range groups {
+		groupIDs[id] = struct{}{}
+	}
+	return nil
+}
+
 // batchDeleteTableAffinityGroups deletes affinity groups for multiple tables in PD.
 // This is used for DROP DATABASE to clean up all table affinity groups at once.
 // Returns error to let the caller decide whether to continue or fail.
-func batchDeleteTableAffinityGroups(jobCtx *jobContext, tables []*model.TableInfo) error {
-	if len(tables) == 0 {
-		return nil
-	}
-
-	ctx := jobCtx.stepCtx
-	codec := jobCtx.store.GetCodec()
-
-	groupIDs := make(map[string]struct{})
-	for _, tblInfo := range tables {
-		groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for id := range groups {
-			groupIDs[id] = struct{}{}
-		}
-	}
+func batchDeleteTableAffinityGroups(jobCtx *jobContext, groupIDs map[string]struct{}) error {
 	if len(groupIDs) == 0 {
 		return nil
 	}
 
+	ctx := jobCtx.stepCtx
 	ids := make([]string, 0, len(groupIDs))
 	for id := range groupIDs {
 		ids = append(ids, id)
