@@ -163,7 +163,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			s3Options = options.S3
 		}
-		ExtractQueryParameters(u, &s3Options)
+		if err := ExtractQueryParameters(u, &s3Options); err != nil {
+			return nil, errors.Trace(err)
+		}
 		s3Options.SetForcePathStyle(rawURL)
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
@@ -185,7 +187,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			gcsOptions = options.GCS
 		}
-		ExtractQueryParameters(u, &gcsOptions)
+		if err := ExtractQueryParameters(u, &gcsOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := gcsOptions.apply(gcs); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -201,7 +205,9 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		if options != nil {
 			azblobOptions = options.Azblob
 		}
-		ExtractQueryParameters(u, &azblobOptions)
+		if err := ExtractQueryParameters(u, &azblobOptions); err != nil {
+			return nil, errors.Trace(err)
+		}
 		if err := azblobOptions.apply(azblob); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -219,7 +225,17 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 // serialization.
 //
 // All of the URL's query parameters will be removed after calling this method.
-func ExtractQueryParameters(u *url.URL, options any) {
+// It returns an error, leaving the options unchanged, if the query cannot be
+// decoded.
+func ExtractQueryParameters(u *url.URL, options any) error {
+	// URL.Query skips parameters it cannot decode, which would silently drop
+	// options such as sse-kms-context.
+	values, err := url.ParseQuery(u.RawQuery)
+	if err != nil {
+		// The decoder error may quote part of the query.
+		return errors.Annotate(berrors.ErrStorageInvalidConfig, "parse storage URL query failed: invalid format")
+	}
+
 	type field struct {
 		index int
 		kind  reflect.Kind
@@ -237,7 +253,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 	}
 
 	// Then, read content from the URL into the options.
-	for key, params := range u.Query() {
+	for key, params := range values {
 		if len(params) == 0 {
 			continue
 		}
@@ -260,6 +276,7 @@ func ExtractQueryParameters(u *url.URL, options any) {
 
 	// Clean up the URL finally.
 	u.RawQuery = ""
+	return nil
 }
 
 // NormalizeQueryParameterKey normalizes object storage URL query parameter keys

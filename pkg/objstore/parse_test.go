@@ -79,6 +79,13 @@ func TestS3SSEKMSContextURL(t *testing.T) {
 		require.Contains(t, err.Error(), "sse-kms-context")
 		require.NotContains(t, err.Error(), "private-context")
 	}
+
+	// A query that cannot be fully decoded must not silently lose the context.
+	for _, rawQuery := range []string{`{"tenant":"a;private-context"}`, `{"tenant":"private-context%zz"}`} {
+		_, err := ParseBackend("s3://bucket/prefix?sse=aws:kms&sse-kms-context="+rawQuery, nil)
+		require.ErrorContains(t, err, "parse storage URL query failed")
+		require.NotContains(t, err.Error(), "private-context")
+	}
 }
 
 func TestCreateStorage(t *testing.T) {
@@ -692,7 +699,10 @@ func TestRedactURL(t *testing.T) {
 		{"/data/my files/100%off", "/data/my files/100%off"},
 		{"s3://bucket/prefix", "s3://bucket/prefix"},
 		{"s3://bucket/prefix?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D", "s3://bucket/prefix?sse-kms-context=xxxxxx"},
-		{`s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`, "s3://bucket/prefix?sse-kms-context=xxxxxx"},
+		{`s3://bucket/prefix?sse-kms-context={"tenant":"#context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a;x&private-context-value"}`, "s3://bucket/prefix"},
+		{`s3://bucket/prefix?sse=aws:kms&sse-kms-context={"tenant":"a%zz&private-context-value"}`, "s3://bucket/prefix"},
 		{"s3://bucket/prefix?access-key=AKID&secret-access-key=SKEY&region=us", "s3://bucket/prefix?access-key=xxxxxx&region=us&secret-access-key=xxxxxx"},
 		{"azure://bucket/prefix?sas-token=SAS", "azure://bucket/prefix?sas-token=xxxxxx"},
 		{"s3://bucket:port/prefix?access-key=AKID&secret-access-key=SKEY", InvalidURLPlaceholder},

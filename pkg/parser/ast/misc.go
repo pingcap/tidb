@@ -15,8 +15,10 @@ package ast
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -4284,12 +4286,25 @@ func RedactURL(str string) string {
 		// An unescaped '#' in a secret query value starts a fragment.
 		u.Fragment = ""
 		u.RawFragment = ""
-		values := u.Query()
-		for k := range values {
+		// URL.Query skips undecodable pairs, which may hide a split context.
+		values, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			u.RawQuery = ""
+			return u.String()
+		}
+		for k, vs := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
+				// An unescaped '&' in a raw JSON context splits it, and the rest
+				// becomes a parameter that cannot be identified as secret.
+				if normalizedKey == "sse-kms-context" && slices.ContainsFunc(vs, func(v string) bool {
+					return !json.Valid([]byte(v))
+				}) {
+					u.RawQuery = ""
+					return u.String()
+				}
 				values[k] = []string{RedactedValue}
 			}
 		}
