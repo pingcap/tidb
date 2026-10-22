@@ -3777,8 +3777,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:Z1gFEBIzhT7Cuc0IBAsKgUxMapL2kwqe3QQq7g9XiJw=",
-        version = "v0.0.0-20260820070758-623e58e60fa9",
+        sum = "h1:4d+GdI0GRxACpzJHdeGzYs98EvSVO1JK+iiIRSvkvEg=",
+        version = "v0.0.0-20261014124429-4141ecadac8f",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -6498,6 +6498,10 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
+        patch_args = ["-p1"],
+        patches = [
+            "//build/patches:org_golang_x_tools.patch",
+        ],
         sum = "h1:7Kn5x/d1svx/PzryTsqeoZN4TZwqeH5pGWjefhLi/1Q=",
         version = "v0.47.0",
     )

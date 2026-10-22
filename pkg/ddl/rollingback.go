@@ -427,11 +427,7 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 	for _, pd := range addingDefinitions {
 		partNames = append(partNames, pd.Name.L)
 	}
-	var dropIndices []*model.IndexInfo
 	for _, indexInfo := range tblInfo.Indices {
-		if !indexInfo.Unique {
-			continue
-		}
 		isNew, ok := pi.DDLChangedIndex[indexInfo.ID]
 		if !ok {
 			// non-changed index
@@ -442,18 +438,12 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 				// Revert the non-public state
 				indexInfo.State = model.StatePublic
 			}
-		} else {
-			if pi.DDLState == model.StateDeleteReorganization {
-				indexInfo.State = model.StateWriteOnly
-			} else {
-				dropIndices = append(dropIndices, indexInfo)
-			}
+		} else if indexInfo.State != model.StateDeleteOnly {
+			// A copy may be public in delete reorganization, so it keeps taking writes for one more
+			// schema version. rollbackLikeDropPartition then moves it to delete only and removes it.
+			// A copy still in delete only never took writes and stays as is.
+			indexInfo.State = model.StateWriteOnly
 		}
-	}
-	for _, indexInfo := range dropIndices {
-		DropIndexColumnFlag(tblInfo, indexInfo)
-		RemoveDependentHiddenColumns(tblInfo, indexInfo)
-		removeIndexInfo(tblInfo, indexInfo)
 	}
 	if pi.DDLState == model.StateDeleteReorganization {
 		// New partitions are public,

@@ -155,6 +155,7 @@ func (j *leftOuterSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *chunk.
 				j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 				continue
 			}
+			j.addJoinedRow()
 			j.isMatchedRows[j.currentProbeRow] = true
 		}
 		j.matchedRowsHeaders[j.currentProbeRow] = 0
