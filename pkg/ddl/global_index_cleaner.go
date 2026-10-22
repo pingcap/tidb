@@ -79,12 +79,14 @@ var gcNoopJobTypes = []model.ActionType{
 // table, while TiKV scans the history of all tables backwards to fill a batch.
 const historyJobBatchSize = 4
 
+var errNoLeftoverIndexesGCJob = errors.New("no DDL history job to key the delete ranges of leftover global indexes")
+
 // gcJobForLeftoverIndexes returns a history job of the table to key the delete ranges of the
 // leftover copies, since the GC worker never completes a delete range whose history job is missing.
 // It walks the history of the table from the newest job and takes the first finished job with a
 // type in gcNoopJobTypes, or rolled back REORGANIZE PARTITION, which exists for every real leftover.
 // For the latter, GC only drops the placement rules of the new partitions the rollback removed,
-// whose IDs are never reused. Jobs are read by m.GetHistoryDDLJob, the lookup GC does through
+// whose IDs are never reused, and a job whose args GC cannot decode is skipped. Jobs are read by m.GetHistoryDDLJob, the lookup GC does through
 // ddl.GetHistoryJobByID.
 func gcJobForLeftoverIndexes(ctx context.Context, se *sess.Session, m *meta.Mutator, tableID int64) (*model.Job, error) {
 	lastJobID := int64(math.MaxInt64)
@@ -111,13 +113,14 @@ func gcJobForLeftoverIndexes(ctx context.Context, se *sess.Session, m *meta.Muta
 			if job.Type == model.ActionReorganizePartition && job.IsRollbackDone() {
 				// GC decodes these args to get the partitions whose placement rules to drop.
 				if _, err = model.GetFinishedTablePartitionArgs(job); err != nil {
-					return nil, errors.Annotatef(err, "decode args of DDL history job %d", job.ID)
+					logutil.DDLLogger().Warn("skip DDL history job whose args cannot be decoded", zap.Int64("jobID", job.ID), zap.Error(err))
+					continue
 				}
 				return job, nil
 			}
 		}
 		if len(rows) < historyJobBatchSize {
-			return nil, errors.Errorf("table %d has no DDL history job to key the delete ranges of its leftover global indexes", tableID)
+			return nil, errors.Annotatef(errNoLeftoverIndexesGCJob, "table %d", tableID)
 		}
 	}
 }
@@ -193,7 +196,7 @@ type LeftoverIndexesCleanup struct {
 // diff. The copies are never read, and their columns, key flags and hidden columns are shared with
 // the public index, so they are removed directly. No DDL job is created: the delete ranges reuse a
 // history job of the table, see gcJobForLeftoverIndexes. It returns an empty result when the table
-// has no leftovers.
+// has no leftovers, and ErrTableNotExists when the table is not in meta under dbID.
 func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, tableID int64) (*LeftoverIndexesCleanup, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	se := sess.NewSession(sctx)
@@ -211,13 +214,26 @@ func CleanupLeftoverIndexes(ctx context.Context, sctx sessionctx.Context, dbID, 
 		return nil, errors.Trace(err)
 	}
 	m := meta.NewMutator(txn)
-	tblInfo, err := m.GetTable(dbID, tableID)
-	if err != nil || tblInfo == nil {
+	tblInfo, err := getTableInfo(m, tableID, dbID)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	leftovers := leftoverGlobalIndexes(tblInfo)
 	if len(leftovers) == 0 {
 		return &LeftoverIndexesCleanup{}, nil
+	}
+	// A DDL step allocates its schema version before it commits the schema diff. Taking the next
+	// version in between would make schema loaders skip the diff of that step.
+	curVer, err := m.GetSchemaVersion()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	diffVer, err := m.GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if curVer != diffVer {
+		return nil, errors.Errorf("schema version %d has no schema diff yet, a DDL step may be in flight, retry later", curVer)
 	}
 	gcJob, err := gcJobForLeftoverIndexes(ctx, se, m, tableID)
 	if err != nil {

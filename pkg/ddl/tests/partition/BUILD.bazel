@@ -28,6 +28,7 @@ go_test(
         "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/expression",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
