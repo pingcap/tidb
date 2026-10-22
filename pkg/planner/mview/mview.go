@@ -405,13 +405,18 @@ func Build(
 	return buildFromLocal(local, opt, aggArgNotNullByOffset)
 }
 
-// buildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
-func buildLocal(
-	sctx planctx.PlanContext,
-	is infoschema.InfoSchema,
-	mv *model.TableInfo,
-) (*buildLocalResult, error) {
-	// Stage 0: validate MV/MLoG metadata and locate all required tables.
+// FastRefreshSource contains the source object and its MLog used by one FAST refresh.
+// BaseTable can be either a physical table or a ready materialized view.
+type FastRefreshSource struct {
+	BaseTable   *model.TableInfo
+	MLogTable   *model.TableInfo
+	BaseTableID int64
+	MLogTableID int64
+}
+
+// ResolveFastRefreshSource validates the source object and MLog metadata required by a single-source
+// FAST refresh. The base table can be a physical table or a ready materialized view.
+func ResolveFastRefreshSource(is infoschema.InfoSchema, mv *model.TableInfo) (*FastRefreshSource, error) {
 	if mv == nil {
 		return nil, errors.New("mv table info is nil")
 	}
@@ -425,18 +430,29 @@ func buildLocal(
 			len(mv.MaterializedView.BaseTableIDs),
 		)
 	}
+
 	baseTableID := mv.MaterializedView.BaseTableIDs[0]
 	baseTable, ok := is.TableInfoByID(baseTableID)
 	if !ok {
 		return nil, errors.Errorf("base table id %d not found in infoschema", baseTableID)
 	}
+	if baseTable.State != model.StatePublic {
+		return nil, errors.Errorf("source object %s is not public", baseTable.Name.O)
+	}
+	if baseTable.MaterializedView != nil && !baseTable.MaterializedView.GetInitBuildState().IsReady() {
+		return nil, errors.Errorf("source materialized view %s is not ready", baseTable.Name.O)
+	}
 	if baseTable.MaterializedViewBase == nil || baseTable.MaterializedViewBase.MLogID == 0 {
 		return nil, errors.Errorf("base table %s has no materialized view log", baseTable.Name.O)
 	}
+
 	mlogTableID := baseTable.MaterializedViewBase.MLogID
 	mlogTable, ok := is.TableInfoByID(mlogTableID)
 	if !ok {
 		return nil, errors.Errorf("materialized view log table id %d not found in infoschema", mlogTableID)
+	}
+	if mlogTable.State != model.StatePublic {
+		return nil, errors.Errorf("materialized view log %s is not public", mlogTable.Name.O)
 	}
 	if mlogTable.MaterializedViewLog == nil {
 		return nil, errors.Errorf("table %s is not a materialized view log", mlogTable.Name.O)
@@ -461,6 +477,25 @@ func buildLocal(
 			mlogTable.Name.O,
 			model.MaterializedViewLogDMLTypeColumnName,
 		)
+	}
+	return &FastRefreshSource{
+		BaseTable:   baseTable,
+		MLogTable:   mlogTable,
+		BaseTableID: baseTableID,
+		MLogTableID: mlogTableID,
+	}, nil
+}
+
+// buildLocal validates MV/MLoG metadata, parses the MV definition, and derives local layout metadata.
+func buildLocal(
+	sctx planctx.PlanContext,
+	is infoschema.InfoSchema,
+	mv *model.TableInfo,
+) (*buildLocalResult, error) {
+	// Stage 0: validate MV/MLoG metadata and locate all required tables.
+	fastSource, err := ResolveFastRefreshSource(is, mv)
+	if err != nil {
+		return nil, err
 	}
 
 	// Stage 1: parse MV definition and derive merge key/aggregate layout from it.
@@ -517,10 +552,10 @@ func buildLocal(
 		sctx:              sctx,
 		mvDBName:          mvDBName,
 		mviewTable:        mv,
-		baseTableID:       baseTableID,
-		mlogTableID:       mlogTableID,
-		baseTable:         baseTable,
-		mlogTable:         mlogTable,
+		baseTableID:       fastSource.BaseTableID,
+		mlogTableID:       fastSource.MLogTableID,
+		baseTable:         fastSource.BaseTable,
+		mlogTable:         fastSource.MLogTable,
 		groupKeySet:       groupKeySet,
 		groupKeyOffs:      groupKeyOffsets,
 		aggCols:           aggCols,

@@ -29,6 +29,11 @@ It also records the design rationale and follow-up items for the refined MV/MLog
 - After lock acquisition, purge inserts one `running` history row; when purge finishes, it updates the same history row to final status.
 - `LAST_PURGED_TSO` is used as a persisted purge checkpoint to skip redundant purge runs.
 
+The source object may also be a ready materialized view. For its MLog, each direct child MV's
+`LAST_SUCCESS_READ_TSO` participates in the safe purge bound, just as for an ordinary source table.
+Parent refresh changes remain available until the child has consumed them; purging the parent's
+MLog does not advance the child's refresh checkpoint.
+
 ## Runtime `NEXT_PURGE_UNIX_SECONDS` Update (Internal SQL Success Path)
 
 - For **internal SQL** triggered purge (identified by `SessionVars.InRestrictedSQL`), after successful purge completion, `mysql.tidb_mlog_purge_info.NEXT_PURGE_UNIX_SECONDS` should be updated together with purge success state.

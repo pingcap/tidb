@@ -85,6 +85,41 @@ drop materialized view mv_mlog_refresh;
 drop materialized view log on t_mv_mlog_refresh;
 drop table if exists t_mv_mlog_refresh;
 
+# TestNestedMaterializedViewFastRefresh
+
+create table t_nested_mv_refresh (a int not null, b int not null, v int not null);
+insert into t_nested_mv_refresh values (1, 1, 10), (1, 1, 5), (1, 2, 7), (2, 1, 4);
+create materialized view log on t_nested_mv_refresh (a, b, v);
+create materialized view mv_nested_parent (a, b, s, cnt) refresh fast as
+select a, b, sum(v), count(1) from t_nested_mv_refresh group by a, b;
+create materialized view log on mv_nested_parent (a, b, s, cnt);
+create materialized view mv_nested_child (a, s, cnt, cnt_s) refresh fast as
+select a, sum(s), count(1), count(s) from mv_nested_parent group by a;
+
+select a, s, cnt, cnt_s from mv_nested_child order by a;
+
+update t_nested_mv_refresh set v = 11 where a = 1 and b = 1 and v = 10;
+delete from t_nested_mv_refresh where a = 1 and b = 2;
+insert into t_nested_mv_refresh values (3, 1, 8);
+refresh materialized view mv_nested_parent fast;
+refresh materialized view mv_nested_child fast;
+
+select a, s, cnt, cnt_s from mv_nested_child order by a;
+
+update t_nested_mv_refresh set v = 12 where a = 1 and b = 1 and v = 11;
+delete from t_nested_mv_refresh where a = 3 and b = 1;
+insert into t_nested_mv_refresh values (4, 1, 9);
+refresh materialized view mv_nested_parent complete delta apply;
+refresh materialized view mv_nested_child fast;
+
+select a, s, cnt, cnt_s from mv_nested_child order by a;
+
+drop materialized view mv_nested_child;
+drop materialized view log on mv_nested_parent;
+drop materialized view mv_nested_parent;
+drop materialized view log on t_nested_mv_refresh;
+drop table if exists t_nested_mv_refresh;
+
 # TestMaterializedViewIndexDDLWritableColumns
 
 create table t_mv_ddl_70457 (a int not null, b int not null);
