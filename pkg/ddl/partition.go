@@ -2200,7 +2200,8 @@ func dropLabelRules(ctx context.Context, codec tikv.Codec, schemaName, tableName
 // DROP PARTITION does not: rollingbackDropTablePartition only cancels that job
 // while it is still StatePublic.
 //
-// New partitions are removed, including their label rules and placement bundles.
+// New partitions and their label rules are removed. Placement bundles for those
+// partitions stay until delete-range GC.
 // Cloned global indexes are dropped here too: a write-only copy is moved to
 // delete-only for one schema version, then removed and queued for delete-range.
 func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
