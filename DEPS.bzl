@@ -3399,8 +3399,8 @@ def go_deps():
         name = "com_github_mjonss_samefn_poc",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/mjonss/samefn-poc",
-        sum = "h1:3lyJy0SaSJwAiEf+1z9C9U3+VQOYxwzM9Mtz75tMfrs=",
-        version = "v0.0.0-20261022202141-26fdf64f9e6b",
+        sum = "h1:Z4noQythXGnXPvzBhhJmdCU1pwaM3uJFwt4FvTKJgpI=",
+        version = "v0.0.0-20261022204218-3246261344d4",
     )
     go_repository(
         name = "com_github_moby_spdystream",
