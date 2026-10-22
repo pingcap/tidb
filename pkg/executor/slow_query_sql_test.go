@@ -145,6 +145,58 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 		`0 0 select * from t where a<3;`))
 }
 
+func TestSlowQueryUnredactedQuery(t *testing.T) {
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	f, err := os.CreateTemp("", "tidb-slow-*.log")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	newCfg.Log.SlowQueryFile = f.Name()
+	config.StoreGlobalConfig(&newCfg)
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originCfg)
+		require.NoError(t, os.Remove(f.Name()))
+	})
+	require.NoError(t, logutil.InitLogger(newCfg.Log.ToLogConfig()))
+
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec(fmt.Sprintf("set @@tidb_slow_query_file='%v'", f.Name()))
+	tk.MustExec("set tidb_slow_log_threshold=0")
+	tk.MustExec("set @@global.tidb_redact_log=on")
+	t.Cleanup(func() {
+		tk.MustExec("set tidb_slow_log_threshold=300")
+		tk.MustExec("set @@global.tidb_redact_log=off")
+	})
+
+	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and lower(column_name) = 'unredacted_query'").
+		Check(testkit.Rows("2"))
+	tk.MustExec("select 123456789")
+	// Avoid ORDER BY time DESC LIMIT. That limit is pushed into the slow-log
+	// reader and would hide the target row once newer statements are logged.
+	tk.EventuallyMustQueryAndCheck(
+		"select query, unredacted_query from information_schema.slow_query "+
+			"where unredacted_query = 'select 123456789;'",
+		nil,
+		testkit.Rows("select ?; select 123456789;"),
+		3*time.Second,
+		50*time.Millisecond,
+	)
+	// A slow-log line that was never cached stays empty in unredacted_query.
+	extra, err := os.OpenFile(f.Name(), os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = extra.WriteString("\n# Time: 2020-01-01T00:00:00.000000+08:00\nselect disk_only_999;\n")
+	require.NoError(t, err)
+	require.NoError(t, extra.Close())
+	tk.MustQuery("select query, unredacted_query from information_schema.slow_query where query = 'select disk_only_999;'").
+		Check(testkit.Rows("select disk_only_999; "))
+
+	// Redact off keeps the plaintext in query and leaves unredacted_query empty.
+	tk.MustExec("set @@global.tidb_redact_log=off")
+	tk.MustExec("select 987654321")
+	tk.MustQuery("select query, unredacted_query from information_schema.slow_query where query = 'select 987654321;'").
+		Check(testkit.Rows("select 987654321; "))
+}
+
 func TestSlowQueryMisc(t *testing.T) {
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg

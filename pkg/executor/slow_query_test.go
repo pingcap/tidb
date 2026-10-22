@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
@@ -93,6 +95,67 @@ func parseSlowLog(sctx sessionctx.Context, reader *bufio.Reader) ([][]types.Datu
 		retriever.columnValueFactoryMap[col.Name.O] = factory
 	}
 	return parseLog(retriever, sctx, reader)
+}
+
+func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().EnableRedactLog = errors.RedactLogEnable
+	sqlText := "select secret_value;"
+	key := slowQueryKeyOf(42, 1.5, "mem-digest")
+	// Lookup does not start the worker. Server.Run does that before queries arrive.
+	globalSlowQueryCache.ensureStarted()
+	globalSlowQueryCache.putIntoCache(key, sqlText)
+	require.Eventually(t, func() bool {
+		got, err := globalSlowQueryCache.getUnredactedQueries(context.Background(), []slowQueryKey{key})
+		return err == nil && len(got) == 1 && got[0] == sqlText
+	}, time.Second, 5*time.Millisecond)
+
+	row := []types.Datum{types.NewStringDatum("")}
+	retriever := &slowQueryRetriever{
+		unredactedQueryIndex: 0,
+		taskList:             make(chan slowLogTask, 1),
+		memTracker:           memory.NewTracker(0, -1),
+	}
+	retriever.memConsume(types.EstimatedMemUsage(row, 1))
+	resultCh := make(chan parsedSlowLog, 1)
+	resultCh <- parsedSlowLog{rows: [][]types.Datum{row}, keys: []slowQueryKey{key}}
+	retriever.taskList <- slowLogTask{resultCh: resultCh}
+
+	rows, err := retriever.dataForSlowLog(context.Background(), sctx)
+	require.NoError(t, err)
+	require.Equal(t, sqlText, rows[0][0].GetString())
+	require.Equal(t, types.EstimatedMemUsage(rows[0], 1), retriever.memTracker.BytesConsumed())
+	require.Equal(t, retriever.lastFetchSize, retriever.memTracker.BytesConsumed())
+
+	close(retriever.taskList)
+	rows, err = retriever.dataForSlowLog(context.Background(), sctx)
+	require.NoError(t, err)
+	require.Nil(t, rows)
+	require.Zero(t, retriever.memTracker.BytesConsumed())
+}
+
+func TestSlowQueryCacheQueuesOnlySelect(t *testing.T) {
+	selectStmt := &ast.SelectStmt{Kind: ast.SelectStmtKindSelect}
+	require.True(t, (&ExecStmt{StmtNode: selectStmt}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindTable}}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SelectStmt{Kind: ast.SelectStmtKindValues}}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: &ast.InsertStmt{}}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: &ast.SetOprStmt{}}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: &ast.ExplainStmt{Stmt: selectStmt}}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{}).isSlowQuerySelect())
+
+	require.True(t, (&ExecStmt{
+		StmtNode: &ast.ExecuteStmt{},
+		Plan:     &plannercore.Execute{Stmt: selectStmt},
+	}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{
+		StmtNode: &ast.ExecuteStmt{},
+		Plan:     &plannercore.Execute{Stmt: &ast.UpdateStmt{}},
+	}).isSlowQuerySelect())
+	require.True(t, (&ExecStmt{
+		StmtNode: &ast.ExecuteStmt{},
+		PsStmt:   &plannercore.PlanCacheStmt{PreparedAst: &ast.Prepared{Stmt: selectStmt}},
+	}).isSlowQuerySelect())
 }
 
 func TestParseSlowLogPanic(t *testing.T) {
@@ -202,7 +265,7 @@ select * from t;`
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
 		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,null,select * from t;`
+		`,update t set i = 1;,null,select * from t;,`
 	require.Equal(t, expectRecordString, recordString)
 
 	// Issue 20928
@@ -225,7 +288,7 @@ select * from t;`
 		`0.1,0.2,0.03,127.0.0.1:20160,0.05,0.6,0.8,0.0.0.0:20160,70724,23333,65536,0,0,0,30000,3000,10000,1000,500000,500005,300000,300005,0,0,,` +
 		`Cop_backoff_regionMiss_total_times: 200 Cop_backoff_regionMiss_total_time: 0.2 Cop_backoff_regionMiss_max_time: 0.2 Cop_backoff_regionMiss_max_addr: 127.0.0.1 Cop_backoff_regionMiss_avg_time: 0.2 Cop_backoff_regionMiss_p90_time: 0.2 Cop_backoff_rpcPD_total_times: 200 Cop_backoff_rpcPD_total_time: 0.2 Cop_backoff_rpcPD_max_time: 0.2 Cop_backoff_rpcPD_max_addr: 127.0.0.1 Cop_backoff_rpcPD_avg_time: 0.2 Cop_backoff_rpcPD_p90_time: 0.2 Cop_backoff_rpcTiKV_total_times: 200 Cop_backoff_rpcTiKV_total_time: 0.2 Cop_backoff_rpcTiKV_max_time: 0.2 Cop_backoff_rpcTiKV_max_addr: 127.0.0.1 Cop_backoff_rpcTiKV_avg_time: 0.2 Cop_backoff_rpcTiKV_p90_time: 0.2,` +
 		`0,0,1,0,1,1,0,default,2.158,2.123,0.05,0.01,0.021,1,1,,60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4,` +
-		`,update t set i = 1;,null,select * from t;`
+		`,update t set i = 1;,null,select * from t;,`
 	require.Equal(t, expectRecordString, recordString)
 
 	// fix sql contain '# ' bug

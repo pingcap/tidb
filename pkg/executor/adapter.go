@@ -2126,6 +2126,15 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	if slowItems == nil {
 		slowItems = &variable.SlowQueryLogItems{}
 	}
+
+	var unredactedSQL string
+	// Only SELECT is queued. Other statements never touch the cache channel.
+	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQuerySelect() {
+		// Capture the original text before it is redacted into the slow log line.
+		// Only this SQL string is retained in memory.
+		unredactedSQL = a.getUnredactedSlowQuerySQL()
+	}
+
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
 	slowItems.RUDetails = a.ruDetailsForStatementLog(slowItems.RUDetails, statementRUTotal)
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
@@ -2135,6 +2144,16 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 			}
 		}
 	})
+
+	if unredactedSQL != "" {
+		// Queue the plaintext before the redacted line is written. A full queue
+		// drops the cache entry and the disk write below still happens.
+		globalSlowQueryCache.putIntoCache(
+			slowQueryKeyOf(slowItems.TxnTS, slowQueryTimeKey(slowItems.TimeTotal), slowItems.Digest),
+			unredactedSQL,
+		)
+	}
+
 	slowLog := sessVars.SlowLogFormat(slowItems)
 	logutil.SlowQueryLogger.Warn(slowLog)
 
@@ -2514,6 +2533,53 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 		sql = sensitiveStmt.SecureText()
 	} else {
 		sql = redact.String(rmode, sessVars.StmtCtx.OriginalSQL+sessVars.PlanCacheParams.String())
+	}
+	return sql
+}
+
+// isSlowQuerySelect reports whether the statement recorded in the slow log is a
+// SELECT. EXECUTE is classified by the prepared statement it runs. TABLE and
+// VALUES use the select AST with a different kind and are not SELECT.
+func (a *ExecStmt) isSlowQuerySelect() bool {
+	stmt := a.slowQueryLoggedStmt()
+	sel, ok := stmt.(*ast.SelectStmt)
+	return ok && sel.Kind == ast.SelectStmtKindSelect
+}
+
+func (a *ExecStmt) slowQueryLoggedStmt() ast.StmtNode {
+	if a.Plan != nil {
+		if exec, ok := a.Plan.(*plannercore.Execute); ok && exec.Stmt != nil {
+			return exec.Stmt
+		}
+	}
+	execStmt, isExec := a.StmtNode.(*ast.ExecuteStmt)
+	if !isExec {
+		return a.StmtNode
+	}
+	if a.PsStmt != nil && a.PsStmt.PreparedAst != nil && a.PsStmt.PreparedAst.Stmt != nil {
+		return a.PsStmt.PreparedAst.Stmt
+	}
+	if a.Ctx == nil {
+		return nil
+	}
+	prepared, err := plannercore.GetPreparedStmt(execStmt, a.Ctx.GetSessionVars())
+	if err != nil || prepared == nil || prepared.PreparedAst == nil {
+		return nil
+	}
+	return prepared.PreparedAst.Stmt
+}
+
+func (a *ExecStmt) getUnredactedSlowQuerySQL() string {
+	sessVars := a.Ctx.GetSessionVars()
+	var sql string
+	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
+		sql = sensitiveStmt.SecureText()
+	} else {
+		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PlanCacheParams.String()
+	}
+	sql = FormatSQL(sql).String()
+	if len(sql) == 0 || sql[len(sql)-1] != ';' {
+		sql += ";"
 	}
 	return sql
 }

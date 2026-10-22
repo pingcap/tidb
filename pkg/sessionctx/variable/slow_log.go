@@ -72,6 +72,8 @@ const (
 	SlowLogIndexNamesStr = "Index_names"
 	// SlowLogQuerySQLStr is slow log field name.
 	SlowLogQuerySQLStr = "Query" // use for slow log table, slow log will not print this field name but print sql directly.
+	// SlowLogUnredactedQueryStr is the in-memory-only plaintext query column in slow log tables.
+	SlowLogUnredactedQueryStr = "unredacted_query"
 	// SlowLogStatsInfoStr is plan stats info.
 	SlowLogStatsInfoStr = "Stats"
 	// SlowLogCopProcAvg is the average process time of all cop-tasks.
