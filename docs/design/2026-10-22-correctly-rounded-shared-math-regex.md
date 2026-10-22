@@ -1,7 +1,7 @@
 # Deterministic, correctly rounded math and regex across TiDB, TiKV and TiFlash
 
 - Author(s): [Mattias Jonsson](https://github.com/mjonss)
-- Discussion PR: TBD
+- Discussion PR: https://github.com/pingcap/tidb/pull/72218
 - Tracking Issue: https://github.com/pingcap/tidb/issues/71807
 
 ## Table of Contents
