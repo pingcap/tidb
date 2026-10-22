@@ -170,7 +170,12 @@ Partition DDL often needs PD side effects:
   - `infosync.ConfigureTiFlashPDForPartitions`
   - Replica check loop: `checkPartitionReplica`
 
-These should generally happen **before** the state that starts writing to the new partitions, so a retry/rollback doesn’t leave partial placement state.
+These should generally happen **before** the state that starts writing to the new
+partitions. Reorganize-family rollback records the new physical IDs for
+delete-range cleanup, which removes placement bundles and attempts to remove
+TiFlash rules. ADD PARTITION rollback does not currently enqueue those IDs, so
+its placement and TiFlash rules may remain even after its partition metadata and
+label rules are removed.
 
 ## Practical debugging anchors
 

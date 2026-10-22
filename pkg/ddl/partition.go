@@ -322,9 +322,10 @@ func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDe
 	return false, nil
 }
 
-// When drop/truncate a partition, we should still keep the dropped partition's placement settings to avoid unnecessary region schedules.
-// When a partition is not configured with a placement policy directly, its rule is in the table's placement group which will be deleted after
-// partition truncated/dropped. So it is necessary to create a standalone placement group with partition id after it.
+// When dropping or truncating a partition, keep its placement settings to avoid
+// unnecessary region scheduling before delete-range GC. Recomputing the table
+// bundle removes inherited rules for the dropped range, so create a standalone
+// partition bundle to preserve those rules until GC.
 func droppedPartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	partitions := make([]model.PartitionDefinition, 0, len(dropPartitions))
 	for _, def := range dropPartitions {
@@ -2200,8 +2201,10 @@ func dropLabelRules(ctx context.Context, codec tikv.Codec, schemaName, tableName
 // DROP PARTITION does not: rollingbackDropTablePartition only cancels that job
 // while it is still StatePublic.
 //
-// New partitions and their label rules are removed. Placement bundles for those
-// partitions stay until delete-range GC.
+// New partition metadata and label rules are removed. Reorganize-family jobs
+// enqueue their physical IDs for delete-range cleanup; that cleanup removes
+// placement bundles and attempts to remove TiFlash rules. ADD PARTITION rollback
+// does not enqueue those IDs, so its placement and TiFlash rules may remain.
 // Cloned global indexes are dropped here too: a write-only copy is moved to
 // delete-only for one schema version, then removed and queued for delete-range.
 func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
@@ -2228,9 +2231,9 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	}
 	tblInfo.Partition.DroppingDefinitions = nil
-	// Collect table/partition ids to clean up, through args.OldPhysicalTblIDs
-	// GC will later also drop matching Placement bundles.
-	// If we delete them now, it could lead to non-compliant placement or failure during flashback
+	// Collect physical IDs in the finished args. Reorganize-family rollback uses
+	// them for delete-range cleanup; ADD PARTITION rollback has no corresponding
+	// cleanup task.
 	physicalTableIDs, pNames := removePartitionAddingDefinitionsFromTableInfo(tblInfo)
 	// TODO: Will this drop LabelRules for existing partitions, if the new partitions have the same name?
 	err = dropLabelRules(w.ctx, jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, pNames)
@@ -2245,7 +2248,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	}
 	if partInfo.Type != ast.PartitionTypeNone {
 		// ALTER TABLE ... PARTITION BY
-		// Also remove anything with the new table id
+		// Also record the new table ID for delete-range cleanup.
 		if partInfo.NewTableID != 0 {
 			physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
 		}
@@ -2316,8 +2319,8 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 // StateDeleteReorganization
 //
 //	Old partitions are not accessible/used by any sessions.
-//	Inserts/updates of global index which still have entries pointing to old partitions
-//	will overwrite those entries.
+//	Inserts/updates of global indexes may still get duplicate-key errors from entries
+//	pointing to old partitions until the background cleanup removes those entries.
 //	In the background we are reading all old partitions and deleting their entries from
 //	the global indexes.
 //
@@ -2358,8 +2361,9 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// Since the previous state do not use the dropping partitions,
-		// we can now actually remove them, allowing to write into the overlapping range
-		// of the higher range partition or LIST default partition.
+		// we can now remove them from the active definitions, allowing writes into
+		// the overlapping range of the higher range partition or LIST default partition.
+		// Their physical data and standalone placement bundles remain until delete-range GC.
 		updateDroppingPartitionInfo(tblInfo, partNames)
 		err = dropLabelRules(jobCtx.stepCtx, jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
@@ -2443,7 +2447,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		// A background job will be created to delete old partition data.
+		// A delete-range task will be enqueued when this DDL job finishes.
 		job.FillFinishedArgs(args)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -2558,9 +2562,12 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 
 // onTruncateTablePartition truncates old partition meta.
 //
-// # StateNone
+// job.SchemaState follows the switch below, then finishes at StateNone:
+// StatePublic -> StateWriteOnly -> StateDeleteOnly -> StateDeleteReorganization -> StateNone
 //
-// Unaware of DDL.
+// # StatePublic
+//
+// Original state, unaware of DDL.
 //
 // # StateWriteOnly
 //
@@ -2586,9 +2593,9 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 // smaller batches.
 // This state is not really needed if there are no global indexes, but used for consistency.
 //
-// # StatePublic
+// # StateNone
 //
-// DDL done.
+// DDL metadata is finalized; old partition data is queued for delete-range GC.
 func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 	canCancel := false
@@ -2757,7 +2764,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		}
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		// A background job will be created to delete old partition data.
+		// A delete-range task will be enqueued when this DDL job finishes.
 		job.FillFinishedArgs(&model.TruncateTableArgs{
 			OldPartitionIDs: oldIDs,
 		})
@@ -3199,7 +3206,7 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //
 // job.SchemaState goes through the following SchemaState(s):
 // StateNone -> StateDeleteOnly -> StateWriteOnly -> StateWriteReorganization
-// -> StateDeleteReorganization -> StatePublic -> Done
+// -> StateDeleteReorganization -> StatePublic -> StateNone (job done)
 // There are more details embedded in the implementation, but the high level changes are:
 //
 // StateNone -> StateDeleteOnly:
@@ -3239,20 +3246,20 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //	this way there will be no orphan records inserted after DeleteRanges
 //	has cleaned up the old partitions and old global indexes.
 //
-// StatePublic -> Done:
+// StatePublic -> StateNone:
 //
 //	Now all heavy lifting is done, and we just need to finalize and drop things, while still doing
-//	double writes, since previous state sees the old partitions/indexes.
+//	double writes for sessions that still see the previous schema version.
 //	Remove the old indexes and old partitions from the TableInfo.
 //	Add the old indexes and old partitions to the queue for later cleanup (see delete_range.go).
 //	Queue new partitions for statistics update.
 //	if ALTER TABLE t PARTITION BY/REMOVE PARTITIONING:
 //	  Recreate the table with the new TableID, by DropTableOrView+CreateTableOrView
 //
-// Done:
+// StateNone:
 //
 //	Everything now looks as it should, no memory of old partitions/indexes,
-//	and no more double writing, since the previous state is only using the new partitions/indexes.
+//	and no more double writing.
 //
 // Note: Special handling is also required in tables.newPartitionedTable(),
 // to get per partition indexes in the right state.
@@ -3616,7 +3623,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		//   leaving data in dropped partitions/indexes that will not be cleaned up again.
 		// - Updates in previous state (DeleteReorg) could have duplicate errors, if the row
 		//   was deleted or updated in after finish (so here we need to have DeleteOnly index state!
-		// And we cannot rollback in this state!
+		// This is the last rollbackable state; StatePublic is the cutoff.
 
 		// Stop double writing to the indexes, only do Deletes!
 		// so that previous could do inserts, we do delete and allow second insert for
@@ -3643,11 +3650,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 	case model.StatePublic:
 		// Drop the droppingDefinitions and finish the DDL
 		// This state is needed for the case where client A sees the schema
-		// with version of StateWriteReorg and would not see updates of
+		// with version of StateWriteReorganization and would not see updates of
 		// client B that writes to the new partitions, previously
 		// addingDefinitions, since it would not double write to
 		// the droppingDefinitions during this time
-		// By adding StateDeleteReorg state, client B will write to both
+		// By adding StateDeleteReorganization, client B will write to both
 		// the new (previously addingDefinitions) AND droppingDefinitions
 
 		// Register the droppingDefinitions ids for rangeDelete
@@ -3764,7 +3771,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		// A background job will be created to delete old partition data.
+		// A delete-range task will be enqueued when this DDL job finishes.
 		job.FillFinishedArgs(args)
 
 	default:

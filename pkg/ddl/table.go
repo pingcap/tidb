@@ -216,8 +216,8 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 				return ver, errors.Trace(err)
 			}
 		}
-		// Placement rules cannot be removed immediately after drop table / truncate table, because the
-		// tables can be flashed back or recovered, therefore it moved to doGCPlacementRules in gc_worker.go.
+		// Keep placement rules until delete-range GC so flashback/recover can retain
+		// the dropped table's placement. doGCPlacementRules removes them later.
 		if !tblInfo.IsSequence() && !tblInfo.IsView() {
 			dropTableEvent := notifier.NewDropTableEvent(tblInfo)
 			err = asyncNotifyEvent(jobCtx, dropTableEvent, job, noSubJob, w.sess)
@@ -556,7 +556,7 @@ func getTableInfo(t *meta.Mutator, tableID, schemaID int64) (*model.TableInfo, e
 
 // onTruncateTable delete old table meta, and creates a new table identical to old table except for table ID.
 // As all the old data is encoded with old table ID, it can not be accessed anymore.
-// A background job will be created to delete old data.
+// A delete-range task will be enqueued to delete the old data.
 func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetTruncateTableArgs(job)
