@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -37,6 +38,11 @@ func TestTheSessionIsoation(t *testing.T) {
 	g := New()
 	glueSe, err := g.CreateSession(store)
 	req.NoError(err)
+	brDom, err := session.GetDomain(store)
+	req.NoError(err)
+	brInfo, err := infosync.GetServerInfoByID(ctx, brDom.DDL().GetID())
+	req.NoError(err)
+	req.True(brInfo.DisableRPC)
 	t.Cleanup(func() {
 		existDom, _ := session.GetDomain(nil)
 		if existDom != nil {
@@ -100,4 +106,23 @@ func TestTheSessionIsoation(t *testing.T) {
 	req.NoError(glueSe.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
 		"test": infos,
 	}))
+}
+
+func TestGlueReusesServingDomain(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+	info, err := infosync.GetServerInfoByID(context.Background(), dom.DDL().GetID())
+	require.NoError(t, err)
+	require.False(t, info.DisableRPC)
+
+	g := New()
+	reused, err := g.getDomainInner(store)
+	require.NoError(t, err)
+	require.Same(t, dom, reused)
+	info, err = infosync.GetServerInfoByID(context.Background(), dom.DDL().GetID())
+	require.NoError(t, err)
+	require.False(t, info.DisableRPC)
 }

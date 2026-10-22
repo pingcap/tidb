@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -61,18 +62,22 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithFilter(store, nil)
+	return dm.getWithFilter(store, nil, nil)
 }
 
-// GetOrCreateWithFilter gets or creates the domain for store with a schema filter.
-//
-// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
-// the actual schema filter of the returned `Domain` is the one when the domain was created.
-func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
-	return dm.getWithFilter(store, filter)
+// GetOrCreateBRDomain gets or creates the domain used by standalone BR.
+// An existing domain keeps its original RPC eligibility and schema filter.
+func (dm *domainMap) GetOrCreateBRDomain(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
+	return dm.getWithFilter(store, filter, []infosync.SyncerOption{
+		infosync.WithDisableRPC(),
+	})
 }
 
-func (dm *domainMap) getWithFilter(store kv.Storage, schemaFilter issyncer.Filter) (d *domain.Domain, err error) {
+func (dm *domainMap) getWithFilter(
+	store kv.Storage,
+	schemaFilter issyncer.Filter,
+	infosyncOpts []infosync.SyncerOption,
+) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -107,7 +112,7 @@ func (dm *domainMap) getWithFilter(store kv.Storage, schemaFilter issyncer.Filte
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}
-		err1 = d.Init(sysFactory, ddlInjector)
+		err1 = d.Init(sysFactory, ddlInjector, infosyncOpts...)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
