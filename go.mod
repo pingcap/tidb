@@ -369,3 +369,6 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+// Temporary Go 1.27 test dependency: https://github.com/tikv/client-go/pull/2121.
+replace github.com/tikv/client-go/v2 => github.com/wfxr/client-go/v2 v2.0.8-0.20261021082006-de3db35d9d6d
