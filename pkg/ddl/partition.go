@@ -2194,9 +2194,15 @@ func dropLabelRules(ctx context.Context, codec tikv.Codec, schemaName, tableName
 	return infosync.UpdateLabelRules(ctx, patch)
 }
 
-// rollbackLikeDropPartition does rollback for Reorganize partition and Add partition.
-// It will drop newly created partitions that has not yet been used, including cleaning
-// up label rules and bundles as well as changed indexes due to global flag.
+// rollbackLikeDropPartition rolls back ADD PARTITION and the reorganize-partition
+// family (REORGANIZE PARTITION, REMOVE PARTITIONING, and ALTER TABLE PARTITION BY).
+// Those rollback paths land here.
+// DROP PARTITION does not: rollingbackDropTablePartition only cancels that job
+// while it is still StatePublic.
+//
+// New partitions are removed, including their label rules and placement bundles.
+// Cloned global indexes are dropped here too: a write-only copy is moved to
+// delete-only for one schema version, then removed and queued for delete-range.
 func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
@@ -2287,10 +2293,24 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 }
 
 // onDropTablePartition deletes old partition meta.
-// States in reverse order:
-// StateNone
+// job.SchemaState follows the switch below, then finishes at StateNone:
+// StatePublic -> StateWriteOnly -> StateDeleteOnly -> StateDeleteReorganization -> StateNone
 //
-//	Old partitions are queued to be deleted (delete_range), global index up-to-date
+// StatePublic
+//
+//	Original state, unaware of DDL
+//
+// StateWriteOnly
+//
+//	Old partitions are blocked for read and write. But for read we are allowing
+//	"overlapping" partition to be read instead. Which means that write can only
+//	happen in the 'overlapping' partitions original range, not into the extended
+//	range open by the dropped partitions.
+//
+// StateDeleteOnly
+//
+//	Old partitions are no longer visible, but if there is inserts/updates to the global indexes,
+//	duplicate key errors will be given, even if the entries are from dropped partitions.
 //
 // StateDeleteReorganization
 //
@@ -2300,21 +2320,9 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 //	In the background we are reading all old partitions and deleting their entries from
 //	the global indexes.
 //
-// StateDeleteOnly
+// StateNone
 //
-//	Old partitions are no longer visible, but if there is inserts/updates to the global indexes,
-//	duplicate key errors will be given, even if the entries are from dropped partitions.
-//
-// StateWriteOnly
-//
-//	Old partitions are blocked for read and write. But for read we are allowing
-//	"overlapping" partition to be read instead. Which means that write can only
-//	happen in the 'overlapping' partitions original range, not into the extended
-//	range open by the dropped partitions.
-//
-// StatePublic
-//
-//	Original state, unaware of DDL
+//	Old partitions are queued to be deleted (delete_range), global index up-to-date
 func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
@@ -3190,7 +3198,7 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //
 // job.SchemaState goes through the following SchemaState(s):
 // StateNone -> StateDeleteOnly -> StateWriteOnly -> StateWriteReorganization
-// -> StateDeleteOrganization -> StatePublic -> Done
+// -> StateDeleteReorganization -> StatePublic -> Done
 // There are more details embedded in the implementation, but the high level changes are:
 //
 // StateNone -> StateDeleteOnly:
@@ -3210,7 +3218,7 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //	To make sure that when we are reorganizing the data,
 //	both the old and new partitions/indexes will be updated.
 //
-// StateWriteReorganization -> StateDeleteOrganization:
+// StateWriteReorganization -> StateDeleteReorganization:
 //
 //	Here is where all data is reorganized, both partitions and indexes.
 //	It copies all data from the old set of partitions into the new set of partitions,
@@ -3223,7 +3231,7 @@ func getReorgPartitionInfo(t *meta.Mutator, job *model.Job, args *model.TablePar
 //	I.e. in this state clients will read from the old set of partitions,
 //	and next state will read the new set of partitions in StateDeleteReorganization.
 //
-// StateDeleteOrganization -> StatePublic:
+// StateDeleteReorganization -> StatePublic:
 //
 //	Now we mark all replaced (old) indexes as StateDeleteOnly
 //	in case DeleteRange would be called directly after the DDL,
