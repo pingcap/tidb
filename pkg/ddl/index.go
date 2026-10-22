@@ -83,13 +83,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
@@ -647,7 +645,8 @@ func DropIndexColumnFlag(tblInfo *model.TableInfo, indexInfo *model.IndexInfo) {
 	col := indexInfo.Columns[0]
 	// other index may still cover this col
 	for _, index := range tblInfo.Indices {
-		if index.Name.L == indexInfo.Name.L {
+		// Compare IDs, since a partition reorganization keeps index copies with the same name.
+		if index.ID == indexInfo.ID {
 			continue
 		}
 
@@ -1390,10 +1389,13 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	}
 	loadCloudStorageURI(w, job)
 	// On a NextGen cluster, global sort is the product design for add index /
-	// modify column. Local sort is only tolerated when SEM is disabled, which
-	// exists to make testing easier rather than as a supported production path.
-	// So, like IMPORT INTO, reject add index / modify column with local sort
-	// when SEM is enabled.
+	// modify column; local sort is not supported. So, like IMPORT INTO, reject
+	// add index / modify column with local sort.
+	//
+	// ingest.LitInitialized is required to tell whether the lightning/ingest
+	// environment is available: when it is not (e.g. tests backed by a
+	// non-TiKV store), pickBackfillType falls back to txn-merge backfill, which
+	// does not sort locally and therefore must not be rejected here.
 	//
 	// job.ReorgMeta.IsFastReorg is required here even though fast reorg is
 	// always enabled on NextGen: for jobs involving system-related DBs,
@@ -1402,8 +1404,8 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	// only happen during upgrade (e.g. ADD INDEX on mysql.stats_history) and
 	// fall back to txn backfill, which doesn't sort at all, so they must not be
 	// rejected here.
-	if kerneltype.IsNextGen() && sem.IsEnabled() && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
-		return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("add index or modify column with local sort")
+	if kerneltype.IsNextGen() && ingest.LitInitialized && job.ReorgMeta.IsFastReorg && !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("add index or modify column with local sort")
 	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {
@@ -2260,12 +2262,13 @@ func onDropIndex(sctx sessionctx.Context, jobCtx *jobContext, job *model.Job) (v
 	return ver, errors.Trace(err)
 }
 
-// RemoveDependentHiddenColumns removes hidden columns by the indexInfo.
+// RemoveDependentHiddenColumns removes the hidden columns used by the index, except those still
+// used by another index, e.g. a copy of the index made by a partition reorganization.
 func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
 		col := tblInfo.Columns[indexColumn.Offset]
-		if col.Hidden {
+		if col.Hidden && !isColumnUsedByOtherIndex(tblInfo, idxInfo.ID, col.Offset) {
 			hiddenColOffs = append(hiddenColOffs, col.Offset)
 		}
 	}
@@ -2277,6 +2280,22 @@ func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.Index
 		tblInfo.MoveColumnInfo(offset, endOffset)
 	}
 	tblInfo.Columns = tblInfo.Columns[:len(tblInfo.Columns)-len(hiddenColOffs)]
+}
+
+// isColumnUsedByOtherIndex checks whether the column is used by an index other than
+// indexID, e.g. a copy of the index made by a partition reorganization.
+func isColumnUsedByOtherIndex(tblInfo *model.TableInfo, indexID int64, offset int) bool {
+	for _, idx := range tblInfo.Indices {
+		if idx.ID == indexID {
+			continue
+		}
+		for _, col := range idx.Columns {
+			if col.Offset == offset {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func removeIndexInfo(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
@@ -2524,6 +2543,7 @@ type baseIndexWorker struct {
 
 type addIndexTxnWorker struct {
 	baseIndexWorker
+	physicalID int64
 
 	// The following attributes are used to reduce memory allocation.
 	idxKeyBufs         [][]byte
@@ -2562,6 +2582,7 @@ func newAddIndexTxnWorker(
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 
 	return &addIndexTxnWorker{
+		physicalID: t.GetPhysicalID(),
 		baseIndexWorker: baseIndexWorker{
 			backfillCtx: bfCtx,
 			indexes:     allIndexes,
@@ -2742,6 +2763,13 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	h, err := tablecodec.DecodeIndexHandle(key, value, idxColLen)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if idxInfo.Global {
+		// Equal compares partition IDs only when both handles are PartitionHandles.
+		// The same inner handle in another partition is a different row.
+		if _, ok := handle.(kv.PartitionHandle); !ok {
+			handle = kv.NewPartitionHandle(w.physicalID, handle)
+		}
 	}
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {

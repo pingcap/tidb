@@ -21,6 +21,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -34,13 +35,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/registry"
+	"github.com/pingcap/tidb/br/pkg/repo"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/nameroute"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
@@ -104,6 +108,8 @@ const (
 	FlagWithPlacementPolicy = "with-tidb-placement-mode"
 	// FlagKeyspaceName corresponds to tidb config keyspace-name
 	FlagKeyspaceName = "keyspace-name"
+	// FlagRename maps an exact source schema or table name to a target name.
+	FlagRename = "rename"
 
 	// flagCheckpointStorage use
 	flagCheckpointStorage = "checkpoint-storage"
@@ -273,6 +279,7 @@ type RestoreConfig struct {
 	RestoreCommonConfig
 
 	NoSchema              bool          `json:"no-schema" toml:"no-schema"`
+	Rename                []string      `json:"rename" toml:"rename"`
 	LoadStats             bool          `json:"load-stats" toml:"load-stats"`
 	FastLoadSysTables     bool          `json:"fast-load-sys-tables" toml:"fast-load-sys-tables"`
 	PDConcurrency         uint          `json:"pd-concurrency" toml:"pd-concurrency"`
@@ -311,6 +318,8 @@ type RestoreConfig struct {
 	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	Layout          repo.Layout                 `json:"storage-layout" toml:"storage-layout"`
+	BackupID        repo.BackupID               `json:"backup-id" toml:"backup-id"`
 	// RetainLatestMVCCVersion means restoring compacted SSTs by retaining only newest MVCC versions.
 	RetainLatestMVCCVersion bool `json:"retain-latest-mvcc-version" toml:"retain-latest-mvcc-version"`
 
@@ -350,6 +359,13 @@ type RestoreConfig struct {
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
+
+	nameRouter *nameroute.Router `json:"-" toml:"-"`
+	// nameRouterRules records the Rename rules used to build nameRouter. The
+	// router is only a cache: RestoreConfig is a public struct whose Rename
+	// field may be assigned after ParseFromFlags (or DefaultRestoreConfig), so
+	// a stale cache must never be returned when the rules changed.
+	nameRouterRules []string `json:"-" toml:"-"`
 }
 
 func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
@@ -360,19 +376,35 @@ type immutableRestoreConfig struct {
 	CmdName           string
 	UpstreamClusterID uint64
 	Storage           string
+	Layout            string `json:"storage-layout,omitempty"`
+	BackupID          string `json:"backup-id,omitempty"`
 	ExplictFilter     bool
 	FilterStr         []string
+	RenameRules       []string `json:",omitempty"`
 	WithSysTable      bool
 	FastLoadSysTables bool
 	LoadStats         bool
 }
 
 func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
+	router, err := cfg.getNameRouter()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	layout := ""
+	backupID := ""
+	if cfg.Layout.IsRepo() {
+		layout = cfg.Layout.String()
+		backupID = cfg.BackupID.String()
+	}
 	config := immutableRestoreConfig{
 		CmdName:           cmdName,
 		UpstreamClusterID: cfg.UpstreamClusterID,
 		Storage:           ast.RedactURL(cfg.Storage),
+		Layout:            layout,
+		BackupID:          backupID,
 		FilterStr:         cfg.FilterStr,
+		RenameRules:       router.CanonicalRules(),
 		WithSysTable:      cfg.WithSysTable,
 		FastLoadSysTables: cfg.FastLoadSysTables,
 		LoadStats:         cfg.LoadStats,
@@ -389,6 +421,9 @@ func (cfg *RestoreConfig) Hash(cmdName string) ([]byte, error) {
 // DefineRestoreFlags defines common flags for the restore tidb command.
 func DefineRestoreFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagNoSchema, false, "skip creating schemas and tables, reuse existing empty ones")
+	flags.StringArray(FlagRename, nil, "rename an exact source schema or table during restore, in source:target form. "+
+		"Restores that write to the same target schema are treated as conflicting by the restore registry: run them serially and let each one finish before the next starts. "+
+		"A schema created for a rename is retained even if the restore ends up dropping every table in it")
 	flags.Bool(flagLoadStats, true, "Run load stats or update stats_meta to trigger auto-analyze at end of snapshot restore task")
 	flags.Bool(flagFastLoadSysTables, true, "load system tables (including statistics) by renaming the temporary system tables")
 	// Do not expose this flag
@@ -468,6 +503,14 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "%v and %v are mutually exclusive",
 			FlagStreamStartTS, FlagStreamFullBackupStorage)
 	}
+	if len(cfg.FullBackupStorage) == 0 && (flags.Changed("storage-layout") || flags.Changed("backup-id")) {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s and --%s require --%s for point restore",
+			"storage-layout",
+			"backup-id",
+			FlagStreamFullBackupStorage,
+		)
+	}
 
 	if cfg.PitrBatchCount, err = flags.GetUint32(FlagPiTRBatchCount); err != nil {
 		return errors.Trace(err)
@@ -481,7 +524,7 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.RetainLatestMVCCVersion, err = flags.GetBool(FlagRetainLatestMVCCVersion); err != nil {
 		return errors.Trace(err)
 	}
-	return nil
+	return cfg.validateNameRouting("")
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
@@ -491,6 +534,12 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Trace(err)
 	}
+	cfg.Rename, err = flags.GetStringArray(FlagRename)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.nameRouter = nil
+	cfg.nameRouterRules = nil
 	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
 	if err != nil {
 		return errors.Trace(err)
@@ -567,6 +616,14 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagUseCheckpoint)
 	}
+	cfg.Layout, err = taskrepo.ParseSnapshotStorageLayoutFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.BackupID, err = taskrepo.ParseSnapshotBackupIDFlag(flags)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cfg.CheckpointStorage, err = flags.GetString(flagCheckpointStorage)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagCheckpointStorage)
@@ -582,6 +639,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.AllowPITRFromIncremental, err = flags.GetBool(flagAllowPITRFromIncremental)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", flagAllowPITRFromIncremental)
+	}
+	if err := taskrepo.ValidateSnapshotRestoreStorage(cfg.Layout, cfg.BackupID); err != nil {
+		return err
 	}
 	cfg.RestorePhase, err = flags.GetUint64(FlagRestorePhase)
 	if err != nil {
@@ -664,7 +724,7 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		// todo: check lower/upper bound
 	}
 
-	return nil
+	return cfg.validateNameRouting("")
 }
 
 // Adjust is use for BR(binary) and BR in TiDB.
@@ -968,19 +1028,88 @@ func printRestoreMetrics() {
 }
 
 func checkSnapshotRestoreMode(ctx context.Context, cfg *RestoreConfig) error {
-	_, _, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	var backupMeta *backuppb.BackupMeta
+	var err error
+	if cfg.BackupID.IsZero() {
+		_, _, backupMeta, err = ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	} else {
+		u, s, storageErr := GetStorage(ctx, cfg.Storage, &cfg.Config)
+		if storageErr != nil {
+			return errors.Trace(storageErr)
+		}
+		resolvedStorage := &taskrepo.SnapshotStorageRef{
+			BackupID:    cfg.BackupID,
+			RootBackend: u,
+			RootStorage: s,
+		}
+		if err := resolvedStorage.Validate(ctx); err != nil {
+			return errors.Trace(err)
+		}
+		backupMeta, err = resolvedStorage.LoadBackupMeta(ctx, &cfg.CipherInfo, cfg.CheckRequirements)
+	}
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
+	if cfg.hasNameRouting() && backupMeta.StartVersion != 0 && backupMeta.StartVersion != backupMeta.EndVersion {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported for incremental snapshot restore", FlagRename)
+	}
 	return nil
+}
+
+func collectLogRestoreBlocklistIDs(manager *stream.TableMappingManager) ([]int64, []int64) {
+	tableIDs := make(map[int64]struct{})
+	dbIDs := make(map[int64]struct{})
+	for _, dbReplace := range manager.DBReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		// Only record downstream IDs this restore actually created. A source
+		// schema whose tables are all routed elsewhere is not created, and
+		// unresolved temporary IDs must not leak into the blocklist.
+		if dbReplace.RestoresDatabaseMetadata() && dbReplace.DbID > 0 {
+			dbIDs[dbReplace.DbID] = struct{}{}
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			if dbID := tableReplace.EffectiveDBID(dbReplace); dbID > 0 {
+				dbIDs[dbID] = struct{}{}
+			}
+			if tableReplace.TableID > 0 {
+				tableIDs[tableReplace.TableID] = struct{}{}
+			}
+			for _, partitionID := range tableReplace.PartitionMap {
+				if partitionID > 0 {
+					tableIDs[partitionID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	tableIDList := make([]int64, 0, len(tableIDs))
+	for id := range tableIDs {
+		tableIDList = append(tableIDList, id)
+	}
+	dbIDList := make([]int64, 0, len(dbIDs))
+	for id := range dbIDs {
+		dbIDList = append(dbIDList, id)
+	}
+	slices.Sort(tableIDList)
+	slices.Sort(dbIDList)
+	return tableIDList, dbIDList
 }
 
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) (restoreErr error) {
 	if err := cfg.EnsureOperationContext(restoreOperationCommandName(cmdName)); err != nil {
+		return errors.Trace(err)
+	}
+	if err := cfg.validateNameRouting(cmdName); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1039,45 +1168,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return
 		}
 
-		// Extract downstream IDs from tableMappingManager
-		// ApplyFilterToDBReplaceMap has already filtered the DBReplaceMap based on PiTRTableTracker,
-		// so we can directly iterate through it and collect non-filtered IDs
-		downstreamTableIds := make(map[int64]struct{})
-		var downstreamDbIds []int64
-
-		// Iterate through DBReplaceMap which has already been filtered by ApplyFilterToDBReplaceMap
-		for _, dbReplace := range cfg.tableMappingManager.DBReplaceMap {
-			if dbReplace.FilteredOut {
-				continue
-			}
-			// Collect downstream DB ID
-			downstreamDbIds = append(downstreamDbIds, dbReplace.DbID)
-
-			// Iterate through tables in this database
-			for _, tableReplace := range dbReplace.TableMap {
-				if tableReplace.FilteredOut {
-					continue
-				}
-				// Collect downstream table ID
-				downstreamTableIds[tableReplace.TableID] = struct{}{}
-
-				// Collect all partition IDs for this table
-				for _, downstreamPartitionId := range tableReplace.PartitionMap {
-					downstreamTableIds[downstreamPartitionId] = struct{}{}
-				}
-			}
-		}
+		tableIDs, dbIDs := collectLogRestoreBlocklistIDs(cfg.tableMappingManager)
 
 		restoreStartTs := cfg.RestoreStartTS
 		if restoreStartTs == 0 {
 			log.Warn("restoreStartTS is not set, the blocklist will block from 0 to restoreCommitTs")
 		}
-		// Convert map to slice for function call
-		tableIdsSlice := make([]int64, 0, len(downstreamTableIds))
-		for id := range downstreamTableIds {
-			tableIdsSlice = append(tableIdsSlice, id)
-		}
-		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, cfg.RewriteTS, tableIdsSlice, downstreamDbIds)
+		filename, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(
+			restoreCommitTs, restoreStartTs, cfg.RewriteTS, tableIDs, dbIDs)
 		if err != nil {
 			restoreErr = err
 			return
@@ -1088,8 +1186,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return
 		}
 		log.Info("save the log restore table IDs blocklist into log backup storage",
-			zap.Int("downstreamTableCount", len(downstreamTableIds)),
-			zap.Int("downstreamDbCount", len(downstreamDbIds)))
+			zap.Int("downstreamTableCount", len(tableIDs)),
+			zap.Int("downstreamDbCount", len(dbIDs)))
 		if err = logTaskStorage.WriteFile(c, filename, data); err != nil {
 			restoreErr = err
 			return
@@ -1290,7 +1388,7 @@ func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 }
 
 func isRestoreSysTablesPhysically(cfg *SnapshotRestoreConfig) (loadSysTablePhysical, loadStatsPhysical bool) {
-	if kerneltype.IsNextGen() {
+	if kerneltype.IsNextGen() || cfg.hasNameRouting() {
 		// physical restore system tables requires rename table, while in
 		// next-gen kernel, wo forbid rename table on system tables.
 		return false, false
@@ -1322,10 +1420,24 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// reads out information from backup meta file and do requirement checking if needed
-	u, s, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+	u, s, err := GetStorage(ctx, cfg.Storage, &cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	resolvedStorage := &taskrepo.SnapshotStorageRef{
+		BackupID:    cfg.BackupID,
+		RootBackend: u,
+		RootStorage: s,
+	}
+	if err := resolvedStorage.Validate(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo, cfg.CheckRequirements)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	u = resolvedStorage.RootBackend
+	s = resolvedStorage.MetadataStorage()
 	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
@@ -1439,8 +1551,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil,
-		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
+		cfg.ExplicitFilter || cfg.hasNameRouting(), isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
+	}
+	if client.IsIncremental() && cfg.hasNameRouting() {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"--%s is not supported for incremental snapshot restore", FlagRename)
 	}
 	if client.IsIncremental() || cfg.ExplicitFilter || !isFullRestore(cmdName) {
 		if loadStatsPhysical {
@@ -1572,13 +1688,56 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
+	nameRouter, err := cfg.getNameRouter()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var nameSources *restoreNameSources
+	if isPiTR && cfg.hasNameRouting() {
+		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables, cfg.tableMappingManager)
+		// The pre-snapshot binding only had the log history, which cannot name a
+		// schema whose only log entry is a table DDL (DBReplace.Name stays empty).
+		// Re-bind with the snapshot-backed source names so a table-level route is
+		// not silently dropped from the PiTR ID map.
+		if err := applyNameRoutesToTableMapping(
+			nameRouter, cfg.logTableHistoryManager, cfg.tableMappingManager, nameSources,
+		); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// The optional target-existence check needs the effective target names before
+	// AllocTableIDs/PreCheck run. Without routing the target names are identical
+	// to the source names, so only build a plan when a route is configured; the
+	// plan is rebuilt below because those steps can change the table metadata.
+	var namePlan *restoreNamePlan
+	targetTablesForCheck := tables
+	if cfg.hasNameRouting() {
+		namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		targetTablesForCheck = namePlan.targetTables
+	}
+	if isPiTR {
+		// Route dependency flags are collected from every TableInfo version in
+		// the log interval. Filter first so unrelated objects don't block a
+		// partial restore, then reject before snapshot DDL starts.
+		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+		if err := cfg.tableMappingManager.ValidateRoutedDependenciesWithRoute(func(schema, table string) (string, string, bool) {
+			targetSchema, targetTable, matched := nameRouter.Route(ast.NewCIStr(schema), ast.NewCIStr(table))
+			return targetSchema.O, targetTable.O, matched
+		}); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	// check if tables and dbs are valid to continue
 	if cfg.RestoreRegistry != nil && cfg.RestoreID != 0 {
 		log.Info("checking ongoing conflicting restore task using restore registry",
 			zap.Int("tables_count", len(tables)),
 			zap.Uint64("current_restore_id", cfg.RestoreID))
-		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, dbs, tables)
+		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasksAndRoutes(
+			ctx, cfg.RestoreID, cfg.PiTRTableTracker, dbs, tables, nameRouter.CanonicalRules())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1589,7 +1748,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	archiveSize := metautil.ArchiveTablesSize(tables)
 	cfg.snapshotRestoreDataSize = archiveSize
 	// some more checks once we get tables and files information
-	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr, tables, archiveSize, isPiTR); err != nil {
+	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr,
+		tables, targetTablesForCheck, archiveSize, isPiTR, nameSources); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1626,6 +1786,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		loadStatsPhysical = false
 	}
 	tables = client.CleanTablesIfTemporarySystemTablesRenamed(loadStatsPhysical, loadSysTablePhysical, tables)
+	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore, readColumnarStorageEnabledForLog(mgr.GetDomain()))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if isPiTR && cfg.hasNameRouting() {
+		nameSources = buildPiTRRestoreNameSources(cfg.logTableHistoryManager, cfg.PiTRTableTracker, dbs, tables, cfg.tableMappingManager)
+	}
+	namePlan, err = buildRestoreNamePlan(nameRouter, dbs, tables, nameSources)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	preAllocRange, err := client.GetPreAllocedTableIDRange()
 	if err != nil {
 		return errors.Trace(err)
@@ -1634,7 +1805,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
 	var schedulersConfig *pdutil.ClusterConfig
-	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
+	if (isFullRestore(cmdName) && !cfg.ExplicitFilter && !cfg.hasNameRouting()) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
 		if isPiTR && cfg.tableMappingManager != nil {
@@ -1742,13 +1913,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	err = PreCheckTableTiFlashReplica(ctx, mgr.GetPDClient(), tables, cfg.tiflashRecorder, isNextGenRestore,
-		readColumnarStorageEnabledForLog(mgr.GetDomain()))
-	if err != nil {
-		return errors.Trace(err)
+	clusterIndexTables := tables
+	clusterIndexDDLJobs := ddlJobs
+	if cfg.hasNameRouting() {
+		clusterIndexTables = namePlan.targetTables
+		// Historical snapshot DDLs are not replayed for a routed full snapshot.
+		clusterIndexDDLJobs = nil
 	}
-
-	err = PreCheckTableClusterIndex(tables, ddlJobs, mgr.GetDomain())
+	err = PreCheckTableClusterIndex(clusterIndexTables, clusterIndexDDLJobs, mgr.GetDomain())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1763,7 +1935,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isFullRestore(cmdName) {
+		if isFullRestore(cmdName) && !cfg.hasNameRouting() {
 			// we should restore all policies during full restoration.
 			err = client.CreatePolicies(ctx, policies)
 			if err != nil {
@@ -1775,8 +1947,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// execute DDL first
-	if err = client.ExecDDLs(ctx, ddlJobs); err != nil {
-		return errors.Trace(err)
+	if !cfg.hasNameRouting() {
+		if err = client.ExecDDLs(ctx, ddlJobs); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// nothing to restore, maybe only ddl changes in incremental restore
@@ -1785,7 +1959,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// even nothing to restore, we show a success message since there is no failure.
 	}
 
-	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
+	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, namePlan.databases, namePlan.tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1818,7 +1992,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	// update table mapping manager with new table ids if PiTR
 	if isPiTR {
-		if err = cfg.tableMappingManager.UpdateDownstreamIds(dbs, createdTables, client.GetDomain()); err != nil {
+		if err = cfg.tableMappingManager.UpdateDownstreamIds(namePlan.databases, createdTables, client.GetDomain()); err != nil {
 			return errors.Trace(err)
 		}
 		log.Info("updated table mapping manager after creating tables")
@@ -2149,7 +2323,7 @@ func fallbackStatsTables(tables []*metautil.Table) []*metautil.Table {
 
 // filterRestoreFiles filters out dbs and tables.
 func filterRestoreFiles(
-	client *snapclient.SnapClient,
+	client restoreFileClient,
 	cfg *RestoreConfig,
 	loadStatsPhysical bool,
 ) (tableMap map[int64]*metautil.Table, dbMap map[int64]*metautil.Database, err error) {
@@ -2174,6 +2348,14 @@ func filterRestoreFiles(
 					continue
 				}
 			}
+			if table.Info.MaterializedView != nil ||
+				table.Info.MaterializedViewLog != nil ||
+				table.Info.MaterializedViewShadow != nil {
+				continue
+			}
+			if table.Info.MaterializedViewBase != nil {
+				table.Info.MaterializedViewBase = nil
+			}
 
 			// Add table to tableMap using table ID as key
 			tableMap[table.Info.ID] = table
@@ -2185,6 +2367,10 @@ func filterRestoreFiles(
 		err = errors.Annotate(berrors.ErrRestoreInvalidBackup, "contains tables but no databases")
 	}
 	return
+}
+
+type restoreFileClient interface {
+	GetDatabases() []*metautil.Database
 }
 
 // getDBNameFromBackup gets database name from either snapshot or log backup history
@@ -2465,6 +2651,11 @@ func readColumnarStorageEnabledForLog(dom *domain.Domain) string {
 
 // PreCheckTableTiFlashReplica checks whether TiFlash replica is less than TiFlash node.
 // columnarStorageEnabled is diagnostic-only for Next-Gen warn logs.
+//
+// It intentionally mutates the passed table metadata in place (clearing or
+// downgrading TiFlashReplica). The caller builds the target metadata from these
+// objects afterwards, while source-only consumers (backup files, checksums,
+// statistics) do not read TiFlashReplica.
 func PreCheckTableTiFlashReplica(
 	ctx context.Context,
 	pdClient pd.Client,
@@ -2749,7 +2940,7 @@ func checkMandatoryClusterRequirements(client *snapclient.SnapClient, cfg *Snaps
 	}
 
 	if isFullRestore(cmdName) {
-		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointEnabledAndExists) {
+		if client.NeedCheckFreshCluster(cfg.ExplicitFilter || cfg.hasNameRouting(), checkpointEnabledAndExists) {
 			if err := client.EnsureNoUserTables(); err != nil {
 				return errors.Trace(err)
 			}
@@ -2766,44 +2957,44 @@ func checkOptionalClusterRequirements(
 	cfg *SnapshotRestoreConfig,
 	checkpointEnabledAndExists bool,
 	mgr *conn.Mgr,
-	tables []*metautil.Table,
+	sourceTables []*metautil.Table,
+	targetTables []*metautil.Table,
 	archiveSize uint64,
-	isPitr bool) error {
+	isPitr bool,
+	nameSources *restoreNameSources) error {
 	if cfg.CheckRequirements && !checkpointEnabledAndExists {
-		if err := checkDiskSpace(ctx, mgr, tables, archiveSize); err != nil {
+		if err := checkDiskSpace(ctx, mgr, sourceTables, archiveSize); err != nil {
 			return errors.Trace(err)
 		}
-		if !client.IsIncremental() {
-			if err := checkTableExistence(ctx, mgr, tables); err != nil {
+	}
+	if shouldCheckRestoreTargetExistence(
+		cfg.CheckRequirements, checkpointEnabledAndExists, client.IsIncremental(), cfg.hasNameRouting()) {
+		if err := checkTableExistence(ctx, mgr, targetTables); err != nil {
+			return errors.Trace(err)
+		}
+		if isPitr {
+			logTargets, err := pitrTargetTablesForExistenceCheck(cfg.RestoreConfig, nameSources)
+			if err != nil {
 				return errors.Trace(err)
 			}
-			if isPitr {
-				if err := checkTableExistence(ctx, mgr, buildLogBackupMetaTables(cfg.PiTRTableTracker.DBNameToTableNames)); err != nil {
-					return errors.Trace(err)
-				}
+			if err := checkTableExistence(ctx, mgr, logTargets); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	}
 	return nil
 }
 
-func buildLogBackupMetaTables(dbNameToTableNames map[string]map[string]struct{}) []*metautil.Table {
-	tables := make([]*metautil.Table, 0)
-
-	for dbName, tableNames := range dbNameToTableNames {
-		for tableName := range tableNames {
-			table := &metautil.Table{
-				DB: &model.DBInfo{
-					Name: ast.NewCIStr(dbName),
-				},
-				Info: &model.TableInfo{
-					Name: ast.NewCIStr(tableName),
-				},
-			}
-			tables = append(tables, table)
-		}
+func shouldCheckRestoreTargetExistence(
+	checkRequirements, checkpointExists, incremental, hasNameRouting bool,
+) bool {
+	if checkpointExists || incremental {
+		return false
 	}
-	return tables
+	// Existing target objects are a data-safety boundary for name routing, not
+	// an optional environment requirement. Never allow --check-requirements to
+	// disable this check for a new routed restore.
+	return checkRequirements || hasNameRouting
 }
 
 func createDBsAndTables(
@@ -2811,8 +3002,8 @@ func createDBsAndTables(
 	client *snapclient.SnapClient,
 	cfg *SnapshotRestoreConfig,
 	mgr *conn.Mgr,
-	dbs []*metautil.Database,
-	tables []*metautil.Table) ([]*restoreutils.CreatedTable, error) {
+	dbs []*restoreutils.DatabaseRestorePlan,
+	tables []*restoreutils.TableRestorePlan) ([]*restoreutils.CreatedTable, error) {
 	var newTS uint64
 	if client.IsIncremental() {
 		if !cfg.AllowPITRFromIncremental {
@@ -2829,11 +3020,11 @@ func createDBsAndTables(
 	}
 
 	// create databases first, it will skip if already exists
-	if err := client.CreateDatabases(ctx, dbs); err != nil {
+	if err := client.CreateDatabasesWithPlan(ctx, dbs); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	createdTables, err := client.CreateTables(ctx, tables, newTS)
+	createdTables, err := client.CreateTablesWithPlan(ctx, tables, newTS)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2843,7 +3034,7 @@ func createDBsAndTables(
 
 func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool,
 	isIncremental bool) {
-	if cfg.ExplicitFilter && isPiTR && !isIncremental {
+	if cfg.isPartialRestore() && isPiTR && !isIncremental {
 		for i, table := range tables {
 			// skip sequence as there is extra steps need to do after creation and restoreMode will block it
 			if table.Info.IsSequence() {
@@ -2912,7 +3103,19 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 			}
 		} else {
 			// For snapshot restore, get cluster ID from backup meta
-			_, _, backupMeta, err := ReadBackupMeta(ctx, metautil.MetaFile, &cfg.Config)
+			u, s, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			resolvedStorage := &taskrepo.SnapshotStorageRef{
+				BackupID:    cfg.BackupID,
+				RootBackend: u,
+				RootStorage: s,
+			}
+			if err := resolvedStorage.Validate(ctx); err != nil {
+				return errors.Trace(err)
+			}
+			backupMeta, err := resolvedStorage.LoadBackupMeta(ctx, &cfg.Config.CipherInfo, cfg.CheckRequirements)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -2935,8 +3138,14 @@ func RunRestoreAbort(c context.Context, g glue.Glue, cmdName string, cfg *Restor
 	isRestoredTSUserSpecified := cfg.RestoreTS != 0
 
 	// create registration info from config to find matching tasks
+	nameRouter, err := cfg.getNameRouter()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	registrationInfo := registry.RegistrationInfo{
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, cfg.BackupID),
 		FilterStrings:     cfg.FilterStr,
+		RouteStrings:      nameRouter.CanonicalRules(),
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		UpstreamClusterID: cfg.UpstreamClusterID,

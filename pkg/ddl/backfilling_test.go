@@ -47,10 +47,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
@@ -245,7 +243,7 @@ func TestPickBackfillType(t *testing.T) {
 	})
 }
 
-func TestInitForReorgIndexesRequiresGlobalSortWithSEM(t *testing.T) {
+func TestInitForReorgIndexesRequiresGlobalSort(t *testing.T) {
 	if !kerneltype.IsNextGen() {
 		t.Skip("global sort is only enforced on the NextGen kernel")
 	}
@@ -257,36 +255,36 @@ func TestInitForReorgIndexesRequiresGlobalSortWithSEM(t *testing.T) {
 		ingest.LitInitialized = oldLitInitialized
 	})
 
-	for _, semVer := range []string{sem.V1, sem.V2} {
-		t.Run(semVer, func(t *testing.T) {
-			defer sem.SwitchToSEMForTest(t, semVer)()
-
-			newJob := func(isFastReorg bool) *model.Job {
-				return &model.Job{
-					ID: 1,
-					ReorgMeta: &model.DDLReorgMeta{
-						IsFastReorg: isFastReorg,
-						IsDistReorg: isFastReorg,
-					},
-				}
-			}
-			w := &worker{workCtx: context.Background(), ddlCtx: &ddlCtx{}}
-
-			// local sort is rejected
-			vardef.CloudStorageURI.Store("")
-			err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
-			require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-			require.ErrorContains(t, err, "add index or modify column with local sort")
-
-			// jobs without fast reorg don't sort locally, so they are still allowed
-			require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
-
-			// global sort is allowed
-			ingest.LitInitialized = true
-			vardef.CloudStorageURI.Store("s3://bucket")
-			require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
-		})
+	newJob := func(isFastReorg bool) *model.Job {
+		return &model.Job{
+			ID: 1,
+			ReorgMeta: &model.DDLReorgMeta{
+				IsFastReorg: isFastReorg,
+				IsDistReorg: isFastReorg,
+			},
+		}
 	}
+	w := &worker{workCtx: context.Background(), ddlCtx: &ddlCtx{}}
+
+	// Without the lightning/ingest env the backfill falls back to txn-merge,
+	// which does not sort locally, so the job is allowed even without cloud
+	// storage.
+	ingest.LitInitialized = false
+	vardef.CloudStorageURI.Store("")
+	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
+
+	// local sort is rejected on NextGen when the ingest environment is available.
+	ingest.LitInitialized = true
+	err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
+	require.ErrorIs(t, err, dbterror.ErrNotSupportedYet)
+	require.ErrorContains(t, err, "add index or modify column with local sort")
+
+	// jobs without fast reorg don't sort locally, so they are still allowed
+	require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
+
+	// global sort is allowed
+	vardef.CloudStorageURI.Store("s3://bucket")
+	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

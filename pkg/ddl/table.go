@@ -78,7 +78,7 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 
 	// Materialized views in Stage-1 are non-partitioned, so their table-level
 	// affinity group ID is derived directly from the old physical table ID.
-	groupID := GetTableAffinityGroupID(args.OldMViewID)
+	groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
 	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
 		logutil.DDLLogger().Warn(
 			"failed to delete old materialized view affinity group after cutover",
