@@ -878,10 +878,18 @@ create global binding from history using plan digest '34905d92850ad6e2f8a75c3402
 show global bindings;
 
 # Verify that the query text is truncated (should contain "(len:" pattern)
-select count(*) as truncated_count
-from information_schema.cluster_statements_summary 
-where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
-  and (digest_text like '%(len:%' or query_sample_text like '%(len:%');
+select coalesce(max(
+    digest_text like '%(len:%' or query_sample_text like '%(len:%'
+), 0) as truncated_count
+from (
+    select digest_text, query_sample_text
+    from information_schema.cluster_statements_summary
+    where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+    union all
+    select digest_text, query_sample_text
+    from information_schema.cluster_statements_summary_history
+    where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+) summaries;
 
 # Clean up
 drop table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
