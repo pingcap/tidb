@@ -87,7 +87,7 @@ require (
 	github.com/ldez/exptostd v0.4.5
 	github.com/lestrrat-go/jwx/v2 v2.0.21
 	github.com/mgechev/revive v1.15.0
-	github.com/mjonss/samefn-poc v0.0.0-20261022190036-99cc9d0a1013
+	github.com/mjonss/samefn-poc v0.0.0-20261022195236-d3a333dda9ee
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2

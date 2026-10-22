@@ -2103,8 +2103,8 @@ github.com/mitchellh/mapstructure v1.5.0/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RR
 github.com/mitchellh/reflectwalk v1.0.0/go.mod h1:mSTlrgnPZtwu0c4WaC2kGObEpuNDbx0jmZXqmk4esnw=
 github.com/mitchellh/reflectwalk v1.0.1 h1:FVzMWA5RllMAKIdUSC8mdWo3XtwoecrH79BY70sEEpE=
 github.com/mitchellh/reflectwalk v1.0.1/go.mod h1:mSTlrgnPZtwu0c4WaC2kGObEpuNDbx0jmZXqmk4esnw=
-github.com/mjonss/samefn-poc v0.0.0-20261022190036-99cc9d0a1013 h1:aZz9RhzVn3ZPsZwwx4RJmRMY3C2THcagze6kUZwTA3g=
-github.com/mjonss/samefn-poc v0.0.0-20261022190036-99cc9d0a1013/go.mod h1:3/00hRvbaeAfU0k5ujCrCpLvxjGcXXLks0xiQQzZXEk=
+github.com/mjonss/samefn-poc v0.0.0-20261022195236-d3a333dda9ee h1:phkT8VvKfWM9/vVJ0blhvyMKvXWRq7z+uWX4cazha6w=
+github.com/mjonss/samefn-poc v0.0.0-20261022195236-d3a333dda9ee/go.mod h1:3/00hRvbaeAfU0k5ujCrCpLvxjGcXXLks0xiQQzZXEk=
 github.com/modern-go/concurrent v0.0.0-20180228061459-e0a39a4cb421/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
 github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd h1:TRLaZ9cD/w8PVh93nsPXa1VrQ6jlwL5oN8l14QlcNfg=
 github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJC0mAP4ikYIbvyc7fijjWJddQyLn8Ig3JB5CqoB9Q=
