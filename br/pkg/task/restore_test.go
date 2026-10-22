@@ -149,6 +149,17 @@ func TestPreCheckTableClusterIndex(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, `.*@@tidb_enable_clustered_index should be ON \(backup table = true, created table = false\).*`, err.Error())
 
+	// A routed restore checks the target name. An incompatible table at the
+	// source name must not block restoring a copy to a new target name.
+	routedTable := &metautil.Table{
+		DB: &model.DBInfo{Name: pmodel.NewCIStr("target")},
+		Info: &model.TableInfo{
+			Name:           pmodel.NewCIStr("copy"),
+			IsCommonHandle: true,
+		},
+	}
+	require.NoError(t, task.PreCheckTableClusterIndex([]*metautil.Table{routedTable}, nil, m.Domain))
+
 	// exist different DDLs
 	jobs := []*model.Job{{
 		ID:         5,
