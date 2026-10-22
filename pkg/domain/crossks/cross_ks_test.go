@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	_ "github.com/pingcap/tidb/pkg/autoid_service" // Initialize the source mockstore's auto-ID service.
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/serverstate"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -481,6 +483,67 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
+	t.Run("expressions see the source schema", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, targetStore)
+		tk.MustExec("use test")
+		tk.MustExec("create table query_key_source(id bigint primary key)")
+		tk.MustExec("insert into query_key_source values (1)")
+		sql := "import into unused_target from select tidb_encode_record_key('test', 'query_key_source', id) from query_key_source"
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
+		captured, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
+		require.NoError(t, err)
+		expected := tk.MustQuery("select tidb_encode_record_key('test', 'query_key_source', id) from query_key_source").Rows()[0][0]
+		pool := handle.SysSessionPool()
+		resource, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Destroy(resource)
+		output := make(chan importer.QueryChunk, 1)
+		require.NoError(t, importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output))
+		close(output)
+		result := <-output
+		require.Equal(t, expected, result.Chk.GetRow(0).GetString(0))
+	})
+	t.Run("execute query in target keyspace", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, targetStore)
+		tk.MustExec("use test")
+		tk.MustExec("create table query_source(id bigint auto_increment primary key, g bigint not null, v bigint not null, key idx_g(g)) auto_id_cache=1")
+		tk.MustExec("insert into query_source(g,v) values (1,10),(1,20),(2,30)")
+		tk.MustExec("set tidb_isolation_read_engines='tikv'")
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+		sql := "import into unused_target from select /*+ STREAM_AGG() SET_VAR(tidb_mem_quota_query=1073741824) */ g,count(*) from query_source use index(idx_g) where v >= 10 group by g"
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
+		captured, err := executor.GenerateImportQueryPlan(tk.Session(), sql)
+		require.NoError(t, err)
+
+		mgr := storage.NewTaskManager(handle.SysSessionPool())
+		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
+			require.True(t, se.IsCrossKS())
+			require.NotNil(t, se.GetInfoSchema().(infoschema.InfoSchema).GetAutoIDRequirement().AutoIDClient())
+			_, err := se.GetSQLExecutor().ExecuteInternal(ctx, "select * from test.query_source")
+			require.ErrorIs(t, err, infoschema.ErrTableNotExists)
+			return nil
+		}))
+		pool := handle.SysSessionPool()
+		resource, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Destroy(resource)
+		output := make(chan importer.QueryChunk, 4)
+		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
+		require.NoError(t, err)
+		close(output)
+		result := make(map[int64]int64)
+		for batch := range output {
+			chk := batch.Chk
+			for i := range chk.NumRows() {
+				row := chk.GetRow(i)
+				_, exists := result[row.GetInt64(0)]
+				require.False(t, exists)
+				result[row.GetInt64(0)] = row.GetInt64(1)
+			}
+		}
+		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
+	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {

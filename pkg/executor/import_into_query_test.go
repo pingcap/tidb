@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -122,5 +123,11 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		require.Less(t, q.SchemaVersion, queryTK.Session().GetLatestInfoSchema().SchemaMetaVersion())
 		_, locked := queryTK.Session().GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID)
 		require.False(t, locked)
+		se, err := session.CreateSession4Test(store)
+		require.NoError(t, err)
+		defer se.Close()
+		output := make(chan importer.QueryChunk, 1)
+		err = importer.RunImportQuery(context.Background(), se, q, "import into unused_target from select * from query_capture_schema", 1<<20, output)
+		require.ErrorContains(t, err, "changed before the import query snapshot")
 	})
 }

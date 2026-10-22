@@ -1374,6 +1374,13 @@ func drainRecordSet(ctx context.Context, se *session, rs sqlexec.RecordSet, allo
 	}
 }
 
+// SetInfoCache replaces the InfoCache the session reads its schema from. An
+// import query worker uses it to read at a submitted schema, and then the
+// session must not be reused.
+func (s *session) SetInfoCache(cache *infoschema.InfoCache) {
+	s.infoCache = cache
+}
+
 // getTableValue executes restricted sql and the result is one column.
 // It returns a string value.
 func (s *session) getTableValue(ctx context.Context, tblName string, varName string) (string, error) {
