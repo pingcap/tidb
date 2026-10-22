@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build (go1.25 && !go1.26) || (go1.26 && !go1.27) || (go1.27 && !go1.28)
+//go:build go1.25 && !go1.28
 
 package hack
 
@@ -24,6 +24,13 @@ import (
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	mapIndirectKey  = 1 << 2
+	mapIndirectElem = 1 << 3
+	mapMaxKeyBytes  = 128
+	mapMaxElemBytes = 128
 )
 
 func TestSwissTable(t *testing.T) {
@@ -254,8 +261,8 @@ func testMapABISlots[K comparable, V any](t *testing.T, m map[K]V) {
 	require.GreaterOrEqual(t, sm.Data.Cap(), uint64(len(m)))
 	var key K
 	var elem V
-	require.Equal(t, unsafe.Sizeof(key) > 128, sm.Type.Flags&(1<<2) != 0)
-	require.Equal(t, unsafe.Sizeof(elem) > 128, sm.Type.Flags&(1<<3) != 0)
+	require.Equal(t, unsafe.Sizeof(key) > mapMaxKeyBytes, sm.Type.Flags&mapIndirectKey != 0)
+	require.Equal(t, unsafe.Sizeof(elem) > mapMaxElemBytes, sm.Type.Flags&mapIndirectElem != 0)
 	seen := make(map[K]bool)
 	checkGroup := func(ref groupReference) {
 		ctrls := *(*uint64)(ref.data)
@@ -264,10 +271,10 @@ func testMapABISlots[K comparable, V any](t *testing.T, m map[K]V) {
 				continue
 			}
 			kp, ep := ref.key(sm.Type, i), ref.elem(sm.Type, i)
-			if sm.Type.Flags&(1<<2) != 0 {
+			if sm.Type.Flags&mapIndirectKey != 0 {
 				kp = *(*unsafe.Pointer)(kp)
 			}
-			if sm.Type.Flags&(1<<3) != 0 {
+			if sm.Type.Flags&mapIndirectElem != 0 {
 				ep = *(*unsafe.Pointer)(ep)
 			}
 			k, v := *(*K)(kp), *(*V)(ep)
