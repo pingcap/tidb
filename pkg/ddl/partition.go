@@ -3430,7 +3430,8 @@ func (w *worker) validateReorganizePartition(job *model.Job, tblInfo *model.Tabl
 // prepareReorganizePartitionIndexes stages replacement indexes with distinct IDs
 // so the old and new partition sets can coexist during reorganization.
 func prepareReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo, newPartInfo *model.PartitionInfo) error {
-	// Global indexes need separate copies for the old and new partition sets.
+	// Global indexes cannot be updated in place because partition IDs from the old
+	// and new sets must coexist in unique indexes during reorganization.
 	// PARTITION BY can also change whether a unique index must be global.
 	for _, index := range tblInfo.Indices {
 		newIndexIsGlobal := getRequestedIndexGlobal(newPartInfo, index)
@@ -3472,8 +3473,9 @@ func prepareReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo,
 	return nil
 }
 
-// enableReorganizePartitionWrites waits for TiFlash replicas, then enables writes
-// to both the old and new partitions and indexes.
+// enableReorganizePartitionWrites waits for configured TiFlash replicas, then
+// advances from delete-only to write-only, enabling inserts into both the old
+// and new partitions and indexes.
 func (w *worker) enableReorganizePartitionWrites(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
 	// All nodes must delete from both partition sets before any node starts
 	// inserting into both. Otherwise a delete using the older schema could leave
