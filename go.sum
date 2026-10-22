@@ -1351,6 +1351,8 @@ github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAE
 github.com/VividCortex/ewma v1.1.1/go.mod h1:2Tkkvm3sRDVXaiyucHiACn4cqf7DpdyLvmxzcbUokwA=
 github.com/VividCortex/ewma v1.2.0 h1:f58SaIzcDXrSy3kWaHNvuJgJ3Nmz59Zji6XoJR/q1ow=
 github.com/VividCortex/ewma v1.2.0/go.mod h1:nz4BbCtbLyFDeC9SUHbtcT5644juEuWfUAUnGx7j5l4=
+github.com/YangKeao/client-go/v2 v2.0.1-0.20261022035111-60e727195a65 h1:NLqsIj7KKKqwbtpgsjHQ7o2xz7iPIzzykXJ+zxusCF0=
+github.com/YangKeao/client-go/v2 v2.0.1-0.20261022035111-60e727195a65/go.mod h1:9PRG3r0nm23DK1lrzneYRFefRRXWYH+8O06rxSrSxRc=
 github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa h1:mx7rQczQb38AWgiFJsuwvygvOnktsz/mknqUJNByB1Q=
 github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa/go.mod h1:qn/VrHolklFxsKZNciiayiHO5qi+2v1TN5jEKDkPC2g=
 github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117 h1:+OqGGFc2YHFd82aSHmjlILVt1t4JWJjrNIfV8cVEPow=
@@ -2396,8 +2398,6 @@ github.com/vbauerster/mpb/v7 v7.5.3 h1:BkGfmb6nMrrBQDFECR/Q7RkKCw7ylMetCb4079CGs
 github.com/vbauerster/mpb/v7 v7.5.3/go.mod h1:i+h4QY6lmLvBNK2ah1fSreiw3ajskRlBp9AhY/PnuOE=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f h1:9DDCDwOyEy/gId+IEMrFHLuQ5R/WV0KNxWLler8X2OY=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f/go.mod h1:8sdOQnirw1PrcnTJYkmW1iOHtUmblMmGdUOHyWYycLI=
-github.com/wfxr/client-go/v2 v2.0.8-0.20261021082006-de3db35d9d6d h1:PjvRcljwV/qO+6MT+2iqWmUI6WMpu2vMAESkGotgbHk=
-github.com/wfxr/client-go/v2 v2.0.8-0.20261021082006-de3db35d9d6d/go.mod h1:vGcfUl10ks2hozODK+STv/TGcCurFhphmSv1HwFbq6I=
 github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 h1:S2dVYn90KE98chqDkyE9Z4N61UnQd+KOfgp5Iu53llk=
 github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=

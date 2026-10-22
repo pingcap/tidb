@@ -370,5 +370,6 @@ replace (
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-// Temporary Go 1.27 test dependency: https://github.com/tikv/client-go/pull/2121.
-replace github.com/tikv/client-go/v2 => github.com/wfxr/client-go/v2 v2.0.8-0.20261021082006-de3db35d9d6d
+// Temporary Go 1.27 test dependency: PR #2121 plus the ART checkptr fix.
+// https://github.com/tikv/client-go/pull/2121; YangKeao/client-go branch codex/art-lcp-checkptr.
+replace github.com/tikv/client-go/v2 => github.com/YangKeao/client-go/v2 v2.0.1-0.20261022035111-60e727195a65
