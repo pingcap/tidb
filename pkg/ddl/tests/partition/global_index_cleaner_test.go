@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -228,6 +229,45 @@ func TestCleanupLeftoverGlobalIndexesOnOwnerChange(t *testing.T) {
 	})
 }
 
+func TestCleanupLeftoverGlobalIndexesOnOwnerChangeTableNotInMeta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key idx_g (a) global) partition by hash (b) partitions 2`)
+	dbInfo, tblInfo, _ := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+	// Drop the table from meta without a new schema version, so the new owner still finds it in its infoschema.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		return meta.NewMutator(txn).DropTableOrView(dbInfo.ID, tblInfo.ID)
+	}))
+	require.NoError(t, dom.DDL().OwnerManager().ResignOwner(context.Background()))
+
+	tk2 := testkit.NewTestKit(t, store)
+	done := make(chan error, 1)
+	go func() {
+		done <- tk2.ExecToErr("create table test.t2 (a int)")
+	}()
+	var (
+		err      error
+		finished bool
+	)
+	select {
+	case err = <-done:
+		finished = true
+	case <-time.After(20 * time.Second):
+	}
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		return meta.NewMutator(txn).CreateTableOrView(dbInfo.ID, tblInfo)
+	}))
+	if !finished {
+		// Let a new owner run the DDL, so the test can tear down.
+		require.NoError(t, dom.DDL().OwnerManager().ResignOwner(context.Background()))
+		<-done
+	}
+	require.True(t, finished, "DDL is not scheduled after the cleanup on election")
+	require.NoError(t, err)
+}
+
 func TestCleanupLeftoverIndexes(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -353,7 +393,7 @@ func TestCleanupLeftoverIndexesNoGCJob(t *testing.T) {
 	ver := dom.InfoSchema().SchemaMetaVersion()
 
 	res, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
-	require.ErrorContains(t, err, "has no DDL history job")
+	require.ErrorContains(t, err, "no DDL history job")
 	require.Nil(t, res)
 	require.NoError(t, dom.Reload())
 	require.Equal(t, ver, dom.InfoSchema().SchemaMetaVersion())
@@ -428,36 +468,106 @@ func TestCleanupLeftoverIndexesRolledBackReorg(t *testing.T) {
 		partition by range (b) (partition p0 values less than (10), partition pMax values less than (maxvalue))`)
 	tk.MustExec("insert into t values (1, 1), (2, 20)")
 	tblID := external.GetTableByName(t, tk, "test", "t").Meta().ID
+	createJobID := historyJobID(t, tk, tblID, "create table")
 	reorgJobID := cancelReorganizePartition(t, store, tk, reorgPMax)
 	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+	ctx := context.Background()
 
-	// GC decodes the args of a rolled back REORGANIZE PARTITION, so the cleanup fails without changes when they cannot be decoded.
+	// GC decodes the args of a rolled back REORGANIZE PARTITION, so an older job is used when they cannot be decoded.
 	var rawArgs []byte
 	updateHistoryJob(t, store, reorgJobID, func(job *model.Job) {
 		rawArgs = job.RawArgs
 		job.RawArgs = []byte("[1]")
 	})
-	ver := dom.InfoSchema().SchemaMetaVersion()
-	res, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
-	require.ErrorContains(t, err, fmt.Sprintf("decode args of DDL history job %d", reorgJobID))
-	require.Nil(t, res)
+	res, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.Subset(t, res.IndexIDs, copyIDs)
+	checkGCJob(t, tk, res.GCJob, createJobID, model.ActionCreateTable)
+	checkDeleteRanges(t, tk, tblID, createJobID, res.DeleteRanges)
 	require.NoError(t, dom.Reload())
-	require.Equal(t, ver, dom.InfoSchema().SchemaMetaVersion())
-	require.NotNil(t, external.GetTableByName(t, tk, "test", "t").Meta().FindIndexByID(copyIDs[0]))
-	idxPrefix := hex.EncodeToString(tablecodec.EncodeTableIndexPrefix(tblID, copyIDs[0]))
-	tk.MustQuery(fmt.Sprintf(`select count(*) from (select start_key, end_key from mysql.gc_delete_range
-		union all select start_key, end_key from mysql.gc_delete_range_done) r where start_key <= '%s' and end_key > '%s'`, idxPrefix, idxPrefix)).Check(testkit.Rows("0"))
 
 	updateHistoryJob(t, store, reorgJobID, func(job *model.Job) {
 		job.RawArgs = rawArgs
 	})
-	res, err = ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
+	_, _, copyIDs = addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+	res, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
 	require.NoError(t, err)
-	require.Subset(t, res.IndexIDs, copyIDs)
+	require.Equal(t, copyIDs, res.IndexIDs)
 	checkGCJob(t, tk, res.GCJob, reorgJobID, model.ActionReorganizePartition)
 	checkDeleteRanges(t, tk, tblID, reorgJobID, res.DeleteRanges)
 	require.NoError(t, dom.Reload())
 	tk.MustExec("admin check table t")
+}
+
+func TestCleanupLeftoverIndexesTableNotExists(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key idx_g (a) global) partition by hash (b) partitions 2`)
+	dbInfo, tblInfo, _ := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+	ctx := context.Background()
+
+	tk.MustExec("create database test2")
+	tk.MustExec("rename table t to test2.t")
+	res, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.True(t, infoschema.ErrTableNotExists.Equal(err), "%v", err)
+	require.Nil(t, res)
+
+	db2, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test2"))
+	require.True(t, ok)
+	tk.MustExec("truncate table test2.t")
+	res, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), db2.ID, tblInfo.ID)
+	require.True(t, infoschema.ErrTableNotExists.Equal(err), "%v", err)
+	require.Nil(t, res)
+
+	res, err = ddl.CleanupLeftoverIndexes(ctx, tk.Session(), 1<<40, tblInfo.ID)
+	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err), "%v", err)
+	require.Nil(t, res)
+}
+
+func TestCleanupLeftoverIndexesSchemaDiffInFlight(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tkClean := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, key idx_g (a) global) partition by hash (b) partitions 2`)
+	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
+	tk.MustExec("create table t2 (a int, b int)")
+	ctx := context.Background()
+
+	var (
+		cleanupErr        error
+		fired, loadedStep bool
+	)
+	// The step of ADD INDEX has allocated its schema version but not committed its schema diff.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, _ *error) {
+		if fired || job.Type != model.ActionAddIndex || job.SchemaState != model.StateDeleteOnly {
+			return
+		}
+		fired = true
+		_, cleanupErr = ddl.CleanupLeftoverIndexes(ctx, tkClean.Session(), dbInfo.ID, tblInfo.ID)
+		// Another node loads the schema before the step commits.
+		_ = dom.Reload()
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
+		if loadedStep || job.Type != model.ActionAddIndex || job.SchemaState != model.StateDeleteOnly {
+			return
+		}
+		if dom.Reload() != nil {
+			return
+		}
+		tbl, ok := dom.InfoSchema().TableByID(ctx, job.TableID)
+		loadedStep = ok && tbl.Meta().FindIndexByName("i2") != nil
+	})
+	tk.MustExec("alter table t2 add index i2 (a)")
+	require.True(t, fired)
+	require.ErrorContains(t, cleanupErr, "has no schema diff yet")
+	require.True(t, loadedStep, "the schema loader skipped the schema diff of the in-flight step")
+	tk.MustExec("admin check table t2")
+
+	res, err := ddl.CleanupLeftoverIndexes(ctx, tk.Session(), dbInfo.ID, tblInfo.ID)
+	require.NoError(t, err)
+	require.Equal(t, copyIDs, res.IndexIDs)
 }
 
 func TestCleanupLeftoverIndexesSkipsPartitionBy(t *testing.T) {
@@ -477,7 +587,7 @@ func TestCleanupLeftoverIndexesSkipsPartitionBy(t *testing.T) {
 	dbInfo, tblInfo, copyIDs := addIndexCopies(t, store, dom, tk, "idx_g", model.StateWriteReorganization)
 
 	res, err := ddl.CleanupLeftoverIndexes(context.Background(), tk.Session(), dbInfo.ID, tblInfo.ID)
-	require.ErrorContains(t, err, "has no DDL history job")
+	require.ErrorContains(t, err, "no DDL history job")
 	require.Nil(t, res)
 
 	reorgJobID := cancelReorganizePartition(t, store, tk, reorgPMax)
