@@ -59,6 +59,7 @@ go_test(
     flaky = True,
     shard_count = 8,
     deps = [
+        "//pkg/autoid_service",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/schemaver",
@@ -67,6 +68,7 @@ go_test(
         "//pkg/ddl/systable",
         "//pkg/domain/sqlsvrapi",
         "//pkg/dxf/framework/storage",
+        "//pkg/executor",
         "//pkg/executor/importer",
         "//pkg/infoschema",
         "//pkg/infoschema/validatorapi",

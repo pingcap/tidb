@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -576,6 +577,15 @@ type QueryChunk struct {
 	Chk         *chunk.Chunk
 	RowIDOffset int64
 }
+
+// RunImportQuery runs the SELECT of the IMPORT INTO statement stmt at q.ReadTS
+// within memQuota bytes, and sends the result chunks to output. sctx reads the
+// submitted schema afterwards, so the caller must destroy it instead of putting
+// it back to its pool.
+// Registration by executor avoids a package import cycle.
+// TODO(joechenrh): Separate IMPORT task submission, status APIs and TaskMeta from
+// the DXF worker package, so workers can call executor directly without this.
+var RunImportQuery func(ctx context.Context, sctx sessionctx.Context, q *QueryPlan, stmt string, memQuota int64, output chan<- QueryChunk) error
 
 func newQueryChunkProcessor(
 	chunkCh chan QueryChunk,
