@@ -4246,8 +4246,13 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 // RedactedValue replaces a secret in redacted output.
 const RedactedValue = "xxxxxx"
 
+// InvalidURLPlaceholder replaces a value that cannot be parsed as a URL in
+// redacted output, because such a value cannot be reliably masked. The value
+// is not necessarily a storage URL; it may also be an endpoint or a local path.
+const InvalidURLPlaceholder = "(invalid URL)"
+
 // RedactURL redacts sensitive query parameters and removes fragments in supported storage URLs.
-// Plain local paths are unchanged; an invalid URL is replaced by a placeholder.
+// Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	if !strings.Contains(str, "://") && !strings.Contains(str, "?") {
@@ -4255,7 +4260,7 @@ func RedactURL(str string) string {
 	}
 	u, err := url.Parse(str)
 	if err != nil {
-		return "(invalid storage URL)"
+		return InvalidURLPlaceholder
 	}
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {

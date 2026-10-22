@@ -62,12 +62,11 @@ func maskIfSet(secret string) string {
 	return ast.RedactedValue
 }
 
-// InvalidURLPlaceholder replaces a storage URL that cannot be parsed, because
-// such a URL cannot be reliably masked.
-const InvalidURLPlaceholder = "(invalid storage URL)"
+// InvalidURLPlaceholder replaces a value that cannot be parsed as a URL.
+const InvalidURLPlaceholder = ast.InvalidURLPlaceholder
 
-// RedactURL masks the credentials in a storage URL so that it can be put into
-// logs and error messages. An unparseable URL is replaced by
+// RedactURL masks the credentials in a storage URL or endpoint so that it can
+// be put into logs and error messages. An unparseable value is replaced by
 // InvalidURLPlaceholder, userinfo and fragments are removed, and the query of a URL with an
 // unknown scheme is dropped, since ast.RedactURL cannot tell which parameters
 // are secret there. A value with neither "://" nor "?" is a local path and is

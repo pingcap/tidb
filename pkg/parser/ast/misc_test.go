@@ -329,7 +329,7 @@ func TestBRIESecureText(t *testing.T) {
 		},
 		{
 			input:   "backup database * to 's3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D'",
-			secured: `^\QBACKUP DATABASE * TO '(invalid storage URL)'\E$`,
+			secured: `^\QBACKUP DATABASE * TO '(invalid URL)'\E$`,
 		},
 		{
 			// we need to use regexp to match to avoid the random ordering since a map was used.
@@ -406,7 +406,7 @@ func TestRedactURL(t *testing.T) {
 		{args{":"}, ":"},
 		{args{"~/file"}, "~/file"},
 		{args{"/data/my files/100%off#name"}, "/data/my files/100%off#name"},
-		{args{"s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "(invalid storage URL)"},
+		{args{"s3://bucket/%zz?sse-kms-context=%7B%22tenant%22%3A%22context-value%22%7D"}, "(invalid URL)"},
 		{args{"gs://bucket/file"}, "gs://bucket/file"},
 		// gs don't have access-key/secret-access-key, so it will NOT be redacted
 		{args{"gs://bucket/file?access-key=123"}, "gs://bucket/file?access-key=123"},
