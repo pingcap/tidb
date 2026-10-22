@@ -466,6 +466,12 @@ func TestAffinityInvalidCodecDDL(t *testing.T) {
 	tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 	tk.MustExec("create table plain(a int)")
 	tk.MustExec("create table plain_p(a int) partition by hash(a) partitions 2")
+	// The internal masking-policy UPDATE flushes preceding metadata writes into
+	// the DDL transaction, so checking the cached InfoSchema alone misses loss.
+	tk.MustExec("create masking policy mask_t on t(a) as a")
+	tk.MustExec("create masking policy mask_p on p(a) as a")
+	db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
 	for _, name := range []string{"t", "p", "plain", "plain_p"} {
 		tk.MustExec("insert into " + name + " values (1),(2),(11),(12)")
 	}
@@ -497,10 +503,15 @@ func TestAffinityInvalidCodecDDL(t *testing.T) {
 			before, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tc.name))
 			require.NoError(t, err)
 			beforeMeta := before.Meta().Clone()
+			persistedBefore, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+			require.NoError(t, err)
 			require.ErrorContains(t, tk.ExecToErr(tc.query), "affinity requires a valid APIv2 keyspace codec in NextGen")
 			after, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tc.name))
 			require.NoError(t, err)
 			require.Equal(t, beforeMeta, after.Meta().Clone())
+			persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+			require.NoError(t, err)
+			require.Equal(t, persistedBefore, persisted, "failed DDL must preserve persisted table metadata")
 			tk.MustQuery("select * from " + tc.name + " order by a").Check(testkit.Rows("1", "2", "11", "12"))
 		})
 	}
