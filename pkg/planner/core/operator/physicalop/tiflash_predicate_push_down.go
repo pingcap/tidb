@@ -255,7 +255,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 	ts.LateMaterializationSelectivity = selectedSelectivity
 }
 
-func splitForcedLateMaterializationConds(conds []expression.Expression, ts *PhysicalTableScan) ([]expression.Expression, []expression.Expression) {
+func splitForcedLateMaterializationConds(conds []expression.Expression, ts *PhysicalTableScan) (forcedConds, remainingConds []expression.Expression) {
 	if len(ts.ForcedLateMaterializationFilterColumnIDs) == 0 {
 		return nil, conds
 	}
@@ -263,8 +263,8 @@ func splitForcedLateMaterializationConds(conds []expression.Expression, ts *Phys
 	for _, colID := range ts.ForcedLateMaterializationFilterColumnIDs {
 		forcedColumnIDs[colID] = struct{}{}
 	}
-	forcedConds := make([]expression.Expression, 0)
-	remainingConds := make([]expression.Expression, 0, len(conds))
+	forcedConds = make([]expression.Expression, 0)
+	remainingConds = make([]expression.Expression, 0, len(conds))
 	for _, cond := range conds {
 		columns := expression.ExtractColumns(cond)
 		if len(columns) == 0 {
