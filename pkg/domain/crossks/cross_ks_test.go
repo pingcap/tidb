@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -481,6 +482,27 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.True(t, ok)
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
+	t.Run("read global variables of target keyspace", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, targetStore)
+		tk.MustExec("set global cte_max_recursion_depth = 7")
+		defer tk.MustExec("set global cte_max_recursion_depth = default")
+		pool := handle.SysSessionPool()
+		resource, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Put(resource)
+		vars := resource.(sessionctx.Context).GetSessionVars()
+		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.CTEMaxRecursionDepth)
+		require.NoError(t, err)
+		require.Equal(t, "7", value)
+	})
+	t.Run("info schema has an auto-ID client", func(t *testing.T) {
+		mgr := storage.NewTaskManager(handle.SysSessionPool())
+		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
+			require.True(t, se.IsCrossKS())
+			require.NotNil(t, se.GetInfoSchema().(infoschema.InfoSchema).GetAutoIDRequirement().AutoIDClient())
+			return nil
+		}))
+	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {

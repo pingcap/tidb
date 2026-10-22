@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
@@ -4246,8 +4247,27 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 	return e, nil
 }
 
+func getMPPServerID(sctx sessionctx.Context) (uint64, error) {
+	if dom := domain.GetDomain(sctx); dom != nil {
+		return dom.ServerID(), nil
+	}
+	// Cross-keyspace sessions have no Domain. The process server info getter is
+	// registered from the hosting Domain's ServerID method.
+	info, err := infosync.GetServerInfo()
+	if err != nil {
+		return 0, err
+	}
+	return info.ServerIDGetter(), nil
+}
+
 func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec.Executor {
 	startTs, err := b.getSnapshotTS()
+	if err != nil {
+		b.err = err
+		return nil
+	}
+
+	serverID, err := getMPPServerID(b.sctx)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4258,7 +4278,7 @@ func (b *executorBuilder) buildMPPGather(v *physicalop.PhysicalTableReader) exec
 		is:           b.is,
 		originalPlan: v.GetTablePlan(),
 		startTS:      startTs,
-		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: domain.GetDomain(b.sctx).ServerID()},
+		mppQueryID:   kv.MPPQueryID{QueryTs: getMPPQueryTS(b.sctx), LocalQueryID: getMPPQueryID(b.sctx), ServerID: serverID},
 		memTracker:   memory.NewTracker(v.ID(), -1),
 
 		columns:                    []*model.ColumnInfo{},

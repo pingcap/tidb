@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -222,8 +223,10 @@ func (*Manager) createSessionManager(
 
 	coordinator := newSchemaCoordinator()
 	isValidator := isvalidator.New(vardef.GetSchemaLease())
-	sessPool := util.NewSessionPool(
-		crossKSSessPoolSize, ksSessFactoryGetter(ks, isValidator),
+	var sessPool util.DestroyableSessionPool
+	factory := withKeyspaceGlobalVars(ksSessFactoryGetter(ks, isValidator), func() util.SessionPool { return sessPool })
+	sessPool = util.NewSessionPool(
+		crossKSSessPoolSize, factory,
 		func(r pools.Resource) {
 			_, ok := r.(sessionctx.Context)
 			intest.Assert(ok)
@@ -250,6 +253,8 @@ func (*Manager) createSessionManager(
 		return nil, errors.Trace(err)
 	}
 	failpoint.InjectCall("injectETCDCli", &etcdCli, ks)
+	// Service discovery and connection creation are deferred until ID allocation.
+	autoidClient := autoid.NewClientDiscover(etcdCli)
 	ctx, cancel := context.WithCancel(context.Background())
 	var svrInfoSyncer *serverinfo.Syncer
 	serverInfoRegistered := false
@@ -260,6 +265,7 @@ func (*Manager) createSessionManager(
 				svrInfoSyncer.RevokeSession()
 			}
 			cancel()
+			autoidClient.ResetConn(nil)
 			err2 := etcdCli.Close()
 			if err2 != nil {
 				logutil.BgLogger().Warn("failed to close etcd client", zap.Error(err2))
@@ -302,7 +308,7 @@ func (*Manager) createSessionManager(
 			return coordinator
 		},
 		schemaVerSyncer,
-		nil, nil,
+		autoidClient, nil,
 	)
 	if err = isSyncer.Reload(); err != nil {
 		return nil, errors.Trace(err)
@@ -326,6 +332,7 @@ func (*Manager) createSessionManager(
 		exitCh:            make(chan struct{}),
 		store:             store,
 		etcdCli:           etcdCli,
+		autoidClient:      autoidClient,
 		schemaVerSyncer:   schemaVerSyncer,
 		serverStateSyncer: serverStateSyncer,
 		infoCache:         infoCache,
@@ -486,6 +493,7 @@ type SessionManager struct {
 	exitCh            chan struct{}
 	store             kv.Storage
 	etcdCli           *clientv3.Client
+	autoidClient      *autoid.ClientDiscover
 	schemaVerSyncer   schemaver.Syncer
 	serverStateSyncer serverstate.Syncer
 	infoCache         *infoschema.InfoCache
@@ -534,6 +542,7 @@ func (m *SessionManager) close() {
 		m.svrInfoSyncer.RevokeSession()
 	}
 	m.schemaVerSyncer.Close()
+	m.autoidClient.ResetConn(nil)
 	if err := m.etcdCli.Close(); err != nil {
 		logger.Warn("failed to close etcd client", zap.Error(err))
 	}
