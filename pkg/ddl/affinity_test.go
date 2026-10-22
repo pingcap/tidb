@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -47,12 +48,13 @@ type mockCodec struct {
 
 type truncateAffinityPDClient struct {
 	pdhttp.Client
-	manager        affinity.Manager
-	failCreate     atomic.Bool
-	failDelete     atomic.Bool
-	failOnce       atomic.Bool
-	createCalls    atomic.Int64
-	createFailures atomic.Int64
+	manager          affinity.Manager
+	failCreate       atomic.Bool
+	failDelete       atomic.Bool
+	failOnce         atomic.Bool
+	createCalls      atomic.Int64
+	createFailures   atomic.Int64
+	nilDeleteContext atomic.Bool
 }
 
 func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, _ ...pdhttp.CreateAffinityGroupsOption) (map[string]*pdhttp.AffinityGroupState, error) {
@@ -65,6 +67,11 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 }
 
 func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
+	// Match the real HTTP client's context validation; the mock manager ignores it.
+	if _, err := http.NewRequestWithContext(ctx, http.MethodDelete, "http://pd/affinity-groups", nil); err != nil {
+		c.nilDeleteContext.Store(ctx == nil)
+		return err
+	}
 	if c.failDelete.Load() {
 		return fmt.Errorf("injected affinity deletion failure")
 	}
@@ -131,40 +138,72 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 	// Both the failed attempt and the successful retry should reach PD.
 	require.Greater(t, cli.createCalls.Load(), int64(2))
 
-	// Cancelling after replacement metadata is published must remove the new
-	// affinity groups before restoring the original partition metadata.
-	tk.MustExec("create table pc(a int, b int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
-	beforeCancel, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pc"))
-	require.NoError(t, err)
-	oldCancelID := beforeCancel.Meta().Partition.Definitions[0].ID
-	cli.failDelete.Store(true)
-	var cancelOnce atomic.Bool
-	var replacementCancelID atomic.Int64
-	const cancelHook = "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep"
-	testfailpoint.EnableCall(t, cancelHook, func(job *model.Job) {
-		if job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateWriteOnly && cancelOnce.CompareAndSwap(false, true) {
-			if args, argsErr := model.GetTruncateTableArgs(job); argsErr == nil && len(args.NewPartitionIDs) > 0 {
-				replacementCancelID.Store(args.NewPartitionIDs[0])
+	for _, scenario := range []string{"delete succeeds", "delete fails", "metadata not committed"} {
+		t.Run(scenario, func(t *testing.T) {
+			tk.MustExec("drop table if exists pc")
+			tk.MustExec("create table pc(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+			tk.MustExec("insert into pc values (1),(11)")
+			beforeCancel, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pc"))
+			require.NoError(t, err)
+			beforeMeta := beforeCancel.Meta().Clone()
+			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+			require.True(t, ok)
+			persistedBefore, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+			require.NoError(t, err)
+			tkCancel := testkit.NewTestKit(t, store)
+			cli.failDelete.Store(scenario == "delete fails")
+			t.Cleanup(func() { cli.failDelete.Store(false) })
+			var cancelOnce atomic.Bool
+			var replacementID atomic.Int64
+			const updateHook = "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"
+			if scenario == "metadata not committed" {
+				// Fail the first step after PD has created the replacement groups,
+				// but before the replacement IDs reach persistent metadata.
+				testfailpoint.Enable(t, updateHook, "return(1)")
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+					if job.TableID == beforeMeta.ID && job.SchemaState == model.StateWriteOnly {
+						testfailpoint.Disable(t, updateHook)
+					}
+				})
 			}
-			tk.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
-		}
-	})
-	require.Error(t, tk.ExecToErr("alter table pc truncate partition p0"))
-	testfailpoint.Disable(t, cancelHook)
-	var afterCancel table.Table
-	require.Eventually(t, func() bool {
-		var lookupErr error
-		afterCancel, lookupErr = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pc"))
-		return lookupErr == nil && afterCancel.Meta().Partition.DDLState == model.StateNone
-	}, 5*time.Second, 10*time.Millisecond)
-	require.Equal(t, oldCancelID, afterCancel.Meta().Partition.Definitions[0].ID)
-	require.Empty(t, afterCancel.Meta().Partition.NewPartitionIDs)
-	require.NotZero(t, replacementCancelID.Load())
-	newCancelGroupID := ddl.GetPartitionAffinityGroupID(store.GetCodec(), beforeCancel.Meta().ID, replacementCancelID.Load())
-	groups, err = affinity.GetGroups(context.Background(), []string{newCancelGroupID})
-	require.NoError(t, err)
-	require.Len(t, groups, 1, "failed cleanup must not prevent metadata rollback")
-	cli.failDelete.Store(false)
+			testfailpoint.EnableCall(t, beforeStep, func(job *model.Job) {
+				if job.TableID == beforeMeta.ID && job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateWriteOnly && cancelOnce.CompareAndSwap(false, true) {
+					args, err := model.GetTruncateTableArgs(job)
+					require.NoError(t, err)
+					replacementID.Store(args.NewPartitionIDs[0])
+					persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+					require.NoError(t, err)
+					require.Equal(t, scenario == "metadata not committed", len(persisted.Partition.NewPartitionIDs) == 0)
+					tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID)).Check(testkit.Rows(fmt.Sprintf("%d successful", job.ID)))
+				}
+			})
+			require.Error(t, tk.ExecToErr("alter table pc truncate partition p0"))
+			require.True(t, cancelOnce.Load())
+			require.NotZero(t, replacementID.Load())
+			var afterCancel table.Table
+			require.Eventually(t, func() bool {
+				afterCancel, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("pc"))
+				return err == nil && afterCancel.Meta().Partition.DDLState == model.StateNone
+			}, 5*time.Second, 10*time.Millisecond)
+			persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+			require.NoError(t, err)
+			require.Equal(t, persistedBefore.Partition, persisted.Partition)
+			require.Equal(t, beforeMeta.Partition.Definitions, afterCancel.Meta().Partition.Definitions)
+			require.Empty(t, afterCancel.Meta().Partition.NewPartitionIDs)
+			require.Equal(t, model.ActionNone, afterCancel.Meta().Partition.DDLAction)
+			require.False(t, cli.nilDeleteContext.Load())
+			tk.MustQuery("select * from pc order by a").Check(testkit.Rows("1", "11"))
+			checkAffinityGroupsInPD(t, dom, "test", "pc", true)
+			newGroupID := ddl.GetPartitionAffinityGroupID(store.GetCodec(), beforeMeta.ID, replacementID.Load())
+			groups, err := affinity.GetGroups(context.Background(), []string{newGroupID})
+			require.NoError(t, err)
+			if scenario == "delete fails" {
+				require.Contains(t, groups, newGroupID, "failed cleanup must not prevent metadata rollback")
+			} else {
+				require.Empty(t, groups, "successful rollback must remove replacement groups")
+			}
+		})
+	}
 }
 
 func (mockCodec) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta {
