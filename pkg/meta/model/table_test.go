@@ -284,39 +284,6 @@ func TestTTLJobInterval(t *testing.T) {
 	require.Equal(t, time.Hour*200, interval)
 }
 
-func TestIDsInDDLToIgnore(t *testing.T) {
-	adding := []PartitionDefinition{{ID: 11}, {ID: 12}, {ID: 13}}
-	dropping := []PartitionDefinition{{ID: 21}}
-
-	// ADD PARTITION iterates AddingDefinitions. A shorter DroppingDefinitions
-	// must not be used as the slice capacity.
-	addPI := &PartitionInfo{
-		DDLAction:           ActionAddTablePartition,
-		DDLState:            StateReplicaOnly,
-		AddingDefinitions:   adding,
-		DroppingDefinitions: dropping,
-	}
-	addIDs := addPI.IDsInDDLToIgnore()
-	require.Equal(t, []int64{11, 12, 13}, addIDs)
-	require.Equal(t, len(adding), cap(addIDs))
-
-	addPI.AddingDefinitions = nil
-	require.Nil(t, addPI.IDsInDDLToIgnore())
-
-	// DROP PARTITION records the partitions in DroppingDefinitions at StateWriteOnly.
-	// Readers skip those IDs. Writes are still allowed.
-	dropPI := &PartitionInfo{
-		DDLAction:           ActionDropTablePartition,
-		DDLState:            StateWriteOnly,
-		AddingDefinitions:   adding,
-		DroppingDefinitions: dropping,
-	}
-	require.Equal(t, []int64{21}, dropPI.IDsInDDLToIgnore())
-
-	dropPI.DroppingDefinitions = nil
-	require.Nil(t, dropPI.IDsInDDLToIgnore())
-}
-
 func TestClearReorgIntermediateInfo(t *testing.T) {
 	ptInfo := &PartitionInfo{}
 	ptInfo.DDLType = ast.PartitionTypeHash

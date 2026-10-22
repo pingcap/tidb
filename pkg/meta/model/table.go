@@ -1329,10 +1329,6 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 // session should not see (may be duplicate errors on insert/update though)
 // For example during truncate or drop partition.
 func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
-	// Drop partition:
-	// onDropTablePartition already enters StateWriteOnly, so readers skip the
-	// partitions being dropped. Writes are still allowed.
-	// https://github.com/pingcap/tidb/issues/55888
 	// Add partition:
 	// TODO: Add tests!
 	// Exchange Partition:
