@@ -751,6 +751,11 @@ type pushDownPredicatesFunc func(cond *expression.ScalarFunction, cols *expressi
 
 func (la *LogicalAggregation) pushDownPredicatesByGroupby(cond *expression.ScalarFunction, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
 	extractedCols := expression.ExtractColumns(cond)
+	if len(extractedCols) == 0 {
+		ret = append(ret, cond)
+		return
+	}
+
 	ok := true
 	for _, col := range extractedCols {
 		if !groupByColumns.Contains(col) {
