@@ -29,8 +29,8 @@ import (
 // MVRefreshStepForTest exposes runtime step information to external executor tests.
 type MVRefreshStepForTest = mvRefreshObserveStep
 
-// NewRefreshMaterializedViewExecForTest exercises the runtime before the SQL entry
-// point lands in the next port, without adding a production executor builder.
+// NewRefreshMaterializedViewExecForTest exercises the runtime directly with a
+// step observer.
 func NewRefreshMaterializedViewExecForTest(sctx sessionctx.Context, stmt *ast.RefreshMaterializedViewStmt, observer mvRefreshStepObserver) *RefreshMaterializedViewExec {
 	return &RefreshMaterializedViewExec{
 		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),

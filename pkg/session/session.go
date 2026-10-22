@@ -2948,6 +2948,9 @@ func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 	if _, ok := stmtToValidate.(*ast.PurgeMaterializedViewLogStmt); ok {
 		return errors.New("cannot run PURGE MATERIALIZED VIEW LOG in explicit transaction")
 	}
+	if _, ok := stmtToValidate.(*ast.RefreshMaterializedViewStmt); ok {
+		return errors.New("cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
+	}
 	return nil
 }
 
