@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,41 @@ func allocJobID(store kv.Storage) (uint64, error) {
 		return 0, errors.New("invalid job id")
 	}
 	return ver.Ver, nil
+}
+
+func durationMicrosecondsBetween(startAt, endAt time.Time) int64 {
+	if startAt.IsZero() || endAt.IsZero() || endAt.Before(startAt) {
+		return 0
+	}
+	return endAt.Sub(startAt).Microseconds()
+}
+
+func formatDurationSecondsFromMicroseconds(durationMicroseconds int64) string {
+	if durationMicroseconds <= 0 {
+		return "0.000000"
+	}
+	return fmt.Sprintf("%d.%06d", durationMicroseconds/1_000_000, durationMicroseconds%1_000_000)
+}
+
+func formatDurationSecondsBetween(startAt, endAt time.Time) string {
+	return formatDurationSecondsFromMicroseconds(durationMicrosecondsBetween(startAt, endAt))
+}
+
+func formatDurationSeconds(duration time.Duration) string {
+	if duration <= 0 {
+		return "0.000000"
+	}
+	return formatDurationSecondsFromMicroseconds(duration.Microseconds())
+}
+
+func histTime(t time.Time, loc *time.Location) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	if loc != nil {
+		t = t.In(loc)
+	}
+	return t.Truncate(time.Microsecond)
 }
 
 // CancelMaterializedViewJobExec executes a materialized view task cancellation request.
