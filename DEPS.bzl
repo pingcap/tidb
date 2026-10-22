@@ -3396,6 +3396,13 @@ def go_deps():
         version = "v1.0.1",
     )
     go_repository(
+        name = "com_github_mjonss_samefn_poc",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/mjonss/samefn-poc",
+        sum = "h1:aZz9RhzVn3ZPsZwwx4RJmRMY3C2THcagze6kUZwTA3g=",
+        version = "v0.0.0-20261022190036-99cc9d0a1013",
+    )
+    go_repository(
         name = "com_github_moby_spdystream",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/moby/spdystream",
