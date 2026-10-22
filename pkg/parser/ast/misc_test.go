@@ -379,6 +379,18 @@ func TestPlanReplayerStmtRestore(t *testing.T) {
 }
 
 func TestRedactURL(t *testing.T) {
+	for _, rawURL := range []string{
+		"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&secret_access_key=FAKE_AST_SK&other-key=benign",
+		"azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign",
+		"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK&secret-access-key=FAKE_AST_SK",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			output := ast.RedactURL(rawURL)
+			for _, secret := range []string{"FAKE_AST_USER", "FAKE_AST_PASS", "FAKE_AST_AK", "FAKE_AST_SK", "FAKE_AST_SAS"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+		})
+	}
 	type args struct {
 		str string
 	}
@@ -387,7 +399,10 @@ func TestRedactURL(t *testing.T) {
 		want string
 	}{
 		{args{""}, ""},
-		{args{":"}, ":"},
+		{args{":"}, "<invalid URI>"},
+		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path%zz?access-key=FAKE_AST_AK"}, "<invalid URI>"},
+		{args{"s3://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?Access_Key=FAKE_AST_AK&other-key=benign"}, "s3://bucket/path?Access_Key=xxxxxx&other-key=benign"},
+		{args{"azure://FAKE_AST_USER:FAKE_AST_PASS@bucket/path?SAS_Token=FAKE_AST_SAS&account-name=benign"}, "azure://bucket/path?SAS_Token=xxxxxx&account-name=benign"},
 		{args{"~/file"}, "~/file"},
 		{args{"gs://bucket/file"}, "gs://bucket/file"},
 		// gs don't have access-key/secret-access-key, so it will NOT be redacted

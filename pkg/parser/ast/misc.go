@@ -4244,14 +4244,15 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 // RedactedValue replaces a secret in redacted output.
 const RedactedValue = "xxxxxx"
 
-// RedactURL redacts sensitive query parameters in supported storage URLs.
-// If the URL is not valid, it returns the original string.
+// RedactURL removes userinfo and redacts sensitive query parameters in supported storage URLs.
+// If the URL is not valid, it returns "<invalid URI>".
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
 	u, err := url.Parse(str)
 	if err != nil {
-		return str
+		return "<invalid URI>"
 	}
+	u.User = nil
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
