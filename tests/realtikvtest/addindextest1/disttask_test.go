@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -259,15 +260,23 @@ func TestAddIndexDistRetryOnKVDiskFull(t *testing.T) {
 	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
 
 	var sufficient atomic.Bool
-	var injected atomic.Int32
+	var diskFullErrors atomic.Int32
 	var taskID atomic.Int64
 	var once sync.Once
 	var retryBefore float64
-	// Exercise the retry decision and idempotent re-execution after real ingestion.
+	// Fail the actual ingest call so retries exercise the import error path.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mockIngestError", func(errP *error) {
+		if !sufficient.Load() {
+			*errP = ingestcli.NewIngestAPIError(&errorpb.Error{
+				Message:  "mock TiKV disk full",
+				DiskFull: &errorpb.DiskFull{},
+			}, nil)
+		}
+	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			task := e.GetTaskBase()
-			if task.Type != proto.Backfill || task.Step != proto.BackfillStepWriteAndIngest || *errP != nil {
+			if task.Type != proto.Backfill || task.Step != proto.BackfillStepWriteAndIngest || !errdef.IsKVDiskFullError(*errP) {
 				return
 			}
 			once.Do(func() {
@@ -275,10 +284,7 @@ func TestAddIndexDistRetryOnKVDiskFull(t *testing.T) {
 					strconv.FormatInt(task.ID, 10), dxfmetric.EventRetry))
 				taskID.Store(task.ID)
 			})
-			if !sufficient.Load() {
-				injected.Add(1)
-				*errP = &ingestcli.IngestAPIError{Err: errdef.ErrKVDiskFull.GenWithStack("mock TiKV disk full")}
-			}
+			diskFullErrors.Add(1)
 		})
 
 	ddlCtx, cancel := context.WithCancel(context.Background())
@@ -315,7 +321,7 @@ func TestAddIndexDistRetryOnKVDiskFull(t *testing.T) {
 		default:
 		}
 		id := taskID.Load()
-		return id != 0 && injected.Load() >= 2 && promtestutil.ToFloat64(
+		return id != 0 && diskFullErrors.Load() >= 2 && promtestutil.ToFloat64(
 			dxfmetric.ExecuteEventCounter.WithLabelValues(strconv.FormatInt(id, 10), dxfmetric.EventRetry)) > retryBefore
 	}, time.Minute, 20*time.Millisecond)
 	select {
