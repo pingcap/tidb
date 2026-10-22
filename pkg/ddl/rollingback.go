@@ -364,6 +364,7 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 			}
 			if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, replacementDefs); deleteErr != nil {
 				logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+				return ver, errors.Trace(deleteErr)
 			}
 		}
 		tblInfo.Partition.NewPartitionIDs = nil
