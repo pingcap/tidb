@@ -30,7 +30,7 @@ import (
 func TestCreateStorage(t *testing.T) {
 	_, err := ParseBackend("1invalid:", nil)
 	require.Error(t, err)
-	require.Regexp(t, "parse storage URL failed: invalid format", err.Error())
+	require.ErrorContains(t, err, "invalid storage URL")
 
 	_, err = ParseBackend("net:storage", nil)
 	require.Error(t, err)
@@ -54,7 +54,8 @@ func TestCreateStorage(t *testing.T) {
 
 	_, err = ParseBackend("s3:///bucket/more/prefix/?access-key=secret-id&secret-access-key=secret-key&session-token=secret-token", &BackendOptions{})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "please specify the bucket for s3 in s3:///bucket/more/prefix/?access-key=xxxxxx&secret-access-key=xxxxxx&session-token=xxxxxx")
+	require.Contains(t, err.Error(), "please specify the bucket for s3")
+	require.NotContains(t, err.Error(), "s3://")
 	require.NotContains(t, err.Error(), "secret-id")
 	require.NotContains(t, err.Error(), "secret-key")
 	require.NotContains(t, err.Error(), "secret-token")
@@ -275,6 +276,15 @@ func TestFormatBackendURL(t *testing.T) {
 }
 
 func TestParseRawURL(t *testing.T) {
+	t.Run("malformed credentials", func(t *testing.T) {
+		_, err := ParseRawURL("s3://FAKE_RAW_USER:FAKE_RAW_PASS@bucket/path%zz?access-key=FAKE_RAW_AK&secret-access-key=FAKE_RAW_SK")
+		require.Error(t, err)
+		for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+			for _, secret := range []string{"FAKE_RAW_USER", "FAKE_RAW_PASS", "FAKE_RAW_AK", "FAKE_RAW_SK"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+		}
+	})
 	cases := []struct {
 		url             string
 		schema          string
@@ -321,6 +331,15 @@ func TestParseRawURL(t *testing.T) {
 }
 
 func TestIsLocal(t *testing.T) {
+	t.Run("malformed credentials", func(t *testing.T) {
+		_, err := IsLocalPath("s3://FAKE_LOCAL_USER:FAKE_LOCAL_PASS@bucket/path%zz?access-key=FAKE_LOCAL_AK&secret-access-key=FAKE_LOCAL_SK")
+		require.Error(t, err)
+		for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+			for _, secret := range []string{"FAKE_LOCAL_USER", "FAKE_LOCAL_PASS", "FAKE_LOCAL_AK", "FAKE_LOCAL_SK"} {
+				t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+			}
+		}
+	})
 	type args struct {
 		path string
 	}
@@ -330,7 +349,7 @@ func TestIsLocal(t *testing.T) {
 		want   bool
 		errStr string
 	}{
-		{"local", args{":"}, false, "missing protocol scheme"},
+		{"local", args{":"}, false, "invalid storage URL"},
 		{"local", args{"~/tmp/file"}, true, ""},
 		{"local", args{"."}, true, ""},
 		{"local", args{".."}, true, ""},
@@ -479,6 +498,22 @@ func TestS3NoProfileCredentialsValidation(t *testing.T) {
 }
 
 func TestParseBackend(t *testing.T) {
+	for _, rawURL := range []string{
+		"s3://FAKE_BACKEND_USER:FAKE_BACKEND_PASS@bucket/path%zz?access-key=FAKE_BACKEND_AK&secret-access-key=FAKE_BACKEND_SK",
+		"s3:///path?access-key=FAKE_BACKEND_AK&secret-access-key=FAKE_BACKEND_SK&unknown-token=FAKE_BACKEND_TOKEN",
+		"gcs:///path?credentials=FAKE_BACKEND_GCS",
+		"azure:///path?sig=FAKE_BACKEND_SAS",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			_, err := ParseBackend(rawURL, nil)
+			require.Error(t, err)
+			for _, output := range []string{err.Error(), fmt.Sprintf("%+v", err)} {
+				for _, secret := range []string{"FAKE_BACKEND_USER", "FAKE_BACKEND_PASS", "FAKE_BACKEND_AK", "FAKE_BACKEND_SK", "FAKE_BACKEND_TOKEN", "FAKE_BACKEND_GCS", "FAKE_BACKEND_SAS"} {
+					t.Run(secret, func(t *testing.T) { require.NotContains(t, output, secret) })
+				}
+			}
+		})
+	}
 	{
 		backendOptions := &BackendOptions{
 			S3:     s3like.S3BackendOptions{},
