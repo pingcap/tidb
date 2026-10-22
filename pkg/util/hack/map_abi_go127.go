@@ -12,6 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// The runtime map and ABI declarations below are derived from Go's
+// src/internal/runtime/maps and src/internal/abi packages.
+// Copyright 2023 The Go Authors. All rights reserved.
+// Copyright 2024 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSES/GO-LICENSE file.
+
 //go:build go1.27 && !go1.28
 
 package hack
