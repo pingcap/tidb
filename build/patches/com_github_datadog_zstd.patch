@@ -1,0 +1,16 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -98,7 +98,11 @@ go_library(
+         "zstdmt_compress.h",
+     ],
+     cgo = True,
+-    copts = ["-DZSTD_LEGACY_SUPPORT=4 -DZSTD_MULTITHREAD=1"],
++    # Plugin-capable Go binaries forbid COPY relocations; compile C as PIC.
++    copts = ["-DZSTD_LEGACY_SUPPORT=4 -DZSTD_MULTITHREAD=1"] + select({
++        "@io_bazel_rules_go//go/platform:windows": [],
++        "//conditions:default": ["-fPIC"],
++    }),
+     importpath = "github.com/DataDog/zstd",
+     visibility = ["//visibility:public"],
+ )

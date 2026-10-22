@@ -1268,6 +1268,10 @@ def go_deps():
         name = "com_github_datadog_zstd",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/DataDog/zstd",
+        patch_args = ["-p1"],
+        patches = [
+            "//build/patches:com_github_datadog_zstd.patch",
+        ],
         sum = "h1:oWf5W7GtOLgp6bciQYDmhHHjdhYkALu6S/5Ni9ZgSvQ=",
         version = "v1.5.5",
     )
