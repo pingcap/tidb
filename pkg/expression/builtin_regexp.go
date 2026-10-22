@@ -17,6 +17,7 @@ package expression
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -455,6 +456,11 @@ func (re *builtinRegexpSubstrFuncSig) evalString(ctx EvalContext, row chunk.Row)
 			return "", true, err
 		}
 
+		// An unsigned occurrence larger than MaxInt64 is read as a negative number,
+		// treat it as MaxInt64 so that it matches nothing.
+		if occurrence < 0 && mysql.HasUnsignedFlag(re.args[3].GetType(ctx).GetFlag()) {
+			occurrence = math.MaxInt64
+		}
 		if occurrence < 1 {
 			occurrence = 1
 		}
@@ -546,6 +552,8 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 	result.ReserveString(n)
 	buffers := getBuffers(params)
 
+	isOccurUnsigned := hasOccur && mysql.HasUnsignedFlag(re.args[3].GetType(ctx).GetFlag())
+
 	// Start to calculate
 	for i := range n {
 		if isResultNull(buffers, i) {
@@ -581,7 +589,13 @@ func (re *builtinRegexpSubstrFuncSig) vecEvalString(ctx EvalContext, input *chun
 		}
 
 		// Get occurrence
-		occurrence := max(params[3].getIntVal(i), 1)
+		occurrence := params[3].getIntVal(i)
+		// An unsigned occurrence larger than MaxInt64 is read as a negative number,
+		// treat it as MaxInt64 so that it matches nothing.
+		if occurrence < 0 && isOccurUnsigned {
+			occurrence = math.MaxInt64
+		}
+		occurrence = max(occurrence, 1)
 
 		if !memorized {
 			// Get pattern and match type and then generate regexp
@@ -754,6 +768,11 @@ func (re *builtinRegexpInStrFuncSig) evalInt(ctx EvalContext, row chunk.Row) (in
 			return 0, true, err
 		}
 
+		// An unsigned occurrence larger than MaxInt64 is read as a negative number,
+		// treat it as MaxInt64 so that it matches nothing.
+		if occurrence < 0 && mysql.HasUnsignedFlag(re.args[3].GetType(ctx).GetFlag()) {
+			occurrence = math.MaxInt64
+		}
 		if occurrence < 1 {
 			occurrence = 1
 		}
@@ -866,6 +885,8 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		return err
 	}
 
+	isOccurUnsigned := hasOccur && mysql.HasUnsignedFlag(re.args[3].GetType(ctx).GetFlag())
+
 	// Start to calculate
 	result.ResizeInt64(n, false)
 	result.MergeNulls(getBuffers(params)...)
@@ -904,7 +925,13 @@ func (re *builtinRegexpInStrFuncSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		}
 
 		// Get occurrence
-		occurrence := max(params[3].getIntVal(i), 1)
+		occurrence := params[3].getIntVal(i)
+		// An unsigned occurrence larger than MaxInt64 is read as a negative number,
+		// treat it as MaxInt64 so that it matches nothing.
+		if occurrence < 0 && isOccurUnsigned {
+			occurrence = math.MaxInt64
+		}
+		occurrence = max(occurrence, 1)
 
 		returnOption := params[4].getIntVal(i)
 		if returnOption != 0 && returnOption != 1 {
@@ -1235,6 +1262,11 @@ func (re *builtinRegexpReplaceFuncSig) evalString(ctx EvalContext, row chunk.Row
 			return "", true, err
 		}
 
+		// An unsigned occurrence larger than MaxInt64 is read as a negative number,
+		// treat it as MaxInt64 so that it matches nothing.
+		if occurrence < 0 && mysql.HasUnsignedFlag(re.args[4].GetType(ctx).GetFlag()) {
+			occurrence = math.MaxInt64
+		}
 		if occurrence < 0 {
 			occurrence = 1
 		}
@@ -1352,6 +1384,8 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 		}
 	}
 
+	isOccurUnsigned := hasOccur && mysql.HasUnsignedFlag(re.args[4].GetType(ctx).GetFlag())
+
 	// Start to calculate
 	for i := range n {
 		if isResultNull(buffers, i) {
@@ -1394,6 +1428,11 @@ func (re *builtinRegexpReplaceFuncSig) vecEvalString(ctx EvalContext, input *chu
 
 		// Get occurrence
 		occurrence := params[4].getIntVal(i)
+		// An unsigned occurrence larger than MaxInt64 is read as a negative number,
+		// treat it as MaxInt64 so that it matches nothing.
+		if occurrence < 0 && isOccurUnsigned {
+			occurrence = math.MaxInt64
+		}
 		if occurrence < 0 {
 			occurrence = 1
 		}

@@ -145,6 +145,25 @@ func getVecExprBenchCaseForRegexp(retType types.EvalType, isBin bool, inputs ...
 	return ret
 }
 
+// vecEvalRegexpWithUnsignedOccurrence appends an unsigned occurrence column to
+// args and evaluates the function vectorized on occurrences larger than
+// MaxInt64, issue 72038.
+func vecEvalRegexpWithUnsignedOccurrence(t *testing.T, fnName string, retType types.EvalType, args ...Expression) *chunk.Column {
+	ctx := createContext(t)
+	ft := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).BuildP()
+	f, err := funcs[fnName].getFunction(ctx, append(args, &Column{Index: 0, RetType: ft}))
+	require.NoError(t, err)
+	require.True(t, f.vectorized() && f.isChildrenVectorized())
+
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{ft}, 2)
+	input.AppendUint64(0, 9223372036854775808)
+	input.AppendUint64(0, 18446744073709551615)
+	result := chunk.NewColumn(types.NewFieldType(convertETType(retType)), 2)
+	require.NoError(t, vecEvalType(ctx, f, retType, input, result))
+	require.Equal(t, 2, result.Rows())
+	return result
+}
+
 func setCharsetAndCollation(id int, tps ...*types.FieldType) {
 	switch id {
 	case 0:
@@ -466,6 +485,9 @@ func TestRegexpSubstr(t *testing.T) {
 		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(5), int64(1), "嗯呐", "0xE597AFE5A5BD", nil}, // index 10
 		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(5), int64(2), nil, "0xE597AFE59190", nil},
 		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(1), int64(100), nil, nil, nil},
+		// Unsigned occurrence larger than MaxInt64, issue 72038
+		{"abc abd abe", "ab.", int64(1), uint64(9223372036854775808), nil, nil, nil},
+		{"abc abd abe", "ab.", int64(1), uint64(18446744073709551615), nil, nil, nil},
 		// Some nullable input tests
 		{"", "^$", int64(1), nil, nil, nil, nil},
 		{nil, "^$", int64(1), nil, nil, nil, nil},
@@ -606,6 +628,12 @@ func TestRegexpSubstrVec(t *testing.T) {
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpSubstrCases)
+
+	result := vecEvalRegexpWithUnsignedOccurrence(t, ast.RegexpSubstr, types.ETString,
+		getStringConstant("abc abd abe", false), getStringConstant("ab.", false), getIntConstant(1))
+	for i := range result.Rows() {
+		require.True(t, result.IsNull(i))
+	}
 }
 
 func TestRegexpInStr(t *testing.T) {
@@ -721,6 +749,9 @@ func TestRegexpInStr(t *testing.T) {
 		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(5), int64(1), 7, 8, nil}, // index 10
 		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(5), int64(2), 0, 15, nil},
 		{"嗯嗯 嗯好 嗯呐", "嗯.", int64(1), int64(100), 0, 0, nil},
+		// Unsigned occurrence larger than MaxInt64, issue 72038
+		{"abc abd abe", "ab.", int64(1), uint64(9223372036854775808), 0, 0, nil},
+		{"abc abd abe", "ab.", int64(1), uint64(18446744073709551615), 0, 0, nil},
 		// Some nullable input tests
 		{"", "^$", int64(1), nil, nil, nil, nil},
 		{nil, "^$", int64(1), nil, nil, nil, nil},
@@ -918,6 +949,13 @@ func TestRegexpInStrVec(t *testing.T) {
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpInStrCases)
+
+	result := vecEvalRegexpWithUnsignedOccurrence(t, ast.RegexpInStr, types.ETInt,
+		getStringConstant("abc abd abe", false), getStringConstant("ab.", false), getIntConstant(1))
+	for i := range result.Rows() {
+		require.False(t, result.IsNull(i))
+		require.Equal(t, int64(0), result.GetInt64(i))
+	}
 }
 
 func TestRegexpReplace(t *testing.T) {
@@ -1068,6 +1106,9 @@ func TestRegexpReplace(t *testing.T) {
 		{"abc", "\\d*", "p", 1, 2, "apbc", "0x61706263", nil}, // index 15
 		{"abc", "\\d*$", "p", 1, 1, "abcp", "0x61626370", nil},
 		{"我们", "\\d*", "p", 1, 2, "我p们", "0xC3A670CB86E28098C3A4C2BBC2AC", nil},
+		// Unsigned occurrence larger than MaxInt64, issue 72038
+		{"abc abd", "ab.", "cc", int64(1), uint64(9223372036854775808), "abc abd", "0x61626320616264", nil},
+		{"abc abd", "ab.", "cc", int64(1), uint64(18446744073709551615), "abc abd", "0x61626320616264", nil},
 		// Some nullable input tests
 		{"", "^$", "a", nil, int64(1), nil, nil, nil},
 		{nil, "^$", "a", nil, nil, nil, nil, nil},
@@ -1223,6 +1264,13 @@ func TestRegexpReplaceVec(t *testing.T) {
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpReplaceCases)
+
+	result := vecEvalRegexpWithUnsignedOccurrence(t, ast.RegexpReplace, types.ETString,
+		getStringConstant("abc abd", false), getStringConstant("ab.", false), getStringConstant("cc", false), getIntConstant(1))
+	for i := range result.Rows() {
+		require.False(t, result.IsNull(i))
+		require.Equal(t, "abc abd", result.GetString(i))
+	}
 }
 
 func TestRegexpCache(t *testing.T) {
