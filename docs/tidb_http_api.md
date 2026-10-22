@@ -55,6 +55,8 @@ listener entirely. Normal-mode HTTP API availability is unchanged.
 
 3. Get the metadata of all regions
 
+    If PD cannot find a requested region, TiDB returns an error containing its decimal ID, such as `region not found for regionID 123`.
+
     ```shell
     curl http://{TiDBIP}:10080/regions/meta
     ```
