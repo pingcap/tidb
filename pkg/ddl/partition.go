@@ -3318,7 +3318,17 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		return ver, errors.Trace(err)
 	case model.StatePublic:
-		return w.finishReorganizePartition(jobCtx, job, tblInfo, args, partInfo)
+		err = w.finishReorganizePartition(jobCtx, job, tblInfo, args, partInfo)
+		if err != nil {
+			return ver, err
+		}
+		job.SchemaState = model.StateNone
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
+		return ver, errors.Trace(err)
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 		return ver, errors.Trace(err)
@@ -3672,9 +3682,10 @@ func (w *worker) retireReorganizePartitionIndexes(jobCtx *jobContext, job *model
 }
 
 // finishReorganizePartition removes obsolete metadata, preserves cleanup IDs,
-// and notifies statistics before completing the job.
-func (w *worker) finishReorganizePartition(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, args *model.TablePartitionArgs, partInfo *model.PartitionInfo) (ver int64, err error) {
+// and notifies statistics. The caller publishes StateNone and marks the job done.
+func (w *worker) finishReorganizePartition(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, args *model.TablePartitionArgs, partInfo *model.PartitionInfo) error {
 	metaMut := jobCtx.metaMut
+	var err error
 	// If we went directly from StateWriteReorganization to StatePublic, client A
 	// could still read the old partitions while client B writes only to the new
 	// partitions. A would miss B's updates. StateDeleteReorganization makes B
@@ -3699,7 +3710,7 @@ func (w *worker) finishReorganizePartition(jobCtx *jobContext, job *model.Job, t
 	failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
 		if val.(bool) {
 			job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
-			failpoint.Return(ver, errors.New("Injected error by reorgPartFail4"))
+			failpoint.Return(errors.New("Injected error by reorgPartFail4"))
 		}
 	})
 	var oldTblID int64
@@ -3709,46 +3720,40 @@ func (w *worker) finishReorganizePartition(jobCtx *jobContext, job *model.Job, t
 		oldTblID = tblInfo.ID
 		physicalTableIDs, err = recreateTableForPartitioningChange(metaMut, job, tblInfo, partInfo.NewTableID, physicalTableIDs)
 		if err != nil {
-			return ver, err
+			return err
 		}
 	}
 
 	// We need to update the Placement rule bundles with the final partitions.
 	_, err = alterTablePartitionBundles(metaMut, tblInfo, nil)
 	if err != nil {
-		return ver, err
+		return err
 	}
 
 	failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
 		if val.(bool) {
 			job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
-			failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
+			failpoint.Return(errors.New("Injected error by reorgPartFail5"))
 		}
 	})
 	failpoint.Inject("updateVersionAndTableInfoErrInStateDeleteReorganization", func() {
-		failpoint.Return(ver, errors.New("Injected error in StateDeleteReorganization"))
+		failpoint.Return(errors.New("Injected error in StateDeleteReorganization"))
 	})
 	args.OldPhysicalTblIDs = physicalTableIDs
 	args.NewPartitionIDs = newPartIDs
-	job.SchemaState = model.StateNone
-	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
-	}
 	// Include the old table ID so statistics can reuse it when partitioning changes.
 	event, err := newStatsDDLEventForJob(job.Type, oldTblID, tblInfo, addedPartsForStats, droppedPartsForStats)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return errors.Trace(err)
 	}
 	err = asyncNotifyEvent(jobCtx, event, job, noSubJob, w.sess)
 	if err != nil {
-		return ver, errors.Trace(err)
+		return errors.Trace(err)
 	}
 
-	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 	// A background job will be created to delete old partition data.
 	job.FillFinishedArgs(args)
-	return ver, errors.Trace(err)
+	return nil
 }
 
 // removeReplacedPartitionIndexes removes retired indexes from the table metadata
