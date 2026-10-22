@@ -23,12 +23,8 @@ go_test(
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/testutil",
         "//pkg/errno",
-<<<<<<< HEAD
-=======
         "//pkg/ingestor/errdef",
         "//pkg/ingestor/ingestcli",
-        "//pkg/ingestor/ingestctrl",
->>>>>>> 0766a90d525 (ddl: retry NextGen add-index on TiKV disk full (#72154))
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend/local",

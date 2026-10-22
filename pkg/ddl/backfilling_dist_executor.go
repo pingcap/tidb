@@ -26,12 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-=======
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
->>>>>>> 0766a90d525 (ddl: retry NextGen add-index on TiKV disk full (#72154))
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -268,18 +264,11 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
-<<<<<<< HEAD
-	return common.IsRetryableError(err) || isRetryableError(err)
-=======
-	if isIndexInfoNotFoundErr(err) {
-		return false
-	}
 	// Retry in DXF so NextGen can continue after storage capacity is expanded.
 	if kerneltype.IsNextGen() && errdef.IsKVDiskFullError(err) {
 		return true
 	}
-	return common.IsRetryableError(err) || isRetryableError(err, true)
->>>>>>> 0766a90d525 (ddl: retry NextGen add-index on TiKV disk full (#72154))
+	return common.IsRetryableError(err) || isRetryableError(err)
 }
 
 func (s *backfillDistExecutor) Close() {

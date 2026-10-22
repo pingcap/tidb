@@ -40,12 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
-	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
->>>>>>> 0766a90d525 (ddl: retry NextGen add-index on TiKV disk full (#72154))
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -254,7 +250,10 @@ func TestAddIndexDistRetryOnKVDiskFull(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists addindex_disk_full_retry")
 	tk.MustExec("use addindex_disk_full_retry")
-	realtikvtest.SetupNextGenGlobalSort(t, tk)
+	tk.MustExec(fmt.Sprintf("set global tidb_cloud_storage_uri = '%s'", realtikvtest.GetNextGenObjStoreURI("addindex/"+t.Name())))
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_cloud_storage_uri = ''")
+	})
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
