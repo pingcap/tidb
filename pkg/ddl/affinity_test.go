@@ -154,6 +154,7 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 			cli.failDelete.Store(scenario == "delete fails")
 			t.Cleanup(func() { cli.failDelete.Store(false) })
 			var cancelOnce atomic.Bool
+			cancelDone := make(chan error, 1)
 			var replacementID atomic.Int64
 			const updateHook = "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"
 			if scenario == "metadata not committed" {
@@ -169,15 +170,35 @@ func TestAffinityTruncatePartitionFailure(t *testing.T) {
 			testfailpoint.EnableCall(t, beforeStep, func(job *model.Job) {
 				if job.TableID == beforeMeta.ID && job.Type == model.ActionTruncateTablePartition && job.SchemaState == model.StateWriteOnly && cancelOnce.CompareAndSwap(false, true) {
 					args, err := model.GetTruncateTableArgs(job)
-					require.NoError(t, err)
+					if err != nil {
+						cancelDone <- err
+						return
+					}
 					replacementID.Store(args.NewPartitionIDs[0])
 					persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
-					require.NoError(t, err)
-					require.Equal(t, scenario == "metadata not committed", len(persisted.Partition.NewPartitionIDs) == 0)
-					tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID)).Check(testkit.Rows(fmt.Sprintf("%d successful", job.ID)))
+					if err != nil {
+						cancelDone <- err
+						return
+					}
+					if wantEmpty := scenario == "metadata not committed"; wantEmpty != (len(persisted.Partition.NewPartitionIDs) == 0) {
+						cancelDone <- fmt.Errorf("unexpected persisted replacement partition state")
+						return
+					}
+					errs, cancelErr := ddl.CancelJobs(context.Background(), tkCancel.Session(), []int64{job.ID})
+					if len(errs) > 0 && errs[0] != nil {
+						cancelDone <- errs[0]
+						return
+					}
+					cancelDone <- cancelErr
 				}
 			})
 			require.Error(t, tk.ExecToErr("alter table pc truncate partition p0"))
+			select {
+			case cancelErr := <-cancelDone:
+				require.NoError(t, cancelErr)
+			default:
+				require.FailNow(t, "expected partition truncate cancellation")
+			}
 			require.True(t, cancelOnce.Load())
 			require.NotZero(t, replacementID.Load())
 			var afterCancel table.Table
