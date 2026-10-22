@@ -401,6 +401,27 @@ func (is *infoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]
 	return tables, nil
 }
 
+// iterSchemaTableInfos makes one streaming pass over all table infos in the schema.
+func (is *infoSchema) iterSchemaTableInfos(
+	ctx stdctx.Context,
+	schema ast.CIStr,
+	visit func(*model.TableInfo) error,
+) error {
+	schemaTables, ok := is.schemaMap[schema.L]
+	if !ok {
+		return nil
+	}
+	for _, tbl := range schemaTables.tables {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := visit(tbl.Meta()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
 func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableNameInfo, error) {
 	schemaTables, ok := is.schemaMap[schema.L]
@@ -1359,16 +1380,4 @@ func getTableInfo(tbl table.Table) *model.TableInfo {
 		return nil
 	}
 	return tbl.Meta()
-}
-
-func getTableInfoList(tables []table.Table) []*model.TableInfo {
-	if tables == nil {
-		return nil
-	}
-
-	infoLost := make([]*model.TableInfo, 0, len(tables))
-	for _, tbl := range tables {
-		infoLost = append(infoLost, tbl.Meta())
-	}
-	return infoLost
 }
