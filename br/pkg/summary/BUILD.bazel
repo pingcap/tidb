@@ -28,7 +28,7 @@ go_test(
     ],
     embed = [":summary"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 8,
     deps = [
         "//br/pkg/errors",
         "//pkg/testkit/testsetup",

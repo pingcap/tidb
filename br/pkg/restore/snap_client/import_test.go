@@ -254,6 +254,8 @@ type memoryPressureImporterClient struct {
 	storeID  atomic.Uint64
 }
 
+// DownloadSST rejects exactly one concurrent request with an explicit memory
+// guard response, then delegates to the successful fake to exercise retry retention.
 func (client *memoryPressureImporterClient) DownloadSST(
 	ctx context.Context,
 	storeID uint64,

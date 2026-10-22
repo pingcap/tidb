@@ -23,6 +23,8 @@ import (
 
 var diagnosticURLStart = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://`)
 
+// redactDiagnosticErrorText preserves context before the first URL and suppresses
+// the remainder when its boundaries cannot be distinguished from credentials.
 func redactDiagnosticErrorText(text string) string {
 	start := diagnosticURLStart.FindStringIndex(text)
 	if start == nil {
@@ -35,6 +37,12 @@ func redactDiagnosticErrorText(text string) string {
 	// exposing credentials after a guessed boundary.
 	if strings.HasSuffix(rawURL, "...") || strings.ContainsAny(rawURL, " \t\r\n\"'`") ||
 		diagnosticURLStart.MatchString(rawURL[start[1]-start[0]:]) {
+		return text[:start[0]] + "(storage URL and following text redacted)"
+	}
+	// An authority delimiter before the last '@' can be an unescaped part of
+	// a password. Parsing would treat its prefix as a host and retain it.
+	if at := strings.LastIndex(rawURL, "@"); at >= 0 &&
+		strings.ContainsAny(rawURL[start[1]-start[0]:at], "/?#") {
 		return text[:start[0]] + "(storage URL and following text redacted)"
 	}
 	redactedURL := objstore.RedactURL(rawURL)

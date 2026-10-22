@@ -778,6 +778,9 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 	return req, *sstMeta, nil
 }
 
+// batchDownloadSST merges files with matching rewrite rules per column family
+// and downloads each group to all region peers. Each attempt is observed before
+// peer retries or cancellation can obscure its error.
 func (importer *SnapFileImporter) batchDownloadSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -905,6 +908,9 @@ func (importer *SnapFileImporter) batchDownloadSST(
 	return maps.Values(resultMetasMap), nil
 }
 
+// batchDownloadNewestVersionSST downloads the latest visible MVCC versions to
+// all region peers, using write CF timestamps to determine visibility. Groups
+// without write CF files are skipped, and failed attempts remain diagnostic samples.
 func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -1035,6 +1041,9 @@ func (importer *SnapFileImporter) batchDownloadNewestVersionSST(
 	return finalResultMetas, nil
 }
 
+// downloadSST downloads overlapping files to the region peers, or only the leader
+// for next-generation restore. It retains each attempt's error while leaving
+// peer retry decisions and returned errors to the existing download flow.
 func (importer *SnapFileImporter) downloadSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -1136,6 +1145,9 @@ func (importer *SnapFileImporter) downloadSST(
 	return maps.Values(resultMetasMap), nil
 }
 
+// downloadRawKVSST clips files to the requested raw key range and downloads them
+// to every region peer. Response errors are observed before sibling cancellation
+// can replace the error returned by the concurrent downloads.
 func (importer *SnapFileImporter) downloadRawKVSST(
 	ctx context.Context,
 	regionInfo *split.RegionInfo,
@@ -1220,6 +1232,8 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 	return downloadMetas, nil
 }
 
+// observeDownloadError retains both transport and TiKV response errors without
+// changing either value used by the caller's retry and failure handling.
 func observeDownloadError(storeID uint64, resp *import_sstpb.DownloadResponse, err error) {
 	summary.ObserveError("tikv", "download_sst", storeID, err)
 	if resp.GetError() != nil {
@@ -1228,6 +1242,9 @@ func observeDownloadError(storeID uint64, resp *import_sstpb.DownloadResponse, e
 	}
 }
 
+// ingest submits downloaded SSTs and follows leader changes when supported.
+// Other TiKV response errors are retained with their diagnostic category while
+// preserving the existing error returned to the caller.
 func (importer *SnapFileImporter) ingest(
 	ctx context.Context,
 	info *split.RegionInfo,
@@ -1311,6 +1328,8 @@ func (importer *SnapFileImporter) ingest(
 	}
 }
 
+// ingestSSTs sends one MultiIngest request to the current region leader and
+// retains any transport error before returning it to the caller.
 func (importer *SnapFileImporter) ingestSSTs(
 	ctx context.Context,
 	sstMetas []*import_sstpb.SSTMeta,

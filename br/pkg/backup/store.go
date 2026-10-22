@@ -201,6 +201,9 @@ func doSendBackup(
 	}
 }
 
+// startBackup sends concurrent requests to one store and forwards its responses.
+// Response errors are retained before cancellation can prevent their delivery;
+// request errors are retained before the existing retry policy handles them.
 func startBackup(
 	pctx context.Context,
 	storeID uint64,
@@ -297,6 +300,8 @@ func startBackup(
 	}
 }
 
+// observeBackupError retains TiKV response errors independently of the backup
+// result. Lock conflicts are excluded because normal lock resolution handles them.
 func observeBackupError(storeID uint64, errPb *backuppb.Error) {
 	if errPb == nil || errPb.GetKvError().GetLocked() != nil {
 		return

@@ -122,6 +122,8 @@ func Classify(err error) Classification {
 	return result
 }
 
+// categoryForCode maps known BR error identities without relying on their text.
+// Unmapped codes remain unknown so broad codes do not imply a specific cause.
 func categoryForCode(err *errors.Error) Category {
 	switch err.ID() {
 	case ErrKVDiskFull.ID():
@@ -146,6 +148,8 @@ func categoryForCode(err *errors.Error) Category {
 	}
 }
 
+// categoryForType recognizes standard and gRPC errors without inspecting text.
+// Generic resource exhaustion does not establish TiKV memory pressure.
 func categoryForType(err error) Category {
 	switch err {
 	case context.Canceled:
@@ -174,6 +178,8 @@ func categoryForType(err error) Category {
 	return CategoryUnknown
 }
 
+// categoryPriority favors explicit failures over cancellation and deadlines,
+// while preserving unknown failures when no more specific cause is available.
 func categoryPriority(category Category) int {
 	switch category {
 	case CategoryTiKVMemoryPressure:

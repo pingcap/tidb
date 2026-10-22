@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/stretchr/testify/require"
@@ -28,8 +29,10 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// retainDiagnosticText lets tests inspect samples through the sanitizer callback.
 func retainDiagnosticText(text string) string { return text }
 
+// decodeFailureFields exercises JSON log encoding to check the emitted diagnostics.
 func decodeFailureFields(t *testing.T, fields []zap.Field) map[string]any {
 	t.Helper()
 	encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
@@ -41,6 +44,7 @@ func decodeFailureFields(t *testing.T, fields []zap.Field) map[string]any {
 	return result
 }
 
+// memoryPressureError models the TiKV download failure that must survive cancellation.
 func memoryPressureError() error {
 	return fmt.Errorf("resource is not enough Memory usage too high, usage: 4111917056 bytes, mem limit 4294967296 bytes: %w",
 		berrors.ErrKVDownloadFailed)
@@ -99,6 +103,65 @@ func TestErrorObservationBoundsAndReset(t *testing.T) {
 	report = decodeFailureFields(t, r.fields(context.DeadlineExceeded, retainDiagnosticText))
 	require.NotContains(t, report, "observed-errors")
 	require.NotContains(t, report, "omitted-error-observations")
+}
+
+func TestErrorObservationSampleTruncation(t *testing.T) {
+	for _, character := range []string{"é", "界", "🙂"} {
+		t.Run(character, func(t *testing.T) {
+			for _, extra := range []string{"", "tail"} {
+				t.Run(fmt.Sprintf("extra=%q", extra), func(t *testing.T) {
+					prefix := strings.Repeat("x", maxErrorSampleLength-len(character))
+					sample := prefix + character + extra
+					want := prefix + character
+					if extra != "" {
+						// Make the byte limit fall within the final character.
+						prefix += "x"
+						sample = prefix + character + extra
+						want = prefix + "..."
+					}
+					r := &errorRecorder{}
+					r.observe("tikv", "backup", 1, fmt.Errorf("%s", sample))
+					for _, observation := range r.observations {
+						require.True(t, utf8.ValidString(observation.Sample))
+						require.Equal(t, want, observation.Sample)
+					}
+					report := decodeFailureFields(t, r.fields(context.Canceled, retainDiagnosticText))
+					observations := report["observed-errors"].([]any)
+					require.Equal(t, want, observations[0].(map[string]any)["sample-error"])
+				})
+			}
+		})
+	}
+}
+
+func TestErrorObservationSanitizerExpansion(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		redacted string
+		want     string
+	}{
+		{
+			name:     "within stored sample bound",
+			redacted: strings.Repeat("x", maxErrorSampleLength+3),
+			want:     strings.Repeat("x", maxErrorSampleLength+3),
+		},
+		{
+			name:     "expands across rune boundary",
+			redacted: strings.Repeat("x", maxErrorSampleLength-1) + "界tail",
+			want:     strings.Repeat("x", maxErrorSampleLength-1) + "...",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := &errorRecorder{}
+			r.observe("tikv", "backup", 1, fmt.Errorf("short sample"))
+			report := decodeFailureFields(t, r.fields(context.Canceled, func(string) string { return test.redacted }))
+			observations := report["observed-errors"].([]any)
+			require.Equal(t, test.want, observations[0].(map[string]any)["sample-error"])
+			for _, observation := range r.observations {
+				require.Equal(t, "short sample", observation.Sample)
+			}
+		})
+	}
 }
 
 func TestConcurrentErrorObservations(t *testing.T) {

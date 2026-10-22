@@ -95,8 +95,38 @@ func TestRedactDiagnosticErrorText(t *testing.T) {
 			want: "s3://bucket/file",
 		},
 		{
+			name: "percent encoded userinfo delimiters",
+			text: "s3://AKID:1234%2F5678%3F9%23@bucket/file",
+			want: "s3://bucket/file",
+		},
+		{
 			name: "truncated userinfo",
 			text: "s3://AKID...",
+			want: "(storage URL and following text redacted)",
+		},
+		{
+			name: "userinfo with unescaped slash after numeric prefix",
+			text: "download failed: s3://AKID:1234/5678@bucket/file",
+			want: "download failed: (storage URL and following text redacted)",
+		},
+		{
+			name: "userinfo with unescaped slash after empty prefix",
+			text: "s3://AKID:/5678@bucket/file",
+			want: "(storage URL and following text redacted)",
+		},
+		{
+			name: "userinfo with unescaped question mark",
+			text: "s3://AKID:1234?5678@bucket/file",
+			want: "(storage URL and following text redacted)",
+		},
+		{
+			name: "userinfo with unescaped fragment",
+			text: "s3://AKID:1234#5678@bucket/file",
+			want: "(storage URL and following text redacted)",
+		},
+		{
+			name: "https userinfo with unescaped question mark",
+			text: "https://AKID:1234?5678@bucket/file",
 			want: "(storage URL and following text redacted)",
 		},
 		{
@@ -133,6 +163,11 @@ func TestFailureSummaryRedactsStorageCredentials(t *testing.T) {
 		"s3://bucket/file?endpoint=https%3A%2F%2FAKID%3ASKEY%40endpoint",
 		"s3://bucket/file?endpoint=https%253A%252F%252FAKID%253ASKEY%2540endpoint",
 		"s3://%41%4B%49%44:%53%4B%45%59@bucket/file",
+		"s3://AKID:1234/5678@bucket/file",
+		"s3://AKID:/5678@bucket/file",
+		"s3://AKID:1234?5678@bucket/file",
+		"s3://AKID:1234#5678@bucket/file",
+		"https://AKID:1234?5678@bucket/file",
 		"s3://AKID" + strings.Repeat("s", 5000) + "@bucket/file",
 		"https://host/path#access_token=SKEY",
 		"s3://bucket/file?access-key=AKID#secret-access-key=SKEY",
@@ -149,7 +184,7 @@ func TestFailureSummaryRedactsStorageCredentials(t *testing.T) {
 		require.NoError(t, encodeErr)
 		encoded := buffer.String()
 		buffer.Free()
-		for _, secret := range []string{"AKID", "USERPASS", "SKEY", "TOKEN", "SAS", "LONG_SECRET_", "%41%4B%49%44", "%53%4B%45%59"} {
+		for _, secret := range []string{"AKID", "USERPASS", "SKEY", "TOKEN", "SAS", "LONG_SECRET_", "%41%4B%49%44", "%53%4B%45%59", "5678"} {
 			require.NotContains(t, encoded, secret)
 		}
 		var report map[string]any

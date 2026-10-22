@@ -17,6 +17,7 @@ package summary
 import (
 	"sort"
 	"sync"
+	"unicode/utf8"
 
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
@@ -52,6 +53,7 @@ type errorRecorder struct {
 
 var observedErrors = &errorRecorder{}
 
+// reset clears diagnostic state between tasks without racing with observations.
 func (r *errorRecorder) reset() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -65,6 +67,8 @@ func ObserveError(component, operation string, storeID uint64, err error) {
 	observedErrors.observe(component, operation, storeID, err)
 }
 
+// observe counts matching failures and retains one bounded sample per diagnostic
+// key. Cancellations do not displace the failures that caused sibling tasks to stop.
 func (r *errorRecorder) observe(component, operation string, storeID uint64, err error) {
 	if err == nil {
 		return
@@ -90,10 +94,6 @@ func (r *errorRecorder) observe(component, operation string, storeID uint64, err
 	if r.observations == nil {
 		r.observations = make(map[errorObservationKey]errorObservation)
 	}
-	sample := err.Error()
-	if len(sample) > maxErrorSampleLength {
-		sample = sample[:maxErrorSampleLength] + "..."
-	}
 	r.observations[key] = errorObservation{
 		Category:  classification.Category,
 		Component: component,
@@ -101,8 +101,21 @@ func (r *errorRecorder) observe(component, operation string, storeID uint64, err
 		StoreID:   storeID,
 		Code:      classification.Code,
 		Count:     1,
-		Sample:    sample,
+		Sample:    truncateErrorSample(err.Error()),
 	}
+}
+
+// truncateErrorSample bounds the sample prefix in bytes without splitting a
+// UTF-8 rune, then appends an omission marker when truncation is needed.
+func truncateErrorSample(sample string) string {
+	if len(sample) <= maxErrorSampleLength {
+		return sample
+	}
+	end := maxErrorSampleLength
+	for end > 0 && !utf8.RuneStart(sample[end]) {
+		end--
+	}
+	return sample[:end] + "..."
 }
 
 // FailureFields describes the final error and, separately, errors observed
@@ -113,6 +126,7 @@ func FailureFields(err error, redactText func(string) string) []zap.Field {
 	return observedErrors.fields(err, redactText)
 }
 
+// redactDiagnosticText suppresses details unless the caller supplies a sanitizer.
 func redactDiagnosticText(text string, redactText func(string) string) string {
 	if redactText == nil {
 		return "(error details redacted)"
@@ -120,6 +134,8 @@ func redactDiagnosticText(text string, redactText func(string) string) string {
 	return redactText(text)
 }
 
+// fields snapshots observations under the lock, then sanitizes copies so the
+// callback cannot block recording or alter retained diagnostic samples.
 func (r *errorRecorder) fields(err error, redactText func(string) string) []zap.Field {
 	classification := berrors.Classify(err)
 	fields := []zap.Field{
@@ -142,8 +158,10 @@ func (r *errorRecorder) fields(err error, redactText func(string) string) []zap.
 	r.mu.Unlock()
 	for i := range observations {
 		sample := redactDiagnosticText(observations[i].Sample, redactText)
-		if len(sample) > maxErrorSampleLength {
-			sample = sample[:maxErrorSampleLength] + "..."
+		// Stored samples may already include the omission marker; only bound
+		// sanitizer output again if it exceeds that full stored sample size.
+		if len(sample) > maxErrorSampleLength+len("...") {
+			sample = truncateErrorSample(sample)
 		}
 		observations[i].Sample = sample
 	}
