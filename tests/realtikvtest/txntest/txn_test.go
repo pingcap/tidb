@@ -25,18 +25,23 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnlock"
 )
 
 func TestInTxnPSProtoPointGet(t *testing.T) {
@@ -240,6 +245,137 @@ func TestDuplicateErrorMessage(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 1)")
 	tk2.MustExec("insert into t4 values (1, 2)")
 	tk.MustContainErrMsg("update t3 set c = c + 1 where v = 1", "Duplicate entry '1' for key 't3.i1'")
+}
+
+type observeInsertLockClient struct {
+	tikv.Client
+	onResponse func(*tikvrpc.Request, *tikvrpc.Response, error) (*tikvrpc.Response, error)
+}
+
+func (c *observeInsertLockClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	resp, err := c.Client.SendRequest(ctx, addr, req, timeout)
+	return c.onResponse(req, resp, err)
+}
+
+func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table insert_duplicate_locks (id int primary key, u int unique, v int)")
+	tk.MustExec("set tidb_enable_async_commit = OFF")
+	tk.MustExec("set tidb_enable_1pc = OFF")
+	t.Log("TiDB version:", tk.MustQuery("select tidb_version()").Rows())
+
+	// Commit only the primary and wait until the secondary commit goroutine has skipped its work.
+	testfailpoint.Enable(t, "tikvclient/twoPCRequestBatchSizeLimit", "return")
+	testfailpoint.Enable(t, "tikvclient/beforeCommitSecondaries", `return("skip")`)
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into insert_duplicate_locks values (1, 1, 10), (2, 2, 20), (3, 3, 30)")
+	txn, err := tk.Session().Txn(false)
+	require.NoError(t, err)
+	startTS := txn.StartTS()
+	tk.MustExec("commit")
+	tk.Session().GetCommitWaitGroup().Wait()
+	require.NoError(t, failpoint.Disable("tikvclient/beforeCommitSecondaries"))
+	require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
+
+	tikvStore := store.(tikv.Storage)
+	tableID := external.GetTableByName(t, tk, "test", "insert_duplicate_locks").Meta().ID
+	tableStart := kv.Key(tablecodec.EncodeTablePrefix(tableID))
+	tableEnd := tableStart.PrefixNext()
+	scanLocks := func() (int, error) {
+		resolver := tikv.NewRegionLockResolver("insert-duplicate-locks", tikvStore)
+		bo := tikv.NewBackoffer(context.Background(), 5000)
+		count := 0
+		for key := []byte(tableStart); ; {
+			locks, loc, err := resolver.ScanLocksInOneRegion(bo, key, tableEnd, startTS, 16)
+			if err != nil {
+				return 0, err
+			}
+			count += len(locks)
+			if len(loc.EndKey) == 0 || bytes.Compare(loc.EndKey, tableEnd) >= 0 {
+				return count, nil
+			}
+			key = loc.EndKey
+		}
+	}
+	lockCount, err := scanLocks()
+	require.NoError(t, err)
+	require.Equal(t, 5, lockCount, "three row keys and three unique-index keys leave five secondary locks")
+
+	// Observe actual responses and cleanup RPCs; do not inject locks or rewrite requests.
+	var mu sync.Mutex
+	duplicateBatchGetLocks, duplicateResolveKeys := false, false
+	resolveRequests := 0
+	var resolveErrors []string
+	onRPCFinished := func(req *tikvrpc.Request, resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		if req.Type == tikvrpc.CmdResolveLock && req.ResolveLock().GetStartVersion() == startTS {
+			resolveRequests++
+			seen := make(map[string]struct{})
+			for _, key := range req.ResolveLock().GetKeys() {
+				if _, ok := seen[string(key)]; ok {
+					duplicateResolveKeys = true
+				}
+				seen[string(key)] = struct{}{}
+			}
+			if rpcErr != nil {
+				resolveErrors = append(resolveErrors, rpcErr.Error())
+			} else if resp == nil {
+				resolveErrors = append(resolveErrors, "missing ResolveLock response")
+			} else if body, ok := resp.Resp.(*kvrpcpb.ResolveLockResponse); ok && body.GetError() != nil {
+				resolveErrors = append(resolveErrors, body.GetError().String())
+			}
+		}
+		if resp != nil {
+			if body, ok := resp.Resp.(*kvrpcpb.BatchGetResponse); ok {
+				seen := make(map[string]struct{})
+				for _, pair := range body.GetPairs() {
+					lock := pair.GetError().GetLocked()
+					if lock == nil || lock.GetLockVersion() != startTS {
+						continue
+					}
+					if _, ok := seen[string(lock.GetKey())]; ok {
+						duplicateBatchGetLocks = true
+					}
+					seen[string(lock.GetKey())] = struct{}{}
+				}
+			}
+		}
+		return resp, rpcErr
+	}
+	originalClient := tikvStore.GetTiKVClient()
+	tikvStore.SetTiKVClient(&observeInsertLockClient{Client: originalClient, onResponse: onRPCFinished})
+	t.Cleanup(func() { tikvStore.SetTiKVClient(originalClient) })
+
+	// Repeated unique values make INSERT's duplicate checks read the same locked index keys twice.
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set tidb_enable_async_commit = OFF")
+	tk2.MustExec("set tidb_enable_1pc = OFF")
+	_, insertErr := tk2.Exec(`insert into insert_duplicate_locks values
+		(4, 2, 100), (5, 3, 100), (6, 2, 100), (7, 3, 100)
+		on duplicate key update v = v + 1`)
+	require.NoError(t, insertErr)
+
+	// Check SQL results and the physical locks, including keys not read by the duplicate checks.
+	tk2.MustQuery("select * from insert_duplicate_locks order by id").Check(testkit.Rows("1 1 10", "2 2 22", "3 3 32"))
+	lockResolver := txnlock.LockResolverProbe{LockResolver: tikvStore.GetLockResolver()}
+	require.Eventually(t, func() bool {
+		count, err := scanLocks()
+		return err == nil && count == 0 && lockResolver.AsyncResolveTaskCount() == 0
+	}, 10*time.Second, 10*time.Millisecond)
+	tk2.MustExec("admin check table insert_duplicate_locks")
+	mu.Lock()
+	t.Logf("duplicate BatchGet locks: %v; duplicate ResolveLock keys: %v; cleanup errors: %v",
+		duplicateBatchGetLocks, duplicateResolveKeys, resolveErrors)
+	observedDuplicateLocks, completedResolveRequests := duplicateBatchGetLocks, resolveRequests
+	cleanupErrors := append([]string(nil), resolveErrors...)
+	mu.Unlock()
+	require.True(t, observedDuplicateLocks, "the SQL statement must encounter duplicate locks from the server")
+	require.Positive(t, completedResolveRequests, "the SQL statement must trigger physical lock resolution")
+	require.Empty(t, cleanupErrors, "background cleanup errors must not be hidden by a successful INSERT")
 }
 
 func TestAssertionWhenPessimisticLockLost(t *testing.T) {
