@@ -94,6 +94,7 @@ pub mod enforce;
 pub mod explain;
 pub mod expression_rewriter;
 pub mod final_mode_agg;
+pub mod fk_plan;
 pub mod find_best_task;
 pub mod fix_control;
 pub mod fulltext;
