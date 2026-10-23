@@ -4945,6 +4945,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		tblName = tn.Name
 	}
 
+	var samplePartitions []table.PartitionedTable
 	if tableInfo.GetPartitionInfo() != nil {
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
@@ -4997,6 +4998,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			pt = tables.NewPartitionTableWithGivenSets(pt, pids)
 		}
 		b.partitionedTable = append(b.partitionedTable, pt)
+		// TABLESAMPLE on this data source may only sample the partitions of this
+		// data source. b.partitionedTable is shared with the whole statement (and
+		// with sibling expressions), so passing it here would let a datasource
+		// sample partitions registered by other tables.
+		samplePartitions = []table.PartitionedTable{pt}
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
@@ -5228,7 +5234,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	// we only mark it for the AllPossibleAccessPaths(since the element inside is shared by PossibleAccessPaths),
 	// and the following ds alternative will clone/inherit this mark from DS copying.
 	setPreferredStoreType(ds, b.TableHints())
-	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
+	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, samplePartitions)
 	b.isSampling = ds.SampleInfo != nil
 
 	for i, colExpr := range ds.Schema().Columns {
