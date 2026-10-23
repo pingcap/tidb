@@ -59,5 +59,6 @@ go_test(
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
