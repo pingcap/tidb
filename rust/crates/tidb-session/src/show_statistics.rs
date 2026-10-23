@@ -158,136 +158,19 @@ impl Session {
     /// `information_schema.ANALYZE_STATUS` answer with: the recorded analyze
     /// jobs the session may see, with a running job's progress estimate.
     pub(crate) fn analyze_status_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let jobs = match self.analyze_status.clone() {
-            Some(provider) => provider
-                .load_analyze_status(&self.active_resource_group)
-                .map_err(DriverError::unsupported)?,
-            None => Vec::new(),
-        };
-        let session_zone = self.session_time_zone();
-        let display_time = |mut value: tidb_datatype::Time| -> Result<Datum, DriverError> {
-            value
-                .convert_time_zone(&chrono::Utc, &session_zone)
-                .map_err(|error| DriverError::unsupported(error.to_string()))?;
-            tidb_datatype::Time::new(value.core_time(), tidb_datatype::TimeType::DateTime, 0)
-                .map(Datum::Time)
-                .map_err(|error| DriverError::unsupported(error.to_string()))
-        };
-        let mut result_rows = Vec::new();
-        for job in jobs {
-            // Go asks for `mysql.AllPrivMask`: any effective static table
-            // privilege makes the row visible.
-            if !self.has_any_scoped_privilege(
-                &job.table_schema,
-                &job.table_name,
-                privilege::all_privs_mask(),
-            ) {
-                continue;
-            }
-            let start_time = job
-                .start_time
-                .map(display_time)
-                .transpose()?
-                .unwrap_or(Datum::Null);
-            let end_time = job
-                .end_time
-                .map(display_time)
-                .transpose()?
-                .unwrap_or(Datum::Null);
-            let mut remaining = Datum::Null;
-            let mut progress = Datum::Null;
-            let mut estimated = Datum::Null;
-            if job.state == tidb_stats::ANALYZE_RUNNING
-                && !job.job_info.starts_with("merge global stats")
-            {
-                let Some(start) = job.start_time else {
-                    return Err(DriverError::unsupported("invalid start time"));
-                };
-                let table_count = self.with_catalog_mut(|catalog| {
-                    let Some(tidb_executor::TableEntry::Kv(table)) =
-                        catalog.table_in(&job.table_schema, &job.table_name)
-                    else {
-                        return Ok(None);
-                    };
-                    let physical_id = if job.partition_name.is_empty() {
-                        table.table_id
-                    } else {
-                        table
-                            .partition()
-                            .and_then(|partition| {
-                                partition.definitions.iter().find(|definition| {
-                                    definition.name.go_lower_eq(&job.partition_name)
-                                })
-                            })
-                            .map_or(0, |definition| definition.id)
-                    };
-                    Ok(Some((
-                        physical_id,
-                        catalog
-                            .table_statistics(physical_id)
-                            .map_or(0, |statistics| statistics.row_count),
-                    )))
-                })?;
-                if let Some((physical_id, mut total_rows)) = table_count {
-                    if (physical_id > 0 && total_rows == 0) || job.processed_rows > total_rows {
-                        total_rows = self.analyze_status.as_ref().map_or(0, |provider| {
-                            provider.approximate_table_count(
-                                &self.active_resource_group,
-                                physical_id,
-                                &job.table_schema,
-                                &job.table_name,
-                                &job.partition_name,
-                            )
-                        });
-                    }
-                    let start = start
-                        .core_time()
-                        .to_datetime(&chrono::Utc)
-                        .map_err(|error| DriverError::unsupported(error.to_string()))?;
-                    let elapsed_seconds = chrono::Utc::now()
-                        .signed_duration_since(start)
-                        .num_nanoseconds()
-                        .map_or(0.0, |nanoseconds| nanoseconds as f64 / 1_000_000_000.0);
-                    let (remaining_seconds, progress_ratio) =
-                        tidb_executor::show_stats::analyze_progress(
-                            total_rows,
-                            job.processed_rows,
-                            elapsed_seconds,
-                        );
-                    remaining = Datum::new_string(
-                        tidb_executor::show_stats::format_analyze_remaining_seconds(
-                            remaining_seconds,
-                        )
-                        .into_bytes(),
-                    );
-                    progress = Datum::Real(progress_ratio);
-                    estimated = Datum::Int(total_rows);
-                } else {
-                    // Go logs the table-lookup failure but still projects the
-                    // helper's named zero return values for these two fields.
-                    progress = Datum::Real(0.0);
-                    estimated = Datum::Int(0);
-                }
-            }
-            result_rows.push(vec![
-                Datum::new_string(job.table_schema.into_bytes()),
-                Datum::new_string(job.table_name.into_bytes()),
-                Datum::new_string(job.partition_name.into_bytes()),
-                Datum::new_string(job.job_info.into_bytes()),
-                Datum::Int(job.processed_rows),
-                start_time,
-                end_time,
-                Datum::new_string(job.state.into_bytes()),
-                job.fail_reason
-                    .map_or(Datum::Null, |value| Datum::new_string(value.into_bytes())),
-                Datum::new_string(job.instance.into_bytes()),
-                job.process_id.map_or(Datum::Null, Datum::UInt),
-                remaining,
-                progress,
-                estimated,
-            ]);
-        }
-        Ok(result_rows)
+        let provider = self.analyze_status.clone();
+        let resource_group = self.active_resource_group.clone();
+        let visibility = self.schema_visibility();
+        let zone = self.session_time_zone();
+        self.with_catalog_mut(|catalog| {
+            analyze_status_rows_of(
+                provider.as_deref(),
+                &resource_group,
+                &visibility,
+                &zone,
+                catalog,
+            )
+        })
     }
 
     /// Go `ShowExec.fetchShowStatsMeta` (`pkg/executor/show_stats.go:36`):
@@ -1031,4 +914,142 @@ impl Session {
         };
         self.filter_show_output(output, like_pattern, where_clause)
     }
+}
+
+pub(crate) fn analyze_status_rows_of(
+    provider: Option<&dyn crate::AnalyzeStatusProvider>,
+    resource_group: &str,
+    visibility: &crate::infoschema::SchemaVisibility,
+    session_zone: &tidb_datatype::SessionTimeZone,
+    catalog: &tidb_executor::Catalog,
+) -> Result<Vec<Vec<Datum>>, DriverError> {
+    let jobs = match provider {
+        Some(provider) => provider
+            .load_analyze_status(resource_group)
+            .map_err(DriverError::unsupported)?,
+        None => Vec::new(),
+    };
+    let display_time = |mut value: tidb_datatype::Time| -> Result<Datum, DriverError> {
+        value
+            .convert_time_zone(&chrono::Utc, session_zone)
+            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+        tidb_datatype::Time::new(value.core_time(), tidb_datatype::TimeType::DateTime, 0)
+            .map(Datum::Time)
+            .map_err(|error| DriverError::unsupported(error.to_string()))
+    };
+    let mut result_rows = Vec::new();
+    for job in jobs {
+        // Go asks for `mysql.AllPrivMask`: any effective static table
+        // privilege makes the row visible.
+        if !visibility.allows(
+            &job.table_schema,
+            &job.table_name,
+            crate::infoschema::PrivMask::Any,
+        ) {
+            continue;
+        }
+        let start_time = job
+            .start_time
+            .map(display_time)
+            .transpose()?
+            .unwrap_or(Datum::Null);
+        let end_time = job
+            .end_time
+            .map(display_time)
+            .transpose()?
+            .unwrap_or(Datum::Null);
+        let mut remaining = Datum::Null;
+        let mut progress = Datum::Null;
+        let mut estimated = Datum::Null;
+        if job.state == tidb_stats::ANALYZE_RUNNING
+            && !job.job_info.starts_with("merge global stats")
+        {
+            let Some(start) = job.start_time else {
+                return Err(DriverError::unsupported("invalid start time"));
+            };
+            let table_count = (|| -> Result<Option<(i64, i64)>, DriverError> {
+                let Some(tidb_executor::TableEntry::Kv(table)) =
+                    catalog.table_in(&job.table_schema, &job.table_name)
+                else {
+                    return Ok(None);
+                };
+                let physical_id = if job.partition_name.is_empty() {
+                    table.table_id
+                } else {
+                    table
+                        .partition()
+                        .and_then(|partition| {
+                            partition.definitions.iter().find(|definition| {
+                                definition.name.go_lower_eq(&job.partition_name)
+                            })
+                        })
+                        .map_or(0, |definition| definition.id)
+                };
+                Ok(Some((
+                    physical_id,
+                    catalog
+                        .table_statistics(physical_id)
+                        .map_or(0, |statistics| statistics.row_count),
+                )))
+            })()?;
+            if let Some((physical_id, mut total_rows)) = table_count {
+                if (physical_id > 0 && total_rows == 0) || job.processed_rows > total_rows {
+                    total_rows = provider.map_or(0, |provider| {
+                        provider.approximate_table_count(
+                            resource_group,
+                            physical_id,
+                            &job.table_schema,
+                            &job.table_name,
+                            &job.partition_name,
+                        )
+                    });
+                }
+                let start = start
+                    .core_time()
+                    .to_datetime(&chrono::Utc)
+                    .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                let elapsed_seconds = chrono::Utc::now()
+                    .signed_duration_since(start)
+                    .num_nanoseconds()
+                    .map_or(0.0, |nanoseconds| nanoseconds as f64 / 1_000_000_000.0);
+                let (remaining_seconds, progress_ratio) =
+                    tidb_executor::show_stats::analyze_progress(
+                        total_rows,
+                        job.processed_rows,
+                        elapsed_seconds,
+                    );
+                remaining = Datum::new_string(
+                    tidb_executor::show_stats::format_analyze_remaining_seconds(
+                        remaining_seconds,
+                    )
+                    .into_bytes(),
+                );
+                progress = Datum::Real(progress_ratio);
+                estimated = Datum::Int(total_rows);
+            } else {
+                // Go logs the table-lookup failure but still projects the
+                // helper's named zero return values for these two fields.
+                progress = Datum::Real(0.0);
+                estimated = Datum::Int(0);
+            }
+        }
+        result_rows.push(vec![
+            Datum::new_string(job.table_schema.into_bytes()),
+            Datum::new_string(job.table_name.into_bytes()),
+            Datum::new_string(job.partition_name.into_bytes()),
+            Datum::new_string(job.job_info.into_bytes()),
+            Datum::Int(job.processed_rows),
+            start_time,
+            end_time,
+            Datum::new_string(job.state.into_bytes()),
+            job.fail_reason
+                .map_or(Datum::Null, |value| Datum::new_string(value.into_bytes())),
+            Datum::new_string(job.instance.into_bytes()),
+            job.process_id.map_or(Datum::Null, Datum::UInt),
+            remaining,
+            progress,
+            estimated,
+        ]);
+    }
+    Ok(result_rows)
 }

@@ -1365,6 +1365,7 @@ pub mod infoschema;
 mod inspection;
 mod load_stats_arm;
 mod account_state;
+mod cluster_state;
 mod instance_state;
 mod memtable_retrievers;
 mod non_prepared_plan_cache;
@@ -1929,282 +1930,48 @@ impl Session {
         &mut self,
         filters: &[tidb_planner::memtable_predicate_extractor::ClusterTableFilter],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        if filters.iter().all(|filter| filter.skip_request()) {
-            return Ok(Vec::new());
-        }
-        if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Config) {
-            return Err(DriverError::SpecificAccessDenied("CONFIG".into()));
-        }
-        let client = self.cluster_config.clone().ok_or_else(|| {
-            DriverError::unsupported("CLUSTER_CONFIG live retrieval is not installed")
-        })?;
-        let topology = self.cluster_topology.clone().ok_or_else(|| {
-            DriverError::unsupported("CLUSTER_CONFIG cluster discovery is not installed")
-        })?;
-        let mut warnings = Vec::new();
-        let servers = topology.servers(&mut warnings);
-        for warning in warnings.drain(..) {
-            self.append_warning(WarningLevel::Warning, 1105, warning);
-        }
-        let servers: Vec<_> = servers
-            .map_err(DriverError::unsupported)?
-            .into_iter()
-            .filter(|server| {
-                filters
-                    .iter()
-                    .any(|filter| filter.matches(&server.server_type, &server.address))
-            })
-            .collect();
-        let rows = client.fetch(&servers, &mut warnings);
-        for warning in warnings {
-            self.append_warning(WarningLevel::Warning, 1105, warning);
-        }
-        Ok(rows)
+        let ctx = self.statement_context(false);
+        let rows = self.viewer_state().cluster_config_rows(&ctx, filters);
+        self.drain_eval_warnings(&ctx);
+        rows
     }
 
-    /// Go `infoschema.GetClusterServerInfo` filtered by the scans'
-    /// `FilterClusterServerInfo` needs, or None when this session has no
-    /// cluster discovery or diagnostics client (an embedded session, which
-    /// reads these tables as empty).
-    #[allow(clippy::type_complexity)]
-    fn cluster_diagnostics_servers(
-        &mut self,
-        matches: impl Fn(&str, &str) -> bool,
-    ) -> Result<
-        Option<(
-            Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>,
-            Vec<tidb_domain::cluster_topology::ClusterServer>,
-        )>,
-        DriverError,
-    > {
-        let (Some(client), Some(topology)) = (
-            self.cluster_diagnostics.clone(),
-            self.cluster_topology.clone(),
-        ) else {
-            return Ok(None);
-        };
-        let mut warnings = Vec::new();
-        let servers = topology.servers(&mut warnings);
-        for warning in warnings {
-            self.append_warning(WarningLevel::Warning, 1105, warning);
-        }
-        let servers = servers
-            .map_err(DriverError::unsupported)?
-            .into_iter()
-            .filter(|server| matches(&server.server_type, &server.address))
-            .collect();
-        Ok(Some((client, servers)))
-    }
-
-    /// Go `clusterServerInfoRetriever.retrieve` after its privilege check:
-    /// ask every matching server's diagnostics service; a server that fails
-    /// is a warning.
+    /// Go `clusterServerInfoRetriever.retrieve` after its privilege check.
     pub(crate) fn cluster_server_info_table_rows(
         &mut self,
         tp: tidb_proto::diagnosticspb::ServerInfoType,
         extractors: &[tidb_planner::memtable_predicate_extractor::ClusterTableExtractor],
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let extractors: Vec<_> = extractors
-            .iter()
-            .filter(|extractor| !extractor.skip_request)
-            .collect();
-        if extractors.is_empty() {
-            return Ok(Vec::new());
-        }
-        let Some((client, servers)) = self.cluster_diagnostics_servers(|tp, addr| {
-            extractors.iter().any(|extractor| {
-                (extractor.node_types.is_empty() || extractor.node_types.contains(tp))
-                    && (extractor.instances.is_empty() || extractor.instances.contains(addr))
-            })
-        })?
-        else {
-            return Ok(Vec::new());
-        };
-        let mut warnings = Vec::new();
-        let rows = client.fetch_server_info(&servers, tp, &mut warnings);
-        for warning in warnings {
-            self.append_warning(WarningLevel::Warning, 1105, warning);
-        }
-        Ok(rows)
-    }
-
-    /// Go `clusterLogRetriever.retrieve` and `initialize`: a contradiction
-    /// reads nothing; otherwise PROCESS is required, and the search needs a
-    /// start time, an end time, and at least one pattern, level, instance or
-    /// node type. Each matching server's diagnostics `SearchLog` stream is
-    /// merged by time; a failing server is a warning.
-    fn cluster_log_table_rows(
-        &mut self,
-        extractors: &[tidb_planner::memtable_predicate_extractor::ClusterLogTableExtractor],
-    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let Some(extractor) = extractors.iter().find(|extractor| !extractor.skip_request) else {
-            return Ok(Vec::new());
-        };
-        if !self.has_scoped_privilege("", "", privilege::GlobalPriv::Process) {
-            return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
-        }
-        let refusal = if extractor.start_time == 0 {
-            Some("denied to scan logs, please specified the start time, such as `time > '2020-01-01 00:00:00'`")
-        } else if extractor.end_time == 0 {
-            Some("denied to scan logs, please specified the end time, such as `time < '2020-01-01 00:00:00'`")
-        } else if extractor.patterns.is_empty()
-            && extractor.log_levels.is_empty()
-            && extractor.instances.is_empty()
-            && extractor.node_types.is_empty()
-        {
-            Some("denied to scan full logs (use `SELECT * FROM cluster_log WHERE message LIKE '%'` explicitly if intentionally)")
-        } else {
-            None
-        };
-        if let Some(refusal) = refusal {
-            return Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-                tidb_executor::EvalError::Unsupported(refusal),
-            )));
-        }
-        let extractor = extractor.clone();
-        let Some((client, servers)) = self.cluster_diagnostics_servers(|tp, addr| {
-            (extractor.node_types.is_empty() || extractor.node_types.contains(tp))
-                && (extractor.instances.is_empty() || extractor.instances.contains(addr))
-        })?
-        else {
-            return Ok(Vec::new());
-        };
-        let request = tidb_proto::diagnosticspb::SearchLogRequest {
-            start_time: extractor.start_time,
-            end_time: extractor.end_time,
-            levels: extractor
-                .log_levels
-                .iter()
-                .map(|level| tidb_sysutil::parse_log_level(level) as i32)
-                .collect(),
-            patterns: extractor.patterns.clone(),
-            target: 0,
-        };
-        let mut warnings = Vec::new();
-        let rows = client.search_log(&servers, &request, &mut warnings);
-        for warning in warnings {
-            self.append_warning(WarningLevel::Warning, 1105, warning);
-        }
-        Ok(rows)
+        let ctx = self.statement_context(false);
+        let rows = self
+            .viewer_state()
+            .cluster_server_info_rows(&ctx, tp, extractors);
+        self.drain_eval_warnings(&ctx);
+        rows
     }
 
     /// Go's seven-source GetClusterServerInfo in dataForTiDBClusterInfo column order.
     pub(crate) fn cluster_info_table_rows(
         &mut self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        use tidb_datatype::Datum;
-        let Some(topology) = self.cluster_topology.as_ref() else {
-            return Ok(Vec::new());
-        };
-        let mut warnings = Vec::new();
-        let servers = topology.servers(&mut warnings);
-        for warning in warnings {
-            self.append_warning(WarningLevel::Warning, 1105, warning);
-        }
-        let servers = servers.map_err(DriverError::unsupported)?;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs() as i64);
-        let redact = self.sem_hides_cluster_metadata();
-        Ok(servers
-            .into_iter()
-            .map(|info| {
-                let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-                let (start, uptime) = if info.start_timestamp > 0 {
-                    (
-                        info.start_timestamp,
-                        go_uptime_string(now - info.start_timestamp),
-                    )
-                } else {
-                    (now, String::new())
-                };
-                vec![
-                    text(&info.server_type),
-                    if redact {
-                        text(&info.server_id.to_string())
-                    } else {
-                        text(&info.address)
-                    },
-                    if redact {
-                        Datum::Null
-                    } else {
-                        text(&info.status_address)
-                    },
-                    text(&info.version),
-                    text(&info.git_hash),
-                    if redact {
-                        Datum::Null
-                    } else {
-                        datetime_datum(start)
-                    },
-                    if redact { Datum::Null } else { text(&uptime) },
-                    Datum::UInt(info.server_id),
-                ]
-            })
-            .collect())
+        let ctx = self.statement_context(false);
+        let rows = self.viewer_state().cluster_info_rows(&ctx);
+        self.drain_eval_warnings(&ctx);
+        rows
     }
 
     /// Go infoschema.GetInstanceAddr uses local status identity. This does not
     /// discover peers: loss of etcd cannot relabel or hide local process rows.
     pub(crate) fn cluster_instance_address(&self) -> String {
-        let Some(syncer) = self.server_info_syncer.as_ref() else {
-            return String::new();
-        };
-        let info = syncer.local_server_info();
-        if self.sem_hides_cluster_metadata() {
-            info.static_info.id.clone()
-        } else {
-            tidb_domain::serverinfo_syncer::join_host_port(
-                &info.static_info.ip,
-                info.static_info.status_port,
-            )
-        }
+        self.viewer_state().cluster_instance_address()
     }
 
-    /// Go `setDataForServersInfo` (`infoschema_reader.go:2730`): one row per
-    /// server `GetAllServerInfo` reports, in Go's column order.
-    ///
-    /// Without a syncer the table is EMPTY rather than invented: a tier with
-    /// no node identity has no server to report. With one and no etcd
-    /// client, the syncer answers this node alone -- Go's `etcdCli == nil`
-    /// path -- and the same call picks up peers once a client is present.
-    ///
-    /// The rows are ordered by id so the table reads deterministically;
-    /// Go's map iteration leaves the order unspecified.
+    /// Go `setDataForServersInfo`: one row per server `GetAllServerInfo`
+    /// reports, in Go's column order.
     pub(crate) fn tidb_servers_info_table_rows(
         &self,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        use tidb_datatype::Datum;
-        let Some(syncer) = self.server_info_syncer.as_ref() else {
-            return Ok(Vec::new());
-        };
-        let all = syncer.all_server_info().map_err(DriverError::unsupported)?;
-        let mut ids: Vec<&String> = all.keys().collect();
-        ids.sort();
-        let redact = self.sem_hides_cluster_metadata();
-        Ok(ids
-            .into_iter()
-            .map(|id| {
-                let info = &all[id];
-                let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-                vec![
-                    text(&info.static_info.id),
-                    if redact {
-                        Datum::Null
-                    } else {
-                        text(&info.static_info.ip)
-                    },
-                    Datum::Int(info.static_info.port as i64),
-                    Datum::Int(info.static_info.status_port as i64),
-                    text(&info.static_info.lease),
-                    text(&info.static_info.version_info.version),
-                    text(&info.static_info.version_info.git_hash),
-                    text(&tidb_domain::serverinfo_syncer::build_string_from_labels(
-                        &info.dynamic_info.labels,
-                    )),
-                ]
-            })
-            .collect())
+        self.viewer_state().tidb_servers_info_rows()
     }
 
     /// A fresh session with its own empty catalog.

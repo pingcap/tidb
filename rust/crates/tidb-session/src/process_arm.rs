@@ -156,103 +156,6 @@ impl Session {
         )
     }
 
-    /// Each discovered peer consumes the same projected local table owner.
-    /// The ordinary SQL executor retains residual predicates after fanout.
-    pub(crate) fn cluster_table_rows(
-        &mut self,
-        table_name: &str,
-        columns: &[(String, FieldType)],
-        required: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let rows = self.local_cluster_table_rows_for(
-            table_name,
-            None,
-            &self.session_time_zone(),
-            required,
-            None,
-        )?;
-        // The statement's requirements are upper-cased column names; a
-        // mixed-case table (CLUSTER_SLOW_QUERY's `Query`) matches them
-        // case-insensitively, as Go's column names do.
-        let mut offsets: Vec<_> = columns
-            .iter()
-            .enumerate()
-            .filter(|(_, (name, _))| {
-                required.is_none_or(|set| {
-                    set.contains(name) || set.contains(&name.to_ascii_uppercase())
-                })
-            })
-            .map(|(index, _)| index)
-            .collect();
-        // A transport column preserves row cardinality for COUNT(*) scans.
-        if offsets.is_empty() && !columns.is_empty() {
-            offsets.push(0);
-        }
-        let projected = rows
-            .into_iter()
-            .map(|row| offsets.iter().map(|index| row[*index].clone()).collect())
-            .collect();
-        self.cluster_table_rows_with_rows(table_name, columns, &offsets, projected, false, None)
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|row| {
-                        let mut full = vec![Datum::Null; columns.len()];
-                        for (index, value) in offsets.iter().zip(row) {
-                            full[*index] = value;
-                        }
-                        full
-                    })
-                    .collect()
-            })
-    }
-
-    /// Shared discovery, cancellation and warnings for ordinary and restricted readers.
-    pub(crate) fn cluster_table_rows_with_rows(
-        &mut self,
-        table_name: &str,
-        columns: &[(String, FieldType)],
-        offsets: &[usize],
-        rows: Vec<Vec<Datum>>,
-        internal: bool,
-        digests: Option<&std::collections::HashSet<String>>,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        // Go carries Username/Hostname (the presented login), not AuthHostname.
-        let user = if internal {
-            None
-        } else {
-            self.login_user
-                .as_deref()
-                .and_then(|identity| identity.split_once('@'))
-        };
-        let (rows, warnings) = peer_cluster_table_rows(
-            self.server_info_syncer.as_deref(),
-            self.cluster_peer.as_deref(),
-            &self.statement_context(false),
-            user,
-            &self.session_time_zone(),
-            table_name,
-            columns,
-            offsets,
-            rows,
-            digests,
-        )?;
-        for (code, message) in warnings {
-            self.append_warning(WarningLevel::Warning, code, message);
-        }
-        Ok(rows)
-    }
-
-    /// Go `expression.SQLDigestTextRetriever` over this session's node and,
-    /// with `global`, its peers (`RetrieveGlobal`).
-    pub(crate) fn sql_digest_texts(
-        &mut self,
-        digests: impl IntoIterator<Item = String>,
-        global: bool,
-    ) -> Result<std::collections::HashMap<String, String>, DriverError> {
-        self.sql_digest_text_retriever()
-            .retrieve(&self.statement_context(false), digests, global)
-    }
-
     /// [`Self::sql_digest_text_retriever`] as `TIDB_DECODE_SQL_DIGESTS` runs
     /// it from the statement context (Go `RetrieveGlobal`).
     pub(crate) fn sql_digest_text_retrieval(&self) -> tidb_executor::SqlDigestTextRetrieval {
@@ -387,37 +290,26 @@ impl Session {
             scan_concurrency: self.dist_sql_scan_concurrency(),
             visibility: self.schema_visibility(),
             index_usage: std::sync::Arc::clone(&self.index_usage_collector),
+            process_scoped: self.has_scoped_privilege("", "", privilege::GlobalPriv::Process),
+            slow_query_file: self
+                .vars
+                .get_system(tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE)
+                .unwrap_or_default(),
+            ddl_job_history_store: self.ddl_job_history_store.clone(),
+            shared_catalog: std::sync::Arc::clone(&self.catalog),
+            analyze_status: self.analyze_status.clone(),
+            digest_retriever: self.sql_digest_text_retriever(),
+            data_lock_waits: self.data_lock_waits.clone(),
+            cluster_topology: self.cluster_topology.clone(),
+            cluster_config: self.cluster_config.clone(),
+            cluster_diagnostics: self.cluster_diagnostics.clone(),
+            cluster_peer: self.cluster_peer.clone(),
+            server_info_syncer: self.server_info_syncer.clone(),
+            config_scoped: self.has_scoped_privilege("", "", privilege::GlobalPriv::Config),
+            hides_cluster_metadata: self.sem_hides_cluster_metadata(),
         }
     }
 
-    fn filter_process_rows(&self, rows: Vec<process::ProcessRow>) -> Vec<process::ProcessRow> {
-        self.viewer_state().filter_process_rows(rows)
-    }
-
-    /// `SELECT * FROM information_schema.PROCESSLIST` rows, in the exact
-    /// column order Go's `tableProcesslistCols` / `ProcessInfo.ToRow` build
-    /// (CAPTURED: `ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO, DIGEST,
-    /// MEM, MEM_ARBITRATION, MEM_WAIT_ARBITRATE_START,
-    /// MEM_WAIT_ARBITRATE_BYTES, DISK, TxnStart, RESOURCE_GROUP,
-    /// SESSION_ALIAS, ROWS_AFFECTED, TIDB_CPU, TIKV_CPU`).
-    ///
-    /// `ToRow` builds on `ToRowForShow(true)`, i.e. `INFO` is never truncated
-    /// here (unlike `SHOW PROCESSLIST` without `FULL`).
-    ///
-    /// Memory arbitration and SQL CPU timing still need their statement
-    /// owners. The other values are snapshots of the target's published state.
-    pub(crate) fn process_list_table_rows(&self) -> Vec<Vec<Datum>> {
-        format_process_rows(self.visible_process_rows(true), &self.session_time_zone())
-    }
-
-    /// Snapshot the supplied local registry without registering a synthetic connection.
-    pub(crate) fn process_list_rows_from_registry(
-        &self,
-        registry: &process::ProcessRegistry,
-        zone: &tidb_datatype::SessionTimeZone,
-    ) -> Vec<Vec<Datum>> {
-        format_process_rows(self.filter_process_rows(registry.snapshot()), zone)
-    }
 }
 
 /// Go `ProcessInfo.ToRow` for each row: the columns of
@@ -501,77 +393,6 @@ impl Session {
             || self.login_user.is_none()
     }
 
-    /// Executor-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
-    pub(crate) fn deadlock_history_table_rows(
-        &mut self,
-        needs_text: bool,
-        needs_key_info: bool,
-    ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        use tidb_datatype::{Collation, StringDatum};
-        use tidb_executor::deadlock_history::{
-            COL_CURRENT_SQL_DIGEST, COL_DEADLOCK_ID, COL_KEY, COL_OCCUR_TIME, COL_RETRYABLE,
-            COL_TRX_HOLDING_LOCK, COL_TRY_LOCK_TRX_ID, GLOBAL_DEADLOCK_HISTORY,
-        };
-        let records = GLOBAL_DEADLOCK_HISTORY.get_all();
-        let texts = if needs_text {
-            self.sql_digest_texts(
-                records.iter().flat_map(|record| {
-                    record.wait_chain.iter().map(|item| item.sql_digest.clone())
-                }),
-                true,
-            )?
-        } else {
-            Default::default()
-        };
-        let render = |catalog: Option<&Catalog>| {
-            records
-                .into_iter()
-                .flat_map(|record| {
-                    (0..record.wait_chain.len())
-                        .map(|idx| {
-                            let item = &record.wait_chain[idx];
-                            let digest_text = texts
-                                .get(&item.sql_digest)
-                                .filter(|text| !text.is_empty())
-                                .cloned()
-                                .map(Datum::new_string)
-                                .unwrap_or(Datum::Null);
-                            let key_info = if item.key.is_empty() || !needs_key_info {
-                                Datum::Null
-                            } else {
-                                tidb_executor::keydecoder::decode_key(
-                                    &item.key,
-                                    catalog.expect("requested key metadata"),
-                                )
-                                .ok()
-                                .and_then(|decoded| serde_json::to_vec(&decoded).ok())
-                                .map(|json| {
-                                    Datum::String(StringDatum::new(json, Collation::DEFAULT))
-                                })
-                                .unwrap_or(Datum::Null)
-                            };
-                            vec![
-                                record.to_datum(idx, COL_DEADLOCK_ID),
-                                record.to_datum(idx, COL_OCCUR_TIME),
-                                record.to_datum(idx, COL_RETRYABLE),
-                                record.to_datum(idx, COL_TRY_LOCK_TRX_ID),
-                                record.to_datum(idx, COL_CURRENT_SQL_DIGEST),
-                                digest_text,
-                                record.to_datum(idx, COL_KEY),
-                                key_info,
-                                record.to_datum(idx, COL_TRX_HOLDING_LOCK),
-                            ]
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect()
-        };
-        if needs_key_info {
-            self.with_catalog_mut(|catalog| Ok(render(Some(catalog))))
-        } else {
-            Ok(render(None))
-        }
-    }
 }
 
 /// Go `expression.SQLDigestTextRetriever`: the normalized statement text of

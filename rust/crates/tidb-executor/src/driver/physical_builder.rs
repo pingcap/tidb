@@ -1492,12 +1492,7 @@ fn owned_mem_table_retriever(
 
 /// Carries a retriever's failure into the executor that runs it.
 fn retrieval_error(error: DriverError) -> crate::ExecError {
-    match error {
-        DriverError::SpecificAccessDenied(privileges) => {
-            crate::ExecError::SpecificAccessDenied(privileges)
-        }
-        error => crate::ExecError::Mysql(error.to_mysql_error()),
-    }
+    crate::ExecError::Retrieval(Box::new(error))
 }
 
 /// Resolves the rows of the memory-table scan `plan_id` over

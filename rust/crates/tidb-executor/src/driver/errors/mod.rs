@@ -46,9 +46,7 @@ impl From<ExecError> for DriverError {
                 DriverError::MemoryExceedForQuery { conn_id }
             }
             ExecError::JsonDocumentNullKey => DriverError::JsonDocumentNullKey,
-            ExecError::SpecificAccessDenied(privileges) => {
-                DriverError::SpecificAccessDenied(privileges)
-            }
+            ExecError::Retrieval(error) => *error,
             // go's charFunctionClass.getFunction BUILD failure: a statement-
             // level build error, not an evaluation event -- the warning buffer
             // records the 1105 row beside the argument casts' truncation

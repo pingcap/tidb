@@ -25,7 +25,6 @@
 use std::sync::Arc;
 
 use tidb_ast::{SessionStmt, Stmt};
-use tidb_datatype::Datum;
 
 use crate::{privilege, process, vars, DriverError, Session};
 use tidb_util::stringutil::go_to_lower;

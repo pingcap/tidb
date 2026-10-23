@@ -108,7 +108,7 @@ mod create;
 use create::{show_create_table_text, show_create_view_text, table_type_of};
 
 #[path = "show_statistics.rs"]
-mod statistics;
+pub(crate) mod statistics;
 
 /// Go `NewColDesc`'s `Collation` cell: the column's own collation name, and
 /// NULL for anything with no character set -- a numeric or temporal column,

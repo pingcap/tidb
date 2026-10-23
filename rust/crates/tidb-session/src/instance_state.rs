@@ -55,6 +55,31 @@ pub(crate) struct ViewerState {
     pub(crate) scan_concurrency: usize,
     pub(crate) visibility: SchemaVisibility,
     pub(crate) index_usage: Arc<tidb_stats_handle_usage_indexusage::Collector>,
+    /// Go `RequestVerification("", "", "", mysql.ProcessPriv)`, which the
+    /// metric-backed tables ask before they look at their extractor.
+    pub(crate) process_scoped: bool,
+    /// `@@tidb_slow_query_file`.
+    pub(crate) slow_query_file: String,
+    /// The DDL job store a node installs, else the shared catalog's history.
+    pub(crate) ddl_job_history_store: Option<Arc<dyn crate::DdlJobHistoryStore>>,
+    pub(crate) shared_catalog: crate::SharedCatalog,
+    /// The analyze-job reader, absent for a session with no statistics.
+    pub(crate) analyze_status: Option<Arc<dyn crate::AnalyzeStatusProvider>>,
+    /// Go's SQL-digest text retriever over this node and its peers.
+    pub(crate) digest_retriever: crate::process_arm::SqlDigestTextRetriever,
+    pub(crate) data_lock_waits: Option<Arc<dyn crate::DataLockWaitsProvider>>,
+    /// The cluster's discovery and diagnostics clients; absent for a session
+    /// no server front end owns, which reads these tables as empty.
+    pub(crate) cluster_topology: Option<Arc<tidb_domain::cluster_topology::ClusterTopology>>,
+    pub(crate) cluster_config: Option<Arc<tidb_exec::cluster_config::ClusterConfigClient>>,
+    pub(crate) cluster_diagnostics:
+        Option<Arc<tidb_exec::cluster_diagnostics::ClusterDiagnosticsClient>>,
+    pub(crate) cluster_peer: Option<Arc<tidb_exec::cluster_peer::ClusterPeerClient>>,
+    pub(crate) server_info_syncer: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
+    /// Go `RequestVerification("", "", "", mysql.ConfigPriv)`.
+    pub(crate) config_scoped: bool,
+    /// Whether SEM hides the cluster metadata from the viewer.
+    pub(crate) hides_cluster_metadata: bool,
 }
 
 impl ViewerState {
@@ -111,6 +136,71 @@ impl ViewerState {
             || tidb_exec::txn_summary::RECORDER.rows(),
             |registry| registry.transaction_history_rows(),
         )
+    }
+
+    /// Go `slowQueryRetriever.retrieve`: SLOW_QUERY's rows from this
+    /// instance's slow-log file. The viewer sees every user's entries with
+    /// `PROCESS`, else only its own; the scans' extractors bound the entries'
+    /// time (a statement scanning the table more than once reads the union
+    /// of their ranges). Returns the rows and the warnings the read raised.
+    pub(crate) fn slow_query_rows(
+        &self,
+        extractors: &[&tidb_planner::memtable_predicate_extractor::SlowQueryExtractor],
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<(Vec<Vec<Datum>>, Vec<String>), DriverError> {
+        if !extractors.is_empty() && extractors.iter().all(|extractor| extractor.skip_request) {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let mut checker = tidb_executor::slow_query::SlowLogChecker {
+            has_process_priv: self.has_process,
+            user: self
+                .login_user
+                .as_deref()
+                .map(|identity| identity.split_once('@').map_or(identity, |(user, _)| user))
+                .map(str::to_owned),
+            ..Default::default()
+        };
+        let live: Vec<_> = extractors
+            .iter()
+            .filter(|extractor| !extractor.skip_request)
+            .collect();
+        if !live.is_empty() && live.iter().all(|extractor| extractor.enable) {
+            checker.enable_time_check = true;
+            checker.time_ranges = live
+                .iter()
+                .flat_map(|extractor| extractor.time_ranges.iter())
+                .map(|range| (range.start_time, range.end_time))
+                .collect();
+        }
+        let columns =
+            crate::infoschema::table_schema("SLOW_QUERY").expect("SLOW_QUERY is registered");
+        let read = tidb_executor::slow_query::retrieve_slow_query_rows(
+            &columns,
+            &checker,
+            zone,
+            &self.slow_query_file,
+        )
+        .map_err(|error| DriverError::Mysql(tidb_executor::MysqlError::unknown(error)))?;
+        Ok((read.rows, read.warnings))
+    }
+
+    /// Go `DDLJobRetriever.initial`: the running jobs, then the meta history
+    /// newest first, from the cluster's store when one is installed, else the
+    /// shared catalog's own history.
+    fn all_ddl_jobs(
+        &self,
+    ) -> Result<(Vec<tidb_model::Job>, Vec<tidb_model::Job>), DriverError> {
+        if let Some(store) = &self.ddl_job_history_store {
+            return store
+                .all_ddl_jobs()
+                .map_err(|message| DriverError::unsupported(message));
+        }
+        let history = self
+            .shared_catalog
+            .lock()
+            .map_err(|_| DriverError::CatalogPoisoned)?
+            .last_history_ddl_jobs()?;
+        Ok((Vec::new(), history))
     }
 
     /// Go `stmtSummaryRetriever`: the statement summary tables for this
@@ -206,6 +296,13 @@ impl MemTableRetriever for InstanceStateRetriever {
             "MEMORY_USAGE",
             "MEMORY_USAGE_OPS_HISTORY",
             "TIDB_INDEX_USAGE",
+            "SLOW_QUERY",
+            "DDL_JOBS",
+            "ANALYZE_STATUS",
+            "INSPECTION_RULES",
+            "INSPECTION_SUMMARY",
+            "METRICS_SUMMARY",
+            "METRICS_SUMMARY_BY_LABEL",
         ]
         .iter()
         .any(|name| table.go_lower_eq(name))
@@ -219,7 +316,77 @@ impl MemTableRetriever for InstanceStateRetriever {
         catalog: &Catalog,
         ctx: &tidb_executor::StmtContext,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor as Extractor;
         let table = read.table_name.as_str();
+        if table.go_lower_eq("SLOW_QUERY") {
+            let extractors: Vec<_> = match &read.extractor {
+                Some(Extractor::SlowQuery(extractor)) => vec![extractor],
+                _ => Vec::new(),
+            };
+            let (rows, warnings) = self
+                .viewer
+                .slow_query_rows(&extractors, &ctx.session_zone())?;
+            for warning in warnings {
+                ctx.append_warning_parts(1105, &warning);
+            }
+            return Ok(rows);
+        }
+        if table.go_lower_eq("DDL_JOBS") {
+            // Go `DDLJobsReaderExec`: the running jobs, then the history, over
+            // the statement's own InfoSchema (the snapshot schema under
+            // `tidb_snapshot`, the transaction's otherwise).
+            let (running, history) = self.viewer.all_ddl_jobs()?;
+            let jobs = running.into_iter().chain(history).collect::<Vec<_>>();
+            return Ok(crate::infoschema::ddl_jobs_rows(
+                &jobs,
+                &self.viewer.visibility,
+                catalog,
+            ));
+        }
+        if table.go_lower_eq("ANALYZE_STATUS") {
+            return crate::show::statistics::analyze_status_rows_of(
+                self.viewer.analyze_status.as_deref(),
+                &self.viewer.resource_group,
+                &self.viewer.visibility,
+                &ctx.session_zone(),
+                catalog,
+            );
+        }
+        if table.go_lower_eq("INSPECTION_RULES") {
+            return Ok(crate::inspection::inspection_rules_rows());
+        }
+        // Go's retrievers query the metrics tables through the restricted SQL
+        // executor.
+        let query_metrics = |sql: &str| {
+            tidb_executor::run_select_meta_in(sql, catalog, "metrics_schema", ctx)
+                .map(|(_, rows)| rows)
+        };
+        if table.go_lower_eq("INSPECTION_SUMMARY") {
+            let Some(Extractor::InspectionSummaryTable(extractor)) = &read.extractor else {
+                return Ok(Vec::new());
+            };
+            return crate::inspection::inspection_summary_rows(
+                extractor,
+                &read.query_time_range,
+                query_metrics,
+                |warning| ctx.append_warning_parts(1105, &warning),
+            );
+        }
+        if table.go_lower_eq("METRICS_SUMMARY") || table.go_lower_eq("METRICS_SUMMARY_BY_LABEL") {
+            // Go checks PROCESS before it looks at the extractor.
+            if !self.viewer.process_scoped {
+                return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            }
+            let Some(Extractor::MetricSummaryTable(extractor)) = &read.extractor else {
+                return Ok(Vec::new());
+            };
+            return crate::memtable_retrievers::metrics_summary_rows(
+                extractor,
+                &read.query_time_range,
+                table.go_lower_eq("METRICS_SUMMARY_BY_LABEL"),
+                query_metrics,
+            );
+        }
         if table.go_lower_eq("PROCESSLIST") {
             return Ok(crate::process_arm::format_process_rows(
                 self.viewer.visible_process_rows(true),

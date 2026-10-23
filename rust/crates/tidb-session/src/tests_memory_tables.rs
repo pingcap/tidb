@@ -188,8 +188,8 @@ fn the_tables_a_scan_retrieves_itself_are_the_ones_table_rows_answers() {
 }
 
 /// A scan has at most one retriever: the families serve disjoint tables, and
-/// they leave the session's own families (and every unknown table) to the
-/// session.
+/// a table none of them builds reads as empty, as Go's `memtableRetriever`
+/// does for a table it has no case for.
 #[test]
 fn a_scan_has_at_most_one_retriever() {
     use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
@@ -223,6 +223,9 @@ fn a_scan_has_at_most_one_retriever() {
         Box::new(crate::account_state::VariablesRetriever::new(
             session.variables_state(),
         )),
+        Box::new(crate::cluster_state::ClusterTablesRetriever::new(
+            session.viewer_state(),
+        )),
     ];
     let servers = |db: &str, table: &str| {
         retrievers
@@ -244,19 +247,59 @@ fn a_scan_has_at_most_one_retriever() {
         ("information_schema", "USER_ATTRIBUTES", 1),
         ("information_schema", "VARIABLES_INFO", 1),
         ("information_schema", "PROFILING", 1),
+        ("information_schema", "SLOW_QUERY", 1),
+        ("information_schema", "DDL_JOBS", 1),
+        ("information_schema", "ANALYZE_STATUS", 1),
+        ("information_schema", "INSPECTION_RULES", 1),
+        ("information_schema", "METRICS_SUMMARY", 1),
         ("information_schema", "TIKV_STORE_STATUS", 1),
         ("information_schema", "TIKV_REGION_STATUS", 1),
         ("information_schema", "TABLE_STORAGE_STATS", 1),
         ("information_schema", "ATTRIBUTES", 1),
         ("information_schema", "PLACEMENT_POLICIES", 1),
         ("performance_schema", "session_variables", 1),
-        ("information_schema", "CLUSTER_PROCESSLIST", 0),
-        ("information_schema", "SLOW_QUERY", 0),
-        ("information_schema", "TIDB_TRX", 0),
+        ("information_schema", "CLUSTER_PROCESSLIST", 1),
+        ("information_schema", "CLUSTER_SLOW_QUERY", 1),
+        ("information_schema", "TIDB_TRX", 1),
+        ("information_schema", "DEADLOCKS", 1),
+        ("information_schema", "DATA_LOCK_WAITS", 1),
+        ("information_schema", "CLUSTER_INFO", 1),
+        ("information_schema", "CLUSTER_CONFIG", 1),
+        ("information_schema", "CLUSTER_LOG", 1),
+        ("information_schema", "TIDB_SERVERS_INFO", 1),
+        ("information_schema", "TIDB_HOT_REGIONS_HISTORY", 1),
         ("information_schema", "NO_SUCH_TABLE", 0),
     ] {
         assert_eq!(servers(db, table), expected, "{db}.{table}");
     }
+}
+
+/// A memory table is retrieved when its scan is first read (Go
+/// `MemTableReaderExec.Next` calls the retriever, which checks the privilege
+/// it needs): a viewer without PROCESS is refused by a read of `CLUSTER_INFO`
+/// and not by a statement whose plan never reads it.
+#[test]
+fn a_scan_that_is_never_read_checks_no_privilege() {
+    let registry = crate::privilege::PrivilegeRegistry::default();
+    let mut admin = bootstrap_session(&registry);
+    admin.run("create user 'reader'@'%'").unwrap();
+    let mut reader = authenticated_session(&registry, "reader", "%");
+    assert!(
+        error_of(&mut reader, "select * from information_schema.cluster_info")
+            .contains("PROCESS")
+    );
+    assert_eq!(
+        row_text(reader.run(
+            "select count(*) from (select * from information_schema.cluster_info limit 0) t"
+        )),
+        [["0"]]
+    );
+    assert_eq!(
+        row_text(reader.run(
+            "select count(*) from information_schema.cluster_info where 1 = 0"
+        )),
+        [["0"]]
+    );
 }
 
 /// A multi-table UPDATE or DELETE joining a memory table: the plan reads the
