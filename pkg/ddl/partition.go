@@ -2124,24 +2124,22 @@ func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 	return nil
 }
 
-// updateDroppingPartitionInfo move dropping partitions to DroppingDefinitions
-func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []string) {
-	oldDefs := tblInfo.Partition.Definitions
-	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-len(partLowerNames))
-	droppingDefs := make([]model.PartitionDefinition, 0, len(partLowerNames))
+// splitPartitionDefinitions preserves table order without changing the input definitions.
+// Partition names must be validated and lowercased by the caller.
+func splitPartitionDefinitions(defs []model.PartitionDefinition, partLowerNames []string) (remaining, dropping []model.PartitionDefinition) {
+	remaining = make([]model.PartitionDefinition, 0, len(defs)-len(partLowerNames))
+	dropping = make([]model.PartitionDefinition, 0, len(partLowerNames))
 
 	// consider using a map to probe partLowerNames if too many partLowerNames
-	for i := range oldDefs {
-		found := slices.Contains(partLowerNames, oldDefs[i].Name.L)
+	for i := range defs {
+		found := slices.Contains(partLowerNames, defs[i].Name.L)
 		if found {
-			droppingDefs = append(droppingDefs, oldDefs[i])
+			dropping = append(dropping, defs[i])
 		} else {
-			newDefs = append(newDefs, oldDefs[i])
+			remaining = append(remaining, defs[i])
 		}
 	}
-
-	tblInfo.Partition.Definitions = newDefs
-	tblInfo.Partition.DroppingDefinitions = droppingDefs
+	return remaining, dropping
 }
 
 func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
@@ -2351,9 +2349,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		}
 		// Reason, see https://github.com/pingcap/tidb/issues/55888
 		// Only mark the partitions as to be dropped, so they are not used, but not yet removed.
-		originalDefs := tblInfo.Partition.Definitions
-		updateDroppingPartitionInfo(tblInfo, partNames)
-		tblInfo.Partition.Definitions = originalDefs
+		_, tblInfo.Partition.DroppingDefinitions = splitPartitionDefinitions(tblInfo.Partition.Definitions, partNames)
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
 		tblInfo.Partition.DDLAction = job.Type
@@ -2364,7 +2360,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// we can now remove them from the active definitions, allowing writes into
 		// the overlapping range of the higher range partition or LIST default partition.
 		// Their physical data and standalone placement bundles remain until delete-range GC.
-		updateDroppingPartitionInfo(tblInfo, partNames)
+		tblInfo.Partition.Definitions, tblInfo.Partition.DroppingDefinitions = splitPartitionDefinitions(tblInfo.Partition.Definitions, partNames)
 		err = dropLabelRules(jobCtx.stepCtx, jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			// TODO: Add failpoint error/cancel injection and test failure/rollback and cancellation!
@@ -2475,14 +2471,15 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
-func replaceTruncatePartitions(jobCtx *jobContext, job *model.Job, t *meta.Mutator, tblInfo *model.TableInfo, oldIDs, newIDs []int64) (oldDefinitions, newDefinitions []model.PartitionDefinition, err error) {
+// replaceTruncatePartitions updates IDs in place and returns the matching old and
+// new definitions in oldIDs order.
+func replaceTruncatePartitions(definitions []model.PartitionDefinition, oldIDs, newIDs []int64) (oldDefinitions, newDefinitions []model.PartitionDefinition) {
 	oldDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
 	newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-	pi := tblInfo.Partition
 	for i, id := range oldIDs {
-		for defIdx := range pi.Definitions {
+		for defIdx := range definitions {
 			// use a reference to actually set the new ID!
-			def := &pi.Definitions[defIdx]
+			def := &definitions[defIdx]
 			if id == def.ID {
 				oldDefinitions = append(oldDefinitions, def.Clone())
 				def.ID = newIDs[i]
@@ -2493,14 +2490,7 @@ func replaceTruncatePartitions(jobCtx *jobContext, job *model.Job, t *meta.Mutat
 		}
 	}
 
-	if err := clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, oldIDs); err != nil {
-		return nil, nil, err
-	}
-
-	if err := updateTruncatePartitionLabelRules(jobCtx, job, t, oldDefinitions, newDefinitions, tblInfo, oldIDs); err != nil {
-		return nil, nil, err
-	}
-	return oldDefinitions, newDefinitions, nil
+	return oldDefinitions, newDefinitions
 }
 
 func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, oldIDs []int64) (bool, error) {
@@ -2660,8 +2650,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// We can still rollback here, since we have not yet started to write to the new partitions!
-		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(jobCtx, job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
-		if err != nil {
+		oldDefinitions, newDefinitions = replaceTruncatePartitions(pi.Definitions, oldIDs, newIDs)
+		if err = clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, oldIDs); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err = updateTruncatePartitionLabelRules(jobCtx, job, jobCtx.metaMut, oldDefinitions, newDefinitions, tblInfo, oldIDs); err != nil {
 			return ver, errors.Trace(err)
 		}
 		var scatterScope string
@@ -3353,13 +3346,7 @@ func (w *worker) prepareReorganizePartition(jobCtx *jobContext, job *model.Job, 
 	tblInfo.Partition.DDLAction = job.Type
 	// Stage both partition sets while keeping the original definitions visible.
 	updateAddingPartitionInfo(partInfo, tblInfo)
-	droppingDefs := make([]model.PartitionDefinition, 0, len(partNames))
-	for _, def := range tblInfo.Partition.Definitions {
-		if slices.Contains(partNames, def.Name.L) {
-			droppingDefs = append(droppingDefs, def)
-		}
-	}
-	tblInfo.Partition.DroppingDefinitions = droppingDefs
+	_, tblInfo.Partition.DroppingDefinitions = splitPartitionDefinitions(tblInfo.Partition.Definitions, partNames)
 
 	// Validate placement policy references before applying external changes.
 	for _, def := range tblInfo.Partition.AddingDefinitions {
