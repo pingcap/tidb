@@ -200,6 +200,28 @@ func TestReorgPartitionFailures(t *testing.T) {
 		"1 1 1", "12 12 21", "13 13 13", "17 17 17", "18 18 18", "2 2 2", "23 23 32", "45 45 54", "5 5 5",
 	)
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+	t.Run("notify after final metadata update", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec(create)
+		events := dom.StatsHandle().DDLEventCh()
+		for len(events) > 0 {
+			<-events
+		}
+		checkedFinalUpdate, notifiedBeforeUpdate := false, false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, _ *error) {
+			if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateNone {
+				checkedFinalUpdate = true
+				notifiedBeforeUpdate = len(events) > 0
+			}
+		})
+		tk.MustExec(alter)
+		require.True(t, checkedFinalUpdate)
+		require.False(t, notifiedBeforeUpdate, "statistics must not be notified before the final metadata update can fail")
+		require.Len(t, events, 1)
+		require.Equal(t, model.ActionReorganizePartition, (<-events).GetType())
+	})
 }
 
 func TestRemovePartitionFailures(t *testing.T) {
