@@ -40,10 +40,11 @@ package packetio
 import (
 	"bufio"
 	"bytes"
-	"compress/zlib"
 	"io"
+	"sync"
 	"time"
 
+	"github.com/klauspost/compress/zlib"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -318,7 +319,7 @@ func (p *PacketIO) Flush() error {
 
 func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
 	return &compressedWriter{
-		compressorBuffer{nil, nil, nil},
+		compressorBuffer{nil, nil},
 		w,
 		new(bytes.Buffer),
 		seq,
@@ -376,18 +377,18 @@ func (cw *compressedWriter) Flush() error {
 		cw.compressedPacket = new(bytes.Buffer)
 	}
 
-	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
-	// suggests a MIN_COMPRESS_LENGTH of 50.
-	minCompressLength := 50
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
 
 	switch cw.compressionAlgorithm {
 	case mysql.CompressionZlib:
-		if cw.compressorBuffer.zlibWriter == nil {
-			cw.compressorBuffer.zlibWriter, err = zlib.NewWriterLevel(cw.compressorBuffer.payload, mysql.ZlibCompressDefaultLevel)
-		}
-		w = cw.compressorBuffer.zlibWriter
+		zw := zlibWriterPool.Get().(*zlib.Writer)
+		defer func() {
+			zw.Reset(nil)
+			zlibWriterPool.Put(zw)
+		}()
+		zw.Reset(cw.compressorBuffer.payload)
+		w = zw
 	case mysql.CompressionZstd:
 		if cw.compressorBuffer.zstdWriter == nil {
 			cw.compressorBuffer.zstdWriter, err = zstd.NewWriter(cw.compressorBuffer.payload, zstd.WithEncoderLevel(cw.zstdLevel))
@@ -454,18 +455,25 @@ func (cw *compressedWriter) Flush() error {
 	return nil
 }
 
+// Packets up to this size are sent uncompressed; MySQL itself uses 50 bytes.
+const minCompressLength = 1024
+
+// Shared by all connections: each writer holds a few hundred KiB of encoder state.
+var zlibWriterPool = sync.Pool{
+	New: func() any {
+		w, _ := zlib.NewWriterLevel(nil, mysql.ZlibCompressDefaultLevel)
+		return w
+	},
+}
+
 type compressorBuffer struct {
 	payload    *bytes.Buffer
-	zlibWriter *zlib.Writer
 	zstdWriter *zstd.Encoder
 }
 
 func (c *compressorBuffer) Reset() {
 	if c.payload != nil {
 		c.payload.Reset()
-	}
-	if c.zlibWriter != nil {
-		c.zlibWriter.Reset(c.payload)
 	}
 	if c.zstdWriter != nil {
 		c.zstdWriter.Reset(c.payload)
