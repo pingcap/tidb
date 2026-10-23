@@ -412,9 +412,10 @@ func (m *MemAwareMap[K, V]) RealBytes() uint64 {
 	return m.unwrap().Size(m.groupSize)
 }
 
+// checkMapABI panics on Go versions whose runtime map layout this package has not been verified against.
 func checkMapABI() {
-	if !strings.Contains(runtime.Version(), `go1.25`) {
-		panic("The hack package only supports go1.25, please confirm the correctness of the ABI before upgrading")
+	if !strings.Contains(runtime.Version(), `go1.25`) && !strings.Contains(runtime.Version(), `go1.26`) {
+		panic("The hack package only supports go1.25/go1.26, please confirm the correctness of the ABI before upgrading")
 	}
 }
 
