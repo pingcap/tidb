@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -258,6 +259,14 @@ func (c *observeInsertLockClient) SendRequest(ctx context.Context, addr string, 
 }
 
 func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
+	testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t, false)
+}
+
+func TestInsertOnDuplicateKeyUpdateRollsBackRepeatedLocks(t *testing.T) {
+	testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t, true)
+}
+
+func testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T, rollback bool) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -266,17 +275,34 @@ func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
 	tk.MustExec("set tidb_enable_1pc = OFF")
 	t.Log("TiDB version:", tk.MustQuery("select tidb_version()").Rows())
 
-	// Commit only the primary and wait until the secondary commit goroutine has skipped its work.
+	// Leave prewrite locks for the next INSERT to resolve, either committed or expired.
 	testfailpoint.Enable(t, "tikvclient/twoPCRequestBatchSizeLimit", "return")
-	testfailpoint.Enable(t, "tikvclient/beforeCommitSecondaries", `return("skip")`)
+	if rollback {
+		testfailpoint.Enable(t, "tikvclient/beforeCommit", `return("fail")`)
+		testfailpoint.Enable(t, "tikvclient/commitFailedSkipCleanup", "return")
+		testfailpoint.Enable(t, "tikvclient/twoPCShortLockTTL", "return")
+		testfailpoint.Enable(t, "tikvclient/doNotKeepAlive", "return")
+	} else {
+		testfailpoint.Enable(t, "tikvclient/beforeCommitSecondaries", `return("skip")`)
+	}
 	tk.MustExec("begin optimistic")
 	tk.MustExec("insert into insert_duplicate_locks values (1, 1, 10), (2, 2, 20), (3, 3, 30)")
 	txn, err := tk.Session().Txn(false)
 	require.NoError(t, err)
 	startTS := txn.StartTS()
-	tk.MustExec("commit")
+	if rollback {
+		tk.MustContainErrMsg("commit", "injected failure before commit")
+	} else {
+		tk.MustExec("commit")
+	}
 	tk.Session().GetCommitWaitGroup().Wait()
-	require.NoError(t, failpoint.Disable("tikvclient/beforeCommitSecondaries"))
+	if rollback {
+		for _, name := range []string{"beforeCommit", "commitFailedSkipCleanup", "twoPCShortLockTTL", "doNotKeepAlive"} {
+			require.NoError(t, failpoint.Disable("tikvclient/"+name))
+		}
+	} else {
+		require.NoError(t, failpoint.Disable("tikvclient/beforeCommitSecondaries"))
+	}
 	require.NoError(t, failpoint.Disable("tikvclient/twoPCRequestBatchSizeLimit"))
 
 	tikvStore := store.(tikv.Storage)
@@ -301,18 +327,32 @@ func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
 	}
 	lockCount, err := scanLocks()
 	require.NoError(t, err)
-	require.Equal(t, 5, lockCount, "three row keys and three unique-index keys leave five secondary locks")
+	if rollback {
+		require.Equal(t, 6, lockCount, "the primary and all five secondaries must remain prewritten")
+		// The short-TTL failpoint sets TTL to 1ms. Refresh TSO instead of waiting for the periodic oracle update.
+		require.Eventually(t, func() bool {
+			_, err := store.CurrentVersion(kv.GlobalTxnScope)
+			return err == nil && tikvStore.GetOracle().IsExpired(startTS, 1, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		}, time.Second, time.Millisecond)
+	} else {
+		require.Equal(t, 5, lockCount, "three row keys and three unique-index keys leave five secondary locks")
+	}
 
 	// Observe actual responses and cleanup RPCs; do not inject locks or rewrite requests.
 	var mu sync.Mutex
 	duplicateBatchGetLocks, duplicateResolveKeys := false, false
 	resolveRequests := 0
+	rollbackRequests := 0
+	expiredPrimary := false
 	var resolveErrors []string
 	onRPCFinished := func(req *tikvrpc.Request, resp *tikvrpc.Response, rpcErr error) (*tikvrpc.Response, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if req.Type == tikvrpc.CmdResolveLock && req.ResolveLock().GetStartVersion() == startTS {
 			resolveRequests++
+			if req.ResolveLock().GetCommitVersion() == 0 {
+				rollbackRequests++
+			}
 			seen := make(map[string]struct{})
 			for _, key := range req.ResolveLock().GetKeys() {
 				if _, ok := seen[string(key)]; ok {
@@ -327,8 +367,14 @@ func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
 			} else if body, ok := resp.Resp.(*kvrpcpb.ResolveLockResponse); ok && body.GetError() != nil {
 				resolveErrors = append(resolveErrors, body.GetError().String())
 			}
+			t.Logf("ResolveLock startTS=%d commitTS=%d keyCount=%d error=%v", startTS,
+				req.ResolveLock().GetCommitVersion(), len(req.ResolveLock().GetKeys()), resolveErrors)
 		}
 		if resp != nil {
+			if body, ok := resp.Resp.(*kvrpcpb.CheckTxnStatusResponse); ok &&
+				req.CheckTxnStatus().GetLockTs() == startTS && body.GetAction() == kvrpcpb.Action_TTLExpireRollback {
+				expiredPrimary = true
+			}
 			if body, ok := resp.Resp.(*kvrpcpb.BatchGetResponse); ok {
 				seen := make(map[string]struct{})
 				for _, pair := range body.GetPairs() {
@@ -340,6 +386,9 @@ func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
 						duplicateBatchGetLocks = true
 					}
 					seen[string(lock.GetKey())] = struct{}{}
+				}
+				if duplicateBatchGetLocks {
+					t.Logf("BatchGet returned repeated locks for transaction %d", startTS)
 				}
 			}
 		}
@@ -354,22 +403,41 @@ func TestInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T) {
 	tk2.MustExec("use test")
 	tk2.MustExec("set tidb_enable_async_commit = OFF")
 	tk2.MustExec("set tidb_enable_1pc = OFF")
+	resolveStarted := time.Now()
 	_, insertErr := tk2.Exec(`insert into insert_duplicate_locks values
 		(4, 2, 100), (5, 3, 100), (6, 2, 100), (7, 3, 100)
 		on duplicate key update v = v + 1`)
 	require.NoError(t, insertErr)
 
 	// Check SQL results and the physical locks, including keys not read by the duplicate checks.
-	tk2.MustQuery("select * from insert_duplicate_locks order by id").Check(testkit.Rows("1 1 10", "2 2 22", "3 3 32"))
+	if rollback {
+		tk2.MustQuery("select * from insert_duplicate_locks order by id").Check(testkit.Rows("4 2 101", "5 3 101"))
+	} else {
+		tk2.MustQuery("select * from insert_duplicate_locks order by id").Check(testkit.Rows("1 1 10", "2 2 22", "3 3 32"))
+	}
+	mu.Lock()
+	t.Logf("after INSERT: duplicate BatchGet locks=%v, duplicate ResolveLock keys=%v, expired primary=%v, resolve requests=%d, rollback requests=%d, cleanup errors=%v; elapsed=%s",
+		duplicateBatchGetLocks, duplicateResolveKeys, expiredPrimary, resolveRequests, rollbackRequests, resolveErrors, time.Since(resolveStarted))
+	mu.Unlock()
+	if rollback {
+		mu.Lock()
+		observedDuplicateLocks, observedExpiredPrimary := duplicateBatchGetLocks, expiredPrimary
+		observedResolveRequests, observedRollbacks := resolveRequests, rollbackRequests
+		mu.Unlock()
+		require.True(t, observedDuplicateLocks, "the SQL statement must encounter duplicate locks from the server")
+		require.True(t, observedExpiredPrimary, "the primary must be rolled back after its 1ms TTL expires")
+		require.Positive(t, observedResolveRequests, "the SQL statement must trigger physical lock resolution")
+		require.Equal(t, observedResolveRequests, observedRollbacks, "all cleanup requests for the expired transaction must roll back")
+	}
 	lockResolver := txnlock.LockResolverProbe{LockResolver: tikvStore.GetLockResolver()}
 	require.Eventually(t, func() bool {
 		count, err := scanLocks()
 		return err == nil && count == 0 && lockResolver.AsyncResolveTaskCount() == 0
-	}, 10*time.Second, 10*time.Millisecond)
+	}, 3*time.Second, 10*time.Millisecond)
 	tk2.MustExec("admin check table insert_duplicate_locks")
 	mu.Lock()
-	t.Logf("duplicate BatchGet locks: %v; duplicate ResolveLock keys: %v; cleanup errors: %v",
-		duplicateBatchGetLocks, duplicateResolveKeys, resolveErrors)
+	t.Logf("duplicate BatchGet locks: %v; duplicate ResolveLock keys: %v; expired primary: %v; rollback requests: %d; cleanup errors: %v; resolution elapsed: %s",
+		duplicateBatchGetLocks, duplicateResolveKeys, expiredPrimary, rollbackRequests, resolveErrors, time.Since(resolveStarted))
 	observedDuplicateLocks, completedResolveRequests := duplicateBatchGetLocks, resolveRequests
 	cleanupErrors := append([]string(nil), resolveErrors...)
 	mu.Unlock()
