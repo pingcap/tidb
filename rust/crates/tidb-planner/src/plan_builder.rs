@@ -169,6 +169,8 @@ mod aggregation_tests;
 pub mod catalog;
 pub mod create_view;
 pub mod cte;
+mod delete_pruning;
+pub mod dml_source;
 pub mod expand;
 pub mod field_name;
 pub mod from;
@@ -745,6 +747,12 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub allocate_delete_root: bool,
     /// The root [`Self::allocate_delete_root`] drew.
     pub dml_root: Option<crate::physical::BasePhysicalPlan>,
+    /// Asks a single-table DELETE's build to prune its read as Go's
+    /// `pruneAndBuildColPositionInfoForDelete` does; the value is whether any
+    /// foreign key trigger exists (Go `hasFK`), which declines the pruning.
+    pub delete_prune_has_fk: Option<bool>,
+    /// The position information that pruning produced, for the `Delete` root.
+    pub delete_col_pos: Option<crate::physical::DeleteColPos>,
 
     /// Go `SessionVars`, narrowed exactly as the rewriter narrows it.
     pub flags: RewriterSessionFlags,
@@ -1545,6 +1553,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             dml_keep: None,
             allocate_delete_root: false,
             dml_root: None,
+            delete_prune_has_fk: None,
+            delete_col_pos: None,
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),
@@ -5049,6 +5059,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // keep the handle's and the indexes' columns
         // (`pruneAndBuildColPositionInfoForDelete`), a multi-table UPDATE
         // keeps the updated aliases and what its SET expressions read.
+        if let Some(has_fk) = self.delete_prune_has_fk.take() {
+            if let Some((position, pairs)) = self.single_table_delete_pruning(select, has_fk) {
+                self.delete_col_pos = Some(position);
+                self.dml_keep = Some(pairs);
+            }
+        }
         let keep = self.dml_keep.take();
         let kept = source_schema
             .columns

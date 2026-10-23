@@ -1190,3 +1190,64 @@ fn aggregation_build_initializes_declared_index_keys_before_statistics() {
     });
     assert!(seen);
 }
+
+#[test]
+fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
+    // Go `pruneAndBuildColPositionInfoForDelete`: removing a record needs the
+    // handle's and the indexes' columns, so `c` leaves the read of
+    // `t(a BIGINT PRIMARY KEY, b BIGINT, c BIGINT, KEY idx_b (b))`.
+    let build_delete = |harness: &Harness, sql: &str, has_fk: bool| {
+        let mut builder = harness.builder();
+        builder.delete_prune_has_fk = Some(has_fk);
+        builder.allocate_delete_root = true;
+        let select = parse_select(sql);
+        let (plan, _) = builder
+            .build_dml_source(&select, false)
+            .unwrap_or_else(|error| panic!("{sql} should build: {}", error.message()));
+        let width = plan.schema().map(|schema| schema.columns.len());
+        (
+            builder
+                .delete_col_pos
+                .map(|position| (position.kept, position.extra_handle)),
+            width,
+        )
+    };
+    let harness = Harness::new();
+    assert_eq!(
+        build_delete(&harness, "SELECT * FROM t WHERE b = 1", false),
+        (Some((vec![0, 1], false)), Some(2))
+    );
+    // The alias is the name the kept columns are matched under.
+    assert_eq!(
+        build_delete(&harness, "SELECT * FROM t AS x WHERE b = 1", false),
+        (Some((vec![0, 1], false)), Some(2))
+    );
+    // A foreign key referencing the table declines the pruning.
+    assert_eq!(
+        build_delete(&harness, "SELECT * FROM t", true),
+        (None, Some(3))
+    );
+    // A partitioned table and a partial index decline it too.
+    let mut partitioned = Harness::new();
+    partitioned.catalog.tables[0].is_partitioned = true;
+    assert_eq!(
+        build_delete(&partitioned, "SELECT * FROM t", false),
+        (None, Some(3))
+    );
+    let mut partial = Harness::new();
+    partial.catalog.tables[0].indexes[0].condition_expr_string = "`c` > 0".to_owned();
+    assert_eq!(
+        build_delete(&partial, "SELECT * FROM t", false),
+        (None, Some(3))
+    );
+    // A heap table (no integer primary key, no common handle) also reads
+    // `_tidb_rowid`.
+    let mut heap = Harness::new();
+    heap.catalog.tables[0].pk_is_handle = false;
+    heap.catalog.tables[0].handle_col_offsets = Vec::new();
+    heap.catalog.tables[0].columns[0].is_primary_key = false;
+    assert_eq!(
+        build_delete(&heap, "SELECT * FROM t", false),
+        (Some((vec![1], true)), Some(2))
+    );
+}

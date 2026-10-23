@@ -1107,39 +1107,14 @@ pub(crate) fn multi_dml_select(
     order_by: &[tidb_ast::OrderItem],
     limit: Option<&tidb_ast::Limit>,
 ) -> tidb_ast::QueryStmt {
-    let mut fields = tidb_ast::SelectFieldList::default();
-    fields.push(tidb_ast::SelectField::Wildcard(Vec::new()));
-    tidb_ast::QueryStmt::Select(Box::new(tidb_ast::SelectStmt {
-        kind: Default::default(),
-        is_in_braces: false,
-        with_before_braces: false,
-        with: with.cloned(),
-        hints: hints.to_vec(),
-        priority: Default::default(),
-        sql_small_result: false,
-        sql_big_result: false,
-        sql_buffer_result: false,
-        sql_no_cache: false,
-        straight_join: false,
-        calc_found_rows: false,
-        distinct: false,
-        all: false,
-        fields,
-        values: Vec::new(),
-        from: Some(from.clone()),
-        where_clause: where_clause.cloned(),
-        group_by: Vec::new(),
-        rollup: false,
-        having: None,
-        windows: Vec::new(),
-        order_by: order_by.to_vec(),
-        limit: limit.cloned(),
-        lock: None,
-        into_outfile: None,
-        into_vars: Vec::new(),
-        query_block_offset: 0,
-        as_view_schema: false,
-    }))
+    tidb_ast::QueryStmt::Select(Box::new(tidb_planner::plan_builder::dml_source::dml_source_select(
+        with,
+        hints,
+        from.clone(),
+        where_clause,
+        order_by,
+        limit,
+    )))
 }
 
 /// Plan all writable targets before executing any source. Aliases of one

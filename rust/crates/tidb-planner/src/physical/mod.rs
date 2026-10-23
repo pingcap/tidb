@@ -2866,6 +2866,27 @@ pub struct PhysicalIndexMergeReader {
     pub plan_part_info: Option<std::sync::Arc<PhysPlanPartInfo>>,
 }
 
+/// Go `physicalop.TblColPosInfo` for a single-table DELETE whose read was
+/// pruned (`pruneAndBuildColPositionInfoForDelete`): which stored columns the
+/// read carries, in table order, and whether the hidden `_tidb_rowid` handle
+/// follows them (a table whose handle is neither an integer primary key nor a
+/// common handle).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeleteColPos {
+    /// The stored-column offsets the read keeps, in table order.
+    pub kept: Vec<usize>,
+    /// Whether `_tidb_rowid` follows the kept columns.
+    pub extra_handle: bool,
+}
+
+impl DeleteColPos {
+    /// The width of a pruned read's row.
+    #[must_use]
+    pub fn width(&self) -> usize {
+        self.kept.len() + usize::from(self.extra_handle)
+    }
+}
+
 /// The cached physical root of an INSERT/UPDATE/DELETE whose source is a
 /// SELECT. Go's rebuild visitor descends into `SelectPlan` and otherwise has
 /// no DML-local range state to update.
@@ -2884,6 +2905,8 @@ pub struct PhysicalDmlRoot {
     /// Go FK checks and cascades selected by the DML builder, in EXPLAIN
     /// order. Execution consumes the same resolved policies.
     pub fk_triggers: Vec<FkTriggerNode>,
+    /// Go `Delete.TblColPosInfos` of a pruned single-table DELETE.
+    pub delete_col_pos: Option<DeleteColPos>,
 }
 
 /// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
@@ -4898,6 +4921,7 @@ impl PhysicalPlan {
                 select_plan: op.select_plan.clone(),
                 update_expressions: op.update_expressions.clone(),
                 fk_triggers: op.fk_triggers.clone(),
+                delete_col_pos: op.delete_col_pos.clone(),
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),
