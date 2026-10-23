@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "generic",
-    srcs = ["sync_map.go"],
+    srcs = [
+        "bounded_min_heap.go",
+        "sync_map.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/generic",
     visibility = ["//visibility:public"],
 )
@@ -10,10 +13,11 @@ go_library(
 go_test(
     name = "generic_test",
     timeout = "short",
-    srcs = ["sync_map_test.go"],
-    flaky = True,
-    deps = [
-        ":generic",
-        "@com_github_stretchr_testify//require",
+    srcs = [
+        "bounded_min_heap_test.go",
+        "sync_map_test.go",
     ],
+    embed = [":generic"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
 )
