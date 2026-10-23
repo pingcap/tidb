@@ -307,12 +307,13 @@ fn build_multi_layout(
         let extra = match &origin {
             SourceOrigin::Base { database, name } => catalog
                 .get_in(database, name)
+                .filter(|_| !super::catalog::is_virtual_schema_table(database, name))
                 .and_then(super::from::extra_handle_column),
             SourceOrigin::Derived => None,
         };
         let extra_handle = extra.is_some();
         let skip_repeated_updates = match &origin {
-            SourceOrigin::Base { database, name } => match catalog.get_in(database, name) {
+            SourceOrigin::Base { database, name } => match stored_table(catalog, database, name) {
                 Some(TableEntry::Kv(kv)) => !extra_handle || kv.partition().is_none(),
                 _ => true,
             },
@@ -323,7 +324,7 @@ fn build_multi_layout(
             columns.push(column);
         }
         let generated_columns = match &origin {
-            SourceOrigin::Base { database, name } => match catalog.get_in(database, name) {
+            SourceOrigin::Base { database, name } => match stored_table(catalog, database, name) {
                 Some(TableEntry::Kv(kv)) => kv
                     .columns()
                     .iter()
@@ -1269,6 +1270,15 @@ impl MultiPrune {
     }
 }
 
+/// A table the catalog stores rows for. A virtual (memory) table has none: its
+/// scan reads the columns the plan keeps and no hidden handle, as a derived
+/// table's does.
+fn stored_table<'a>(catalog: &'a Catalog, database: &str, name: &str) -> Option<&'a TableEntry> {
+    catalog
+        .get_in(database, name)
+        .filter(|_| !super::catalog::is_virtual_schema_table(database, name))
+}
+
 /// The columns of each source's part of a read row, in order.
 fn part_column_names(source: &MultiLayout, catalog: &Catalog) -> Vec<Vec<String>> {
     source
@@ -1276,7 +1286,7 @@ fn part_column_names(source: &MultiLayout, catalog: &Catalog) -> Vec<Vec<String>
         .iter()
         .map(|table| {
             let entry = match &table.origin {
-                SourceOrigin::Base { database, name } => catalog.get_in(database, name),
+                SourceOrigin::Base { database, name } => stored_table(catalog, database, name),
                 SourceOrigin::Derived => None,
             };
             match entry {
@@ -1396,7 +1406,7 @@ fn prune_for_delete(
         let Some((database, name)) = base(slot) else {
             return true;
         };
-        let Some(TableEntry::Kv(kv)) = catalog.get_in(&database, &name) else {
+        let Some(TableEntry::Kv(kv)) = stored_table(catalog, &database, &name) else {
             return true;
         };
         match super::dml::delete_keep_mask(kv) {
@@ -1456,7 +1466,7 @@ fn planned_source_rows(
     let mut slots = Vec::with_capacity(source.tables.len());
     for table in &source.tables {
         let entry = match &table.origin {
-            SourceOrigin::Base { database, name } => catalog.get_in(database, name),
+            SourceOrigin::Base { database, name } => stored_table(catalog, database, name),
             SourceOrigin::Derived => None,
         };
         let kv = match entry {

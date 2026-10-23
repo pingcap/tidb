@@ -155,3 +155,63 @@ fn a_missing_memory_table_is_reported_as_the_planner_resolves_it() {
         "Table 'performance_schema.NonExistent' doesn't exist"
     );
 }
+
+/// A multi-table UPDATE or DELETE joining a memory table: the plan reads the
+/// memory table's own columns, with no hidden handle (it stores no rows), so
+/// the write splits each read row by those widths. `7 columns, expected 9`
+/// was the width of a stored table's part applied to the virtual one. The
+/// answers are Go's, for a heap table and a clustered one as the target.
+#[test]
+fn multi_table_writes_join_memory_tables() {
+    let mut session = Session::new();
+    session.run("create database memtbl").unwrap();
+    session.run("use memtbl").unwrap();
+    session
+        .run("create table t5 (a int, n varchar(64))")
+        .unwrap();
+    session
+        .run("create table t6 (a bigint primary key, n varchar(64))")
+        .unwrap();
+    session
+        .run("insert into t5 values (1, 'memtbl'), (2, 'nomatch'), (3, 'memtbl')")
+        .unwrap();
+    session
+        .run("insert into t6 values (1, 'memtbl'), (2, 'nomatch')")
+        .unwrap();
+    let rows = |session: &mut Session, table: &str| {
+        row_text(session.run(&format!("select * from {table} order by a")))
+    };
+    session
+        .run("delete t5 from t5 join information_schema.schemata s on s.schema_name = t5.n")
+        .unwrap();
+    assert_eq!(rows(&mut session, "t5"), [["2", "nomatch"]]);
+    session
+        .run("insert into t5 values (1, 'memtbl'), (4, 'memtbl')")
+        .unwrap();
+    session
+        .run(
+            "delete t5 from information_schema.schemata s join t5 on s.schema_name = t5.n \
+             where t5.a = 4",
+        )
+        .unwrap();
+    assert_eq!(rows(&mut session, "t5"), [["1", "memtbl"], ["2", "nomatch"]]);
+    session
+        .run(
+            "update t5 join information_schema.schemata s on s.schema_name = t5.n \
+             set t5.a = t5.a + 100",
+        )
+        .unwrap();
+    assert_eq!(rows(&mut session, "t5"), [["2", "nomatch"], ["101", "memtbl"]]);
+    session
+        .run(
+            "delete t6, t5 from t6 join t5 on t5.a = 101 + 0 * t6.a \
+             join information_schema.schemata s on s.schema_name = t6.n",
+        )
+        .unwrap();
+    assert_eq!(rows(&mut session, "t5"), [["2", "nomatch"]]);
+    assert_eq!(rows(&mut session, "t6"), [["2", "nomatch"]]);
+    session
+        .run("delete from t6 using t6 join information_schema.schemata s on s.schema_name = t6.n")
+        .unwrap();
+    assert_eq!(rows(&mut session, "t6"), [["2", "nomatch"]]);
+}

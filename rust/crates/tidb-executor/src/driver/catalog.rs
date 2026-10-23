@@ -652,7 +652,7 @@ fn mark_cluster_table(
     }];
 }
 
-fn is_virtual_schema_table(database: &str, name: &str) -> bool {
+pub(crate) fn is_virtual_schema_table(database: &str, name: &str) -> bool {
     database.go_lower_eq(crate::driver::infoschema_meta::INFORMATION_SCHEMA)
         || database.go_lower_eq(crate::driver::metricsschema::METRICS_SCHEMA)
         || (database.go_lower_eq(crate::driver::perfschema::PERFORMANCE_SCHEMA)
