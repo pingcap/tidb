@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/config",
         "//pkg/executor",
@@ -17,7 +17,11 @@ go_test(
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
+<<<<<<< HEAD
         "//pkg/util",
+=======
+        "//pkg/util/intest",
+>>>>>>> 187eba37caf (executor, util/memory: keep global analyze memory usage non-negative (#65503))
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
