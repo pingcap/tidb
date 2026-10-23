@@ -196,6 +196,12 @@ impl CommittedTxnInfo {
 /// implementation is [`RealClusterTransactions`]; the tests drive the same
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
+    /// A fresh TSO from the store's oracle (Go `GetOracle().GetTimestamp`):
+    /// what `NewTxnInStmt` takes for the session transaction a DDL, account or
+    /// ANALYZE statement runs under.
+    fn fresh_timestamp(&self) -> Result<u64, String> {
+        Err("a fresh timestamp is unavailable from this storage owner".into())
+    }
     fn external_timestamp(&self, _value: Option<u64>) -> Result<u64, String> {
         Err("external timestamp is unavailable from this storage owner".into())
     }
@@ -1489,6 +1495,10 @@ impl<S> ClusterTransactions for RealClusterTransactions<S>
 where
     S: StoreClient,
 {
+    fn fresh_timestamp(&self) -> Result<u64, String> {
+        self.opener.store().get_timestamp_async().wait()
+    }
+
     fn external_timestamp(&self, value: Option<u64>) -> Result<u64, String> {
         self.opener.store().external_timestamp(value)
     }

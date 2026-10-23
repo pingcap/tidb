@@ -313,6 +313,7 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        self.record_new_txn_in_stmt();
         let service = ClusterAnalyzeService {
             statement_memory,
             resource_group: self.session.active_resource_group().to_owned(),

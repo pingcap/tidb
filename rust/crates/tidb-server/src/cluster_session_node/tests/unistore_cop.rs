@@ -14049,11 +14049,12 @@ fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
     let info = |session: &mut ClusterServerSession| {
         displayed(rows(session, "SELECT @@tidb_last_txn_info"))[0][0].clone()
     };
-    rows(&mut session, "CREATE TABLE test.t_info (a INT PRIMARY KEY)");
     rows(&mut session, "USE test");
     rows(&mut session, "SET @x = 1");
     rows(&mut session, "PREPARE p FROM 'SELECT 1'");
     assert_eq!(info(&mut session), "", "statements that ran no transaction");
+    // A DDL does run one (`NewTxnInStmt`): a start-only record.
+    rows(&mut session, "CREATE TABLE test.t_info (a INT PRIMARY KEY)");
 
     session
         .execute_write("INSERT INTO test.t_info VALUES (1)")
@@ -14095,6 +14096,49 @@ fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
         read.contains("\"commit_ts\":0,\"txn_commit_mode\":\"\""),
         "{read}"
     );
+}
+
+/// Go's DDL, account and ANALYZE statements run under a session transaction
+/// opened by `NewTxnInStmt` at a fresh TSO, and the autocommit `CommitTxn`
+/// that ends them records its start-only `@@tidb_last_txn_info`. Captured on
+/// the Go oracle: CREATE TABLE, ALTER TABLE, CREATE USER, GRANT, REVOKE,
+/// DROP USER and ANALYZE each leave a newer start with `commit_ts` 0; a
+/// local `CREATE TEMPORARY TABLE` returns before `NewTxnInStmt` and leaves
+/// the record alone.
+#[test]
+fn new_txn_in_stmt_statements_record_a_fresh_start_only_txn_info() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1017)).unwrap();
+    let start = |session: &mut ClusterServerSession| -> u64 {
+        displayed(rows(
+            session,
+            "SELECT IF(@@tidb_last_txn_info = '', 0, cast(json_unquote(json_extract(\
+             @@tidb_last_txn_info, '$.start_ts')) AS UNSIGNED))",
+        ))[0][0]
+            .parse()
+            .unwrap_or(0)
+    };
+    let mut last = start(&mut session);
+    assert_eq!(last, 0, "a fresh session has no record");
+    for statement in [
+        "CREATE TABLE test.t_new_txn (a INT PRIMARY KEY)",
+        "ALTER TABLE test.t_new_txn ADD COLUMN b INT",
+        "CREATE USER 'new_txn_u'@'%' IDENTIFIED BY ''",
+    ] {
+        session.execute_write(statement).unwrap();
+        let now = start(&mut session);
+        assert!(now > last, "{statement} left start {now} after {last}");
+        let info = displayed(rows(&mut session, "SELECT @@tidb_last_txn_info"))[0][0].clone();
+        assert!(
+            info.contains("\"commit_ts\":0,\"txn_commit_mode\":\"\""),
+            "{statement}: {info}"
+        );
+        last = now;
+    }
+    session
+        .execute_write("CREATE TEMPORARY TABLE test.tt_new_txn (a INT)")
+        .unwrap();
+    assert_eq!(start(&mut session), last, "a local temporary table is not one");
 }
 
 /// Go `PrepareTxnCtx` enters the `autocommit = 0` transaction with

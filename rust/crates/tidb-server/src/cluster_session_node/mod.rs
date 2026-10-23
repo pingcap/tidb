@@ -7255,6 +7255,7 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        self.record_new_txn_in_stmt();
         // Go logs nothing for a successful account statement.
         self.session
             .run_account_statement_with(sql, &ClusterAccountService(Arc::clone(&self.accounts)))
@@ -8014,6 +8015,7 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
+        self.record_new_txn_in_stmt();
         // The session owns the rest of the DDL path; this node supplies the
         // service that publishes to the cluster.
         let service = ClusterDdlService::new(Arc::clone(&self.ddl));
@@ -8033,6 +8035,18 @@ impl ClusterServerSession {
             affected_rows: 0,
             last_insert_id: 0,
         })
+    }
+
+    /// Go `sessiontxn.NewTxnInStmt` (`executor/ddl.go:151`, `simple.go:153`,
+    /// `grant.go:144`, `revoke.go:71`): a DDL, account or ANALYZE statement
+    /// runs under a session transaction opened at a fresh TSO, and the
+    /// autocommit `CommitTxn` that ends the statement records it as
+    /// `@@tidb_last_txn_info` (start only: nothing was written through it).
+    /// `@@tidb_current_ts` is 0 again by the next statement, as in Go.
+    pub(super) fn record_new_txn_in_stmt(&mut self) {
+        if let Ok(start_ts) = self.transactions.fresh_timestamp() {
+            self.session.record_started_txn_info(start_ts);
+        }
     }
 
     /// Go `preSplitAndScatterTable` after CREATE TABLE, on a node whose
