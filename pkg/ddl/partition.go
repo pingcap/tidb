@@ -67,6 +67,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/clients/router"
+	pd "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
@@ -262,9 +263,8 @@ func alterTableLabelRule(codec tikv.Codec, schemaName string, meta *model.TableI
 		return false, nil
 	}
 
-	r, ok := oldRule[tableRuleID]
-	if ok {
-		rule := r.Reset(codec, schemaName, meta.Name.L, "", ids...)
+	rule := buildTableLabelRule(codec, schemaName, meta, ids, oldRule)
+	if rule != nil {
 		err = infosync.PutLabelRule(context.TODO(), rule)
 		if err != nil {
 			return false, errors.Wrapf(err, "failed to notify PD label rule")
@@ -274,71 +274,148 @@ func alterTableLabelRule(codec tikv.Codec, schemaName string, meta *model.TableI
 	return false, nil
 }
 
-func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) (bool, error) {
-	// We want to achieve:
-	// - before we do any reorganization/write to new partitions/global indexes that the placement rules are in-place
-	// - not removing any placement rules for removed partitions
-	// So we will:
-	// 1) First write the new bundles including both new and old partitions,
-	//    EXCEPT if the old partition is in fact a table, then skip that partition
-	// 2) Then overwrite the bundles with the final partitioning scheme (second call in onReorg/
+func buildTableLabelRule(codec tikv.Codec, schemaName string, tblInfo *model.TableInfo, ids []int64, rules map[string]*label.Rule) *label.Rule {
+	tableRuleID := label.NewRuleID(codec, schemaName, tblInfo.Name.L, "")
+	if r, ok := rules[tableRuleID]; ok {
+		return resetPartitionLabelRule(r, codec, schemaName, tblInfo.Name.L, "", ids...)
+	}
+	return nil
+}
 
+func buildTruncatePartitionLabelRulePatch(codec tikv.Codec, schemaName string, tblInfo *model.TableInfo, newPartitions []model.PartitionDefinition, rules map[string]*label.Rule) *pd.LabelRulePatch {
+	tableID := label.NewRuleID(codec, schemaName, tblInfo.Name.L, "")
+	newPartIDs := getPartitionIDs(tblInfo)
+	newRules := make([]*label.Rule, 0, len(newPartitions)+1)
+	if tr, ok := rules[tableID]; ok {
+		newRules = append(newRules, resetPartitionLabelRule(tr, codec, schemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
+	}
+	for _, newPartition := range newPartitions {
+		partRuleID := label.NewRuleID(codec, schemaName, tblInfo.Name.L, newPartition.Name.L)
+		if pr, ok := rules[partRuleID]; ok {
+			newRules = append(newRules, resetPartitionLabelRule(pr, codec, schemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
+		}
+	}
+	return label.NewRulePatch(newRules, []string{})
+}
+
+func buildExchangePartitionLabelRulePatch(codec tikv.Codec, ntSchemaName string, nt *model.TableInfo, ptSchemaName string, pt *model.TableInfo, partDef *model.PartitionDefinition, rules map[string]*label.Rule) *pd.LabelRulePatch {
+	ntrID := label.NewRuleID(codec, ntSchemaName, nt.Name.L, "")
+	ptrID := label.NewRuleID(codec, ptSchemaName, pt.Name.L, partDef.Name.L)
+	ntr := rules[ntrID]
+	ptr := rules[ptrID]
+	partIDs := getPartitionIDs(nt)
+	var setRules []*label.Rule
+	var deleteRules []string
+	if ntr != nil && ptr != nil {
+		setRules = append(setRules, resetPartitionLabelRule(ntr, codec, ptSchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		setRules = append(setRules, resetPartitionLabelRule(ptr, codec, ntSchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
+	} else if ptr != nil {
+		setRules = append(setRules, resetPartitionLabelRule(ptr, codec, ntSchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
+		deleteRules = append(deleteRules, ptrID)
+	} else if ntr != nil {
+		setRules = append(setRules, resetPartitionLabelRule(ntr, codec, ptSchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		deleteRules = append(deleteRules, ntrID)
+	}
+	return label.NewRulePatch(setRules, deleteRules)
+}
+
+func resetPartitionLabelRule(rule *label.Rule, codec tikv.Codec, schemaName, tableName, partitionName string, ids ...int64) *label.Rule {
+	cloned := rule.Clone()
+	// Rule.Clone is shallow; Reset rewrites Labels in place and sorts ids.
+	// Keep fetched rule snapshots and caller-owned ID slices unchanged.
+	cloned.Labels = slices.Clone(rule.Labels)
+	return cloned.Reset(codec, schemaName, tableName, partitionName, slices.Clone(ids)...)
+}
+
+// buildAlterTablePartitionBundles keeps existing partition rules until the DDL
+// finishes, while including rules for the added partitions before writes begin.
+func buildAlterTablePartitionBundles(t placement.PolicyGetter, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	tblInfo = tblInfo.Clone()
 	p := tblInfo.Partition
 	if p != nil {
-		// if partitioning a non-partitioned table, we will first change the metadata,
-		// so the table looks like a partitioned table, with the first/only partition having
-		// the same partition ID as the table, so we can access the table as a single partition.
-		// But in this case we should not add a bundle rule for the same range
-		// both as table and partition.
+		// A table being partitioned is temporarily represented by a partition
+		// with the table ID. Including it would duplicate the table key range.
 		if p.Definitions[0].ID != tblInfo.ID {
-			// prepend with existing partitions
 			addDefs = append(p.Definitions, addDefs...)
 		}
 		p.Definitions = addDefs
 	}
 
-	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
 	if err != nil {
-		return false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-
 	var bundles []*placement.Bundle
 	if tblBundle != nil {
 		bundles = append(bundles, tblBundle)
 	}
-
 	partitionBundles, err := placement.NewPartitionListBundles(t, addDefs)
 	if err != nil {
-		return false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
+	return append(bundles, partitionBundles...), nil
+}
 
-	bundles = append(bundles, partitionBundles...)
-
+func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) (bool, error) {
+	bundles, err := buildAlterTablePartitionBundles(t, tblInfo, addDefs)
+	if err != nil {
+		return false, err
+	}
 	if len(bundles) > 0 {
 		return true, infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	}
 	return false, nil
 }
 
-// When dropping or truncating a partition, keep its placement settings to avoid
-// unnecessary region scheduling before delete-range GC. Recomputing the table
-// bundle removes inherited rules for the dropped range, so create a standalone
-// partition bundle to preserve those rules until GC.
-func droppedPartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+func buildDropPartitionBundles(t placement.PolicyGetter, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	// Keep the dropped data's placement until GC, then remove its ranges from
+	// the table bundle. Preserve this order for both policy reads and bundles.
+	bundles, err := partitionBundlesForDroppedDefinitions(t, tblInfo, dropPartitions)
+	if err != nil {
+		return nil, err
+	}
+	tableBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+	return bundles, nil
+}
+
+func buildTruncatePartitionBundles(t placement.PolicyGetter, tblInfo *model.TableInfo, oldPartitions, newPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tableBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+	keepDroppedBundles, err := partitionBundlesForDroppedDefinitions(t, tblInfo, oldPartitions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return append(bundles, keepDroppedBundles...), nil
+}
+
+// partitionBundlesForDroppedDefinitions preserves placement for dropped data
+// until GC removes it, including placement inherited from the table policy.
+func partitionBundlesForDroppedDefinitions(t placement.PolicyGetter, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	partitions := make([]model.PartitionDefinition, 0, len(dropPartitions))
 	for _, def := range dropPartitions {
 		def = def.Clone()
 		if def.PlacementPolicyRef == nil {
 			def.PlacementPolicyRef = tblInfo.PlacementPolicyRef
 		}
-
 		if def.PlacementPolicyRef != nil {
 			partitions = append(partitions, def)
 		}
 	}
-
 	return placement.NewPartitionListBundles(t, partitions)
 }
 
@@ -360,21 +437,30 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 	tblInfo.Partition.AddingDefinitions = append(tblInfo.Partition.AddingDefinitions, newDefs...)
 }
 
-func updatePartInfoDefinitionsFromFinalDefinitions(
-	checkedTblInfo *model.TableInfo,
-	partInfo *model.PartitionInfo,
-	definitionsOffset int,
-) error {
-	if err := rebuildStorageClassForPartitionDefinitions(checkedTblInfo, checkedTblInfo.Partition.Definitions); err != nil {
-		return err
+// checkAndNormalizePartitionDefinitions returns checked definitions owned by the
+// caller. Validation can fold values in place, so it must not share definition
+// values with either the current table metadata or the requested partitions.
+func checkAndNormalizePartitionDefinitions(
+	ctx expression.BuildContext,
+	tblInfo *model.TableInfo,
+	definitionsOffset, definitionsCount int,
+) ([]model.PartitionDefinition, error) {
+	checkedTblInfo := *tblInfo
+	checkedPartition := *tblInfo.Partition
+	checkedPartition.Definitions = clonePartitionDefinitions(tblInfo.Partition.Definitions)
+	checkedTblInfo.Partition = &checkedPartition
+	if err := checkPartitionDefinitionConstraints(ctx, &checkedTblInfo); err != nil {
+		return nil, errors.Trace(err)
 	}
-	definitionsEnd := definitionsOffset + len(partInfo.Definitions)
-	if definitionsOffset < 0 || definitionsEnd > len(checkedTblInfo.Partition.Definitions) {
-		return errors.Errorf("invalid partition definition range [%d, %d) for %d final definitions",
-			definitionsOffset, definitionsEnd, len(checkedTblInfo.Partition.Definitions))
+	if err := rebuildStorageClassForPartitionDefinitions(&checkedTblInfo, checkedPartition.Definitions); err != nil {
+		return nil, err
 	}
-	partInfo.Definitions = clonePartitionDefinitions(checkedTblInfo.Partition.Definitions[definitionsOffset:definitionsEnd])
-	return nil
+	definitionsEnd := definitionsOffset + definitionsCount
+	if definitionsOffset < 0 || definitionsEnd > len(checkedPartition.Definitions) {
+		return nil, errors.Errorf("invalid partition definition range [%d, %d) for %d final definitions",
+			definitionsOffset, definitionsEnd, len(checkedPartition.Definitions))
+	}
+	return clonePartitionDefinitions(checkedPartition.Definitions[definitionsOffset:definitionsEnd]), nil
 }
 
 // CheckAndUpdateAddedPartitionDefinitions rebuilds added partition definitions
@@ -385,14 +471,16 @@ func CheckAndUpdateAddedPartitionDefinitions(
 	partInfo *model.PartitionInfo,
 	definitionsOffset int,
 ) error {
-	clonedMeta := meta.Clone()
+	clonedMeta := *meta
 	tmp := *partInfo
-	tmp.Definitions = append(clonePartitionDefinitions(meta.Partition.Definitions), tmp.Definitions...)
+	tmp.Definitions = append(slices.Clone(meta.Partition.Definitions), tmp.Definitions...)
 	clonedMeta.Partition = &tmp
-	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
-		return errors.Trace(err)
+	definitions, err := checkAndNormalizePartitionDefinitions(ctx, &clonedMeta, definitionsOffset, len(partInfo.Definitions))
+	if err != nil {
+		return err
 	}
-	return updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset)
+	partInfo.Definitions = definitions
+	return nil
 }
 
 // clonePartitionDefinitions also deep-clones InValues, unlike
@@ -2373,25 +2461,10 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			return ver, err
 		}
 
-		var bundles []*placement.Bundle
-		// create placement groups for each dropped partition to keep the data's placement before GC
-		// These placements groups will be deleted after GC
-		bundles, err = droppedPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
+		bundles, err := buildDropPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
-		}
-
-		var tableBundle *placement.Bundle
-		// Recompute table bundle to remove dropped partitions rules from its group
-		tableBundle, err = placement.NewTableBundle(metaMut, tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
-		if tableBundle != nil {
-			bundles = append(bundles, tableBundle)
 		}
 
 		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
@@ -2786,27 +2859,10 @@ func clearTruncatePartitionTiflashStatus(tblInfo *model.TableInfo, newPartitions
 }
 
 func updateTruncatePartitionLabelRules(jobCtx *jobContext, job *model.Job, t *meta.Mutator, oldPartitions, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo, oldIDs []int64) error {
-	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
+	bundles, err := buildTruncatePartitionBundles(t, tblInfo, oldPartitions, newPartitions)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-
-	tableBundle, err := placement.NewTableBundle(t, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if tableBundle != nil {
-		bundles = append(bundles, tableBundle)
-	}
-
-	// create placement groups for each dropped partition to keep the data's placement before GC
-	// These placements groups will be deleted after GC
-	keepDroppedBundles, err := droppedPartitionBundles(t, tblInfo, oldPartitions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	bundles = append(bundles, keepDroppedBundles...)
 
 	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	if err != nil {
@@ -2825,19 +2881,7 @@ func updateTruncatePartitionLabelRules(jobCtx *jobContext, job *model.Job, t *me
 		return errors.Wrapf(err, "failed to get label rules from PD")
 	}
 
-	newPartIDs := getPartitionIDs(tblInfo)
-	newRules := make([]*label.Rule, 0, len(oldIDs)+1)
-	if tr, ok := rules[tableID]; ok {
-		newRules = append(newRules, tr.Clone().Reset(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
-	}
-
-	for idx, newPartition := range newPartitions {
-		if pr, ok := rules[oldPartRules[idx]]; ok {
-			newRules = append(newRules, pr.Clone().Reset(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
-		}
-	}
-
-	patch := label.NewRulePatch(newRules, []string{})
+	patch := buildTruncatePartitionLabelRulePatch(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, newPartitions, rules)
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
 		return errors.Wrapf(err, "failed to notify PD the label rules")
@@ -3099,28 +3143,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
-	ntr := rules[ntrID]
-	ptr := rules[ptrID]
-
-	// This must be a bug, nt cannot be partitioned!
-	partIDs := getPartitionIDs(nt)
-
-	var setRules []*label.Rule
-	var deleteRules []string
-	if ntr != nil && ptr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(jobCtx.store.GetCodec(), ptDbInfo.Name.L, pt.Name.L, partDef.Name.L, partDef.ID))
-		setRules = append(setRules, ptr.Clone().Reset(jobCtx.store.GetCodec(), ntDbInfo.Name.L, nt.Name.L, "", append(partIDs, nt.ID)...))
-	} else if ptr != nil {
-		setRules = append(setRules, ptr.Clone().Reset(jobCtx.store.GetCodec(), ntDbInfo.Name.L, nt.Name.L, "", append(partIDs, nt.ID)...))
-		// delete ptr
-		deleteRules = append(deleteRules, ptrID)
-	} else if ntr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(jobCtx.store.GetCodec(), ptDbInfo.Name.L, pt.Name.L, partDef.Name.L, partDef.ID))
-		// delete ntr
-		deleteRules = append(deleteRules, ntrID)
-	}
-
-	patch := label.NewRulePatch(setRules, deleteRules)
+	patch := buildExchangePartitionLabelRulePatch(jobCtx.store.GetCodec(), ntDbInfo.Name.L, nt, ptDbInfo.Name.L, pt, partDef, rules)
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
@@ -3442,9 +3465,11 @@ func (w *worker) validateReorganizePartition(job *model.Job, tblInfo *model.Tabl
 		return err
 	}
 	sctx := w.sess.Context
-	if err = checkReorgPartitionDefs(sctx, job.Type, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	definitions, err := checkAndNormalizeReorgPartitionDefinitions(sctx.GetExprCtx(), job.Type, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap)
+	if err != nil {
 		return err
 	}
+	partInfo.Definitions = definitions
 	if job.Type != model.ActionAlterTablePartitioning {
 		return nil
 	}

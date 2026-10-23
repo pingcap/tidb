@@ -3001,9 +3001,11 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = checkReorgPartitionDefs(ctx, model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	definitions, err := checkAndNormalizeReorgPartitionDefinitions(ctx.GetExprCtx(), model.ActionReorganizePartition, meta, partInfo, firstPartIdx, lastPartIdx, idMap)
+	if err != nil {
 		return errors.Trace(err)
 	}
+	partInfo.Definitions = definitions
 	if err = handlePartitionPlacement(ctx, partInfo); err != nil {
 		return errors.Trace(err)
 	}
@@ -3110,11 +3112,15 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	return errors.Trace(err)
 }
 
-func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) error {
+// checkAndNormalizeReorgPartitionDefinitions checks the final layout without changing
+// current or requested metadata, and returns the normalized replacement definitions.
+func checkAndNormalizeReorgPartitionDefinitions(ctx expression.BuildContext, action model.ActionType, tblInfo *model.TableInfo, partInfo *model.PartitionInfo, firstPartIdx, lastPartIdx int, idMap map[int]struct{}) ([]model.PartitionDefinition, error) {
 	// partInfo contains only the new added partition, we have to combine it with the
 	// old partitions to check all partitions is strictly increasing.
 	pi := tblInfo.Partition
-	clonedMeta := tblInfo.Clone()
+	clonedMeta := *tblInfo
+	clonedPartition := *pi
+	clonedMeta.Partition = &clonedPartition
 	switch action {
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		clonedMeta.Partition = partInfo
@@ -3123,67 +3129,65 @@ func checkReorgPartitionDefs(ctx sessionctx.Context, action model.ActionType, tb
 		clonedMeta.Partition.AddingDefinitions = partInfo.Definitions
 		clonedMeta.Partition.Definitions = getReorganizedDefinitions(clonedMeta.Partition, firstPartIdx, lastPartIdx, idMap)
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
-	}
-	if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta); err != nil {
-		return errors.Trace(err)
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("partition type")
 	}
 	definitionsOffset := 0
 	if action == model.ActionReorganizePartition {
 		definitionsOffset = firstPartIdx
 	}
-	if err := updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset); err != nil {
-		return errors.Trace(err)
+	definitions, err := checkAndNormalizePartitionDefinitions(ctx, &clonedMeta, definitionsOffset, len(partInfo.Definitions))
+	if err != nil {
+		return nil, err
 	}
 	if action == model.ActionReorganizePartition {
 		if pi.Type == ast.PartitionTypeRange {
 			if lastPartIdx == len(pi.Definitions)-1 {
 				// Last partition dropped, OK to change the end range
 				// Also includes MAXVALUE
-				return nil
+				return definitions, nil
 			}
 			// Check if the replaced end range is the same as before
-			lastAddingPartition := partInfo.Definitions[len(partInfo.Definitions)-1]
+			lastAddingPartition := definitions[len(definitions)-1]
 			lastOldPartition := pi.Definitions[lastPartIdx]
 			if len(pi.Columns) > 0 {
-				newGtOld, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastAddingPartition, &lastOldPartition, pi, tblInfo)
+				newGtOld, err := checkTwoRangeColumns(ctx, &lastAddingPartition, &lastOldPartition, pi, tblInfo)
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 				if newGtOld {
-					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+					return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 				}
-				oldGtNew, err := checkTwoRangeColumns(ctx.GetExprCtx(), &lastOldPartition, &lastAddingPartition, pi, tblInfo)
+				oldGtNew, err := checkTwoRangeColumns(ctx, &lastOldPartition, &lastAddingPartition, pi, tblInfo)
 				if err != nil {
-					return errors.Trace(err)
+					return nil, errors.Trace(err)
 				}
 				if oldGtNew {
-					return errors.Trace(dbterror.ErrRangeNotIncreasing)
+					return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 				}
-				return nil
+				return definitions, nil
 			}
 
-			isUnsigned := isPartExprUnsigned(ctx.GetExprCtx().GetEvalCtx(), tblInfo)
-			currentRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
+			isUnsigned := isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo)
+			currentRangeValue, _, err := getRangeValue(ctx, pi.Definitions[lastPartIdx].LessThan[0], isUnsigned)
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
-			newRangeValue, _, err := getRangeValue(ctx.GetExprCtx(), partInfo.Definitions[len(partInfo.Definitions)-1].LessThan[0], isUnsigned)
+			newRangeValue, _, err := getRangeValue(ctx, definitions[len(definitions)-1].LessThan[0], isUnsigned)
 			if err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 
 			if currentRangeValue != newRangeValue {
-				return errors.Trace(dbterror.ErrRangeNotIncreasing)
+				return nil, errors.Trace(dbterror.ErrRangeNotIncreasing)
 			}
 		}
 	} else {
 		if len(pi.Definitions) != (lastPartIdx - firstPartIdx + 1) {
 			// if not ActionReorganizePartition, require all partitions to be changed.
-			return errors.Trace(dbterror.ErrAlterOperationNotSupported)
+			return nil, errors.Trace(dbterror.ErrAlterOperationNotSupported)
 		}
 	}
-	return nil
+	return definitions, nil
 }
 
 // CoalescePartitions coalesce partitions can be used with a table that is partitioned by hash or key to reduce the number of partitions by number.

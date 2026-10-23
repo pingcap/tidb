@@ -17,8 +17,12 @@ package ddl
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestAppendPhysicalTableIDs(t *testing.T) {
@@ -36,4 +40,18 @@ func TestAppendPhysicalTableIDs(t *testing.T) {
 	ids := appendPhysicalTableIDs([]int64{1}, table)
 
 	require.Equal(t, []int64{1, 100, 101, 102}, ids)
+}
+
+func TestBuildTableLabelRuleOwnership(t *testing.T) {
+	codec := tikv.NewCodecV1(tikv.ModeTxn)
+	tbl := &model.TableInfo{Name: ast.NewCIStr("t")}
+	id := label.NewRuleID(codec, "db", "t", "")
+	rule := (&label.Rule{Labels: []pd.RegionLabel{{Key: "a", Value: "table"}}}).Reset(codec, "old_db", "old_t", "", 100)
+	before := rule.String()
+	ids := []int64{30, 10, 20}
+	result := buildTableLabelRule(codec, "db", tbl, ids, map[string]*label.Rule{id: rule})
+	require.Equal(t, id, result.ID)
+	require.Equal(t, before, rule.String())
+	require.Equal(t, []int64{30, 10, 20}, ids)
+	require.Nil(t, buildTableLabelRule(codec, "db", tbl, ids, nil))
 }

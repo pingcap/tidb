@@ -60,13 +60,8 @@ partition by list (id) (partition p0 values in (1, 2))`,
 			partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), tbInfo, spec)
 			require.NoError(t, err)
 
-			clonedMeta := tbInfo.Clone()
-			tmp := *partInfo
 			oldDefCount := len(tbInfo.Partition.Definitions)
-			tmp.Definitions = append(clonePartitionDefinitions(tbInfo.Partition.Definitions), tmp.Definitions...)
-			clonedMeta.Partition = &tmp
-			require.NoError(t, checkPartitionDefinitionConstraints(ctx.GetExprCtx(), clonedMeta))
-			require.NoError(t, updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, oldDefCount))
+			require.NoError(t, CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), tbInfo, partInfo, oldDefCount))
 
 			require.Len(t, partInfo.Definitions, 1)
 			require.Equal(t, tt.tier, partInfo.Definitions[0].StorageClassTier)
@@ -78,6 +73,23 @@ partition by list (id) (partition p0 values in (1, 2))`,
 			}
 		})
 	}
+
+	t.Run("validation failure preserves input definitions", func(t *testing.T) {
+		ctx := metabuild.NewContext()
+		tbInfo := buildStorageClassTableInfo(t, ctx, `create table t (id int)
+partition by list (id) (partition p0 values in (1))`)
+		spec := parseStorageClassAlterSpec(t, `alter table t add partition (
+partition p1 values in (2 + 0), partition p2 values in (2))`)
+		partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), tbInfo, spec)
+		require.NoError(t, err)
+		original := clonePartitionDefinitions(tbInfo.Partition.Definitions)
+		requested := clonePartitionDefinitions(partInfo.Definitions)
+
+		err = CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), tbInfo, partInfo, len(original))
+		require.ErrorContains(t, err, "Multiple definition of same constant in list partitioning")
+		require.Equal(t, original, tbInfo.Partition.Definitions)
+		require.Equal(t, requested, partInfo.Definitions)
+	})
 
 	t.Run("alter without storage class keeps existing metadata", func(t *testing.T) {
 		ctx := metabuild.NewContext()
@@ -113,12 +125,31 @@ partition p2 values less than (300))`)
 	firstPartIdx, lastPartIdx, idMap, err := getReplacedPartitionIDs(partNames, tbInfo.Partition)
 	require.NoError(t, err)
 
-	require.NoError(t, checkReorgPartitionDefs(sctx, model.ActionReorganizePartition, tbInfo, partInfo, firstPartIdx, lastPartIdx, idMap))
+	requested := partInfo.Clone().Definitions
+	original := tbInfo.Partition.Clone().Definitions
+	definitions, err := checkAndNormalizeReorgPartitionDefinitions(sctx.GetExprCtx(), model.ActionReorganizePartition, tbInfo, partInfo, firstPartIdx, lastPartIdx, idMap)
+	require.NoError(t, err)
+	require.Equal(t, requested, partInfo.Definitions)
+	require.Equal(t, original, tbInfo.Partition.Definitions)
+	partInfo.Definitions = definitions
 	require.Len(t, partInfo.Definitions, 2)
 	require.Equal(t, "200", partInfo.Definitions[0].LessThan[0])
 	require.Equal(t, model.StorageClassTierIA, partInfo.Definitions[0].StorageClassTier)
 	require.Equal(t, "300", partInfo.Definitions[1].LessThan[0])
 	require.Equal(t, model.StorageClassTierStandard, partInfo.Definitions[1].StorageClassTier)
+
+	t.Run("range boundary failure preserves requested expression", func(t *testing.T) {
+		spec := parseStorageClassAlterSpec(t, `alter table t reorganize partition p0 into (
+partition p0 values less than (25 + 25))`)
+		partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), tbInfo, spec)
+		require.NoError(t, err)
+		requested := partInfo.Clone().Definitions
+		definitions, err := checkAndNormalizeReorgPartitionDefinitions(sctx.GetExprCtx(), model.ActionReorganizePartition, tbInfo, partInfo, 0, 0, map[int]struct{}{0: {}})
+		require.ErrorContains(t, err, "VALUES LESS THAN value must be strictly increasing")
+		require.Nil(t, definitions)
+		require.Equal(t, requested, partInfo.Definitions)
+		require.Equal(t, original, tbInfo.Partition.Definitions)
+	})
 }
 
 func TestStorageClassRemovePartitioningIgnoresPartitionScopes(t *testing.T) {
@@ -141,7 +172,8 @@ partition by range (id) (partition p0 values less than (100), partition p1 value
 	}
 	partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), meta, spec)
 	require.NoError(t, err)
-	require.NoError(t, checkReorgPartitionDefs(sctx, model.ActionRemovePartitioning, tbInfo, partInfo, 0, len(partNames)-1, nil))
+	_, err = checkAndNormalizeReorgPartitionDefinitions(sctx.GetExprCtx(), model.ActionRemovePartitioning, tbInfo, partInfo, 0, len(partNames)-1, nil)
+	require.NoError(t, err)
 }
 
 func buildStorageClassTableInfo(t *testing.T, ctx *metabuild.Context, sql string) *model.TableInfo {
