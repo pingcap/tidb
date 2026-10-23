@@ -157,5 +157,51 @@ func TestInvertedIndex(t *testing.T) {
 			})
 			compareStringSlice(t, normalizedPlanRows, output[i].Plan)
 		}
+
+		testKit.MustExec("set @@tidb_opt_enable_late_materialization = on")
+		t.Run("hint_on_indexed_column", func(t *testing.T) {
+			rows := testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t1, a) */ * from t1 where a > 3 and c > 1").Rows())
+			plan := strings.Join(rows, "\n")
+			require.Contains(t, plan, "invertedindex:idx_a")
+			require.NotContains(t, plan, "pushed down filter")
+		})
+		t.Run("hint_on_indexed_and_unindexed_columns", func(t *testing.T) {
+			rows := testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t1, a, c) */ * from t1 where a > 3 and c > 1").Rows())
+			plan := strings.Join(rows, "\n")
+			require.Contains(t, plan, "invertedindex:idx_a")
+			require.Contains(t, plan, "pushed down filter:gt(test.t1.c, 1), keep order:")
+		})
+		t.Run("hint_with_forced_inverted_index", func(t *testing.T) {
+			rows := testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t1, a, c) */ * from t1 force index(idx_a) where a > 1 and c > 1").Rows())
+			plan := strings.Join(rows, "\n")
+			require.Contains(t, plan, "invertedindex:idx_a")
+			require.Contains(t, plan, "pushed down filter:gt(test.t1.c, 1), keep order:")
+		})
+		testKit.MustExec("set @@tidb_opt_enable_late_materialization = off")
+		t.Run("hint_with_late_materialization_disabled", func(t *testing.T) {
+			rows := testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t1, a, c) */ * from t1 where a > 3 and c > 1").Rows())
+			plan := strings.Join(rows, "\n")
+			require.Contains(t, plan, "invertedindex:idx_a")
+			require.NotContains(t, plan, "pushed down filter")
+		})
+
+		testKit.MustExec("create table t_lm_inverted_small (a int, b int, c int, columnar index idx_a(a) using inverted)")
+		testKit.MustExec("insert into t_lm_inverted_small values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4)")
+		testkit.SetTiFlashReplica(t, dom, "test", "t_lm_inverted_small")
+		testKit.MustExec("analyze table t_lm_inverted_small all columns")
+		testKit.MustExec("set @@tidb_opt_enable_late_materialization = on")
+		t.Run("small_table_hint_without_matching_predicate", func(t *testing.T) {
+			rows := testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t_lm_inverted_small, c) */ * from t_lm_inverted_small where a = 1").Rows())
+			plan := strings.Join(rows, "\n")
+			require.NotContains(t, plan, "invertedindex:")
+			require.NotContains(t, plan, "pushed down filter")
+		})
+		t.Run("small_table_hint_with_matching_predicate", func(t *testing.T) {
+			rows := testdata.ConvertRowsToStrings(testKit.MustQuery("explain format = 'brief' select /*+ tiflash_lm_filter(t_lm_inverted_small, c) */ * from t_lm_inverted_small where a = 1 and c > 1").Rows())
+			plan := strings.Join(rows, "\n")
+			require.NotContains(t, plan, "invertedindex:")
+			require.Contains(t, plan, "pushed down filter:gt(test.t_lm_inverted_small.c, 1), keep order:")
+			require.Contains(t, plan, "eq(test.t_lm_inverted_small.a, 1)")
+		})
 	})
 }
