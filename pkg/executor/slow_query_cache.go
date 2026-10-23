@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"strconv"
-	"sync"
 	"time"
 	"unsafe"
 
@@ -89,12 +88,12 @@ type slowQueryCacheReadTask struct {
 // A full write queue drops the entry. Plaintext waiting in writeCh is not
 // counted; the worker applies maxMem and fixedMem when it handles the write.
 // Readers block until woken or their context ends. Non-diagnostic TiDB starts
-// the worker in Server.Run. enqueue does not start it, and diagnostic mode
-// neither starts the worker nor enqueues reads or writes.
+// the worker in Server.Run. Read and write entrypoints check that lifecycle
+// state before sending tasks; diagnostic mode neither starts the worker nor
+// enqueues reads or writes.
 type slowQueryCache struct {
 	writeCh chan slowQueryCacheWriteTask
 	readCh  chan *slowQueryCacheReadTask
-	startMu sync.Mutex
 	running bool
 
 	head          *SlowQueryGroup
@@ -148,17 +147,15 @@ func (c *slowQueryCache) start() {
 	if diagnosticmode.Enabled() {
 		return
 	}
-	c.ensureStarted()
-}
-
-func (c *slowQueryCache) ensureStarted() {
-	c.startMu.Lock()
-	defer c.startMu.Unlock()
-	if c.running {
+	if c.checkRunning() {
 		return
 	}
 	c.running = true
 	go c.run()
+}
+
+func (c *slowQueryCache) checkRunning() bool {
+	return c.running
 }
 
 func (c *slowQueryCache) run() {
@@ -210,7 +207,7 @@ func (c *slowQueryCache) pollRead() (*slowQueryCacheReadTask, bool) {
 }
 
 func (c *slowQueryCache) putIntoCache(key slowQueryKey, sql string) {
-	if sql == "" || diagnosticmode.Enabled() {
+	if sql == "" || diagnosticmode.Enabled() || !c.checkRunning() {
 		return
 	}
 	c.tryToCache(slowQueryCacheWriteTask{key: key, sql: sql})
@@ -239,6 +236,9 @@ func (c *slowQueryCache) getUnredactedQueries(ctx context.Context, keys []slowQu
 	}
 	if diagnosticmode.Enabled() {
 		return nil, nil
+	}
+	if !c.checkRunning() {
+		return make([]string, len(keys)), nil
 	}
 
 	task := &slowQueryCacheReadTask{

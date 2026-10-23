@@ -102,8 +102,9 @@ func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
 	sctx.GetSessionVars().EnableRedactLog = errors.RedactLogEnable
 	sqlText := "select secret_value;"
 	key := slowQueryKeyOf(42, 1.5, "mem-digest")
-	// Lookup does not start the worker. Server.Run does that before queries arrive.
-	globalSlowQueryCache.ensureStarted()
+	// The production Server.Run path starts the process-wide worker before
+	// accepting connections. Unit tests start it explicitly.
+	globalSlowQueryCache.start()
 	globalSlowQueryCache.putIntoCache(key, sqlText)
 	require.Eventually(t, func() bool {
 		got, err := globalSlowQueryCache.getUnredactedQueries(context.Background(), []slowQueryKey{key})

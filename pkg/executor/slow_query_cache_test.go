@@ -169,7 +169,7 @@ func TestSlowQueryCacheDropsOversizedAndUnqueuedSQL(t *testing.T) {
 	require.False(t, cache.tryToCache(slowQueryCacheWriteTask{key: slowQueryKeyOf(4, 1, "queued"), sql: "one"}))
 	require.Equal(t, 1, len(cache.writeCh))
 
-	cache.ensureStarted()
+	cache.start()
 	require.Eventually(t, func() bool {
 		got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{
 			slowQueryKeyOf(2, 1, "fits"),
@@ -192,7 +192,7 @@ func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
 	require.Equal(t, 2, len(cache.writeCh))
 	require.Zero(t, cache.memoryUsage)
 
-	cache.ensureStarted()
+	cache.start()
 	require.Eventually(t, func() bool {
 		got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{first, second})
 		// The second insert freezes the ring and reuses the only slot.
@@ -210,7 +210,7 @@ func TestSlowQueryCacheAccountsMemoryOnWorker(t *testing.T) {
 		sql: droppedSQL,
 	}))
 	require.Zero(t, dropped.memoryUsage)
-	dropped.ensureStarted()
+	dropped.start()
 	require.Eventually(t, func() bool {
 		got, err := dropped.getUnredactedQueries(context.Background(), []slowQueryKey{droppedKey})
 		return err == nil && len(dropped.writeCh) == 0 && len(got) == 1 && got[0] == ""
@@ -271,13 +271,26 @@ func TestSlowQueryCacheLookupRespectsContext(t *testing.T) {
 
 func TestSlowQueryCacheAsyncReadWrite(t *testing.T) {
 	cache := newSlowQueryCache()
-	cache.ensureStarted()
+	cache.start()
 	key := slowQueryKeyOf(7, 1.5, "0123456789abcdef")
 	cache.putIntoCache(key, "select 1;")
 	require.Eventually(t, func() bool {
 		got, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{key})
 		return err == nil && len(got) == 1 && got[0] == "select 1;"
 	}, time.Second, 5*time.Millisecond)
+}
+
+func TestSlowQueryCacheEntrypointsWithoutWorker(t *testing.T) {
+	cache := newSlowQueryCache()
+	key := slowQueryKeyOf(1, 1, "missing")
+	cache.putIntoCache(key, "select 1;")
+	require.False(t, cache.running)
+	require.Zero(t, len(cache.writeCh))
+
+	values, err := cache.getUnredactedQueries(context.Background(), []slowQueryKey{key})
+	require.NoError(t, err)
+	require.Equal(t, []string{""}, values)
+	require.False(t, cache.running)
 }
 
 func TestSlowQueryTimeKeyMatchesSlowLogFormat(t *testing.T) {

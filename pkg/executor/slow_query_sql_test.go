@@ -146,6 +146,7 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 }
 
 func TestSlowQueryUnredactedQuery(t *testing.T) {
+	executor.StartSlowQueryCache()
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	f, err := os.CreateTemp("", "tidb-slow-*.log")
