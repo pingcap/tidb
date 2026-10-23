@@ -15,10 +15,13 @@
 package executor
 
 import (
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -115,4 +118,22 @@ func TestInitRefreshMaterializedViewSessionAppliesDefinitionDivPrecisionIncremen
 	restore()
 	require.False(t, sessVars.EnableMView)
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+}
+
+func TestBuildMVRefreshOutOfPlaceBuildSQLImportOptions(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			SQLContent: "select a, count(1) from t group by a",
+		},
+	}
+
+	sql, err := buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, "TiKV", 12, "64gib")
+	require.NoError(t, err)
+	require.Contains(t, sql, "IMPORT INTO `test`.`__mv_shadow_1` FROM (")
+	require.Contains(t, sql, "WITH "+strings.Join(ddl.BuildMViewImportIntoOptions(12, "64gib"), ", "))
+
+	sql, err = buildMVRefreshOutOfPlaceBuildSQL("test", "__mv_shadow_1", tblInfo, kv.TiDB.Name(), 12, "64gib")
+	require.NoError(t, err)
+	require.Equal(t, "INSERT INTO `test`.`__mv_shadow_1` select a, count(1) from t group by a", sql)
 }
