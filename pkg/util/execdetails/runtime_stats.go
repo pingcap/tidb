@@ -655,12 +655,15 @@ func NewRuntimeStatsColl(reuse *RuntimeStatsColl) *RuntimeStatsColl {
 	}
 }
 
-// EstimateScanBytes estimates physical scan bytes from one logical scan request.
-// It intentionally runs before scan details from independent requests are merged
-// because the ratio is not linear across requests.
-func EstimateScanBytes(totalKeys, processedKeys, processedBytes int64) (float64, bool) {
-	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
+// EstimateScanBytes prefers backend-reported total bytes for a logical scan
+// request and falls back to the processed-byte ratio when total bytes are zero.
+// Run it before merging independent requests because the fallback is not linear.
+func EstimateScanBytes(totalKeys, processedKeys, processedBytes, totalBytes int64) (float64, bool) {
+	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 || totalBytes < 0 {
 		return 0, false
+	}
+	if totalBytes > 0 {
+		return float64(totalBytes), true
 	}
 	if processedKeys == 0 {
 		return 0, processedBytes == 0
