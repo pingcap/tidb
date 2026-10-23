@@ -113,16 +113,27 @@ func checkCancelMaterializedViewJobPrivilege(
 	sqlExec sqlexec.SQLExecutor,
 	stmt *ast.CancelMaterializedViewJobStmt,
 ) error {
+	if err := validateCancelMaterializedViewJobStmt(stmt); err != nil {
+		return err
+	}
 	pm := privilege.GetPrivilegeManager(ctx)
 	user := ctx.GetSessionVars().User
 	if pm == nil || user == nil {
 		return nil
 	}
-	is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is, ok := ctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	if !ok {
-		return errors.New("cannot resolve current infoschema for materialized view log purge cancellation")
+		return errors.New("cannot resolve current infoschema for materialized view job cancellation")
 	}
-	dbName, tableName, found, err := resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+	var dbName, tableName string
+	var found bool
+	var err error
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		dbName, tableName, found, err = resolveCancelRefreshJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		dbName, tableName, found, err = resolveCancelPurgeJobPrivilegeTarget(kctx, sqlExec, is, uint64(stmt.JobID))
+	}
 	if err != nil {
 		return err
 	}
@@ -139,14 +150,23 @@ func validateCancelMaterializedViewJobStmt(stmt *ast.CancelMaterializedViewJobSt
 	if stmt == nil {
 		return errors.New("cancel materialized view job: missing statement")
 	}
-	if stmt.Tp != ast.CancelMaterializedViewJobTypeLogPurge {
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh, ast.CancelMaterializedViewJobTypeLogPurge:
+		return nil
+	default:
 		return errors.Errorf("invalid materialized view job cancel type: %d", stmt.Tp)
 	}
-	return nil
 }
 
 func cancelMaterializedViewJobUserError(stmt *ast.CancelMaterializedViewJobStmt) error {
-	return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d", stmt.JobID)
+	switch stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		return errors.NewNoStackErrorf("cannot cancel materialized view refresh job %d", stmt.JobID)
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		return errors.NewNoStackErrorf("cannot cancel materialized view log purge job %d", stmt.JobID)
+	default:
+		return errors.Errorf("cancel materialized view job: unsupported type %d", stmt.Tp)
+	}
 }
 
 // Next implements the Executor Next interface.
@@ -172,7 +192,15 @@ func (e *CancelMaterializedViewJobExec) Next(ctx context.Context, _ *chunk.Chunk
 	if err := checkCancelMaterializedViewJobPrivilege(ctx, e.Ctx(), sctx.GetSQLExecutor(), e.stmt); err != nil {
 		return err
 	}
-	applied, err := requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
+	var applied bool
+	switch e.stmt.Tp {
+	case ast.CancelMaterializedViewJobTypeRefresh:
+		applied, err = requestRefreshHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
+	case ast.CancelMaterializedViewJobTypeLogPurge:
+		applied, err = requestPurgeHistCancel(ctx, sctx, uint64(e.stmt.JobID), requesterArg)
+	default:
+		return errors.Errorf("cancel materialized view job: unsupported type %d", e.stmt.Tp)
+	}
 	if err != nil {
 		return err
 	}
