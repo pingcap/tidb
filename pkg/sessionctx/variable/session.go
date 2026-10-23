@@ -1120,9 +1120,6 @@ type SessionVars struct {
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
-	// EnableCascadesPlanner enables the cascades planner.
-	EnableCascadesPlanner bool
-
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
@@ -1692,6 +1689,11 @@ type SessionVars struct {
 	// Value 0 will estimate row(s) found immediately.
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
+
+	// AlwaysKeepJoinKey indicates the optimizer to always keep join keys during optimization.
+	// Join keys are crucial for join optimization like Join Order and Join Algorithm selection, removing
+	// join keys might lead to suboptimal plans in some cases.
+	AlwaysKeepJoinKey bool
 
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
@@ -2327,6 +2329,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableRedactLog:               DefTiDBRedactLog,
 		EnableWindowFunction:          DefEnableWindowFunction,
 		OptOrderingIdxSelRatio:        DefTiDBOptOrderingIdxSelRatio,
+		AlwaysKeepJoinKey:             DefOptAlwaysKeepJoinKey,
 		CostModelVersion:              DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
@@ -2341,6 +2344,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
@@ -2430,19 +2434,6 @@ func (s *SessionVars) GetAllowPreferRangeScan() bool {
 // SetAllowPreferRangeScan set SessionVars.preferRangeScan.
 func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
 	s.preferRangeScan = val
-}
-
-// GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
-func (s *SessionVars) GetEnableCascadesPlanner() bool {
-	if s.StmtCtx.HasEnableCascadesPlannerHint {
-		return s.StmtCtx.EnableCascadesPlanner
-	}
-	return s.EnableCascadesPlanner
-}
-
-// SetEnableCascadesPlanner set SessionVars.EnableCascadesPlanner.
-func (s *SessionVars) SetEnableCascadesPlanner(val bool) {
-	s.EnableCascadesPlanner = val
 }
 
 // GetEnableIndexMerge get EnableIndexMerge from SessionVars.enableIndexMerge.
@@ -3067,7 +3058,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
 	// Decode StatementContext.
-	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))
+	s.StmtCtx.PrevAffectedRows = sessionStates.LastAffectedRows
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return

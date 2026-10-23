@@ -272,7 +272,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
-		tempCond = expression.PropagateConstant(p.SCtx().GetExprCtx(), tempCond)
+		tempCond = expression.PropagateConstantForJoin(p.SCtx().GetExprCtx(), p.SCtx().GetSessionVars().AlwaysKeepJoinKey,
+			p.Children()[0].Schema(), p.Children()[1].Schema(), tempCond)
 		// Return table dual when filter is constant false or null.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
@@ -1717,7 +1718,8 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
-	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
+	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema,
+		p.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive)
 	p.AttachOnConds(joinConds)
 	return predicates
 }

@@ -24,7 +24,7 @@ aliases:
     - XuHuaiyu
     - zanmato1984
     - cfzjywxk
-    - Benjamin2037
+    - bb7133
   sig-approvers-executor:
     - windtalker
     - XuHuaiyu
@@ -38,7 +38,7 @@ aliases:
     - XuHuaiyu
     - zanmato1984
   sig-approvers-lightning:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - lance6716
@@ -49,21 +49,21 @@ aliases:
     - tangenta
     - wjhuang2016
   sig-approvers-ddl:
-    - Benjamin2037
+    - bb7133
     - tangenta
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
     - lance6716
   sig-approvers-disttask:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - lance6716
     - tangenta
     - wjhuang2016
   sig-approvers-dumpling:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - lance6716
     - tangenta
@@ -71,17 +71,17 @@ aliases:
     - wjhuang2016
     - tangenta
     - D3Hunter
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
   sig-approvers-meta:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - tangenta
     - wjhuang2016
     - D3Hunter
     - lance6716
   sig-approvers-owner:
-    - Benjamin2037
+    - bb7133
     - tangenta
     - wjhuang2016
     - D3Hunter
@@ -91,25 +91,25 @@ aliases:
     - D3Hunter
     - tangenta
   sig-approvers-resourcemanager:
-    - Benjamin2037
+    - bb7133
     - D3Hunter
     - gmhdbjd
     - lance6716
     - tangenta
     - wjhuang2016
   sig-approvers-table:
-    - Benjamin2037
+    - bb7133
     - cfzjywxk
     - gmhdbjd
     - tangenta
     - wjhuang2016
   sig-approvers-lock:
-    - Benjamin2037
+    - bb7133
     - lance6716
     - tangenta
     - wjhuang2016
   sig-approvers-tidb-binlog:
-    - Benjamin2037
+    - bb7133
     - gmhdbjd
     - lance6716
   sig-approvers-planner:

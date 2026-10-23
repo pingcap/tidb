@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+//go:build go1.26 && !go1.27
 
-type ruleType int
+package hack
 
-const (
-	// DefaultNone indicates this is none rule.
-	DefaultNone ruleType = iota
-	// XFJoinToApply refers to join to a apply rule.
-	XFJoinToApply
-)
+type testMapTable = mapTable
 
-// String implements the fmt.Stringer interface.
-func (tp *ruleType) String() string {
-	switch *tp {
-	case XFJoinToApply:
-		return "join_to_apply"
-	default:
-		return "default_none"
-	}
-}
+const testMapGroupSlots = mapGroupSlots

@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "main_test.go",
         "pessimistic_test.go",
+        "server_test.go",
     ],
     flaky = True,
     deps = [
@@ -19,6 +20,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
+        "//pkg/server",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
@@ -35,6 +37,7 @@ go_test(
         "//pkg/util/deadlockhistory",
         "//pkg/util/sqlkiller",
         "//tests/realtikvtest",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

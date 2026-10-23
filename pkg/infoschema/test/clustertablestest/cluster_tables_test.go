@@ -1955,7 +1955,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
-	bigID := tbl.Meta().ID * 10
+	bigID := tbl.Meta().ID*10 + 1
 	bigTableName := ""
 	// set a hard limitation on 10000 to avoid using too much resource
 	for i := 0; i < 10000; i++ {
@@ -1973,7 +1973,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec(fmt.Sprintf("insert into %s values (1)", bigTableName))
 
-	// Now we have two table: t and `bigTableName`. The later one's ID is 10 times the former one.
+	// Now we have two tables whose IDs have overlapping decimal representations.
 	// Then create two session to run TXNs on these two tables
 	txnTK1 := s.newTestKitWithRoot(t)
 	txnTK2 := s.newTestKitWithRoot(t)
