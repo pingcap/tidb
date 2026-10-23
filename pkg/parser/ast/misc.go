@@ -15,8 +15,10 @@ package ast
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -3729,14 +3731,26 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// RedactURL redacts the secret tokens in the URL. only S3 url need redaction for now.
-// if the url is not a valid url, return the original string.
+// RedactedValue replaces a secret in redacted output.
+const RedactedValue = "xxxxxx"
+
+// InvalidURLPlaceholder replaces a value that cannot be parsed as a URL in
+// redacted output, because such a value cannot be reliably masked. The value
+// is not necessarily a storage URL; it may also be an endpoint or a local path.
+const InvalidURLPlaceholder = "(invalid URL)"
+
+// RedactURL removes userinfo, and redacts the secret tokens and removes fragments in supported storage URLs.
+// Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
-	u, err := url.Parse(str)
-	if err != nil {
+	if !strings.Contains(str, "://") && !strings.Contains(str, "?") {
 		return str
 	}
+	u, err := url.Parse(str)
+	if err != nil {
+		return InvalidURLPlaceholder
+	}
+	u.User = nil
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
@@ -3749,6 +3763,7 @@ func RedactURL(str string) string {
 			"access-key":        {},
 			"secret-access-key": {},
 			"session-token":     {},
+			"sse-kms-context":   {},
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
@@ -3757,13 +3772,29 @@ func RedactURL(str string) string {
 	}
 
 	if len(redactKeys) > 0 {
-		values := u.Query()
-		for k := range values {
+		// An unescaped '#' in a secret query value starts a fragment.
+		u.Fragment = ""
+		u.RawFragment = ""
+		// URL.Query skips undecodable pairs, which may hide a split context.
+		values, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			u.RawQuery = ""
+			return u.String()
+		}
+		for k, vs := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
-				values[k] = []string{"xxxxxx"}
+				// An unescaped '&' in a raw JSON context splits it, and the rest
+				// becomes a parameter that cannot be identified as secret.
+				if normalizedKey == "sse-kms-context" && slices.ContainsFunc(vs, func(v string) bool {
+					return !json.Valid([]byte(v))
+				}) {
+					u.RawQuery = ""
+					return u.String()
+				}
+				values[k] = []string{RedactedValue}
 			}
 		}
 		// In go1.25.5, url.Values.Encode() will sort the keys.

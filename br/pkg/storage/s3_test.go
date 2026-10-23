@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -20,14 +21,17 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -1841,4 +1845,305 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 	// other function will throw error
 	require.ErrorContains(t, err, "ContentRange is empty")
 	require.Nil(t, reader)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestS3SSEKMSContextFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		input      string
+		normalized string
+		invalid    bool
+	}{
+		{name: "unset"},
+		{name: "empty object", input: `{}`, normalized: `{}`},
+		{name: "normalize", input: " \n { \"tenant\" : \"tenant-a\", \"purpose\":\"backup\" } \t", normalized: `{"purpose":"backup","tenant":"tenant-a"}`},
+		{name: "unicode", input: `{"租户":"租户一","emoji":"😀","escaped":"\u4e2d"}`, normalized: `{"emoji":"😀","escaped":"中","租户":"租户一"}`},
+		{name: "special characters", input: `{"key":"a+b / = & \" \\ \n"}`, normalized: `{"key":"a+b / = \u0026 \" \\ \n"}`},
+		{name: "whitespace", input: " \n\t", invalid: true},
+		{name: "null", input: `null`, invalid: true},
+		{name: "array", input: `[]`, invalid: true},
+		{name: "string", input: `"secret-value"`, invalid: true},
+		{name: "number value", input: `{"secret-value":1}`, invalid: true},
+		{name: "null value", input: `{"secret-value":null}`, invalid: true},
+		{name: "boolean value", input: `{"secret-value":true}`, invalid: true},
+		{name: "nested object", input: `{"secret-value":{}}`, invalid: true},
+		{name: "nested array", input: `{"secret-value":[]}`, invalid: true},
+		{name: "duplicate key", input: `{"key":"secret-value","key":"other"}`, invalid: true},
+		{name: "escaped duplicate key", input: `{"key":"secret-value","\u006bey":"other"}`, invalid: true},
+		{name: "incomplete", input: `{"key":"secret-value"`, invalid: true},
+		{name: "trailing object", input: `{"key":"secret-value"}{}`, invalid: true},
+		{name: "trailing garbage", input: `{"key":"secret-value"}garbage`, invalid: true},
+		{name: "invalid UTF8", input: "{\"key\":\"secret-value\xff\"}", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+			DefineFlags(flags)
+			require.NoError(t, flags.Set("s3.sse-kms-context", tc.input))
+			require.NoError(t, flags.Set("s3.sse", "aws:kms"))
+			var options BackendOptions
+			require.NoError(t, options.ParseFromFlags(flags))
+			backend := &backuppb.S3{}
+			err := options.S3.Apply(backend)
+			if tc.invalid {
+				require.Error(t, err)
+				require.True(t, berrors.ErrStorageInvalidConfig.Equal(err))
+				require.Contains(t, err.Error(), "sse-kms-context")
+				require.NotContains(t, err.Error(), "secret-value")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(tc.normalized)), backend.GetSseKmsEncryptionContext())
+			// Context must not introduce defaults for existing options.
+			require.Equal(t, "aws:kms", backend.Sse)
+			require.Empty(t, backend.SseKmsKeyId)
+			require.NoError(t, options.S3.Apply(backend))
+			require.Equal(t, base64.StdEncoding.EncodeToString([]byte(tc.normalized)), backend.GetSseKmsEncryptionContext())
+		})
+	}
+
+	// AWS rejects a context header without explicit SSE-KMS; other providers
+	// keep their own SSE semantics.
+	for _, tc := range []struct {
+		sse, keyID, provider string
+		invalid              bool
+	}{
+		{"", "", "", true},
+		{"", "test-key", "aws", true},
+		{"AES256", "", "", true},
+		{"AES256", "test-key", "aws", true},
+		{"", "test-key", "ceph", false},
+		{"AES256", "", "ceph", false},
+		{"aws:kms", "", "aws", false},
+		{"aws:kms", "test-key", "", false},
+		{"aws:kms:dsse", "test-key", "aws", false},
+	} {
+		flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
+		DefineFlags(flags)
+		require.NoError(t, flags.Set("s3.sse-kms-context", `{"tenant":"tenant-a"}`))
+		require.NoError(t, flags.Set("s3.sse", tc.sse))
+		require.NoError(t, flags.Set("s3.sse-kms-key-id", tc.keyID))
+		require.NoError(t, flags.Set("s3.provider", tc.provider))
+		var options BackendOptions
+		require.NoError(t, options.ParseFromFlags(flags))
+		backend := &backuppb.S3{}
+		err := options.S3.Apply(backend)
+		if tc.invalid {
+			require.True(t, berrors.ErrStorageInvalidConfig.Equal(err), "%+v", tc)
+			require.Contains(t, err.Error(), "sse-kms-context")
+			require.NotContains(t, err.Error(), "tenant-a")
+			continue
+		}
+		require.NoError(t, err, "%+v", tc)
+		require.Equal(t, tc.sse, backend.Sse)
+		require.Equal(t, tc.keyID, backend.SseKmsKeyId)
+		require.Equal(t, tc.provider, backend.Provider)
+	}
+}
+
+func TestS3EncryptionContextRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		context string
+	}{
+		{name: "unset"},
+		{name: "configured", context: "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := createS3Suite(t)
+			options := &backuppb.S3{
+				Bucket:                  "bucket",
+				Prefix:                  "prefix/",
+				Sse:                     "aws:kms",
+				SseKmsKeyId:             "key-id",
+				Acl:                     "private",
+				StorageClass:            "STANDARD_IA",
+				SseKmsEncryptionContext: tc.context,
+			}
+			storage := NewS3StorageForTest(s.s3, options)
+			var expected *string
+			if tc.context != "" {
+				expected = aws.String(tc.context)
+			}
+			ctx := context.Background()
+			expectPut := func() {
+				s.s3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+					func(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+						require.Equal(t, expected, input.SSEKMSEncryptionContext)
+						require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+						require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
+						require.Equal(t, types.ObjectCannedACLPrivate, input.ACL)
+						require.Equal(t, types.StorageClassStandardIa, input.StorageClass)
+						return &s3.PutObjectOutput{}, nil
+					})
+			}
+			expectPut()
+			// WriteFile waits for the object to become visible via HeadObject.
+			s.s3.EXPECT().HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(&s3.HeadObjectOutput{}, nil)
+			require.NoError(t, storage.WriteFile(ctx, "object", []byte("data")))
+
+			// The permission probe must satisfy the same encryption policy as real writes.
+			expectPut()
+			s.s3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(&s3.DeleteObjectOutput{}, nil)
+			require.NoError(t, PutAndDeleteObjectCheck(ctx, s.s3, options))
+
+			s.s3.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+					require.Equal(t, expected, input.SSEKMSEncryptionContext)
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
+					require.Equal(t, types.ObjectCannedACLPrivate, input.ACL)
+					require.Equal(t, types.StorageClassStandardIa, input.StorageClass)
+					return &s3.CreateMultipartUploadOutput{}, nil
+				})
+			_, err := storage.MultipartWriter(ctx, "object")
+			require.NoError(t, err)
+
+			s.s3.EXPECT().CopyObject(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, input *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+					require.Equal(t, expected, input.SSEKMSEncryptionContext)
+					require.Equal(t, "source/source-prefix/object", aws.ToString(input.CopySource))
+					require.Equal(t, "bucket", aws.ToString(input.Bucket))
+					require.Equal(t, types.ServerSideEncryptionAwsKms, input.ServerSideEncryption)
+					require.Equal(t, "key-id", aws.ToString(input.SSEKMSKeyId))
+					require.Empty(t, input.ACL)
+					return &s3.CopyObjectOutput{}, nil
+				})
+			source := NewS3StorageForTest(s.s3, &backuppb.S3{Bucket: "source", Prefix: "source-prefix/"})
+			require.NoError(t, storage.CopyFrom(ctx, source, CopySpec{From: "object", To: "copy"}))
+		})
+	}
+}
+
+func TestS3CopyEncryptionContextHeader(t *testing.T) {
+	for _, encryptionContext := range []string{"", "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9"} {
+		t.Run(encryptionContext, func(t *testing.T) {
+			var request *http.Request
+			client := s3.New(s3.Options{
+				Region:      "us-east-1",
+				Credentials: aws.AnonymousCredentials{},
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+					request = req
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader(`<CopyObjectResult><ETag>etag</ETag></CopyObjectResult>`)),
+						Request:    req,
+					}, nil
+				})},
+			})
+			destination := NewS3StorageForTest(client, &backuppb.S3{
+				Bucket:                  "destination",
+				Prefix:                  "prefix/",
+				Sse:                     "aws:kms",
+				SseKmsKeyId:             "destination-key-id",
+				SseKmsEncryptionContext: encryptionContext,
+			})
+			source := NewS3StorageForTest(client, &backuppb.S3{Bucket: "source", Prefix: "source-prefix/"})
+			require.NoError(t, destination.CopyFrom(context.Background(), source, CopySpec{From: "object", To: "copy"}))
+			require.NotNil(t, request)
+			header := request.Header.Values("X-Amz-Server-Side-Encryption-Context")
+			if encryptionContext == "" {
+				require.Empty(t, header)
+			} else {
+				require.Equal(t, []string{encryptionContext}, header)
+			}
+			// The destination must use the configured key, not the bucket default.
+			require.Equal(t, "aws:kms", request.Header.Get("X-Amz-Server-Side-Encryption"))
+			require.Equal(t, "destination-key-id", request.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"))
+			require.Equal(t, "source/source-prefix/object", request.Header.Get("X-Amz-Copy-Source"))
+		})
+	}
+}
+
+func TestS3ConcurrentUploadEncryptionContext(t *testing.T) {
+	for _, encryptionContext := range []string{"", "eyJ0ZW5hbnQiOiJ0ZW5hbnQtYSJ9"} {
+		for _, tc := range []struct {
+			name string
+			size int64
+		}{
+			{name: "single", size: 32},
+			{name: "multipart", size: manager.MinUploadPartSize + 1},
+		} {
+			t.Run(tc.name+"/"+encryptionContext, func(t *testing.T) {
+				requests := make(chan *http.Request, 8)
+				client := s3.New(s3.Options{
+					Region:      "us-east-1",
+					Credentials: aws.AnonymousCredentials{},
+					HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						requests <- req
+						if req.Body != nil {
+							if _, err := io.Copy(io.Discard, req.Body); err != nil {
+								return nil, err
+							}
+						}
+						body := ""
+						if req.URL.Query().Has("uploads") {
+							body = `<InitiateMultipartUploadResult><Bucket>bucket</Bucket><Key>prefix/object</Key><UploadId>upload-id</UploadId></InitiateMultipartUploadResult>`
+						} else if req.Method == http.MethodPost {
+							body = `<CompleteMultipartUploadResult><ETag>etag</ETag></CompleteMultipartUploadResult>`
+						}
+						return &http.Response{
+							StatusCode: http.StatusOK,
+							Header:     http.Header{"Etag": []string{"etag"}},
+							Body:       io.NopCloser(strings.NewReader(body)),
+							Request:    req,
+						}, nil
+					})},
+				})
+				storage := NewS3StorageForTest(client, &backuppb.S3{
+					Bucket:                  "bucket",
+					Prefix:                  "prefix/",
+					Sse:                     "aws:kms",
+					SseKmsKeyId:             "key-id",
+					SseKmsEncryptionContext: encryptionContext,
+				})
+				ctx := context.Background()
+				writer, err := storage.Create(ctx, "object", &WriterOption{Concurrency: 2, PartSize: manager.MinUploadPartSize})
+				require.NoError(t, err)
+				_, err = writer.Write(ctx, make([]byte, tc.size))
+				require.NoError(t, err)
+				require.NoError(t, writer.Close(ctx))
+				close(requests)
+				counts := make(map[string]int)
+				for req := range requests {
+					operation := "put"
+					writesObject := true
+					switch {
+					case req.URL.Query().Has("uploads"):
+						operation = "create"
+					case req.URL.Query().Has("partNumber"):
+						operation, writesObject = "part", false
+					case req.Method == http.MethodPost:
+						operation, writesObject = "complete", false
+					}
+					counts[operation]++
+					header := req.Header.Values("X-Amz-Server-Side-Encryption-Context")
+					if !writesObject {
+						require.Empty(t, header, operation)
+						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
+						require.Empty(t, req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
+						continue
+					}
+					if encryptionContext == "" {
+						require.Empty(t, header, operation)
+					} else {
+						require.Equal(t, []string{encryptionContext}, header, operation)
+					}
+					require.Equal(t, "aws:kms", req.Header.Get("X-Amz-Server-Side-Encryption"), operation)
+					require.Equal(t, "key-id", req.Header.Get("X-Amz-Server-Side-Encryption-Aws-Kms-Key-Id"), operation)
+				}
+				if tc.name == "single" {
+					require.Equal(t, map[string]int{"put": 1}, counts)
+				} else {
+					require.Equal(t, map[string]int{"create": 1, "part": 2, "complete": 1}, counts)
+				}
+			})
+		}
+	}
 }
