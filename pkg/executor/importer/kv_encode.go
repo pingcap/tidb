@@ -34,9 +34,20 @@ import (
 type TableKVEncoder struct {
 	*kv.BaseKVEncoder
 	// see import.go
+<<<<<<< HEAD
 	columnAssignments []expression.Expression
 	fieldMappings     []*FieldMapping
 	insertColumns     []*table.Column
+=======
+	columnAssignments  []expression.Expression
+	columnsAndUserVars []*ast.ColumnNameOrUserVar
+	fieldMappings      []*FieldMapping
+	insertColumns      []*table.Column
+	// Following cache use to avoid `runtime.makeslice`.
+	insertColumnRowCache []types.Datum
+	rowCache             []types.Datum
+	hasValueCache        []bool
+>>>>>>> d1e09c73fbc (executor: tiny optimize import into from select performance by avoid 1 cast and memory allocation (#60397))
 }
 
 // NewTableKVEncoder creates a new TableKVEncoder.
@@ -96,8 +107,16 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 }
 
 // todo merge with code in load_data.go
+<<<<<<< HEAD
 func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, 0, len(en.insertColumns))
+=======
+func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
+	if cap(en.insertColumnRowCache) < len(en.insertColumns) {
+		en.insertColumnRowCache = make([]types.Datum, 0, len(en.insertColumns))
+	}
+	row := en.insertColumnRowCache[:0]
+>>>>>>> d1e09c73fbc (executor: tiny optimize import into from select performance by avoid 1 cast and memory allocation (#60397))
 	setVar := func(name string, col *types.Datum) {
 		// User variable names are not case-sensitive
 		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
@@ -163,8 +182,26 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 // copied from InsertValues
+<<<<<<< HEAD
 func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, len(en.Columns))
+=======
+func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
+	rowLen := len(en.Columns)
+	if cap(en.rowCache) < rowLen || cap(en.hasValueCache) < rowLen {
+		en.rowCache = make([]types.Datum, rowLen)
+		en.hasValueCache = make([]bool, rowLen)
+	} else {
+		en.rowCache = en.rowCache[:0]
+		en.hasValueCache = en.hasValueCache[:0]
+		for range rowLen {
+			en.rowCache = append(en.rowCache, types.Datum{})
+			en.hasValueCache = append(en.hasValueCache, false)
+		}
+	}
+	row := en.rowCache
+	hasValue := en.hasValueCache
+>>>>>>> d1e09c73fbc (executor: tiny optimize import into from select performance by avoid 1 cast and memory allocation (#60397))
 	for i := range en.insertColumns {
 		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
 		if err != nil {
@@ -185,10 +222,12 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	record := en.GetOrCreateRecord()
 	for i, col := range en.Columns {
 		var theDatum *types.Datum
+		doCast := true
 		if hasValue[i] {
 			theDatum = &row[i]
+			doCast = false
 		}
-		value, err = en.ProcessColDatum(col, rowID, theDatum)
+		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
 		if err != nil {
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
