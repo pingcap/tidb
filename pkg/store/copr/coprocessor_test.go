@@ -16,9 +16,11 @@ package copr
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
@@ -930,5 +932,40 @@ func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
 	require.Len(t, tasks, 4)
 	for _, task := range tasks {
 		require.Equal(t, task.busyThreshold, time.Second)
+	}
+}
+
+func TestBuildTiDBMemCopTasksSkipsNonServingNodes(t *testing.T) {
+	const mockInfo = `{
+  "tidb": {"ddl_id":"tidb", "ip":"127.0.0.1", "status_port":10080, "server_id":1},
+  "br": {"ddl_id":"br", "ip":"127.0.0.1", "status_port":10081, "server_id":2, "disable_rpc":true},
+  "tidb2": {"ddl_id":"tidb2", "ip":"::1", "status_port":10082, "server_id":3, "disable_rpc":false}
+ }`
+	const fp = "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"
+	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf("return(`%s`)", mockInfo)))
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+	ranges := buildCopRanges("a", "z")
+	for _, tc := range []struct {
+		name     string
+		serverID uint64
+		addrs    []string
+	}{
+		{"broadcast", 0, []string{"127.0.0.1:10080", "[::1]:10082"}},
+		{"serving node", 1, []string{"127.0.0.1:10080"}},
+		{"non-serving node", 2, nil},
+		{"explicitly enabled node", 3, []string{"[::1]:10082"}},
+		{"missing node", 4, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tasks, err := buildTiDBMemCopTasks(ranges, &kv.Request{StoreType: kv.TiDB, TiDBServerID: tc.serverID})
+			require.NoError(t, err)
+			addrs := make([]string, 0, len(tasks))
+			for _, task := range tasks {
+				addrs = append(addrs, task.storeAddr)
+				require.Same(t, ranges, task.ranges)
+				require.Equal(t, kv.TiDB, task.storeType)
+			}
+			require.ElementsMatch(t, tc.addrs, addrs)
+		})
 	}
 }

@@ -467,3 +467,26 @@ func TestIssue42619(t *testing.T) {
 			"test tp 1 1 1 1 1",
 		))
 }
+
+func TestSkipNonServingTiDBRPCNodesForTiDBTypeCoprocessor(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	const fp = "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"
+	// A valid address must not make a standalone BR process an RPC target.
+	const brInfo = `{"br":{"ddl_id":"br","ip":"127.0.0.1","status_port":10080,"disable_rpc":true}}`
+	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf("return(`%s`)", brInfo)))
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+	tk.MustQuery("select * from information_schema.cluster_slow_query").Check(testkit.Rows())
+	require.Zero(t, tk.Session().GetSessionVars().StmtCtx.WarningCount())
+	// cluster_info supplies addresses for config/log/metrics fanout.
+	tk.MustQuery("select instance from information_schema.cluster_info where type = 'tidb'").Check(testkit.Rows())
+
+	// Missing and explicit false flags both describe serving TiDB nodes.
+	const mixedInfo = `{
+  "br":{"disable_rpc":true},
+  "tidb":{"ddl_id":"tidb","ip":"127.0.0.1","listening_port":4000,"version":"8.0.11-TiDB-v8.5.0"},
+  "tidb2":{"ddl_id":"tidb2","ip":"127.0.0.2","listening_port":4001,"version":"8.0.11-TiDB-v8.5.0","disable_rpc":false}
+ }`
+	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf("return(`%s`)", mixedInfo)))
+	tk.MustQuery("select instance from information_schema.cluster_info where type = 'tidb' order by instance").Check(testkit.Rows("127.0.0.1:4000", "127.0.0.2:4001"))
+}
