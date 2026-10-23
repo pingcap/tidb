@@ -379,16 +379,19 @@ func (cw *compressedWriter) Flush() error {
 
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
+	needCompress := len(data) > minCompressLength
 
 	switch cw.compressionAlgorithm {
 	case mysql.CompressionZlib:
-		zw := zlibWriterPool.Get().(*zlib.Writer)
-		defer func() {
-			zw.Reset(nil)
-			zlibWriterPool.Put(zw)
-		}()
-		zw.Reset(cw.compressorBuffer.payload)
-		w = zw
+		if needCompress {
+			zw := zlibWriterPool.Get().(*zlib.Writer)
+			defer func() {
+				zw.Reset(nil)
+				zlibWriterPool.Put(zw)
+			}()
+			zw.Reset(cw.compressorBuffer.payload)
+			w = zw
+		}
 	case mysql.CompressionZstd:
 		if cw.compressorBuffer.zstdWriter == nil {
 			cw.compressorBuffer.zstdWriter, err = zstd.NewWriter(cw.compressorBuffer.payload, zstd.WithEncoderLevel(cw.zstdLevel))
@@ -406,7 +409,6 @@ func (cw *compressedWriter) Flush() error {
 	uncompressedLength := 0
 	compressedHeader := make([]byte, 7)
 
-	needCompress := len(data) > minCompressLength
 	if needCompress {
 		// only reset the payload buffer if we are compressing.
 		defer cw.compressorBuffer.Reset()
