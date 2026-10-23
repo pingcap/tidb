@@ -171,27 +171,50 @@ impl Session {
         // Go `doDDLWorks`: the DDL tables (`InitDDLTables`, every version a
         // fresh store lacks), then this branch's `versionedBootstrapSchemas`
         // -- `systemTablesOfBaseNextGenVersion` and
-        // `systemTablesOfMaskingPolicyNextGenVersion`, `mysql.user` first --
-        // each under its reserved metadef ID. Master's materialized-view
-        // version is not bootstrapped by this branch.
-        let tables = tidb_metadef::DDL_TABLE_VERSION_TABLES
+        // `systemTablesOfMaskingPolicyNextGenVersion`, `mysql.user` first.
+        // The DDL tables keep their reserved metadef ids under both kernels;
+        // the others take them under the next-gen kernel and, under the
+        // classic kernel, the ids their `CREATE TABLE` jobs draw (table
+        // `4 + 2k`, each job the odd id after it, `mysql` itself being 1 and
+        // `sys` 2 / job 3). Master's materialized-view version is not
+        // bootstrapped by this branch.
+        let classic = tidb_exec::mysql_bootstrap::BootstrapLayout::of_kernel()
+            == tidb_exec::mysql_bootstrap::BootstrapLayout::Classic;
+        let ddl_tables = tidb_metadef::DDL_TABLE_VERSION_TABLES
             .iter()
             .flat_map(|version| version.tables.iter())
-            .chain(
-                tidb_metadef::BOOTSTRAP_TABLES
-                    .iter()
-                    .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name)),
-            );
+            .map(|table| (table, table.id));
+        let other_tables = tidb_metadef::BOOTSTRAP_TABLES
+            .iter()
+            .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name))
+            .enumerate()
+            .map(|(position, table)| {
+                let id = if classic {
+                    4 + 2 * i64::try_from(position).expect("a table position fits in i64")
+                } else {
+                    table.id
+                };
+                (table, id)
+            });
+        let tables = ddl_tables.chain(other_tables);
         self.with_catalog_mut(|catalog| {
-            for table in tables {
+            for (table, id) in tables {
                 tidb_executor::run_create_system_table_in(
                     table.create_sql,
                     catalog,
                     "mysql",
                     settings,
                     &ddl_ctx,
-                    table.id,
+                    id,
                 )?;
+            }
+            if classic {
+                // `mysql` is the first id Go draws, `sys` the second, `test`
+                // follows the 53 tables and the two views (114); the counter
+                // ends at 116 with the resource-group job.
+                catalog.register_database_with_id("mysql", 1);
+                catalog.register_database_with_id("test", 114);
+                catalog.reserve_ids_through(116);
             }
             Ok(())
         })?;

@@ -30,7 +30,6 @@ use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ZonedNoResolver;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_planner::cardinality::row_size::{RowSizeColumnStats, RowSizeType};
 use tidb_planner::expression_rewriter::ColumnIdAllocator;
 use tidb_planner::find_best_task::coster::Ver2Coster;
 use tidb_planner::find_best_task::dispatch::{DispatchContext, find_best_task};
@@ -45,7 +44,7 @@ use tidb_planner::physical_property::PhysicalProperty;
 use tidb_planner::plan_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_planner::plan_builder::catalog::TableSource;
-use tidb_planner::stats_info::{HistColl, StatsInfo};
+use tidb_planner::stats_info::StatsInfo;
 
 use super::FromTable;
 use super::catalog::{Catalog, TableEntry};
@@ -1168,111 +1167,6 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     }
 }
 
-/// The columns Go's lite statistics initialization loads for this statement:
-/// every column compared against a constant in any query block. Go loads
-/// exactly these payloads (and the indexes whose first column they cover) and
-/// leaves every other column evicted, which is what makes
-/// `EstimateColumnNDV` borrow a loaded index's analyzed row count.
-fn predicate_column_names(select: &tidb_ast::SelectStmt) -> Vec<(Option<String>, String)> {
-    struct FilterColumns(Vec<(Option<String>, String)>);
-
-    impl FilterColumns {
-        fn collect_paths(&mut self, expr: &tidb_ast::Expr) {
-            struct Paths(Vec<Vec<String>>);
-            impl tidb_ast::Visitor for Paths {
-                fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-                    if let Some(tidb_ast::Expr::Column(path)) =
-                        node.downcast_ref::<tidb_ast::Expr>()
-                    {
-                        self.0.push(path.clone());
-                    }
-                    false
-                }
-                fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-                    true
-                }
-            }
-            let mut paths = Paths(Vec::new());
-            let mut owned = expr.clone();
-            tidb_ast::Visitable::accept(&mut owned, &mut paths);
-            for path in paths.0 {
-                let Some(name) = path.last() else {
-                    continue;
-                };
-                let qualifier = (path.len() > 1).then(|| path[path.len() - 2].clone());
-                self.0.push((qualifier, name.clone()));
-            }
-        }
-    }
-
-    impl tidb_ast::Visitor for FilterColumns {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() else {
-                return false;
-            };
-            match expr {
-                tidb_ast::Expr::Binary(op, lhs, rhs) if is_comparison_operator(*op) => {
-                    if is_constant_literal(rhs) {
-                        self.collect_paths(lhs);
-                    } else if is_constant_literal(lhs) {
-                        self.collect_paths(rhs);
-                    }
-                }
-                tidb_ast::Expr::In { expr, list, .. }
-                    if !list.is_empty() && list.iter().all(is_constant_literal) =>
-                {
-                    self.collect_paths(expr);
-                }
-                tidb_ast::Expr::Is { expr, .. } => self.collect_paths(expr),
-                _ => {}
-            }
-            false
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-
-    let mut visitor = FilterColumns(Vec::new());
-    let mut owned = select.clone();
-    tidb_ast::Visitable::accept(&mut owned, &mut visitor);
-    visitor.0
-}
-
-fn is_comparison_operator(op: tidb_ast::BinaryOp) -> bool {
-    matches!(
-        op,
-        tidb_ast::BinaryOp::Eq
-            | tidb_ast::BinaryOp::NullEq
-            | tidb_ast::BinaryOp::Ne
-            | tidb_ast::BinaryOp::Lt
-            | tidb_ast::BinaryOp::Le
-            | tidb_ast::BinaryOp::Gt
-            | tidb_ast::BinaryOp::Ge
-    )
-}
-
-fn is_constant_literal(expr: &tidb_ast::Expr) -> bool {
-    matches!(
-        expr,
-        tidb_ast::Expr::Int(_)
-            | tidb_ast::Expr::Decimal(_)
-            | tidb_ast::Expr::Float(_)
-            | tidb_ast::Expr::Hex(_)
-            | tidb_ast::Expr::Bit(_)
-            | tidb_ast::Expr::String(_)
-            | tidb_ast::Expr::RawString(_)
-            | tidb_ast::Expr::Null
-            | tidb_ast::Expr::Bool(_)
-            | tidb_ast::Expr::ParamMarker {
-                in_execute: true,
-                value: Some(_),
-                ..
-            }
-    )
-}
-
 /// Go `StmtCtx.SetIndexForce()`'s statement-wide reach (`stats.go:165` →
 /// `plan_cost_ver2.go:1234`): every risky full table scan of the statement
 /// pays the penalty, hinted or not.
@@ -1305,7 +1199,11 @@ impl OwnedRewrite for StampIndexForce {
 struct InitStats<'a> {
     error: Option<tidb_planner::plan_base::PlanError>,
     catalog: &'a Catalog,
-    select: Option<&'a tidb_ast::SelectStmt>,
+    /// Go's statistics demand for this statement (`statistics_demand`), once
+    /// `CollectPredicateColumnsPoint` has seen the plan: the columns and
+    /// indexes whose payloads the synchronous load makes available. `None`
+    /// before that point.
+    demanded: Option<&'a std::collections::HashMap<tidb_model::TableItemID, bool>>,
     context: &'a crate::StmtContext,
     /// Whether this walk records the statement's used statistics (Go
     /// `initStats`' `RecordUsedInfo` and `recordUsedItemStatsStatus`). Go
@@ -1402,40 +1300,32 @@ pub(crate) fn record_used_item_stats_status(
 
 impl InitStats<'_> {
     /// The `(column ids, index ids)` Go's lite statistics initialization
-    /// loads for this source: the columns its own predicates compare against
-    /// a constant, plus the indexes whose first column those cover.
+    /// leaves loaded for this source: what `CollectPredicateColumnsPoint`'s
+    /// demand (read off the plan after predicate pushdown) names for its
+    /// physical table and the cache holds in full.
     ///
-    /// `None` when the statement carries no such predicate for this source,
-    /// which leaves the caller on the cache's fully loaded subset.
+    /// `None` before that demand exists or when it names no column of this
+    /// source, which leaves the caller on the cache's fully loaded subset.
     fn predicate_loaded_items(
         &self,
         source: &tidb_planner::logical::DataSource,
         statistics: Option<&crate::access_cost::TableStatistics>,
     ) -> Option<(BTreeSet<i64>, BTreeSet<i64>)> {
         statistics?;
-        let names = predicate_column_names(self.select?);
-        if names.is_empty() {
-            return None;
-        }
-        let visible = source
-            .table_as_name
-            .as_deref()
-            .unwrap_or(&source.table_name)
-            .go_to_lower();
-        let table_name = source.table_name.go_to_lower();
-        let db_name = source.db_name.go_to_lower();
+        let demanded = self.demanded?;
         let mut columns = BTreeSet::new();
-        for (qualifier, name) in &names {
-            if let Some(qualifier) = qualifier {
-                let qualifier = qualifier.go_to_lower();
-                if qualifier != visible && qualifier != table_name && qualifier != db_name {
-                    continue;
-                }
+        let mut indexes = BTreeSet::new();
+        for (item, full_load) in demanded {
+            if item.table_id != source.physical_table_id {
+                continue;
             }
-            for column in &source.columns {
-                if column.name.go_lower_eq(name) {
-                    columns.insert(column.id);
-                }
+            if item.is_index {
+                indexes.insert(item.id);
+            } else if *full_load {
+                // Go `addPredicateColumnsFromExpressions(..., false)`: a join
+                // key asks for the column's essential statistics only, so its
+                // histogram stays evicted.
+                columns.insert(item.id);
             }
         }
         if columns.is_empty() {
@@ -1449,25 +1339,13 @@ impl InitStats<'_> {
                 .and_then(|statistics| statistics.column_load_status.get(id))
                 .is_some_and(|status| status.is_full_load())
         });
+        indexes.retain(|id| {
+            statistics
+                .and_then(|statistics| statistics.index_load_status.get(id))
+                .is_some_and(|status| status.is_full_load())
+        });
         if columns.is_empty() {
             return None;
-        }
-        let mut indexes = BTreeSet::new();
-        if let Some(TableEntry::Kv(table)) =
-            self.catalog.get_in(&source.db_name, &source.table_name)
-        {
-            for index in table.indexes() {
-                let first = index
-                    .column_offsets
-                    .first()
-                    .and_then(|offset| table.visible_columns().get(*offset));
-                let loaded = statistics
-                    .and_then(|statistics| statistics.index_load_status.get(&index.id))
-                    .is_some_and(|status| status.is_full_load());
-                if loaded && first.is_some_and(|column| columns.contains(&column.id)) {
-                    indexes.insert(index.id);
-                }
-            }
         }
         Some((columns, indexes))
     }
@@ -1482,7 +1360,6 @@ impl InitStats<'_> {
             return Ok(Descend::Children(vec![(); node.children().len()]));
         };
         source.base.base.set_stats(None);
-        source.table_path_count_after_access = None;
         source.derived_access_paths = None;
         source.derived_index_paths.retain(|_, path| {
             path.row_estimate = None;
@@ -1511,15 +1388,6 @@ impl InitStats<'_> {
             source.physical_table_id,
         );
         let statistics = statistics.as_deref();
-        source.analyzed_index_ids = statistics
-            .map(|stats| {
-                stats
-                    .index_stats_existence
-                    .iter()
-                    .filter_map(|(id, analyzed)| analyzed.then_some(*id))
-                    .collect()
-            })
-            .unwrap_or_default();
         let row_count = crate::access_cost::realtime_row_count(statistics);
         // Go `buildDataSource`: a table with an available TiFlash replica
         // marks the statement as reading TiFlash whenever MPP is allowed.
@@ -1539,419 +1407,15 @@ impl InitStats<'_> {
                 statistics.map_or(0, |statistics| statistics.modify_count),
             );
         }
-        // Go's `fillIndexPath` initializes the table path's CountAfterAccess
-        // from the datasource row count and `deriveTablePathStats` replaces
-        // it from the access conditions. Only a handle range this replay
-        // recognizes is recorded here; everything else is left to the
-        // planner's own derivation over the built conditions, which a
-        // placeholder equal to the row count would have overridden.
-        source.table_path_count_after_access = None;
         // Retain Go's loaded subset, including empty and TopN-only payloads.
         // The cache's explicit status excludes evicted metadata from NDV
         // scaling and histogram estimates without inferring state from buckets.
-        let (loaded_columns, loaded_indexes) = self
-            .predicate_loaded_items(source, statistics)
-            .unwrap_or_else(|| {
-                (
-                    statistics
-                        .map(|statistics| {
-                            statistics
-                                .columns
-                                .iter()
-                                .filter(|(id, _)| {
-                                    statistics.column_load_status.get(id)
-                                        .is_some_and(|status| status.is_full_load())
-                                })
-                                .map(|(id, _)| *id)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    statistics
-                        .map(|statistics| {
-                            statistics
-                                .indexes
-                                .iter()
-                                .filter(|(id, _)| {
-                                    statistics.index_load_status.get(id)
-                                        .is_some_and(|status| status.is_full_load())
-                                })
-                                .map(|(id, _)| *id)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                )
-            });
-        let ndvs = source
-            .columns
-            .iter()
-            .zip(
-                source
-                    .base
-                    .base
-                    .schema()
-                    .into_iter()
-                    .flat_map(|schema| &schema.columns),
-            )
-            .map(|(metadata, column)| {
-                // Go `DataSource.initStats` sets every column's NDV from
-                // `cardinality.EstimateColumnNDV`: an initialized histogram's
-                // NDV scaled from analyze time to the realtime row count, and
-                // otherwise `RealtimeCount * distinctFactor` (0.8) -- for a
-                // pseudo table too, whose `PseudoTable` count is 10000.
-                // `pseudoEqualRate` is an equality SELECTIVITY of the pseudo
-                // range estimator, not an NDV.
-                let ndv = statistics
-                    .and_then(|statistics| {
-                        statistics.estimate_column_ndv(
-                            metadata.id,
-                            &loaded_columns,
-                            &loaded_indexes,
-                        )
-                    })
-                    .unwrap_or(
-                        row_count * tidb_planner::cardinality::derive_stats::DISTINCT_FACTOR,
-                    );
-                (column.unique_id, ndv)
-            })
-            .collect::<Vec<_>>();
-        // Go `initStats` always attaches the table's generated HistColl,
-        // including for a pseudo table. That presence is semantically visible
-        // to cost model v2: base-table rows include DataInDiskByRows' eight
-        // bytes per column, while a join/projection-created StatsInfo has a
-        // nil HistColl and uses static type width only.
-        let row_size_columns = source
-            .table_columns
-            .iter()
-            .filter_map(|column| {
-                let loaded = statistics?.columns.get(&column.id)?;
-                let field_type = column.ret_type.as_ref()?;
-                let is_handle = source
-                    .handle_cols
-                    .iter()
-                    .any(|handle| handle.unique_id == column.unique_id);
-                let row_size_col = RowSizeColumnStats::new(
-                    RowSizeType::from_field_type_code(field_type.code()),
-                    loaded.histogram.tot_col_size,
-                    loaded.histogram.null_count,
-                    loaded.total_row_count(),
-                    is_handle,
-                );
-                Some((column.unique_id, row_size_col))
-            })
-            .collect::<Vec<_>>();
-        // The planner's DataSource-statistics rule reads the loaded
-        // histograms through `HistColl`; Go's `deriveStats4DataSource` uses
-        // the histogram-aware `Selectivity`, not an NDV approximation.
-        let histograms = source
-            .table_columns
-            .iter()
-            .filter_map(|column| {
-                let loaded = statistics?.columns.get(&column.id)?;
-                Some((column.unique_id, std::sync::Arc::new(loaded.clone())))
-            })
-            .collect::<Vec<_>>();
-        let column_load_status = source.table_columns.iter().map(|column| {
-            let status = statistics
-                .and_then(|statistics| statistics.column_load_status.get(&column.id))
-                .copied()
-                .unwrap_or_default();
-            (column.unique_id, status)
-        }).collect::<Vec<_>>();
-        // Go `HistColl.Columns`/`Indices` membership: `PseudoTable` holds
-        // every public, non-hidden column and every public index; a stored
-        // table holds what it analyzed.
-        let pseudo_collection = statistics.is_none_or(|statistics| statistics.pseudo);
-        // A hypothetical index (negative id here, id 0 in Go) belongs to the
-        // session, not to `TableInfo`, so Go's `PseudoTable` and the loaded
-        // statistics never hold it: selectivity ignores its columns.
-        let index_in_collection = |index: &tidb_planner::plan_builder::catalog::SourceIndex| {
-            index.id >= 0
-                && match statistics {
-                    Some(statistics) if !pseudo_collection => {
-                        statistics.indexes.contains_key(&index.id)
-                    }
-                    _ => index.is_public,
-                }
-        };
-        // GenerateHistCollFromColumnInfo builds every index map from retained
-        // payloads, including invalid/evicted ones. A schema-only index must
-        // not become the first V1 suffix candidate, and a missing mapped
-        // column terminates the usable prefix rather than skipping a hole.
-        let index_columns = source
-            .indexes
-            .iter()
-            .filter(|index| index_in_collection(index))
-            .filter_map(|index| {
-                let declared = source.declared_index_columns(index)
-                    .into_iter().map_while(|column| column).collect::<Vec<_>>();
-                // Go resolves the index against `ds.TblCols`, every table
-                // column, so an index leading with a pruned or hidden
-                // (expression-index) column is still in the collection.
-                let mut columns = index.columns.iter()
-                    .map_while(|key| source.table_columns.get(key.offset))
-                    .map(|column| column.unique_id)
-                    .collect::<Vec<_>>();
-                // This snapshot is consumed after path preparation. Mirror
-                // fillIndexPath's extension of the initial retained-index map,
-                // which only ever appends the integer handle, and runs only
-                // for the paths in AllPossibleAccessPaths.
-                let has_possible_path = source.enumerated_paths.iter().any(|path| {
-                    matches!(path, tidb_planner::access_path::PossiblePath::Index { index: position }
-                        if source.indexes.get(*position).is_some_and(|candidate| candidate.id == index.id))
-                });
-                if has_possible_path && columns.len() == index.columns.len() {
-                    columns.extend(source.handle_cols_to_append(index, &declared)
-                        .into_iter().map(|(column, _)| column.unique_id));
-                }
-                (!columns.is_empty()).then_some((index.id, columns))
-            })
-            .collect::<Vec<_>>();
-        let mv_index_columns = source
-            .indexes
-            .iter()
-            .filter(|index| {
-                index.is_multi_valued && index_columns.iter().any(|(id, _)| *id == index.id)
-            })
-            .filter_map(|index| {
-                Some((index.id, tidb_planner::access_path::prepare_cols_for_mv_index(source, index)?))
-            })
-            .collect::<Vec<_>>();
-        let index_histograms = index_columns.iter().filter_map(|(id, _)| {
-            Some((*id, std::sync::Arc::new(statistics?.indexes.get(id)?.clone())))
-        }).collect::<Vec<_>>();
-        let column_index_ids = index_columns.iter().map(|(id, columns)| (columns[0], *id)).collect::<Vec<_>>();
-        let index_row_counts = source
-            .indexes
-            .iter()
-            .filter_map(|index| {
-                let statistics = statistics?;
-                statistics.indexes.get(&index.id)?;
-                source.schema_column_for_index_column(index.columns.first()?)?;
-                let mut row_counts =
-                    tidb_planner::cardinality::row_count_estimator::IndexRowCounts::unscaled(
-                        statistics.row_count,
-                        statistics.modify_count,
-                    );
-                let index_is_fully_loaded = statistics
-                    .index_load_status
-                    .get(&index.id)
-                    .is_some_and(|status| status.is_full_load());
-                if index.is_multi_valued && index_is_fully_loaded {
-                    let analyzed_row_count = statistics
-                        .columns
-                        .iter()
-                        .find_map(|(column_id, column)| {
-                            statistics
-                                .column_load_status
-                                .get(column_id)
-                                .is_some_and(|status| status.is_full_load())
-                                .then(|| column.total_row_count())
-                        })
-                        .or_else(|| {
-                            statistics
-                                .indexes
-                                .iter()
-                                .find_map(|(candidate_id, candidate)| {
-                                    let candidate_is_multi_valued = source
-                                        .indexes
-                                        .iter()
-                                        .find(|source_index| source_index.id == *candidate_id)
-                                        .is_some_and(|source_index| source_index.is_multi_valued);
-                                    (!candidate_is_multi_valued
-                                        && statistics
-                                            .index_load_status
-                                            .get(candidate_id)
-                                            .is_some_and(|status| status.is_full_load()))
-                                    .then(|| candidate.total_row_count())
-                                })
-                        })
-                        .unwrap_or(-1.0);
-                    let index_total_count = statistics.indexes.get(&index.id).map_or(
-                        0.0,
-                        tidb_planner::cardinality::row_count_estimator::IndexStats::total_row_count,
-                    );
-                    if analyzed_row_count > 0.0 && index_total_count > 0.0 {
-                        let scale = index_total_count / analyzed_row_count;
-                        row_counts.index_realtime = (statistics.row_count as f64 * scale) as i64;
-                        row_counts.index_modify = (statistics.modify_count as f64 * scale) as i64;
-                    }
-                }
-                Some((index.id, row_counts))
-            })
-            .collect::<Vec<_>>();
-        // Go `HistColl.Indices`' NDVs feed `getGroupNDVs`, which matches an
-        // index's whole column list against a source's asked column groups.
-        let index_ndvs = source
-            .indexes
-            .iter()
-            .filter_map(|index| {
-                let loaded = statistics?.indexes.get(&index.id)?;
-                if loaded.histogram.ndv <= 0 {
-                    return None;
-                }
-                let columns = index
-                    .columns
-                    .iter()
-                    .filter_map(|column| {
-                        source
-                            .schema_column_for_index_column(column)
-                            .map(|planned| planned.unique_id)
-                    })
-                    .collect::<Vec<_>>();
-                (columns.len() == index.columns.len())
-                    .then(|| (index.id, (columns, loaded.histogram.ndv as f64)))
-            })
-            .collect::<Vec<_>>();
-        let initialized_column_ndvs = source
-            .table_columns
-            .iter()
-            .filter_map(|column| {
-                let statistics = statistics?;
-                let status = statistics.column_load_status.get(&column.id)?;
-                status
-                    .stats_initialized()
-                    .then(|| {
-                        statistics
-                            .columns
-                            .get(&column.id)
-                            .map(|column_stats| (column.unique_id, column_stats.histogram.ndv))
-                    })
-                    .flatten()
-            })
-            .collect::<Vec<_>>();
-        let initialized_index_ndvs = source
-            .indexes
-            .iter()
-            .filter_map(|index| {
-                let statistics = statistics?;
-                if !statistics
-                    .index_load_status
-                    .get(&index.id)?
-                    .stats_initialized()
-                {
-                    return None;
-                }
-                let ndv = statistics.indexes.get(&index.id)?.histogram.ndv;
-                let columns = index
-                    .columns
-                    .iter()
-                    .map(|column| {
-                        source
-                            .schema_column_for_index_column(column)
-                            .map(|column| column.unique_id)
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some((index.id, (columns, ndv)))
-            })
-            .collect::<Vec<_>>();
-        // Go `HistColl.Columns`' and `Indices`' `Info`, which the
-        // selectivity estimators read.
-        let column_infos = source
-            .columns
-            .iter()
-            .zip(
-                source
-                    .base
-                    .base
-                    .schema()
-                    .into_iter()
-                    .flat_map(|schema| &schema.columns),
-            )
-            .filter(|(metadata, column)| match statistics {
-                Some(statistics) if !pseudo_collection => {
-                    statistics.columns.contains_key(&metadata.id)
-                }
-                // Go `PseudoTable` walks `TableInfo.Columns`, which holds
-                // neither `_tidb_rowid` nor the other extra (negative id) columns.
-                _ => !column.is_hidden && metadata.id > 0,
-            })
-            .map(|(metadata, column)| {
-                (
-                    column.unique_id,
-                    tidb_planner::cardinality::pseudo::PseudoColumn {
-                        lower_name: tidb_hack::go_to_lower(&metadata.name),
-                        unique_key_flag: column.ret_type.as_ref().is_some_and(|field_type| {
-                            field_type.flags() & tidb_datatype::FieldTypeFlags::UNIQUE_KEY != 0
-                        }),
-                    },
-                )
-            })
-            .collect::<Vec<_>>();
-        let index_infos = source
-            .indexes
-            .iter()
-            .filter(|index| index_in_collection(index))
-            .map(|index| tidb_planner::stats_info::HistCollIndexInfo {
-                id: index.id,
-                unique: index.unique,
-                mv_index: index.is_multi_valued,
-                column_lower_names: index
-                    .columns
-                    .iter()
-                    .map(|column| tidb_hack::go_to_lower(&column.name))
-                    .collect(),
-                column_lengths: index.columns.iter().map(|column| column.length).collect(),
-            })
-            .collect::<Vec<_>>();
-        source.table_stats = Some(
-            StatsInfo::new(row_count, ndvs)
-                .with_hist_coll(
-                    HistColl::new(
-                        statistics.is_none_or(|statistics| statistics.pseudo),
-                        row_count as i64,
-                        row_size_columns,
-                    )
-                    .with_histograms(histograms)
-                    .with_column_load_status(column_load_status)
-                    .with_index_load_status(statistics.into_iter().flat_map(|statistics| {
-                        statistics
-                            .index_load_status
-                            .iter()
-                            .map(|(id, status)| (*id, *status))
-                    }))
-                    .with_index_histograms(index_histograms)
-                    .with_column_index_ids(column_index_ids)
-                    .with_index_columns(index_columns)
-                    .with_index_row_counts(index_row_counts)
-                    .with_index_range_policies(source.indexes.iter().map(|index| (index.id,
-                        tidb_planner::cardinality::index_range_policy::IndexRangePolicy {
-                            has_condition: !index.condition_expr_string.is_empty(),
-                            is_multi_value: index.is_multi_valued,
-                        })))
-                    .with_modify_count(statistics.map_or(0, |statistics| statistics.modify_count))
-                    .with_pk_is_handle(source.handle_is_int)
-                    .with_index_ndvs(index_ndvs)
-                    .with_initialized_ndvs(initialized_column_ndvs, initialized_index_ndvs)
-                    .with_column_and_index_infos(column_infos, index_infos)
-                    .with_mv_index_columns(mv_index_columns),
-                )
-                .with_stats_version(statistics.map_or(tidb_stats::PSEUDO_VERSION, |statistics| {
-                    if statistics.pseudo || statistics.stats_ver <= 0 {
-                        tidb_stats::PSEUDO_VERSION
-                    } else {
-                        statistics.stats_ver as u64
-                    }
-                })),
+        let predicate_loaded = self.predicate_loaded_items(source, statistics);
+        source.init_stats(
+            statistics.map(|statistics| statistics as &dyn tidb_planner::logical::init_stats::TableStatsSnapshot),
+            row_count,
+            predicate_loaded,
         );
-        self.derive_source_access_statistics(source, statistics, row_count)?;
-        source.table_scan_penalty = tidb_planner::plan_cost_ver2::TableScanPenaltyInput {
-            has_range_info: false,
-            // Go's `tidb_opt_prefer_range_scan` default is ON. This executor
-            // does not expose a session override yet.
-            allow_prefer_range_scan: true,
-            pseudo_stats: statistics.is_none_or(|statistics| statistics.pseudo),
-            analyze_row_count: statistics
-                .map_or(-1, |statistics| statistics.analyze_row_count() as i64),
-            modify_count: statistics.map_or(0, |statistics| statistics.modify_count),
-            has_partition_scan: false,
-            has_index_force: false,
-            unsigned_int_handle: source.handle_is_int
-                && source
-                    .handle_cols
-                    .first()
-                    .and_then(|column| column.ret_type.as_ref())
-                    .is_some_and(tidb_datatype::FieldType::is_unsigned),
-        };
         // Go `deriveStats`' `StmtCtx.SetIndexForce()` (`stats.go:165`): the
         // flag is statement-wide, so a hint on ANY occurrence records it here
         // and the pass below stamps every source once the walk completes.
@@ -1962,195 +1426,6 @@ impl InitStats<'_> {
             source, self.context.optimizer_cost_env().session.scale_ndv_skew_ratio,
         );
         Ok(Descend::Stop(()))
-    }
-
-    // Transitional boundary: snapshot attachment and derived access state have
-    // different lifetimes. This body still contains the legacy AST route and
-    // must migrate together with logical path derivation, not be reused as a
-    // second authoritative candidate builder.
-    fn derive_source_access_statistics(
-        &self,
-        source: &mut tidb_planner::logical::DataSource,
-        statistics: Option<&crate::access_cost::TableStatistics>,
-        row_count: f64,
-    ) -> Result<(), tidb_planner::plan_base::PlanError> {
-        let estimation_error =
-            |error: tidb_planner::cardinality::row_count_estimator::EstimationError| {
-                tidb_planner::plan_base::PlanError::internal_coded(error.to_string())
-            };
-        let source_table = self.catalog.get_in(&source.db_name, &source.table_name);
-        // Go `deriveStatsByFilter(ds, ds.PushedDownConds, ...)`: one
-        // `Selectivity` over the pushed-down conditions, whose reads of column
-        // and index statistics are what `EXPLAIN`'s `stats:partial[...]` marks
-        // report. The planner's own derivation has no recorder to call yet, so
-        // this pass only records them.
-        if let (false, Some(TableEntry::Kv(_)), Some(table_stats)) = (
-            source.pushed_down_conds.is_empty(),
-            source_table,
-            source.table_stats.as_ref(),
-        ) {
-            let record = |item_id, is_index| {
-                if !self.record_used_stats {
-                    return;
-                }
-                // Go `PseudoTable`'s objects: public, non-hidden columns and
-                // public indexes.
-                let in_pseudo_table = if is_index {
-                    source
-                        .indexes
-                        .iter()
-                        .any(|index| index.id == item_id && index.is_public)
-                } else {
-                    source
-                        .table_columns
-                        .iter()
-                        .any(|column| column.id == item_id && !column.is_hidden)
-                };
-                record_used_item_stats_status(
-                    self.context,
-                    &source.table_name,
-                    source.physical_table_id,
-                    statistics,
-                    in_pseudo_table,
-                    item_id,
-                    is_index,
-                );
-            };
-            // The planner's own derivation already warns for each converted
-            // endpoint; this pass must not repeat them.
-            let statement = tidb_planner::ranger::points::StatementRangerEvaluator(self.context);
-            let evaluate = tidb_planner::ranger::points::QuietRangerEvaluator(&statement);
-            let options = self.context.optimizer_cost_env().session.estimator_options.clone();
-            let filled_paths = source.derive_stats_filled_paths();
-            let selectivity_context = tidb_planner::cardinality::selectivity::SelectivityContext {
-                range_fallback_handler: Some(self.context.range_fallback_handler()),
-                record_used_item: Some(&record),
-                ..tidb_planner::cardinality::selectivity::SelectivityContext::new(&options, &evaluate)
-            };
-            let _ = tidb_planner::logical::rewrite::filter_selectivity(
-                table_stats,
-                &source.pushed_down_conds,
-                &selectivity_context,
-                Some(&filled_paths),
-            );
-        }
-        // Propagated predicates may not occur in this source's AST WHERE.
-        // Rebuild path estimates from the optimizer's current expressions.
-        if !source.pushed_down_conds.is_empty() {
-            if let Some(TableEntry::Kv(table)) = source_table {
-                for index in &source.indexes {
-                    // A hypothetical index lives in the session, not in the
-                    // table, and Go fills its path like any other.
-                    let hypo_metadata = || {
-                        self.context
-                            .hypo_indexes()?
-                            .table_indexes(&source.db_name, &source.table_name)
-                            .into_iter()
-                            .find(|candidate| candidate.id == index.id)
-                    };
-                    let Some(metadata) = table
-                        .plan_indexes()
-                        .find(|candidate| candidate.id == index.id)
-                        .or_else(hypo_metadata)
-                    else {
-                        continue;
-                    };
-                    let prefix = source.index_range_columns(index);
-                    if prefix.is_empty() {
-                        continue;
-                    }
-                    let (columns, lengths): (Vec<_>, Vec<_>) = prefix.into_iter().unzip();
-                    // Go `GetRowCountByIndexRanges` records the index it reads
-                    // (`row_count_index.go:48`) before any fast path.
-                    if self.record_used_stats {
-                        record_used_item_stats_status(
-                            self.context,
-                            &source.table_name,
-                            source.physical_table_id,
-                            statistics,
-                            index.is_public,
-                            index.id,
-                            true,
-                        );
-                    }
-                    // Go's `fillIndexPath` builds a path's ranges and row
-                    // count in one pass; the logical derivation's port of it
-                    // converts the points under the statement's warnings, so
-                    // this row-count pass over the same ranges stays quiet.
-                    let statement =
-                        tidb_planner::ranger::points::StatementRangerEvaluator(self.context);
-                    let evaluate = tidb_planner::ranger::points::QuietRangerEvaluator(&statement);
-                    let built =
-                        tidb_planner::ranger::detacher::detach_index_range_with_fallback_handler_in(
-                            &source.pushed_down_conds,
-                            &columns,
-                            &lengths,
-                            self.context.range_max_size(),
-                            self.context.range_fallback_handler(),
-                            &evaluate,
-                            self.context.ranger_options(),
-                        ).map_err(|error| {
-                            use tidb_planner::ranger::points::PointBuilderError;
-                            match error {
-                                PointBuilderError::Eval(error) => error.into(),
-                                PointBuilderError::Value(error) =>
-                                    tidb_planner::plan_base::PlanError::internal_coded(error.to_string()),
-                                PointBuilderError::Unsupported(message) =>
-                                    tidb_planner::plan_base::PlanError::unsupported_type(message),
-                            }
-                        })?;
-                    let ranges = built
-                        .ranges
-                        .iter()
-                        .map(|range| crate::kv_table::IndexRange {
-                            low: range.low_val.clone(),
-                            high: range.high_val.clone(),
-                            low_exclusive: range.low_exclude,
-                            high_exclusive: range.high_exclude,
-                        })
-                        .collect::<Vec<_>>();
-                    let ranges =
-                        crate::access_cost::prune_estimate_ranges(&ranges, metadata.column_offsets.len());
-                    let estimate = crate::access_cost::index_row_count_with_options(
-                        metadata, table, &ranges, statistics, row_count, false,
-                        self.context.optimizer_cost_env().session.estimator_options.clone(),
-                    )
-                    .map_err(estimation_error)?;
-                    source
-                        .derived_index_paths
-                        .entry(index.id)
-                        .or_default()
-                        .row_estimate = Some(estimate);
-                    if index.primary && source.is_common_handle {
-                        source.table_path_count_after_access = Some(estimate.est);
-                    }
-                }
-            }
-        }
-        // Go's `fillIndexPath` estimates every index path, a full-range one
-        // included: with no condition on this source the count is the whole
-        // table (`GetRowCountByIndexRanges` skips estimating a full range).
-        // Without it the skyline could not compare an index with the table
-        // path, so an ordered request kept every index alive.
-        if source.pushed_down_conds.is_empty() {
-            if let Some(TableEntry::Kv(_)) = source_table {
-                let full_range_count = statistics
-                    .filter(|statistics| !statistics.pseudo)
-                    .map_or(row_count, |statistics| statistics.row_count as f64);
-                for index in &source.indexes {
-                    source
-                        .derived_index_paths
-                        .entry(index.id)
-                        .or_default()
-                        .row_estimate = Some(
-                        tidb_planner::cardinality::row_count_column::RowEstimate::default_est(
-                            full_range_count,
-                        ),
-                    );
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -2201,7 +1476,6 @@ fn planner_physical_select(
     let query = tidb_ast::QueryStmt::Select(Box::new(select.clone()));
     let (logical, plan_ids, column_ids) = planner_optimized_query(
         &query,
-        Some(select),
         catalog,
         current_database,
         ctx,
@@ -2267,14 +1541,9 @@ fn planner_physical_query_with_registry(
     (LogicalPlan, PhysicalPlan, Vec<RegisteredScalarSubquery>),
     tidb_planner::plan_base::PlanError,
 > {
-    let select_hint = match query {
-        tidb_ast::QueryStmt::Select(select) => Some(select.as_ref()),
-        tidb_ast::QueryStmt::SetOpr(_) => None,
-    };
     let registry = ScalarSubqueryRegistry::default();
     let logical = planner_optimized_query_with_allocators(
         query,
-        select_hint,
         catalog,
         current_database,
         ctx,
@@ -2569,7 +1838,7 @@ impl DriverCteOptimizer<'_> {
         let mut initializer = InitStats {
             error: None,
             catalog: self.catalog,
-            select: None,
+            demanded: None,
             context: ctx,
             record_used_stats: true,
         };
@@ -2796,7 +2065,6 @@ fn subquery_evaluator<'a>(
         let logical = optimize_built_logical(
             inner.clone(),
             opt_flag,
-            None,
             catalog,
             ctx,
             use_plan_cache,
@@ -2869,7 +2137,6 @@ fn dynamic_prune_fallback<'a>(
 
 fn planner_optimized_query(
     query: &tidb_ast::QueryStmt,
-    select_hint: Option<&tidb_ast::SelectStmt>,
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
@@ -2880,7 +2147,6 @@ fn planner_optimized_query(
     let registry = ScalarSubqueryRegistry::default();
     let logical = planner_optimized_query_with_allocators(
         query,
-        select_hint,
         catalog,
         current_database,
         ctx,
@@ -2895,7 +2161,6 @@ fn planner_optimized_query(
 #[allow(clippy::too_many_arguments)]
 fn planner_optimized_query_with_allocators(
     query: &tidb_ast::QueryStmt,
-    select_hint: Option<&tidb_ast::SelectStmt>,
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
@@ -2927,7 +2192,6 @@ fn planner_optimized_query_with_allocators(
     optimize_built_logical(
         plan,
         opt_flag,
-        select_hint,
         catalog,
         ctx,
         use_plan_cache,
@@ -3594,7 +2858,6 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     let logical = optimize_built_logical(
         plan,
         plan_flags,
-        Some(select),
         catalog,
         ctx,
         use_plan_cache,
@@ -3636,7 +2899,6 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
 fn optimize_built_logical(
     plan: LogicalPlan,
     flags: u64,
-    select_hint: Option<&tidb_ast::SelectStmt>,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     use_plan_cache: bool,
@@ -3647,9 +2909,43 @@ fn optimize_built_logical(
     struct PlannerStatisticsLoad<'a> {
         catalog: &'a Catalog,
         context: &'a crate::StmtContext,
-        select: Option<&'a tidb_ast::SelectStmt>,
+        /// The statement's accumulated statistics demand; see
+        /// [`InitStats::demanded`]. A CTE body optimized on its own adds its
+        /// own demand.
+        demanded: RefCell<Option<std::collections::HashMap<tidb_model::TableItemID, bool>>>,
         /// See [`InitStats::record_used_stats`].
         record_used_stats: std::cell::Cell<bool>,
+        /// Whether the planner's own statistics derivation records the items
+        /// it reads. Go records them when it derives a source, after the
+        /// partition processor and the synchronous statistics load; the first
+        /// initialization walk runs before both.
+        records_used_items: std::cell::Cell<bool>,
+    }
+
+    impl tidb_planner::logical::rule::UsedStatsRecorder for PlannerStatisticsLoad<'_> {
+        fn record_used_item(
+            &self,
+            physical_table_id: i64,
+            table_name: &str,
+            in_pseudo_table: bool,
+            item_id: i64,
+            is_index: bool,
+        ) {
+            if !self.records_used_items.get() {
+                return;
+            }
+            let statistics =
+                crate::access_cost::get_stats_table(self.context, self.catalog, physical_table_id);
+            record_used_item_stats_status(
+                self.context,
+                table_name,
+                physical_table_id,
+                statistics.as_deref(),
+                in_pseudo_table,
+                item_id,
+                is_index,
+            );
+        }
     }
 
     impl tidb_planner::logical::rule_collect_plan_stats::StatisticsLoadRequester
@@ -3666,6 +2962,10 @@ fn optimize_built_logical(
                 usage.visited_logical_table_ids.iter().copied(),
                 |table_id| self.catalog.table_statistics(table_id),
             );
+            self.demanded
+                .borrow_mut()
+                .get_or_insert_with(Default::default)
+                .extend(self.catalog.statistics_demand(usage));
             self.catalog.request_statistics_load(usage, self.context)
         }
 
@@ -3677,16 +2977,20 @@ fn optimize_built_logical(
             &self,
             plan: LogicalPlan,
         ) -> Result<LogicalPlan, (LogicalPlan, tidb_planner::plan_base::PlanError)> {
+            let demanded = self.demanded.borrow();
             let mut initializer = InitStats {
                 error: None,
                 catalog: self.catalog,
-                select: self.select,
+                demanded: demanded.as_ref(),
                 context: self.context,
                 record_used_stats: self.record_used_stats.get(),
             };
             let (plan, ()) = fold_owned(&mut initializer, plan, ());
             if let Some(error) = initializer.error {
                 return Err((plan, error));
+            }
+            if self.record_used_stats.get() {
+                self.records_used_items.set(true);
             }
             // Go reads `StmtCtx.GetIndexForce()` at PHYSICAL cost time
             // (`plan_cost_ver2.go:1234`), after every source's deriveStats
@@ -3765,8 +3069,9 @@ fn optimize_built_logical(
     let statistics_load = PlannerStatisticsLoad {
         catalog,
         context: ctx,
-        select: select_hint,
+        demanded: RefCell::new(None),
         record_used_stats: std::cell::Cell::new(true),
+        records_used_items: std::cell::Cell::new(false),
     };
     let partition_pruning = PlannerPartitionPruning {
         catalog,
@@ -3828,6 +3133,7 @@ fn optimize_built_logical(
         outer_join_reorder: ctx.outer_join_reorder(),
         advanced_join_hint: ctx.advanced_join_hint(),
         hint_warning_sink: Some(ctx),
+        used_stats_recorder: Some(&statistics_load),
         cte_optimizer: Some(&cte_optimizer),
     };
     let mut source_count = 0;
@@ -4201,14 +3507,9 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
         plan,
         ctx.opt_index_prune_threshold(),
     );
-    let select_hint = match query {
-        tidb_ast::QueryStmt::Select(select) => Some(select.as_ref()),
-        tidb_ast::QueryStmt::SetOpr(_) => None,
-    };
     let optimized = optimize_built_logical(
         plan,
         flags,
-        select_hint,
         catalog,
         ctx,
         false,
@@ -4225,29 +3526,54 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
 
 #[cfg(test)]
 mod predicate_column_tests {
-    use super::predicate_column_names;
+    use super::*;
+    use crate::access_cost::TableStatistics;
+    use tidb_planner::logical::DataSource;
+    use tidb_model::TableItemID;
 
-    /// The loading model must read the source's OWN constant filters. A
-    /// column=column join condition is not one: Go's `PushedDownConds` do not
-    /// contain it, so the column stays evicted and borrows a loaded index's
-    /// analyzed row count.
+    /// The loaded set follows `CollectPredicateColumnsPoint`'s demand over the
+    /// plan: a column the source filters on loads, and a column only a join
+    /// key asked for (Go's `needFullStats` false) stays evicted, so it borrows
+    /// a loaded index's analyzed row count.
     #[test]
     fn filter_columns_load_and_join_keys_do_not() {
-        let statement = tidb_parser::parse(
-            "SELECT sum(h_amount) FROM history \
-             WHERE h_c_w_id = 1 AND h_c_d_id = 5 AND h_c_id = c_id",
-        )
-        .unwrap();
-        let tidb_ast::Stmt::Query(query) = &statement else {
-            panic!("not a query");
+        let mut source = DataSource::new(Default::default(), 7, "history");
+        source.physical_table_id = 7;
+        let mut statistics = TableStatistics::default();
+        for id in [1, 2] {
+            statistics
+                .column_load_status
+                .insert(id, tidb_stats::StatsLoadedStatus::full_load());
+        }
+        let item = |id| TableItemID {
+            table_id: 7,
+            id,
+            is_index: false,
+            is_sync_load_failed: false,
         };
-        let tidb_ast::QueryStmt::Select(select) = &**query else {
-            panic!("not a SELECT");
+        let demanded = std::collections::HashMap::from([(item(1), true), (item(2), false)]);
+        let catalog = Catalog::default();
+        let context = crate::StmtContext::default();
+        let initializer = InitStats {
+            error: None,
+            catalog: &catalog,
+            demanded: Some(&demanded),
+            context: &context,
+            record_used_stats: false,
         };
-        let names = predicate_column_names(select);
-        let loaded = |name: &str| names.iter().any(|(_, candidate)| candidate == name);
-        assert!(loaded("h_c_w_id") && loaded("h_c_d_id"), "{names:?}");
-        assert!(!loaded("h_c_id"), "{names:?}");
+        let (columns, indexes) = initializer
+            .predicate_loaded_items(&source, Some(&statistics))
+            .expect("the demand names a column of the source");
+        assert_eq!(columns, BTreeSet::from([1]));
+        assert!(indexes.is_empty());
+        // Before the demand exists, the cache's fully loaded subset stands.
+        let initializer = InitStats {
+            demanded: None,
+            ..initializer
+        };
+        assert!(initializer
+            .predicate_loaded_items(&source, Some(&statistics))
+            .is_none());
     }
 }
 
@@ -4333,7 +3659,7 @@ mod statistics_initialization_tests {
         let mut initializer = InitStats {
             error: None,
             catalog: &catalog,
-            select: None,
+            demanded: None,
             context: &context,
             record_used_stats: true,
         };
@@ -4343,10 +3669,6 @@ mod statistics_initialization_tests {
         };
         assert!(returned.derived_access_paths.is_none(), "statistics refresh invalidates candidate derivation");
         assert!(initializer.error.is_none(), "{:?}", initializer.error);
-        // The bridge records only a handle range it recognized; an unfiltered
-        // table path's count is the planner's own derivation (the realtime
-        // row count, Go `fillIndexPath`'s initial CountAfterAccess).
-        assert_eq!(returned.table_path_count_after_access, None);
         assert_eq!(
             returned.derived_index_paths.len(),
             1,
@@ -4484,7 +3806,7 @@ mod statistics_initialization_tests {
             let mut initializer = InitStats {
                 error: None,
                 catalog: &catalog,
-                select: None,
+                demanded: None,
                 context: &context,
                 record_used_stats: true,
             };
@@ -4603,6 +3925,7 @@ mod statistics_initialization_tests {
             is_visible: true,
             ..Default::default()
         }];
+        source.enumerated_paths = vec![tidb_planner::access_path::PossiblePath::Index { index: 0 }];
         let mut parameter = Constant::new(Datum::Int(1), field_type);
         parameter.param_marker = Some(ParamMarker { order: 0 });
         let comparison = Expression::ScalarFunction(ScalarFunction::new(
@@ -4660,27 +3983,29 @@ mod statistics_initialization_tests {
                     }
                     other => panic!("unexpected error: {other:?}"),
                 });
-                let mut initializer = InitStats {
-                    error: None,
-                    catalog: &catalog,
-                    select: None,
-                    context: &context,
-                    record_used_stats: true,
-                };
-                let (plan, ()) = fold_owned(
-                    &mut initializer,
+                // Go builds the ranges and the row count in `fillIndexPath`,
+                // which the planner's statistics derivation runs.
+                let plan_ids = PlanIdAllocator::new();
+                let column_ids = ColumnIdAllocator::new();
+                let optimized = optimize_built_logical(
                     LogicalPlan::DataSource(source.clone()),
-                    (),
+                    0,
+                    &catalog,
+                    &context,
+                    false,
+                    &plan_ids,
+                    &column_ids,
+                    &tidb_expr::SessionTimeZone::utc(),
                 );
-                let LogicalPlan::DataSource(returned) = plan else {
-                    panic!("lost datasource");
-                };
-                assert_eq!(returned.table_id, 7);
                 if bound {
-                    assert!(initializer.error.is_none(), "{:?}", initializer.error);
+                    let plan = optimized.expect("bound parameter plans");
+                    let LogicalPlan::DataSource(returned) = plan else {
+                        panic!("lost datasource");
+                    };
+                    assert_eq!(returned.table_id, 7);
                     assert!(returned.derived_index_paths.get(&9).and_then(|path| path.count_after_access()).is_some());
                 } else {
-                    assert_eq!(initializer.error, expected_error);
+                    assert_eq!(optimized.err(), expected_error.clone());
                     if let Some(error) = expected_error {
                         if matches!(
                             error.kind(),
@@ -4696,7 +4021,6 @@ mod statistics_initialization_tests {
                             assert_eq!(mysql.message, expected_message);
                         }
                     }
-                    assert!(returned.derived_index_paths.get(&9).and_then(|path| path.count_after_access()).is_none());
                 }
             }
         }

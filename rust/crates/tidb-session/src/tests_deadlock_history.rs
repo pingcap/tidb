@@ -124,9 +124,10 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v VARCHAR(10), KEY idx_v (v))")
         .unwrap();
     session.run("INSERT INTO t VALUES (1, 'abc')").unwrap();
-    let (table_id, index_key) = {
+    let (table_id, index_key, db_id) = {
         let catalog = session.shared_catalog();
         let mut catalog = catalog.lock().unwrap();
+        let db_id = catalog.database_id("test").expect("the test database");
         let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
             panic!("t must be a KV table");
         };
@@ -137,7 +138,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
             .into_iter()
             .find(|key| is_index_key(key))
             .expect("the inserted row must have one secondary-index key");
-        (table.table_id, index_key)
+        (table.table_id, index_key, db_id)
     };
     let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(1));
     let row_key_hex = key
@@ -257,7 +258,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
                 Collation::Utf8Mb4Bin,
             )),
             Datum::String(StringDatum::new(
-                format!(r#"{{"db_name":"test","table_name":"t","handle_type":"int","handle_value":"1","db_id":1,"table_id":{table_id}}}"#).into_bytes(),
+                format!(r#"{{"db_name":"test","table_name":"t","handle_type":"int","handle_value":"1","db_id":{db_id},"table_id":{table_id}}}"#).into_bytes(),
                 Collation::Utf8Mb4Bin,
             )),
             Datum::UInt(102),
@@ -277,7 +278,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
                 Collation::Utf8Mb4Bin,
             )),
             Datum::String(StringDatum::new(
-                format!(r#"{{"db_name":"test","table_name":"t","index_name":"idx_v","index_values":["abc","1"],"db_id":1,"table_id":{table_id},"index_id":1}}"#).into_bytes(),
+                format!(r#"{{"db_name":"test","table_name":"t","index_name":"idx_v","index_values":["abc","1"],"db_id":{db_id},"table_id":{table_id},"index_id":1}}"#).into_bytes(),
                 Collation::Utf8Mb4Bin,
             )),
             Datum::UInt(202),

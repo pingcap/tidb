@@ -254,8 +254,6 @@ pub struct DataSource {
     pub index_merge_skip_range_scan_check: bool,
     /// Go `TableStats`: the table-level profile before any filtering.
     pub table_stats: Option<StatsInfo>,
-    /// Go table access path's already-derived `CountAfterAccess`.
-    pub table_path_count_after_access: Option<f64>,
     /// Candidates retained by logical derivation; physical search consumes them.
     pub derived_access_paths: Option<crate::access_path::DerivedAccessPaths>,
     /// Occurrence-local ordinary index records, keyed by catalog ID.
@@ -453,6 +451,36 @@ impl DataSource {
             &idx_cols,
             regard_null_as_point,
         )
+    }
+
+    /// Go `recordUsedItemStatsStatus` for one column or index of this source:
+    /// a `PseudoTable` holds the public, non-hidden columns and the public
+    /// indexes.
+    pub(crate) fn record_used_item(
+        &self,
+        recorder: Option<&dyn crate::logical::rule::UsedStatsRecorder>,
+        item_id: i64,
+        is_index: bool,
+    ) {
+        let Some(recorder) = recorder else {
+            return;
+        };
+        let in_pseudo_table = if is_index {
+            self.indexes
+                .iter()
+                .any(|index| index.id == item_id && index.is_public)
+        } else {
+            self.table_columns
+                .iter()
+                .any(|column| column.id == item_id && !column.is_hidden)
+        };
+        recorder.record_used_item(
+            self.physical_table_id,
+            &self.table_name,
+            in_pseudo_table,
+            item_id,
+            is_index,
+        );
     }
 
     /// Go `deriveStatsByFilter(ds, conds, ds.AllPossibleAccessPaths)`'s
@@ -1140,7 +1168,6 @@ impl DataSource {
             prefer_index_merge_by_fix_control: self.prefer_index_merge_by_fix_control,
             index_merge_skip_range_scan_check: self.index_merge_skip_range_scan_check,
             table_stats: self.table_stats.clone(),
-            table_path_count_after_access: self.table_path_count_after_access,
             derived_index_paths: self.derived_index_paths.clone(),
             derived_access_paths: self.derived_access_paths.clone(),
             analyzed_index_ids: self.analyzed_index_ids.clone(),

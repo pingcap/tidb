@@ -377,6 +377,7 @@ impl<'a> DispatchContext<'a> {
             range_fallback_handler: self.range_fallback_handler,
             expression_evaluator: self.expression_evaluator,
             plan_cache_marker: self.plan_cache_marker.filter(|_| self.use_plan_cache),
+            used_stats_recorder: None,
         }
     }
 
@@ -3393,6 +3394,7 @@ fn find_best_task_4_logical_data_source_paths(
                                 &residual_table_filters,
                                 &ctx.access_path_derivation_context(),
                                 None,
+                                None,
                             )
                         })
                         .filter(|value| *value > 0.0)
@@ -4385,7 +4387,7 @@ fn find_best_task_4_logical_data_source_paths(
                         }
                         table_stats.as_ref().and_then(|stats| {
                             crate::logical::rewrite::analyzed_filter_selectivity_in(
-                                stats, filters, &ctx.access_path_derivation_context(), None,
+                                stats, filters, &ctx.access_path_derivation_context(), None, None,
                             )
                         }).filter(|ratio| *ratio > 0.0)
                             .unwrap_or(crate::cost_factors::SELECTION_FACTOR)

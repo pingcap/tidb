@@ -2129,7 +2129,20 @@ fn table_or_partition_not_exist(
     }
 }
 
-pub const SYS_TABLES: &[(&str, i64)] = &[("schema_unused_indexes", 122)];
+/// `sys`' own tables with the id Go's bootstrap draws for them: the view is
+/// the 112th id under the classic kernel (53 tables, `mysql.tidb_mdl_view`
+/// before it) and the third under the next-gen one (`bootstrapSchemas` draws
+/// none, the views are its first two objects). Go's own counters, not a
+/// reading of the store: a node over a store the other kernel bootstrapped
+/// still says its own kernel's id here.
+pub fn sys_tables() -> [(&'static str, i64); 1] {
+    let id = if tidb_config::kerneltype::is_next_gen() {
+        3
+    } else {
+        112
+    };
+    [("schema_unused_indexes", id)]
+}
 
 /// A `DATETIME` for a table's `UpdateTS` TSO in the session zone (Go
 /// `types.FromGoTime(table.GetUpdateTime().In(loc))`), NULL for a table whose
@@ -2326,6 +2339,7 @@ fn tables_rows(
     // view's own creation time for sys; the TIDB_TABLE_ID blocks the
     // bootstrap assigned per schema). performance_schema's tables are
     // catalog entries and render through the loop above.
+    let sys_tables = sys_tables();
     for (schema_upper, tables, created, is_view) in [
         (
             "METRICS_SCHEMA",
@@ -2333,7 +2347,7 @@ fn tables_rows(
             "1970-01-01 08:00:00",
             false,
         ),
-        ("sys", SYS_TABLES, "2026-09-24 18:05:56", true),
+        ("sys", &sys_tables[..], "2026-09-24 18:05:56", true),
     ] {
         let created = if schema_upper == "METRICS_SCHEMA" {
             // These tables never recorded a TSO: the epoch, in the session

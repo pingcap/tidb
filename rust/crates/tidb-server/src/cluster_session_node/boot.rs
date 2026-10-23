@@ -132,9 +132,12 @@ pub(crate) fn run_cluster_session_node_with_spill(
             .map_err(|error| error.to_string())?;
             if !accounts.bootstrap.already_bootstrapped() {
                 let started = std::time::Instant::now();
-                let (outcome, schema_version) =
-                    crate::bootstrap_publish::publish_bootstrap(opener, COPROCESSOR_QUERY_TIMEOUT)
-                        .map_err(|error| error.to_string())?;
+                let (outcome, schema_version, bootstrap_splits) =
+                    crate::bootstrap_publish::publish_bootstrap_with_splits(
+                        opener,
+                        COPROCESSOR_QUERY_TIMEOUT,
+                    )
+                    .map_err(|error| error.to_string())?;
                 crate::bootstrap_publish::notify_committed_bootstrap(
                     &outcome,
                     schema_version,
@@ -145,7 +148,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 // Go `EnableSplitTableRegion`: the bootstrap cut every system
                 // table's region (re-cutting an existing boundary is a no-op).
                 if tidb_config::config_tree::config::get_global_config().split_table {
-                    tidb_exec::pre_split::split_bootstrap_tables(region_store.as_ref(), 0);
+                    tidb_exec::pre_split::split_bootstrap_tables(
+                        region_store.as_ref(),
+                        &bootstrap_splits,
+                    );
                 }
             }
             loaded = Some(

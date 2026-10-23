@@ -20,6 +20,10 @@
 //! [`tidb_exec::cluster_privilege_load::load_cluster_privileges`] — rather than
 //! inspecting the mutation list. Writing bytes only this test understands would
 //! prove nothing.
+//!
+//! This file pins the NEXT-GEN layout (`BootstrapLayout::NextGen`: reserved
+//! ids, the tables written straight into meta, four DDL jobs); the Classic
+//! layout's ids, versions and history are `mysql_bootstrap_classic_source`'s.
 
 use std::collections::BTreeMap;
 
@@ -31,12 +35,30 @@ use tidb_exec::cluster_privilege_load::{
     load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
 };
 use tidb_exec::mysql_bootstrap::{
-    plan_mysql_bootstrap, BootstrapEnvironment, BootstrapError, BootstrapWrite,
-    BOOTSTRAP_VIEW_COUNT,
+    plan_mysql_bootstrap_with_layout, BootstrapEnvironment, BootstrapError, BootstrapLayout,
+    BootstrapWrite, BOOTSTRAP_VIEW_COUNT,
 };
 use tidb_meta::key;
 use tidb_metadef::{BOOTSTRAP_TABLES, DDL_TABLE_VERSION_TABLES};
 use tidb_txnkv::transaction::BufferMutationOp;
+
+/// Go master's materialized-view tables, which this tree's Go does not create.
+const MATERIALIZED_VIEW_TABLES: [&str; 5] = [
+    "tidb_mview_refresh_info",
+    "tidb_mlog_purge_info",
+    "tidb_mview_refresh_hist",
+    "tidb_mview_refresh_alert",
+    "tidb_mlog_purge_hist",
+];
+
+/// The next-gen plan, which is the layout every test here is about.
+fn plan_mysql_bootstrap(
+    snapshot: &mut MetaStore,
+    start_ts: u64,
+    environment: &BootstrapEnvironment,
+) -> Result<BootstrapWrite, BootstrapError> {
+    plan_mysql_bootstrap_with_layout(snapshot, start_ts, environment, BootstrapLayout::NextGen)
+}
 
 /// One fixed environment, so every plan here is byte-for-byte reproducible.
 fn environment() -> BootstrapEnvironment {
@@ -113,10 +135,15 @@ fn a_bootstrapped_keyspace_loads_back_as_a_catalog_with_every_mysql_table() {
         .iter()
         .find(|database| database.info.name.lowercase() == "mysql")
         .expect("the bootstrap created the mysql database");
+    // The five materialized-view tables are Go master's, not this tree's.
     let all_tables = DDL_TABLE_VERSION_TABLES
         .iter()
         .flat_map(|version| version.tables)
-        .chain(BOOTSTRAP_TABLES);
+        .chain(
+            BOOTSTRAP_TABLES
+                .iter()
+                .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name)),
+        );
     // Go bootstrap also creates the MDL view, represented by the catalog owner.
     assert!(database
         .tables
@@ -218,14 +245,18 @@ fn a_second_bootstrap_is_refused_rather_than_layered_on_top() {
         "{error}"
     );
     // A keyspace where only the DATABASE survived — a bootstrap that died
-    // halfway — must be refused too, or the retry writes a second copy.
+    // halfway — must be refused too, or the retry writes a second copy. The
+    // database is found by name.
     let mut half = MetaStore::default();
+    let database = tidb_model::DBInfo {
+        id: tidb_metadef::system::SYSTEM_DATABASE_ID,
+        name: tidb_ast::CiString::new("mysql"),
+        state: tidb_model::SchemaState::PUBLIC,
+        ..tidb_model::DBInfo::default()
+    };
     half.pairs.insert(
-        key::table_kv_key(
-            tidb_metadef::system::SYSTEM_DATABASE_ID,
-            BOOTSTRAP_TABLES[0].id,
-        ),
-        b"{}".to_vec(),
+        key::database_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID),
+        tidb_meta::value::serialize_db_info(&database).unwrap(),
     );
     let error = plan_mysql_bootstrap(&mut half, 1, &environment())
         .expect_err("a half-bootstrapped keyspace is refused");
@@ -235,40 +266,132 @@ fn a_second_bootstrap_is_refused_rather_than_layered_on_top() {
     );
 }
 
+/// Go's next-gen bootstrap writes every table straight into meta, with no
+/// schema version, and spends one version on each of its four DDL jobs: the
+/// two views, `test` and the resource group.
 #[test]
-fn a_bootstrap_spends_exactly_one_schema_version_and_describes_it() {
+fn a_next_gen_bootstrap_spends_one_schema_version_per_ddl_job() {
     let mut store = MetaStore::default();
     store
         .pairs
         .insert(key::schema_version_kv_key(), b"60".to_vec());
     let write =
         plan_mysql_bootstrap(&mut store, 7, &environment()).expect("the keyspace bootstraps");
-    assert_eq!(write.schema_version, 61);
-    assert_eq!(write.diff.version, 61);
+    assert_eq!(write.schema_version, 64);
+    assert_eq!(write.diff.version, 64);
     assert_eq!(
         write.diff.action_type,
-        tidb_model::action_type::ActionType::ACTION_CREATE_TABLES
+        tidb_model::action_type::ActionType::ACTION_ALTER_RESOURCE_GROUP
     );
-    // Every created table is named in the diff, which is what makes a real
-    // TiDB's own reloader pick them all up at this one version. The DDL-owned
-    // tables ride the same fresh bootstrap whenever the environment's
-    // `ddl_table_version` has not reached their group, so the count spans
-    // both lists.
-    let ddl_table_count = tidb_metadef::DDL_TABLE_VERSION_TABLES
-        .iter()
-        .filter(|version| environment().ddl_table_version < version.version)
-        .map(|version| version.tables.len())
-        .sum::<usize>();
-    let affected = &write.diff.affected_options;
-    assert!(affected.is_allocated());
-    assert_eq!(
-        affected.len(),
-        BOOTSTRAP_TABLES.len() + ddl_table_count + BOOTSTRAP_VIEW_COUNT,
-        "the diff names every mysql.* table the fresh bootstrap created"
-    );
-    assert!(affected.iter_handles().all(|affected| affected.is_some()));
     apply(&mut store, &write);
-    assert_eq!(store.pairs[&key::schema_version_kv_key()], b"61");
+    assert_eq!(store.pairs[&key::schema_version_kv_key()], b"64");
+    for version in 61..=64 {
+        assert!(
+            store.pairs.contains_key(&key::schema_diff_kv_key(version)),
+            "version {version} has a diff"
+        );
+    }
+    // The four jobs are the bootstrap's whole history.
+    assert_eq!(BOOTSTRAP_VIEW_COUNT, 2);
+    let catalog = load_cluster_catalog(&mut store).expect("the catalog loads");
+    let history = tidb_exec::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
+    assert_eq!(history.load(&mut store).unwrap().len(), 4);
+    // Go draws an id per object and per job from 1: the views are 1 and 3,
+    // `test` is 5, the jobs are 2, 4, 6 and 7.
+    let (mysql, mdl_view) = catalog.find_table("mysql", "tidb_mdl_view").unwrap();
+    assert_eq!(mysql.id, tidb_metadef::system::SYSTEM_DATABASE_ID);
+    assert_eq!(mdl_view.id, 1);
+    let (sys, sys_view) = catalog
+        .find_table("sys", "schema_unused_indexes")
+        .unwrap();
+    assert_eq!(sys.id, tidb_metadef::system::SYS_DATABASE_ID);
+    assert_eq!(sys_view.id, 3);
+    let test = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "test")
+        .unwrap();
+    assert_eq!(test.info.id, 5);
+    assert_eq!(store.pairs[&key::next_global_id_kv_key()], b"7");
+}
+
+/// The next-gen layout against a Go bootstrap built with `-tags nextgen`
+/// (a throwaway `session` test over `mockstore`, whose meta it listed):
+/// every table's id and clustered-handle flag, the database ids, the counters
+/// and the four bootstrap jobs.
+#[test]
+fn the_next_gen_layout_is_what_go_creates() {
+    const GO: &str = include_str!("data/mysql_bootstrap_nextgen_layout.json");
+    let go: serde_json::Value = serde_json::from_str(GO).unwrap();
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the catalog loads");
+    let mut seen = 0;
+    for database in &catalog.databases {
+        let name = database.info.name.lowercase().to_owned();
+        if !["mysql", "sys", "test"].contains(&name.as_str()) {
+            continue;
+        }
+        assert_eq!(
+            go["databases"][&name].as_i64(),
+            Some(database.info.id),
+            "database {name}"
+        );
+        for table in &database.tables {
+            let full = format!("{name}.{}", table.name.lowercase());
+            let expected = &go["tables"][&full];
+            assert_eq!(expected["id"].as_i64(), Some(table.id), "{full} id");
+            // Go builds its next-gen direct tables under ON; this node keeps
+            // INT_ONLY for them (see `jobs.rs`), so the flag is Go's only for
+            // the DDL-owned tables, which `InitDDLTables` builds likewise.
+            let ddl_owned = tidb_metadef::DDL_TABLE_VERSION_TABLES
+                .iter()
+                .flat_map(|version| version.tables)
+                .any(|owned| owned.id == table.id);
+            if ddl_owned {
+                assert_eq!(
+                    expected["common_handle"].as_bool(),
+                    Some(table.is_common_handle),
+                    "{full} common handle"
+                );
+            }
+            assert_eq!(
+                expected["view"].as_bool(),
+                Some(table.view.is_some()),
+                "{full}"
+            );
+            seen += 1;
+        }
+    }
+    assert_eq!(seen, go["tables"].as_object().unwrap().len());
+    assert_eq!(
+        catalog.schema_version,
+        go["head"]["schema_version"].as_i64().unwrap()
+    );
+    assert_eq!(
+        store.pairs[&key::next_global_id_kv_key()],
+        go["head"]["next_global_id"].to_string().into_bytes()
+    );
+    let history = tidb_exec::ddl_history_table::DdlHistoryTable::locate(&catalog).unwrap();
+    let jobs = history.load(&mut store).unwrap();
+    let expected = go["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), expected.len());
+    for (job, expected) in jobs.iter().zip(expected) {
+        assert_eq!(expected["id"].as_i64(), Some(job.id));
+        assert_eq!(
+            expected["type"].as_str(),
+            Some(job.type_.to_string().as_str())
+        );
+        assert_eq!(expected["schema_id"].as_i64(), Some(job.schema_id));
+        assert_eq!(expected["table_id"].as_i64(), Some(job.table_id));
+        assert_eq!(
+            expected["schema_name"].as_str(),
+            Some(job.schema_name.to_string().as_str())
+        );
+        assert_eq!(
+            expected["table_name"].as_str(),
+            Some(job.table_name.to_string().as_str())
+        );
+    }
 }
 
 #[test]
@@ -290,7 +413,9 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .count();
     // One `mysql.user` row (PRIMARY + i_user), six `mysql.tidb` rows (PRIMARY
     // each), and one `mysql.global_variables` row (PRIMARY each) per
-    // global-scope system variable in the captured fixture.
+    // global-scope system variable in the captured fixture. The four DDL
+    // jobs file four `mysql.tidb_ddl_history` rows, whose integer primary key
+    // is the handle (no index entry).
     const GLOBAL_VARIABLES_FIXTURE: &str =
         include_str!("../src/mysql_bootstrap/global_variables_fixture.tsv");
     assert!(GLOBAL_VARIABLES_FIXTURE
@@ -301,6 +426,6 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .filter(|line| !line.is_empty())
         .count();
     // The builtin binding lock row owns sql_index, time_index and digest_index.
-    assert_eq!(records, 8 + global_variable_rows);
+    assert_eq!(records, 8 + global_variable_rows + 4);
     assert_eq!(index_entries, 11 + global_variable_rows);
 }

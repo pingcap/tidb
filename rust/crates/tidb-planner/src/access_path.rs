@@ -59,6 +59,9 @@ pub(crate) struct AccessPathDerivationContext<'a> {
     /// Go `sctx.SetSkipPlanCache` from the ranger; `None` unless the
     /// statement uses the plan cache (Go's tracker ignores it otherwise).
     pub plan_cache_marker: Option<&'a dyn crate::logical::rule::PlanCacheMarker>,
+    /// Go `recordUsedItemStatsStatus`; `None` outside the statement's
+    /// statistics derivation.
+    pub used_stats_recorder: Option<&'a dyn crate::logical::rule::UsedStatsRecorder>,
 }
 
 impl AccessPathDerivationContext<'_> {
@@ -207,9 +210,13 @@ pub(crate) fn derive_access_paths(
                         }),
                     PossiblePath::Table { .. } => table_path
                         .as_ref()
-                        .and_then(|path| path.count_after_access)
-                        .or(source.table_path_count_after_access),
-                    PossiblePath::TiFlashTable => source.table_path_count_after_access,
+                        .and_then(|path| path.count_after_access),
+                    // The TiFlash path is the table path under another store;
+                    // only a common handle's PRIMARY estimate reaches it.
+                    PossiblePath::TiFlashTable => table_path
+                        .as_ref()
+                        .filter(|_| source.is_common_handle && !source.pushed_down_conds.is_empty())
+                        .and_then(|path| path.count_after_access),
                 })
                 .map(|rows| rows / stats.row_count())
                 .reduce(f64::min)

@@ -339,6 +339,7 @@ pub mod apply;
 pub mod cte;
 pub mod data_source;
 pub mod expand;
+pub mod init_stats;
 pub mod fold;
 pub mod functional_dependencies;
 pub mod index_scan;

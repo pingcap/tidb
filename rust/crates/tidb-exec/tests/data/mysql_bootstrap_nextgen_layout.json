@@ -1,0 +1,361 @@
+{
+ "databases": {
+  "mysql": 281474976710655,
+  "sys": 281474976710595,
+  "test": 5
+ },
+ "head": {
+  "next_global_id": 7,
+  "schema_version": 4
+ },
+ "jobs": [
+  {
+   "id": 2,
+   "schema_id": 281474976710655,
+   "schema_name": "mysql",
+   "schema_version": 1,
+   "table_id": 1,
+   "table_name": "tidb_mdl_view",
+   "type": "create view"
+  },
+  {
+   "id": 4,
+   "schema_id": 281474976710595,
+   "schema_name": "sys",
+   "schema_version": 2,
+   "table_id": 3,
+   "table_name": "schema_unused_indexes",
+   "type": "create view"
+  },
+  {
+   "id": 6,
+   "schema_id": 5,
+   "schema_name": "test",
+   "schema_version": 3,
+   "table_id": 0,
+   "table_name": "",
+   "type": "create schema"
+  },
+  {
+   "id": 7,
+   "schema_id": 1,
+   "schema_name": "default",
+   "schema_version": 4,
+   "table_id": 0,
+   "table_name": "",
+   "type": "alter resource group"
+  }
+ ],
+ "tables": {
+  "mysql.advisory_locks": {
+   "common_handle": true,
+   "id": 281474976710616,
+   "view": false
+  },
+  "mysql.analyze_jobs": {
+   "common_handle": false,
+   "id": 281474976710617,
+   "view": false
+  },
+  "mysql.analyze_options": {
+   "common_handle": false,
+   "id": 281474976710620,
+   "view": false
+  },
+  "mysql.bind_info": {
+   "common_handle": false,
+   "id": 281474976710630,
+   "view": false
+  },
+  "mysql.capture_plan_baselines_blacklist": {
+   "common_handle": false,
+   "id": 281474976710623,
+   "view": false
+  },
+  "mysql.column_stats_usage": {
+   "common_handle": true,
+   "id": 281474976710622,
+   "view": false
+  },
+  "mysql.columns_priv": {
+   "common_handle": true,
+   "id": 281474976710642,
+   "view": false
+  },
+  "mysql.db": {
+   "common_handle": true,
+   "id": 281474976710644,
+   "view": false
+  },
+  "mysql.default_roles": {
+   "common_handle": true,
+   "id": 281474976710631,
+   "view": false
+  },
+  "mysql.dist_framework_meta": {
+   "common_handle": true,
+   "id": 281474976710602,
+   "view": false
+  },
+  "mysql.expr_pushdown_blacklist": {
+   "common_handle": false,
+   "id": 281474976710628,
+   "view": false
+  },
+  "mysql.gc_delete_range": {
+   "common_handle": false,
+   "id": 281474976710635,
+   "view": false
+  },
+  "mysql.gc_delete_range_done": {
+   "common_handle": false,
+   "id": 281474976710634,
+   "view": false
+  },
+  "mysql.global_grants": {
+   "common_handle": true,
+   "id": 281474976710624,
+   "view": false
+  },
+  "mysql.global_priv": {
+   "common_handle": true,
+   "id": 281474976710645,
+   "view": false
+  },
+  "mysql.global_variables": {
+   "common_handle": true,
+   "id": 281474976710641,
+   "view": false
+  },
+  "mysql.help_topic": {
+   "common_handle": false,
+   "id": 281474976710639,
+   "view": false
+  },
+  "mysql.index_advisor_results": {
+   "common_handle": false,
+   "id": 281474976710598,
+   "view": false
+  },
+  "mysql.opt_rule_blacklist": {
+   "common_handle": false,
+   "id": 281474976710627,
+   "view": false
+  },
+  "mysql.password_history": {
+   "common_handle": true,
+   "id": 281474976710646,
+   "view": false
+  },
+  "mysql.plan_replayer_status": {
+   "common_handle": false,
+   "id": 281474976710615,
+   "view": false
+  },
+  "mysql.plan_replayer_task": {
+   "common_handle": true,
+   "id": 281474976710614,
+   "view": false
+  },
+  "mysql.request_unit_by_group": {
+   "common_handle": true,
+   "id": 281474976710601,
+   "view": false
+  },
+  "mysql.role_edges": {
+   "common_handle": true,
+   "id": 281474976710632,
+   "view": false
+  },
+  "mysql.stats_buckets": {
+   "common_handle": true,
+   "id": 281474976710636,
+   "view": false
+  },
+  "mysql.stats_extended": {
+   "common_handle": true,
+   "id": 281474976710626,
+   "view": false
+  },
+  "mysql.stats_feedback": {
+   "common_handle": false,
+   "id": 281474976710633,
+   "view": false
+  },
+  "mysql.stats_fm_sketch": {
+   "common_handle": true,
+   "id": 281474976710625,
+   "view": false
+  },
+  "mysql.stats_histograms": {
+   "common_handle": true,
+   "id": 281474976710637,
+   "view": false
+  },
+  "mysql.stats_history": {
+   "common_handle": true,
+   "id": 281474976710619,
+   "view": false
+  },
+  "mysql.stats_meta": {
+   "common_handle": false,
+   "id": 281474976710638,
+   "view": false
+  },
+  "mysql.stats_meta_history": {
+   "common_handle": true,
+   "id": 281474976710618,
+   "view": false
+  },
+  "mysql.stats_table_locked": {
+   "common_handle": false,
+   "id": 281474976710613,
+   "view": false
+  },
+  "mysql.stats_top_n": {
+   "common_handle": false,
+   "id": 281474976710629,
+   "view": false
+  },
+  "mysql.table_cache_meta": {
+   "common_handle": false,
+   "id": 281474976710621,
+   "view": false
+  },
+  "mysql.tables_priv": {
+   "common_handle": true,
+   "id": 281474976710643,
+   "view": false
+  },
+  "mysql.tidb": {
+   "common_handle": true,
+   "id": 281474976710640,
+   "view": false
+  },
+  "mysql.tidb_background_subtask": {
+   "common_handle": false,
+   "id": 281474976710650,
+   "view": false
+  },
+  "mysql.tidb_background_subtask_history": {
+   "common_handle": false,
+   "id": 281474976710649,
+   "view": false
+  },
+  "mysql.tidb_ddl_history": {
+   "common_handle": false,
+   "id": 281474976710652,
+   "view": false
+  },
+  "mysql.tidb_ddl_job": {
+   "common_handle": false,
+   "id": 281474976710654,
+   "view": false
+  },
+  "mysql.tidb_ddl_notifier": {
+   "common_handle": true,
+   "id": 281474976710648,
+   "view": false
+  },
+  "mysql.tidb_ddl_reorg": {
+   "common_handle": false,
+   "id": 281474976710653,
+   "view": false
+  },
+  "mysql.tidb_global_task": {
+   "common_handle": false,
+   "id": 281474976710609,
+   "view": false
+  },
+  "mysql.tidb_global_task_history": {
+   "common_handle": false,
+   "id": 281474976710608,
+   "view": false
+  },
+  "mysql.tidb_import_jobs": {
+   "common_handle": false,
+   "id": 281474976710607,
+   "view": false
+  },
+  "mysql.tidb_kernel_options": {
+   "common_handle": true,
+   "id": 281474976710597,
+   "view": false
+  },
+  "mysql.tidb_masking_policy": {
+   "common_handle": false,
+   "id": 281474976710593,
+   "view": false
+  },
+  "mysql.tidb_mdl_info": {
+   "common_handle": false,
+   "id": 281474976710651,
+   "view": false
+  },
+  "mysql.tidb_mdl_view": {
+   "common_handle": false,
+   "id": 1,
+   "view": true
+  },
+  "mysql.tidb_pitr_id_map": {
+   "common_handle": true,
+   "id": 281474976710600,
+   "view": false
+  },
+  "mysql.tidb_restore_registry": {
+   "common_handle": false,
+   "id": 281474976710599,
+   "view": false
+  },
+  "mysql.tidb_runaway_queries": {
+   "common_handle": false,
+   "id": 281474976710605,
+   "view": false
+  },
+  "mysql.tidb_runaway_watch": {
+   "common_handle": false,
+   "id": 281474976710606,
+   "view": false
+  },
+  "mysql.tidb_runaway_watch_done": {
+   "common_handle": false,
+   "id": 281474976710603,
+   "view": false
+  },
+  "mysql.tidb_timers": {
+   "common_handle": false,
+   "id": 281474976710604,
+   "view": false
+  },
+  "mysql.tidb_ttl_job_history": {
+   "common_handle": true,
+   "id": 281474976710610,
+   "view": false
+  },
+  "mysql.tidb_ttl_table_status": {
+   "common_handle": false,
+   "id": 281474976710612,
+   "view": false
+  },
+  "mysql.tidb_ttl_task": {
+   "common_handle": true,
+   "id": 281474976710611,
+   "view": false
+  },
+  "mysql.tidb_workload_values": {
+   "common_handle": false,
+   "id": 281474976710596,
+   "view": false
+  },
+  "mysql.user": {
+   "common_handle": true,
+   "id": 281474976710647,
+   "view": false
+  },
+  "sys.schema_unused_indexes": {
+   "common_handle": false,
+   "id": 3,
+   "view": true
+  }
+ }
+}

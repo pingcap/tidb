@@ -796,3 +796,208 @@ fn substitute_column(
         other => other.clone(),
     }
 }
+
+/// `GetRowCountByIndexRanges` over a `HistColl`, the call `fillIndexPath`'s
+/// `detachCondAndBuildRangeForPath` makes for every filled index path.
+#[cfg(test)]
+mod index_range_estimate_tests {
+    use std::sync::Arc;
+
+    use tidb_datatype::{Collation, Datum, FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_stats::{Bucket, Histogram, TopN};
+
+    use super::get_row_count_by_index_ranges;
+    use crate::cardinality::row_count_estimator::{
+        EstimatorOptions, IndexRangeDatums, IndexRowCounts, IndexStats,
+    };
+    use crate::stats_info::HistColl;
+
+    fn column(unique_id: i64) -> Column {
+        Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong))
+    }
+
+    fn range(low: Vec<Datum>, high: Vec<Datum>) -> IndexRangeDatums {
+        IndexRangeDatums {
+            collators: vec![Collation::Binary; low.len()],
+            low_val: low,
+            high_val: high,
+            low_exclude: false,
+            high_exclude: false,
+        }
+    }
+
+    fn two_column_histogram(id: i64, first_low: i64, first_high: i64) -> Arc<IndexStats> {
+        Arc::new(IndexStats {
+            histogram: Histogram {
+                id,
+                ndv: 100,
+                buckets: vec![Bucket {
+                    count: 1_000,
+                    repeat: 1,
+                    ndv: 100,
+                    lower_bound: Datum::Bytes(
+                        tidb_codec::encode_key(&[Datum::Int(first_low), Datum::Int(1)]).unwrap(),
+                    ),
+                    upper_bound: Datum::Bytes(
+                        tidb_codec::encode_key(&[Datum::Int(first_high), Datum::Int(100)]).unwrap(),
+                    ),
+                }],
+                ..Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            num_columns: 2,
+            unique: false,
+        })
+    }
+
+    /// Go `ColUniqueID2IdxIDs` only maps an index to the column it LEADS
+    /// with: a byte histogram cannot answer a standalone bound on a later key
+    /// column, so only an index leading with the missing column contributes.
+    #[test]
+    fn recursive_index_statistics_only_estimate_the_leading_column() {
+        let columns = [column(1), column(2)];
+        let ranges = [range(
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(1), Datum::Int(8)],
+        )];
+        let options = EstimatorOptions::default();
+        let collection = |indexes: &[(i64, Vec<i64>)]| {
+            HistColl::new(false, 1_000, [])
+                .with_index_histograms(indexes.iter().map(|(id, _)| {
+                    (*id, two_column_histogram(*id, if *id == 7 { 1 } else { 1_000 }, if *id == 7 { 100 } else { 2_000 }))
+                }))
+                .with_index_columns(indexes.iter().cloned())
+                .with_column_index_ids(
+                    indexes.iter().map(|(id, columns)| (columns[0], *id)),
+                )
+                .with_index_row_counts(
+                    indexes
+                        .iter()
+                        .map(|(id, _)| (*id, IndexRowCounts::unscaled(1_000, 0))),
+                )
+        };
+        let baseline = get_row_count_by_index_ranges(
+            &collection(&[(7, vec![1, 2])]),
+            7,
+            &ranges,
+            &columns,
+            &options,
+        )
+        .unwrap();
+        let with_nonleading = get_row_count_by_index_ranges(
+            &collection(&[(7, vec![1, 2]), (1, vec![3, 2])]),
+            7,
+            &ranges,
+            &columns,
+            &options,
+        )
+        .unwrap();
+        assert_eq!(with_nonleading.est, baseline.est);
+        assert_eq!(with_nonleading.min_est, baseline.min_est);
+        assert_eq!(with_nonleading.max_est, baseline.max_est);
+        let with_leading = get_row_count_by_index_ranges(
+            &collection(&[(7, vec![1, 2]), (1, vec![3, 2]), (2, vec![2, 3])]),
+            7,
+            &ranges,
+            &columns,
+            &options,
+        )
+        .unwrap();
+        // Two contributing columns activate Go's index-NDV bound: 1000 / 100.
+        assert_eq!(with_leading.max_est, 10.0);
+        assert_ne!(with_leading.max_est, baseline.max_est);
+    }
+
+    /// A one-column bound on a two-column index whose TopN holds only
+    /// `(v, v)` pairs: an absent value is estimated from the modify count.
+    #[test]
+    fn unknown_values_in_composite_index_ranges_match_go() {
+        let mut topn = TopN::new(10);
+        for value in 0..10 {
+            let encoded = tidb_codec::encode_key(&[Datum::Int(value), Datum::Int(value)]).unwrap();
+            topn.append(&encoded, 1);
+        }
+        topn.sort();
+        let index = Arc::new(IndexStats {
+            histogram: Histogram {
+                id: 7,
+                ndv: 10,
+                ..Default::default()
+            },
+            topn: Some(topn),
+            cms: None,
+            stats_ver: 2,
+            num_columns: 2,
+            unique: false,
+        });
+        let collection = HistColl::new(false, 20, [])
+            .with_modify_count(10)
+            .with_index_histograms([(7, index)])
+            .with_index_columns([(7, vec![1, 2])])
+            .with_index_row_counts([(7, IndexRowCounts::unscaled(20, 10))]);
+        let columns = [column(1), column(2)];
+        let estimate = |low, high| {
+            get_row_count_by_index_ranges(
+                &collection,
+                7,
+                &[range(vec![Datum::Int(low)], vec![Datum::Int(high)])],
+                &columns,
+                &EstimatorOptions::default(),
+            )
+            .unwrap()
+            .est
+        };
+        assert_eq!(estimate(30, 30), 1.0);
+        assert_eq!(estimate(9, 30), 2.0);
+    }
+
+    /// Go `canSkipIndexEstimation`: a full range over an ordinary index
+    /// includes every table row, so the realtime count answers it even when
+    /// the index histogram counts fewer entries; a not-null range does not
+    /// take that shortcut.
+    #[test]
+    fn a_full_index_range_is_the_realtime_row_count() {
+        let index = Arc::new(IndexStats {
+            histogram: Histogram {
+                id: 7,
+                ndv: 50,
+                null_count: 10,
+                buckets: vec![Bucket {
+                    count: 50,
+                    repeat: 1,
+                    ndv: 50,
+                    lower_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(1)]).unwrap()),
+                    upper_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(50)]).unwrap()),
+                }],
+                ..Default::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            num_columns: 1,
+            unique: false,
+        });
+        let collection = HistColl::new(false, 80, [])
+            .with_index_histograms([(7, index)])
+            .with_index_columns([(7, vec![1])])
+            .with_index_row_counts([(7, IndexRowCounts::unscaled(80, 0))]);
+        let columns = [column(1)];
+        let estimate = |low: Datum, high: Datum| {
+            get_row_count_by_index_ranges(
+                &collection,
+                7,
+                &[range(vec![low], vec![high])],
+                &columns,
+                &EstimatorOptions::default(),
+            )
+            .unwrap()
+            .est
+        };
+        assert_eq!(estimate(Datum::Null, Datum::MaxValue), 80.0);
+        assert_ne!(estimate(Datum::MinNotNull, Datum::MaxValue), 80.0);
+        assert_ne!(estimate(Datum::Int(1), Datum::Int(10)), 80.0);
+    }
+}

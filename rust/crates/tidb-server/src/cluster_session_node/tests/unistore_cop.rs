@@ -111,6 +111,54 @@ fn displayed(rows: Vec<Vec<Datum>>) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// A node over a store bootstrapped in either kernel's layout serves the
+/// tables it finds there by name: advisory locks, `mysql.*` reads and DDL
+/// all work, and a user table takes the id Go's kernel would give it (117
+/// after the classic bootstrap's 116 ids, 8 after the next-gen one's seven).
+#[test]
+fn a_node_serves_a_store_of_either_layout_by_name() {
+    use tidb_exec::mysql_bootstrap::BootstrapLayout;
+    if crate::isolate_process_globals() {
+        return;
+    }
+    for (layout, first_user_table) in [
+        (BootstrapLayout::Classic, "117"),
+        (BootstrapLayout::NextGen, "8"),
+    ] {
+        tidb_ddl::bootstrap_publish::override_layout_on_this_thread(Some(layout));
+        let (stack, _users) = cop_backed_stack();
+        let mut session = stack.factory.open_session(session_context(130)).unwrap();
+        assert_eq!(
+            displayed(rows(&mut session, "select get_lock('layout_lock', 0)")),
+            vec![vec!["1".to_owned()]],
+            "{layout:?}"
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                "select count(*) from information_schema.tables where table_schema = 'mysql' \
+                 and table_name = 'advisory_locks'"
+            )),
+            vec![vec!["1".to_owned()]],
+            "{layout:?}"
+        );
+        assert!(
+            !displayed(rows(&mut session, "select user from mysql.user")).is_empty(),
+            "{layout:?}"
+        );
+        rows(&mut session, "create table test.layout_t (a int)");
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                "select tidb_table_id from information_schema.tables where table_name = 'layout_t'"
+            )),
+            vec![vec![first_user_table.to_owned()]],
+            "{layout:?}"
+        );
+    }
+    tidb_ddl::bootstrap_publish::override_layout_on_this_thread(None);
+}
+
 #[test]
 fn session_activation_preserves_assertion_level_until_transaction_end() {
     let (stack, _users) = cop_backed_stack();
@@ -20247,10 +20295,16 @@ fn regions_split_and_show_like_go() {
         .map(|row| (row[0].clone(), row[1].clone())),
     )
     .collect();
+    // The DDL tables are at reserved ids under both kernels; the other
+    // `mysql.*` tables are too only under the next-gen kernel.
     let lowest_reserved = tidb_metadef::DDL_TABLE_VERSION_TABLES
         .iter()
         .flat_map(|group| group.tables.iter())
-        .chain(tidb_metadef::BOOTSTRAP_TABLES.iter())
+        .chain(
+            tidb_metadef::BOOTSTRAP_TABLES
+                .iter()
+                .filter(|_| tidb_config::kerneltype::is_next_gen()),
+        )
         .map(|table| table.id)
         .min()
         .unwrap()
@@ -20291,9 +20345,9 @@ fn regions_split_and_show_like_go() {
         ("tps", "t_{tps.p1}_r_4611686018427387904 t_{tpn.p0}_ 0"),
         ("tps", "t_{tps.p1}_ t_{tps.p1}_i_2_ 0"),
         ("tpn", "t_{tpn.p0}_ t_{tpn.p1}_ 0"),
-        // Go's next boundary is its lowest reserved system table (a DDL
-        // table, 281474976710648); this node bootstraps every `mysql.*`
-        // table at a reserved id, so its lowest one is lower.
+        // Go's next boundary is its lowest reserved system table: a DDL
+        // table (281474976710648) under the classic kernel this was captured
+        // from, the lowest `mysql.*` table under the next-gen one.
         ("tpn", "t_{tpn.p1}_ t_{lowest_reserved}_ 0"),
     ];
     let mut actual = Vec::new();

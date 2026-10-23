@@ -102,6 +102,7 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         outer_join_reorder: true,
         advanced_join_hint: true,
         hint_warning_sink: None,
+        used_stats_recorder: None,
         cte_optimizer: None,
     }
 }

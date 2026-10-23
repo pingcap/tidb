@@ -196,6 +196,7 @@ pub(crate) fn analyzed_filter_selectivity_in(
     conditions: &[Expression],
     context: &crate::access_path::AccessPathDerivationContext<'_>,
     filled_paths: Option<&crate::cardinality::selectivity::FilledPaths>,
+    record_used_item: Option<&dyn Fn(i64, bool)>,
 ) -> Option<f64> {
     // The derivation context carries the statement's own snapshot of these
     // session variables.
@@ -214,6 +215,7 @@ pub(crate) fn analyzed_filter_selectivity_in(
             // statement uses the plan cache.
             use_plan_cache: context.plan_cache_marker.is_some(),
             plan_cache_marker: context.plan_cache_marker,
+            record_used_item,
             ..crate::cardinality::selectivity::SelectivityContext::new(
                 &options,
                 context.expression_evaluator,
@@ -2287,13 +2289,23 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                             range_fallback_handler: self.range_fallback_handler,
                             expression_evaluator: &evaluate,
                             plan_cache_marker: self.plan_cache_marker(),
+                            used_stats_recorder: self
+                                .rule_context
+                                .and_then(|context| context.used_stats_recorder),
                         };
                         let filled_paths = op.derive_stats_filled_paths();
+                        // Go `deriveStatsByFilter`'s `Selectivity` reports the
+                        // columns and indexes it reads to the statement's
+                        // used-stats ledger.
+                        let record_used_item = |item_id, is_index| {
+                            op.record_used_item(derivation.used_stats_recorder, item_id, is_index);
+                        };
                         let range_selectivity = analyzed_filter_selectivity_in(
                             &table_stats,
                             &op.pushed_down_conds,
                             &derivation,
                             Some(&filled_paths),
+                            Some(&record_used_item),
                         );
                         let stats = range_selectivity.map_or_else(
                             || {
@@ -2673,6 +2685,9 @@ impl OwnedRewrite for DeriveStatsFold<'_> {
                         range_fallback_handler: self.range_fallback_handler,
                         expression_evaluator: &evaluate,
                         plan_cache_marker: self.plan_cache_marker(),
+                        used_stats_recorder: self
+                            .rule_context
+                            .and_then(|context| context.used_stats_recorder),
                     };
                     match crate::access_path::derive_access_paths(
                         source,

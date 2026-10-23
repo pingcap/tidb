@@ -41,6 +41,7 @@ mod fair_locking_session_seam_realtikv_source;
 mod hint_updatable_vars_source;
 mod index_type_passthrough_source;
 mod keydecoder_source;
+mod mysql_bootstrap_classic_source;
 mod mysql_bootstrap_source;
 mod mysql_bootstrap_tableinfo_source;
 mod pd_approximate_count_source;

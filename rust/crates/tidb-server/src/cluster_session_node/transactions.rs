@@ -1228,6 +1228,10 @@ where
     /// session's group rarely changes, so the stamped clone is kept and
     /// shared. Bounded by the number of distinct groups this node serves.
     group_openers: Arc<Mutex<Vec<GroupOpener<S>>>>,
+    /// `mysql.advisory_locks`, located by name the first time a lock is
+    /// taken (the table is never recreated, so its key shape is fixed for
+    /// the life of the cluster).
+    advisory_lock_table: Arc<Mutex<Option<tidb_exec::mysql_bootstrap::AdvisoryLockTable>>>,
 }
 
 /// One resource group's stamped opener; see `RealClusterTransactions::group_openers`.
@@ -1260,6 +1264,7 @@ where
             opener: Arc::new(opener),
             timeout,
             group_openers: Arc::new(Mutex::new(Vec::new())),
+            advisory_lock_table: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1288,12 +1293,44 @@ where
         opener
     }
 
+    /// Go resolves `mysql.advisory_locks` through the info schema on every
+    /// `GET_LOCK`; this tier keeps the one located table, found by name in
+    /// the stored schema whichever layout the bootstrap gave it.
+    fn advisory_lock_table(
+        &self,
+    ) -> Result<tidb_exec::mysql_bootstrap::AdvisoryLockTable, AdvisoryLockError> {
+        let mut cached = self
+            .advisory_lock_table
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(table) = cached.as_ref() {
+            return Ok(table.clone());
+        }
+        let mut transaction = self
+            .opener
+            .begin()
+            .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
+        let located = {
+            let mut snapshot = tidb_exec::real_tikv_catalog::TransactionMetaSnapshot::new(
+                &mut transaction,
+                self.timeout,
+            );
+            tidb_exec::mysql_bootstrap::AdvisoryLockTable::locate(&mut snapshot)
+        };
+        let _ = transaction.rollback(&UnaryCallContext::with_timeout(self.timeout));
+        let table = located.map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
+        *cached = Some(table.clone());
+        Ok(table)
+    }
+
     fn acquire_advisory_lock_lease(
         &self,
         name: &str,
         timeout: Duration,
     ) -> Result<RealAdvisoryLockLease<S>, AdvisoryLockError> {
-        let key = tidb_exec::mysql_bootstrap::advisory_lock_key(name)
+        let key = self
+            .advisory_lock_table()?
+            .key(name)
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
         // Go's advisory lock session: a pessimistic transaction that locks and
         // never publishes, holding its lock until rollback.

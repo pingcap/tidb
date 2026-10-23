@@ -9558,7 +9558,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
     if events.is_empty() {
         return Ok(());
     }
-    let (_, table) = catalog
+    let (system_database, table) = catalog
         .find_table("mysql", NOTIFIER_TABLE_NAME)
         .ok_or_else(|| {
             DdlPlanError::Encode(format!("mysql.{} does not exist", NOTIFIER_TABLE_NAME))
@@ -9580,7 +9580,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
     let sub_job_id_column = column_id("sub_job_id")?;
     let schema_change_column = column_id("schema_change")?;
     let processed_by_column = column_id("processed_by_flag")?;
-    let row_id_key = key::auto_table_id_kv_key(tidb_metadef::system::SYSTEM_DATABASE_ID, table.id);
+    let row_id_key = key::auto_table_id_kv_key(system_database.id, table.id);
     let needs_row_id = !table.pk_is_handle && !table.is_common_handle;
     // Go's internal INSERT allocates `_tidb_rowid` from the node's allocator,
     // whose reservation commits on its own; only without one does the
@@ -9590,7 +9590,7 @@ fn append_schema_change_mutations<S: MetaSnapshot>(
         .then(|| {
             snapshot
                 .row_ids()
-                .map(|ids| ids.row_allocator_for(tidb_metadef::system::SYSTEM_DATABASE_ID, table))
+                .map(|ids| ids.row_allocator_for(system_database.id, table))
         })
         .flatten();
     let mut row_id = if needs_row_id && allocator.is_none() {

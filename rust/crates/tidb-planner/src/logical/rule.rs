@@ -672,6 +672,9 @@ pub struct RuleContext<'a> {
     pub advanced_join_hint: bool,
     /// Go `StmtCtx.SetHintWarning`.
     pub hint_warning_sink: Option<&'a dyn HintWarningSink>,
+    /// Go `StmtCtx.GetUsedStatsInfo(true)`'s `RecordUsedItemStatus`, reached
+    /// from the statistics derivation (`recordUsedItemStatsStatus`).
+    pub used_stats_recorder: Option<&'a dyn UsedStatsRecorder>,
     /// Go `utilfuncp.DoOptimize` as `LogicalCTE.DeriveStats` reaches it: the
     /// driver-owned whole-query optimizer a CTE class runs the first time its
     /// statistics are asked for (`logical_cte.go:172`).
@@ -710,6 +713,23 @@ pub trait HintWarningSink {
 pub trait PlanCacheMarker {
     /// Records the first reason the current statement cannot use plan cache.
     fn set_skip_plan_cache(&self, reason: &str);
+}
+
+/// Go `recordUsedItemStatsStatus` (`cardinality/trace.go`): the statement's
+/// ledger of the column and index statistics an estimate read.
+pub trait UsedStatsRecorder {
+    /// Records the statistics item (`item_id`, a column or index id) the
+    /// estimate of `physical_table_id` just read. `in_pseudo_table` says
+    /// whether a fresh `PseudoTable` holds the item (a public, non-hidden
+    /// column or a public index).
+    fn record_used_item(
+        &self,
+        physical_table_id: i64,
+        table_name: &str,
+        in_pseudo_table: bool,
+        item_id: i64,
+        is_index: bool,
+    );
 }
 
 /// Go `base.LogicalOptRule` (`base/rule_base.go`).

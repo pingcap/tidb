@@ -688,3 +688,122 @@ fn partial_dnf_index_range_preserves_logical_statistics_cover() {
         );
     }
 }
+
+#[test]
+fn deriving_a_data_source_fills_each_index_path_row_count_from_its_collection() {
+    // Go `fillIndexPath` ends in `GetRowCountByIndexRanges` over the ranges
+    // it just built: a pseudo table answers a point on a non-unique index
+    // with `realtime / pseudoEqualRate` (10000 / 1000), whatever a caller
+    // set before the derivation.
+    let allocator = PlanIdAllocator::new();
+    let mut source = stated_source(&allocator, &[1], 10_000.0, &[(1, 8_000.0)]);
+    let LogicalPlan::DataSource(op) = &mut source else {
+        unreachable!()
+    };
+    op.table_scan_penalty.pseudo_stats = true;
+    op.columns = vec![super::data_source::DataSourceColumn {
+        id: 1,
+        name: "a".to_owned(),
+        is_primary_key: false,
+        is_not_null: false,
+    }];
+    op.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+        id: 8,
+        name: "ia".to_owned(),
+        is_public: true,
+        is_visible: true,
+        columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+            name: "a".to_owned(),
+            offset: 0,
+            length: -1,
+        }],
+        ..Default::default()
+    }];
+    op.enumerated_paths = vec![crate::access_path::PossiblePath::Index { index: 0 }];
+    op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
+    op.derived_index_paths.entry(8).or_default().row_estimate =
+        Some(crate::cardinality::row_count_column::RowEstimate::default_est(1.0));
+    attach_pseudo_collection(op);
+    let context = super::rule_tests::test_context(&allocator);
+    let (plan, result) =
+        super::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);
+    result.expect("derives");
+    let LogicalPlan::DataSource(op) = plan else {
+        unreachable!()
+    };
+    let estimate = op.derived_index_paths[&8]
+        .row_estimate
+        .expect("the planner fills the index path's estimate");
+    assert_eq!(estimate.est, 10.0);
+}
+
+#[test]
+fn deriving_an_index_path_records_the_index_in_the_used_stats_ledger() {
+    // Go `GetRowCountByIndexRanges` calls `recordUsedItemStatsStatus` for the
+    // index before any estimate (`row_count_index.go:48`), with or without a
+    // condition on it.
+    #[derive(Default)]
+    struct Recorder(std::cell::RefCell<Vec<(i64, i64, bool, bool)>>);
+    impl super::rule::UsedStatsRecorder for Recorder {
+        fn record_used_item(
+            &self,
+            physical_table_id: i64,
+            _table_name: &str,
+            in_pseudo_table: bool,
+            item_id: i64,
+            is_index: bool,
+        ) {
+            self.0
+                .borrow_mut()
+                .push((physical_table_id, item_id, is_index, in_pseudo_table));
+        }
+    }
+    let allocator = PlanIdAllocator::new();
+    for conditions in [Vec::new(), vec![eq_condition_to_constant(1, 7)]] {
+        let mut source = stated_source(&allocator, &[1], 10_000.0, &[(1, 8_000.0)]);
+        let LogicalPlan::DataSource(op) = &mut source else {
+            unreachable!()
+        };
+        op.columns = vec![super::data_source::DataSourceColumn {
+            id: 1,
+            name: "a".to_owned(),
+            is_primary_key: false,
+            is_not_null: false,
+        }];
+        op.indexes = vec![crate::plan_builder::catalog::SourceIndex {
+            id: 8,
+            name: "ia".to_owned(),
+            is_public: true,
+            is_visible: true,
+            columns: vec![crate::plan_builder::catalog::SourceIndexColumn {
+                name: "a".to_owned(),
+                offset: 0,
+                length: -1,
+            }],
+            ..Default::default()
+        }];
+        op.enumerated_paths = vec![crate::access_path::PossiblePath::Index { index: 0 }];
+        op.pushed_down_conds = conditions
+            .into_iter()
+            .map(Expression::ScalarFunction)
+            .collect();
+        attach_pseudo_collection(op);
+        let recorder = Recorder::default();
+        let mut context = super::rule_tests::test_context(&allocator);
+        context.used_stats_recorder = Some(&recorder);
+        let (_, result) =
+            super::rewrite::recursive_derive_stats_with_context(source, Vec::new(), &context);
+        result.expect("derives");
+        let physical_id = recorder.0.borrow().first().map(|record| record.0);
+        assert!(
+            recorder
+                .0
+                .borrow()
+                .iter()
+                .any(|(_, item, is_index, in_pseudo)| (*item, *is_index, *in_pseudo)
+                    == (8, true, true)),
+            "index 8 is recorded, got {:?} for table {physical_id:?}",
+            recorder.0.borrow()
+        );
+    }
+}

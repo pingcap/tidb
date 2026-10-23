@@ -213,7 +213,8 @@ fn prepare_union_index_merge_path_for_or(
                                     &filled.detached.ranges,
                                     &filled.common_columns,
                                     ctx,
-                                )?,
+                                )?
+                                .est,
                                 None => super::ordinary::estimate_int_table_path(ds, &filled, ctx)?,
                             });
                             Ok(filled)
@@ -643,28 +644,34 @@ pub(super) fn estimate_partial_index_ranges(
     ctx: &AccessPathDerivationContext<'_>,
 ) -> Result<f64, PlanError> {
     estimate_index_ranges(ds, source_index, &filled.detached.ranges, &filled.columns, ctx)
+        .map(|estimate| estimate.est)
 }
 
-/// Go `GetRowCountByIndexRanges` over `ranges` of `source_index`, whose
-/// usable key columns are `columns`.
-fn estimate_index_ranges(
+/// Go `detachCondAndBuildRangeForPath`'s `GetRowCountByIndexRanges` over
+/// `ranges` of `source_index`, whose usable key columns are `columns`.
+pub(super) fn estimate_index_ranges(
     ds: &DataSource,
     source_index: &crate::plan_builder::catalog::SourceIndex,
     ranges: &crate::ranger::types::Ranges,
     columns: &[(tidb_expr::column::Column, i64)],
     ctx: &AccessPathDerivationContext<'_>,
-) -> Result<f64, PlanError> {
+) -> Result<crate::cardinality::row_count_column::RowEstimate, PlanError> {
     let declared = source_index.columns.len();
+    // Go `GetRowCountByIndexRanges` records the index it reads before any
+    // fast path (`row_count_index.go:48`).
+    ds.record_used_item(ctx.used_stats_recorder, source_index.id, true);
     let ranges = &super::ordinary::prune_estimate_range(ranges, declared);
     let Some(hist) = ds.table_stats.as_ref().and_then(|stats| stats.hist_coll()) else {
         // Go's table always carries a collection; a profile without one
         // keeps the pseudo rate.
-        return Ok(crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
-            ranges,
-            ds.table_stats
-                .as_ref()
-                .map_or(ranges.len() as f64, |stats| stats.row_count()),
-            source_index.unique.then_some(source_index.columns.len()),
+        return Ok(crate::cardinality::row_count_column::RowEstimate::default_est(
+            crate::ranger::stats_bridge::pseudo_count_by_index_ranges(
+                ranges,
+                ds.table_stats
+                    .as_ref()
+                    .map_or(ranges.len() as f64, |stats| stats.row_count()),
+                source_index.unique.then_some(source_index.columns.len()),
+            ),
         ));
     };
     let columns = columns
@@ -679,7 +686,6 @@ fn estimate_index_ranges(
         &columns,
         &ctx.estimator_options,
     )
-    .map(|estimate| estimate.est)
     .map_err(|error| PlanError::internal_coded(error.to_string()))
 }
 

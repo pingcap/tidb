@@ -28,7 +28,6 @@ use chrono::{Datelike, Timelike};
 use tidb_codec::gen_table_record_prefix;
 use tidb_datatype::{Datum, Time, TimeType};
 use tidb_meta::{key, value};
-use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
@@ -95,6 +94,7 @@ pub struct BootstrapEnvironment {
 
 /// Writes every seed row Go's `doDMLWorks` writes, with its index entries.
 pub fn seed(
+    database_id: i64,
     tables: &[TableInfo],
     environment: &BootstrapEnvironment,
     mutations: &mut Vec<BufferMutation>,
@@ -120,7 +120,7 @@ pub fn seed(
             continue;
         }
         mutations.push(BufferMutation::set(
-            key::auto_table_id_kv_key(SYSTEM_DATABASE_ID, table.id),
+            key::auto_table_id_kv_key(database_id, table.id),
             value::encode_int_value(i64::try_from(used).expect("a seed row count fits in i64")),
         )?);
     }

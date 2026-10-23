@@ -3263,11 +3263,14 @@ impl Catalog {
         Ok(())
     }
 
-    fn statistics_load_items(
+    /// Go `CollectPredicateColumnsPoint`'s demand after `collectSyncIndices`
+    /// and the static-pruning expansion: every column and index the
+    /// statement's plan needs statistics of (`true`: the whole payload), whether
+    /// or not the shared cache already holds it.
+    pub(crate) fn statistics_demand(
         &self,
         usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
-        _determinate: bool,
-    ) -> Vec<tidb_model::StatsLoadItem> {
+    ) -> HashMap<tidb_model::TableItemID, bool> {
         let mut columns = usage.predicate_columns.clone();
 
         // Go `markAtLeastOneFullStatsLoadForEachTable`: determinate mode
@@ -3429,6 +3432,15 @@ impl Catalog {
             }
         }
 
+        items
+    }
+
+    fn statistics_load_items(
+        &self,
+        usage: &tidb_planner::logical::rule_collect_plan_stats::ColumnStatsUsage,
+        _determinate: bool,
+    ) -> Vec<tidb_model::StatsLoadItem> {
+        let mut items = self.statistics_demand(usage);
         // Go's stats handle drops requests already satisfied by the shared
         // cache before queueing workers.
         items.retain(|item, full_load| {
@@ -4429,6 +4441,14 @@ impl Catalog {
             // Embedded catalogs share the same allocator for both table kinds.
             None => Ok(self.allocate_table_id()),
         }
+    }
+
+    /// Go's `GenGlobalID` counter after a bootstrap that drew ids up to `id`:
+    /// the next table or database this catalog creates takes an id above it
+    /// (the process-wide table counter never moves backwards).
+    pub fn reserve_ids_through(&mut self, id: i64) {
+        TABLE_ID_HIGHWATER.fetch_max(id, std::sync::atomic::Ordering::SeqCst);
+        self.next_database_id = self.next_database_id.max(id);
     }
 
     /// Embedded-catalog allocator, shared by persistent and local tables.

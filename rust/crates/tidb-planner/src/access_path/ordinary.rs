@@ -47,7 +47,16 @@ pub(crate) fn filter_selectivity(
     let Some(stats) = &source.table_stats else {
         return crate::cost_factors::SELECTION_FACTOR;
     };
-    crate::logical::rewrite::analyzed_filter_selectivity_in(stats, conditions, context, None)
+    let record_used_item = |item_id, is_index| {
+        source.record_used_item(context.used_stats_recorder, item_id, is_index);
+    };
+    crate::logical::rewrite::analyzed_filter_selectivity_in(
+        stats,
+        conditions,
+        context,
+        None,
+        Some(&record_used_item),
+    )
         .unwrap_or(crate::cost_factors::SELECTION_FACTOR)
 }
 
@@ -195,6 +204,26 @@ pub(crate) fn fill_ordinary_index_paths(
         let mut filled = fill_index_path(
             source, index, &source.pushed_down_conds, context, prefix_single_scan, true,
         )?;
+        // Go `detachCondAndBuildRangeForPath`: the path's `CountAfterAccess`
+        // and its bounds come from the index's statistics over the ranges
+        // just built; a path with no usable key column keeps the realtime
+        // row count `fillIndexPath` started from.
+        let derived = if filled.columns.is_empty() {
+            let realtime = source
+                .table_stats
+                .as_ref()
+                .and_then(|stats| stats.hist_coll())
+                .map_or(0.0, |hist| hist.realtime_count() as f64);
+            crate::cardinality::row_count_column::RowEstimate::new(realtime, 0.0, 0.0)
+        } else {
+            super::index_merge::estimate_index_ranges(
+                source,
+                index,
+                &filled.detached.ranges,
+                &filled.columns,
+                context,
+            )?
+        };
         let index_filters = &filled.index_filters;
         // Go adjusts access rows before computing CountAfterIndex, preserving
         // the old count as the lower risk bound. Both ordinary and cloned
@@ -204,10 +233,7 @@ pub(crate) fn fill_ordinary_index_paths(
             .iter()
             .map(|(column, _)| column.clone())
             .collect::<Vec<_>>();
-        let estimate = source
-            .derived_index_paths
-            .get(&index.id)
-            .and_then(|path| path.row_estimate)
+        let estimate = Some(derived)
             .map(|mut estimate| {
                 if !correlated_columns.is_empty() {
                     estimate.est = correlated_access_count_after_access(
@@ -456,15 +482,26 @@ pub(crate) fn fill_table_path(
         .as_ref()
         .or_else(|| source.base.base.stats_info());
     let mut count_after_access = stats.map(|stats| stats.row_count());
+    // Go `deriveCommonHandleTablePathStats`: with any condition, the PRIMARY
+    // index's statistics over the ranges `detachCondAndBuildRangeForPath`
+    // built, which also set the path's bounds.
+    let common_estimate = match common_index {
+        Some(index) if !source.pushed_down_conds.is_empty() && !filled.common_columns.is_empty() => {
+            Some(super::index_merge::estimate_index_ranges(
+                source,
+                index,
+                &detached.ranges,
+                &filled.common_columns,
+                context,
+            )?)
+        }
+        _ => None,
+    };
     if !detached.access_conds.is_empty() {
-        count_after_access = match source.table_path_count_after_access {
-            Some(count) => Some(count),
-            None if common_index.is_some() => stats.map(|stats| {
-                crate::ranger::stats_bridge::pseudo_count_by_ranges(
-                    &detached.ranges,
-                    stats.row_count(),
-                )
-            }),
+        count_after_access = match common_index {
+            Some(_) => common_estimate
+                .map(|estimate| estimate.est)
+                .or(count_after_access),
             None => Some(estimate_int_table_path(source, &filled, context)?),
         };
     }
@@ -477,9 +514,7 @@ pub(crate) fn fill_table_path(
         count_after_access = count_after_access
             .map(|count| correlated_access_count_after_access(source, count, &columns));
     }
-    let estimate = common_index
-        .and_then(|index| source.derived_index_paths.get(&index.id))
-        .and_then(|path| path.row_estimate);
+    let estimate = common_estimate;
     let mut min_count_after_access = estimate.map_or(0.0, |estimate| estimate.min_est);
     let mut max_count_after_access = estimate.map_or(0.0, |estimate| estimate.max_est);
     if let (Some(count), Some(filtered), Some(table)) = (

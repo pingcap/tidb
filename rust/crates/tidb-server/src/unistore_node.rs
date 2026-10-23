@@ -478,8 +478,8 @@ pub(crate) fn unistore_cluster_session_stack(
 
     // The bootstrap: every boot, because the store is empty every boot.
     let bootstrap_started = std::time::Instant::now();
-    let (outcome, schema_version) =
-        crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+    let (outcome, schema_version, bootstrap_splits) =
+        crate::bootstrap_publish::publish_bootstrap_with_splits(&opener, IN_PROCESS_TIMEOUT)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
     let schema_version =
         crate::bootstrap_publish::notify_committed_bootstrap(&outcome, schema_version, None)
@@ -488,7 +488,7 @@ pub(crate) fn unistore_cluster_session_stack(
     // Go `EnableSplitTableRegion` (config `split-table`): the bootstrap cut
     // every system table's region on the fresh store.
     if tidb_config::config_tree::config::get_global_config().split_table {
-        tidb_exec::pre_split::split_bootstrap_tables(region_store.as_ref(), 0);
+        tidb_exec::pre_split::split_bootstrap_tables(region_store.as_ref(), &bootstrap_splits);
     }
 
     // Go's bootstrap INSERTs `root@%` into `mysql.user`; this node provisions

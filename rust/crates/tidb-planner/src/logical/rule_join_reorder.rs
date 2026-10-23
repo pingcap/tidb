@@ -224,6 +224,7 @@ fn without_projection_inline<'a>(context: &RuleContext<'a>) -> RuleContext<'a> {
         outer_join_reorder: context.outer_join_reorder,
         advanced_join_hint: context.advanced_join_hint,
         hint_warning_sink: context.hint_warning_sink,
+        used_stats_recorder: context.used_stats_recorder,
         cte_optimizer: context.cte_optimizer,
     }
 }

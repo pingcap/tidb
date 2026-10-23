@@ -1226,6 +1226,7 @@ mod tests {
             range_fallback_handler: None,
             expression_evaluator: &crate::ranger::points::evaluate_static,
             plan_cache_marker: None,
+            used_stats_recorder: None,
         };
         let plan_id_before = allocator.current();
         // Go `buildIntoAccessPath`: a union reading through one index is no

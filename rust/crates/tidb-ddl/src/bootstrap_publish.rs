@@ -25,7 +25,9 @@
 use std::time::Duration;
 
 use tidb_exec::mysql_bootstrap::{
-    bootstrap_mysql_schema, read_ddl_table_version, utc_now_timestamp, BootstrapEnvironment,
+    plan_mysql_bootstrap_with_layout, read_ddl_table_version, utc_now_timestamp,
+    BootstrapEnvironment, BootstrapLayout,
+    BootstrapSplits,
 };
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_catalog::TransactionMetaSnapshot;
@@ -36,6 +38,26 @@ use tidb_txnkv::transaction::{
 };
 use tidb_util::timeutil::infer_system_tz;
 
+thread_local! {
+    static LAYOUT_OVERRIDE: std::cell::Cell<Option<BootstrapLayout>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Makes the bootstraps this thread publishes use `layout` instead of the
+/// build's kernel layout, so one test binary can exercise both kernels'
+/// layouts. Production never calls it.
+#[doc(hidden)]
+pub fn override_layout_on_this_thread(layout: Option<BootstrapLayout>) {
+    LAYOUT_OVERRIDE.with(|cell| cell.set(layout));
+}
+
+/// The layout this build's kernel bootstraps.
+fn layout() -> BootstrapLayout {
+    LAYOUT_OVERRIDE
+        .with(std::cell::Cell::get)
+        .unwrap_or_else(BootstrapLayout::of_kernel)
+}
+
 /// Plans and commits the bootstrap on one transaction.
 ///
 /// Bootstrap reads and writes share one transaction timestamp.
@@ -43,7 +65,16 @@ pub fn publish_bootstrap<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<(OptimisticCommitOutcome, i64), String> {
-    let call = UnaryCallContext::with_timeout(timeout);
+    publish_bootstrap_with_splits(opener, timeout).map(|(outcome, version, _)| (outcome, version))
+}
+
+/// [`publish_bootstrap`], also naming the region splits the new tables owe
+/// (`tidb_exec::pre_split::split_bootstrap_tables`), whose ids are the ones
+/// the bootstrap actually gave them.
+pub fn publish_bootstrap_with_splits<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+) -> Result<(OptimisticCommitOutcome, i64, BootstrapSplits), String> {
     let mut environment = BootstrapEnvironment {
         system_tz: infer_system_tz(),
         // Go's `new_collations_enabled_on_first_bootstrap` default, which this
@@ -59,10 +90,15 @@ pub fn publish_bootstrap<S: StoreClient>(
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
         environment.ddl_table_version =
             read_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
-        bootstrap_mysql_schema(&mut snapshot, start_ts, &environment)
+        plan_mysql_bootstrap_with_layout(&mut snapshot, start_ts, &environment, layout())
             .map_err(|error| error.to_string())?
     };
     let schema_version = write.schema_version;
+    let splits = write.splits.clone();
+    // The commit's deadline starts once the plan is made: a classic plan runs
+    // every bootstrap statement as a DDL job, which takes longer than one
+    // round trip.
+    let call = UnaryCallContext::with_timeout(timeout);
     // Go's `onAlterResourceGroup` calls `infosync.ModifyResourceGroup` inside
     // the job step, before the step's transaction commits, and a failure
     // cancels the job -- which `mustExecute` turns into a fatal bootstrap.
@@ -73,7 +109,7 @@ pub fn publish_bootstrap<S: StoreClient>(
     let outcome = transaction
         .commit(write.mutations, &call)
         .map_err(|error| error.to_string())?;
-    Ok((outcome, schema_version))
+    Ok((outcome, schema_version, splits))
 }
 
 /// Refuses every bootstrap side effect unless the commit really landed, then

@@ -253,27 +253,22 @@ fn wait_scatter_region_finish(store: &dyn RegionStore, region_ids: &[u64]) {
 /// `createAndSplitTables` cuts each DDL table version group's prefixes in
 /// one split (no scatter, the global scatter group), then every `mysql.*`
 /// table's `CREATE TABLE` pre-splits its record range
-/// (`preSplitAndScatterTable` with no scatter). `previous_ddl_table_version`
-/// is the store's DDL table version before this bootstrap.
-pub fn split_bootstrap_tables(store: &dyn RegionStore, previous_ddl_table_version: i64) {
-    for group in tidb_metadef::DDL_TABLE_VERSION_TABLES
-        .iter()
-        .filter(|group| previous_ddl_table_version < group.version)
-    {
-        let keys = group
-            .tables
-            .iter()
-            .map(|table| gen_table_prefix(table.id))
-            .collect();
+/// (`preSplitAndScatterTable` with no scatter). `splits` names the ids the
+/// bootstrap gave its tables ([`crate::mysql_bootstrap::BootstrapSplits`]).
+pub fn split_bootstrap_tables(
+    store: &dyn RegionStore,
+    splits: &crate::mysql_bootstrap::BootstrapSplits,
+) {
+    for group in &splits.global_batches {
+        let keys = group.iter().map(|id| gen_table_prefix(*id)).collect();
         let (_, error) = store.split_regions(keys, false, Some(GLOBAL_SCATTER_GROUP_ID));
         // Go `splitAndScatterTable`.
         if let Some(error) = error {
             tidb_util::logutil::bg_logger().warn("split table region failed", &[zap_error(&error)]);
         }
     }
-    for table in tidb_metadef::BOOTSTRAP_TABLES {
-        let (_, error) =
-            store.split_regions(vec![gen_table_prefix(table.id)], false, Some(table.id));
+    for id in &splits.table_ids {
+        let (_, error) = store.split_regions(vec![gen_table_prefix(*id)], false, Some(*id));
         // Go's `CREATE TABLE` runs `SplitRecordRegion`.
         if let Some(error) = error {
             tidb_ddl_logutil::ddl_logger().warn("split table region failed", &[zap_error(&error)]);
