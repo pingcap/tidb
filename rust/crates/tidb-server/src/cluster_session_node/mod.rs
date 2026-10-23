@@ -394,7 +394,7 @@ use tidb_ddl::worker as ddl;
 mod ddl_job_history_store;
 mod ddl_notifier;
 pub(crate) mod gc_worker;
-mod lazy_transaction;
+use tidb_session::lazy_transaction;
 mod non_transactional_dml;
 mod record_set;
 mod ru_stats_writer;
@@ -402,7 +402,7 @@ pub(crate) mod schema_lease;
 pub(crate) mod schema_sync;
 mod statistics;
 pub(crate) mod stats_maintenance;
-mod transactions;
+use tidb_session::cluster_transactions as transactions;
 
 pub use boot::run_cluster_session_node;
 pub(crate) use boot::run_cluster_session_node_with_spill;

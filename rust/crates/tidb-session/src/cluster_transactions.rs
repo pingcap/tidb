@@ -83,11 +83,11 @@ use tidb_txnkv::transaction::SchemaLeaseChecker;
 use tidb_txnkv::transaction::{LockWaitTime, PessimisticLockFailure, RealTransaction};
 use tidb_txnkv::Key;
 
-use crate::sql_node::SqlQueryError;
+use tidb_exec::sql_query_error::SqlQueryError;
 
 /// Carries a commit's own client-visible triple onto the wire, so a 9007 stays
 /// a 9007 instead of collapsing into the generic 1105.
-pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
+pub fn sql_error(error: LockSqlError) -> SqlQueryError {
     SqlQueryError {
         write_conflict: error.write_conflict,
         ..SqlQueryError::new(error.code, error.state, error.message)
@@ -106,7 +106,7 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
 /// rewrite when it is `ON`. Under `MARKER` the key arguments are no longer
 /// strings, so no table is named, but the new error still redacts its
 /// arguments again, as Go's `FastGenByArgs` does.
-pub(crate) fn try_replace_write_conflict_error(
+pub fn try_replace_write_conflict_error(
     mut error: SqlQueryError,
     redaction: Redaction,
     table_by_id: impl Fn(i64) -> Option<(Option<String>, String)>,
@@ -299,7 +299,7 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
         _schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
-        observer: Option<tidb_session::process::ProcessTransactionObserver>,
+        observer: Option<crate::process::ProcessTransactionObserver>,
     ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         if let (Some(observer), Some(ts)) = (observer, read_ts) {
             observer.activated(ts);
@@ -593,7 +593,7 @@ pub trait OpenClusterTransaction: Send {
 
 /// Rebuilds and stages one Go SQL statement inside a caller-owned pessimistic
 /// transaction, leaving transaction commit or rollback to that caller.
-pub(crate) fn stage_pessimistic_statement<T>(
+pub fn stage_pessimistic_statement<T>(
     transaction: &dyn OpenClusterTransaction,
     staged: &MutationBuffer,
     lock_wait_timeout: Duration,
@@ -647,16 +647,16 @@ pub(crate) fn stage_pessimistic_statement<T>(
 /// not a timestamp; [`RealOptimisticTransactionOpener::begin_at`] refuses it,
 /// so such a statement fails closed instead of publishing anywhere.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct StatementReadTs {
+pub struct StatementReadTs {
     value: Arc<Mutex<Option<u64>>>,
     current_tso: tidb_executor::CurrentTso,
-    observer: Option<tidb_session::process::ProcessTransactionObserver>,
+    observer: Option<crate::process::ProcessTransactionObserver>,
     /// Where the open records Go's `DurationWaitTS`.
     phase_durations: Option<tidb_executor::phase_durations::SessionPhaseDurations>,
 }
 
 impl StatementReadTs {
-    pub(crate) fn new(current_tso: tidb_executor::CurrentTso) -> Self {
+    pub fn new(current_tso: tidb_executor::CurrentTso) -> Self {
         Self {
             value: Arc::default(),
             current_tso,
@@ -666,7 +666,7 @@ impl StatementReadTs {
     }
 
     /// Records the statement's timestamp wait on the session's clocks.
-    pub(crate) fn with_phase_durations(
+    pub fn with_phase_durations(
         mut self,
         phase_durations: tidb_executor::phase_durations::SessionPhaseDurations,
     ) -> Self {
@@ -682,9 +682,9 @@ impl StatementReadTs {
         }
     }
 
-    pub(crate) fn with_observer(
+    pub fn with_observer(
         mut self,
-        observer: Option<tidb_session::process::ProcessTransactionObserver>,
+        observer: Option<crate::process::ProcessTransactionObserver>,
     ) -> Self {
         self.observer = observer;
         self
@@ -702,7 +702,7 @@ impl StatementReadTs {
     }
 
     /// The timestamp the statement read at, or `None` if it never read.
-    pub(crate) fn get(&self) -> Option<u64> {
+    pub fn get(&self) -> Option<u64> {
         *self
             .value
             .lock()
@@ -982,13 +982,13 @@ fn lock_storage_error(error: tidb_exec::pessimistic_lock_error::LockSqlError) ->
 /// The transaction owner a write statement transfers after its snapshot handle
 /// is unbound.  Keeping this alias here avoids exposing the concrete TiKV
 /// transaction implementation through the storage trait.
-pub(crate) type WriteTransactionSlot = Arc<Mutex<Option<Box<dyn OpenClusterTransaction>>>>;
+pub type WriteTransactionSlot = Arc<Mutex<Option<Box<dyn OpenClusterTransaction>>>>;
 
 /// Where an autocommit statement's lock, taken after its read, leaves the
 /// `for_update_ts` its conflict asks the statement to be re-run at (Go
 /// `handlePessimisticLockError` -> `OnStmtRetry`). The statement owner takes
 /// it back after the snapshot is gone.
-pub(crate) type LockRetrySlot = Arc<Mutex<Option<u64>>>;
+pub type LockRetrySlot = Arc<Mutex<Option<u64>>>;
 
 impl Drop for DeferredSnapshot {
     fn drop(&mut self) {
@@ -1180,7 +1180,7 @@ impl ClusterSnapshot for DeferredSnapshot {
 /// `read_ts` is the statement's, and outlives the returned handle: whatever
 /// timestamp the statement's first read waits for is written there, and the
 /// statement's publication reads it back after this handle has been dropped.
-pub(crate) fn deferred_snapshot(
+pub fn deferred_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     resource_group: Arc<str>,
@@ -1190,7 +1190,7 @@ pub(crate) fn deferred_snapshot(
 
 /// [`deferred_snapshot`] with a writable transaction opened in parallel with
 /// DML planning.  The statement reads and commits through that one owner.
-pub(crate) fn prefetched_write_snapshot(
+pub fn prefetched_write_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
     read_ts: StatementReadTs,
     write_handoff: WriteTransactionSlot,
@@ -1445,7 +1445,13 @@ where
                 // failed timestamp future is logged and the transaction is
                 // opened on a fresh synchronous timestamp instead of failing
                 // the statement (only unistore propagates the error).
-                tidb_util::logutil::bg_logger().warn("wait tso failed", &[crate::zap_error(error)]);
+                tidb_util::logutil::bg_logger().warn(
+                    "wait tso failed",
+                    &[tidb_log::Field::new(
+                        "error",
+                        tidb_log::Value::Str(error.to_string()),
+                    )],
+                );
                 return if self.pessimistic {
                     SessionTransaction::begin_pessimistic(self.opener, self.timeout, options)
                         .map(|mut transaction| {
@@ -1607,7 +1613,7 @@ where
         resource_group: &str,
         schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
         options: SessionTransactionOptions,
-        observer: Option<tidb_session::process::ProcessTransactionObserver>,
+        observer: Option<crate::process::ProcessTransactionObserver>,
     ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         // Go's autocommit `finishStmt` on a statement that staged nothing
         // publishes nothing; skip the opener and protocol lookups too.
@@ -1855,269 +1861,6 @@ where
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use super::*;
-
-    #[derive(Debug)]
-    struct BatchCountingSnapshot {
-        get_calls: Arc<AtomicUsize>,
-        batch_get_calls: Arc<AtomicUsize>,
-    }
-
-    impl ClusterSnapshot for BatchCountingSnapshot {
-        fn get(&mut self, _key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
-            self.get_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(None)
-        }
-
-        fn batch_get(&mut self, keys: &[Key]) -> Result<SnapshotPairs, StorageError> {
-            self.batch_get_calls.fetch_add(1, Ordering::Relaxed);
-            Ok(keys
-                .iter()
-                .map(|key| (key.as_bytes().to_vec(), b"value".to_vec()))
-                .collect())
-        }
-
-        fn scan(
-            &mut self,
-            _start: &Key,
-            _end: &Key,
-            _limit: Option<usize>,
-        ) -> Result<SnapshotPairs, StorageError> {
-            Ok(Vec::new())
-        }
-    }
-
-    struct BatchCountingTransactions {
-        get_calls: Arc<AtomicUsize>,
-        batch_get_calls: Arc<AtomicUsize>,
-    }
-
-    impl ClusterTransactions for BatchCountingTransactions {
-        fn prepare_snapshot(
-            &self,
-            _resource_group: &str,
-        ) -> Result<Box<dyn PendingClusterSnapshot>, String> {
-            panic!("the test opens its snapshot directly")
-        }
-
-        fn open_snapshot(&self, _resource_group: &str) -> Result<Box<dyn ClusterSnapshot>, String> {
-            Ok(Box::new(BatchCountingSnapshot {
-                get_calls: Arc::clone(&self.get_calls),
-                batch_get_calls: Arc::clone(&self.batch_get_calls),
-            }))
-        }
-
-        fn open_max_ts_snapshot(
-            &self,
-            resource_group: &str,
-        ) -> Result<Box<dyn ClusterSnapshot>, String> {
-            self.open_snapshot(resource_group)
-        }
-
-        fn commit(
-            &self,
-            _buffer: &MutationBuffer,
-            _read_ts: Option<u64>,
-            _resource_group: &str,
-            _options: SessionTransactionOptions,
-        ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
-            panic!("unused in batch-get forwarding test")
-        }
-
-        fn begin(
-            &self,
-            _pessimistic: bool,
-            _fair_locking: bool,
-            _resource_group: &str,
-            _options: SessionTransactionOptions,
-        ) -> Result<Box<dyn OpenClusterTransaction>, String> {
-            panic!("unused in batch-get forwarding test")
-        }
-
-        fn prepare_autocommit_write(
-            &self,
-            _resource_group: &str,
-            _pessimistic: bool,
-            _fair_locking: bool,
-            _options: SessionTransactionOptions,
-        ) -> Result<Box<dyn PendingClusterTransaction>, String> {
-            panic!("unused in batch-get forwarding test")
-        }
-
-        fn acquire_advisory_lock(
-            &self,
-            _name: &str,
-            _timeout: Duration,
-        ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError> {
-            panic!("unused in batch-get forwarding test")
-        }
-
-        fn is_advisory_lock_used(&self, _name: &str) -> bool {
-            panic!("unused in batch-get forwarding test")
-        }
-    }
-
-    #[test]
-    fn session_activation_retains_options_after_timestamp_future_failure() {
-        use std::sync::atomic::AtomicBool;
-        use tikv_client::oracle::{
-            Oracle, OracleOption, OracleResult, ReadTimestampValidator, TimestampFuture,
-        };
-
-        /// The store's oracle, failing the next dispatched timestamp once:
-        /// client-go's `SetOracle` with a test oracle.
-        struct FailingOnce {
-            inner: Arc<dyn Oracle>,
-            fail: Arc<AtomicBool>,
-        }
-        struct Failed;
-        #[async_trait::async_trait]
-        impl TimestampFuture for Failed {
-            async fn wait(&self) -> OracleResult<u64> {
-                Err("injected timestamp wait failure".into())
-            }
-        }
-        #[async_trait::async_trait]
-        impl ReadTimestampValidator for FailingOnce {
-            async fn validate_read_timestamp(
-                &self,
-                read_timestamp: u64,
-                is_stale_read: bool,
-                option: &OracleOption,
-            ) -> OracleResult<()> {
-                self.inner
-                    .validate_read_timestamp(read_timestamp, is_stale_read, option)
-                    .await
-            }
-        }
-        #[async_trait::async_trait]
-        impl Oracle for FailingOnce {
-            async fn get_timestamp(&self, option: &OracleOption) -> OracleResult<u64> {
-                self.inner.get_timestamp(option).await
-            }
-            fn get_timestamp_async(&self, option: &OracleOption) -> Box<dyn TimestampFuture> {
-                if self.fail.swap(false, Ordering::AcqRel) {
-                    Box::new(Failed)
-                } else {
-                    self.inner.get_timestamp_async(option)
-                }
-            }
-            async fn get_low_resolution_timestamp(
-                &self,
-                option: &OracleOption,
-            ) -> OracleResult<u64> {
-                self.inner.get_low_resolution_timestamp(option).await
-            }
-            fn get_low_resolution_timestamp_async(
-                &self,
-                option: &OracleOption,
-            ) -> Box<dyn TimestampFuture> {
-                self.inner.get_low_resolution_timestamp_async(option)
-            }
-            fn set_low_resolution_timestamp_update_interval(
-                &self,
-                update_interval: Duration,
-            ) -> OracleResult<()> {
-                self.inner
-                    .set_low_resolution_timestamp_update_interval(update_interval)
-            }
-            async fn get_stale_timestamp(
-                &self,
-                transaction_scope: &str,
-                previous_seconds: u64,
-            ) -> OracleResult<u64> {
-                self.inner
-                    .get_stale_timestamp(transaction_scope, previous_seconds)
-                    .await
-            }
-            fn is_expired(&self, lock_timestamp: u64, ttl: u64, option: &OracleOption) -> bool {
-                self.inner.is_expired(lock_timestamp, ttl, option)
-            }
-            fn until_expired(&self, lock_timestamp: u64, ttl: u64, option: &OracleOption) -> i64 {
-                self.inner.until_expired(lock_timestamp, ttl, option)
-            }
-            fn close(&self) {}
-            async fn get_external_timestamp(&self) -> OracleResult<u64> {
-                self.inner.get_external_timestamp().await
-            }
-            async fn set_external_timestamp(&self, timestamp: u64) -> OracleResult<()> {
-                self.inner.set_external_timestamp(timestamp).await
-            }
-            async fn get_all_tso_keyspace_group_min_timestamp(&self) -> OracleResult<u64> {
-                self.inner.get_all_tso_keyspace_group_min_timestamp().await
-            }
-        }
-        let stack =
-            crate::unistore_node::in_process_stack(&tidb_pd_client::ClusterSecurity::plaintext())
-                .unwrap();
-        let fail = Arc::new(AtomicBool::new(false));
-        let store = stack.tikv_store.store();
-        store.set_oracle(Arc::new(FailingOnce {
-            inner: store.get_oracle(),
-            fail: fail.clone(),
-        }));
-        let opener = RealOptimisticTransactionOpener::from_capabilities(
-            (*stack.tikv_store).clone(),
-            Duration::from_secs(3),
-        )
-        .unwrap();
-        let transactions = RealClusterTransactions::new(opener, Duration::from_secs(3));
-        for pessimistic in [false, true] {
-            fail.store(true, Ordering::Release);
-            let options = SessionTransactionOptions {
-                commit_protocol: tidb_txnkv::transaction::CommitProtocol::two_phase_only(),
-                assertion_level: tidb_proto::KvrpcAssertionLevel::Strict,
-                kv_context: None,
-            };
-            let pending = transactions
-                .prepare_autocommit_write("default", pessimistic, false, options)
-                .unwrap();
-            let transaction = pending.wait().unwrap();
-            assert!(!fail.load(Ordering::Acquire));
-            let buffer = MutationBuffer::new();
-            transaction.bind_mutation_buffer(&buffer);
-            buffer
-                .stage_owned_batch([(
-                    Key::from_bytes(b"absent"),
-                    Some(b"value".to_vec()),
-                    false,
-                    tidb_txnkv::AssertionOp::AssertExist,
-                )])
-                .unwrap();
-            let error = transaction
-                .commit(&buffer)
-                .expect_err("fallback must retain Strict");
-            assert_eq!(error.code, 8141, "{error:?}");
-        }
-    }
-
-    #[test]
-    fn deferred_snapshot_forwards_batch_get_without_point_read_fallback() {
-        let get_calls = Arc::new(AtomicUsize::new(0));
-        let batch_get_calls = Arc::new(AtomicUsize::new(0));
-        let transactions = Arc::new(BatchCountingTransactions {
-            get_calls: Arc::clone(&get_calls),
-            batch_get_calls: Arc::clone(&batch_get_calls),
-        });
-        let mut snapshot = DeferredSnapshot::new(
-            transactions,
-            StatementReadTs::default(),
-            Arc::<str>::from("default"),
-        );
-        let keys = vec![Key::from_bytes(b"k1"), Key::from_bytes(b"k2")];
-
-        let pairs = snapshot.batch_get(&keys).expect("batch get succeeds");
-
-        assert_eq!(pairs.len(), 2);
-        assert_eq!(batch_get_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(get_calls.load(Ordering::Relaxed), 0);
-    }
-}
-
-#[cfg(test)]
 mod write_conflict_rewrite_tests {
     use tidb_codec::table_key::{
         encode_index_seek_key, encode_row_key_with_handle, hex, RecordHandle,
@@ -2127,7 +1870,7 @@ mod write_conflict_rewrite_tests {
     };
 
     use super::try_replace_write_conflict_error;
-    use crate::sql_node::SqlQueryError;
+    use tidb_exec::sql_query_error::SqlQueryError;
 
     /// The commit error `sql_error` hands the session for one conflict.
     fn commit_error(key: &[u8], primary: &[u8], redaction: Redaction) -> SqlQueryError {

@@ -45,12 +45,12 @@ use tidb_executor::storage::StorageError;
 use tidb_txnkv::transaction::{LockWaitTime, SchemaLeaseChecker};
 use tidb_txnkv::Key;
 
-use super::transactions::{CommittedTxnInfo, OpenClusterTransaction};
-use crate::sql_node::SqlQueryError;
+use crate::cluster_transactions::{CommittedTxnInfo, OpenClusterTransaction};
+use tidb_exec::sql_query_error::SqlQueryError;
 
 /// Opens the store transaction from the options in force at the activation
 /// (Go `SetOptionsOnTxnActive`), and publishes its start timestamp.
-pub(crate) type TransactionOpener = Box<
+pub type TransactionOpener = Box<
     dyn FnOnce(SessionTransactionOptions) -> Result<Box<dyn OpenClusterTransaction>, String> + Send,
 >;
 
@@ -142,12 +142,12 @@ impl Shared {
 
 /// A transaction that has entered but not yet activated; see the module
 /// documentation.
-pub(crate) struct LazyClusterTransaction {
+pub struct LazyClusterTransaction {
     shared: Arc<Shared>,
 }
 
 impl LazyClusterTransaction {
-    pub(crate) fn new(
+    pub fn new(
         pessimistic: bool,
         options: SessionTransactionOptions,
         buffer: MutationBuffer,

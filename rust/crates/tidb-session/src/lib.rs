@@ -1389,6 +1389,8 @@ mod stmt_ctx;
 mod table_lock;
 pub use table_lock::ClusterDdlLockEffect;
 mod table_privilege;
+pub mod cluster_transactions;
+pub mod lazy_transaction;
 mod savepoints;
 pub use savepoints::SavepointStack;
 mod txn;

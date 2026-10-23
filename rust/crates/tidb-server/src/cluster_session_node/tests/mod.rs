@@ -17,6 +17,7 @@ mod point_get_max_ts;
 mod prepared_transactions;
 mod schema_changes;
 mod statistics;
+mod store_transactions;
 mod transactions;
 mod unistore_cop;
 mod wide_sql;
