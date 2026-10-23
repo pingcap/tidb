@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -389,28 +390,74 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,1), (18446744073709551615,2)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
 	tk.MustExec("set @@tidb_executor_concurrency=15")
-	const slowCopDelay = 100 * time.Millisecond
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", fmt.Sprintf("return(%d)", slowCopDelay/time.Millisecond)))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
-	})
-	assertQueryDuration := func(sql string, limit time.Duration) {
-		start := time.Now()
-		tk.MustQuery(sql)
-		require.Less(t, time.Since(start), limit)
+	tk.MustExec("set @@tidb_session_alias = 'concurrent_small_cop'")
+	assertCopWaves := func(sql string, indexRequests, tableRequests int) {
+		t.Helper()
+		waves := []struct {
+			scan     tipb.ExecType
+			expected int
+			arrived  atomic.Int32
+			ready    chan struct{}
+		}{
+			{scan: tipb.ExecType_TypeIndexScan, expected: indexRequests, ready: make(chan struct{})},
+			{scan: tipb.ExecType_TypeTableScan, expected: tableRequests, ready: make(chan struct{})},
+		}
+		// The deadline bounds a broken concurrency invariant, rather than
+		// imposing a latency requirement on a normally scheduled query.
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		const hook = "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"
+		require.NoError(t, failpoint.EnableCall(hook, func(req *tikvrpc.Request) {
+			copReq, ok := req.Req.(*coprocessor.Request)
+			if !ok || copReq.ConnectionAlias != "concurrent_small_cop" {
+				return
+			}
+			var dag tipb.DAGRequest
+			if err := dag.Unmarshal(copReq.Data); err != nil || len(dag.Executors) == 0 {
+				t.Errorf("invalid Cop DAG request: %v", err)
+				return
+			}
+			for i := range waves {
+				wave := &waves[i]
+				if dag.Executors[0].Tp != wave.scan {
+					continue
+				}
+				arrived := int(wave.arrived.Add(1))
+				if arrived > wave.expected {
+					t.Errorf("unexpected extra %s request: %s", wave.scan, sql)
+					return
+				}
+				if arrived == wave.expected {
+					close(wave.ready)
+				}
+				// No request in this wave may finish until all have reached the hook.
+				select {
+				case <-wave.ready:
+				case <-ctx.Done():
+					t.Errorf("only %d of %d %s requests overlapped: %s", wave.arrived.Load(), wave.expected, wave.scan, sql)
+				}
+				return
+			}
+			t.Errorf("unexpected Cop scan type %s: %s", dag.Executors[0].Tp, sql)
+		}))
+		defer func() { require.NoError(t, failpoint.Disable(hook)) }()
+		// Cancel before disabling the hook so a failed query releases blocked requests.
+		defer cancel()
+		tk.MustQueryWithContext(ctx, sql)
+		require.NoError(t, ctx.Err(), sql)
+		for i := range waves {
+			require.EqualValues(t, waves[i].expected, waves[i].arrived.Load(), sql)
+		}
 	}
-	// The aggregate index lookup has index and table lookup Cop stages; the
-	// remaining queries should complete in one delayed Cop wave.
-	twoCopWaveLimit := slowCopDelay * 3
-	singleCopWaveLimit := slowCopDelay * 2
+	// The index lookup needs one wave for all ten partition index scans,
+	// followed by one wave for all ten table lookups.
 	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
-	assertQueryDuration("select sum(c) from t1 use index (idx_b) where b < 10;", twoCopWaveLimit)
-	// Test for index reader with partition table
-	assertQueryDuration("select id, b from t1 use index (idx_b) where b < 10;", singleCopWaveLimit)
-	// Test for table reader with partition table.
-	assertQueryDuration("select * from t1 where c < 10;", singleCopWaveLimit)
-	// 	// Test for table reader with 2 parts ranges.
-	assertQueryDuration("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;", singleCopWaveLimit)
+	assertCopWaves("select sum(c) from t1 use index (idx_b) where b < 10;", 10, 10)
+	// The covering index reader batches all ten partition ranges into one request.
+	assertCopWaves("select id, b from t1 use index (idx_b) where b < 10;", 1, 0)
+	// The table reader must scan all ten partitions in one wave.
+	assertCopWaves("select * from t1 where c < 10;", 0, 10)
+	// The ordered unsigned handle scan must read its two ranges in one wave.
+	assertCopWaves("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;", 0, 2)
 }
 
 func TestDMLWithLiteCopWorker(t *testing.T) {
