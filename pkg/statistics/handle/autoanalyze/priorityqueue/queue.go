@@ -589,21 +589,21 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
-		for _, tblInfo := range tbls {
+		pushJobsForTable := func(tblInfo *model.TableInfo) error {
 			// If table locked, skip analyze all partitions of the table.
 			if _, ok := lockedTables[tblInfo.ID]; ok {
-				continue
+				return nil
 			}
 
 			if tblInfo.IsView() {
-				continue
+				return nil
 			}
 
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
 				stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
 				if !found {
-					continue
+					return nil
 				}
 
 				job := jobFactory.CreateNonPartitionedTableAnalysisJob(
@@ -614,7 +614,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 				if err != nil {
 					return err
 				}
-				continue
+				return nil
 			}
 
 			// Only analyze the partition that has not been locked.
@@ -641,7 +641,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			} else {
 				globalStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tblInfo.ID)
 				if !found {
-					continue
+					return nil
 				}
 				job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
 					tblInfo,
@@ -652,6 +652,12 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 				if err != nil {
 					return err
 				}
+			}
+			return nil
+		}
+		for _, tblInfo := range tbls {
+			if err := pushJobsForTable(tblInfo); err != nil {
+				return err
 			}
 		}
 
