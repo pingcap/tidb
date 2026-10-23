@@ -106,6 +106,17 @@ func TestParameterize(t *testing.T) {
 		},
 		// TODO: more test cases
 	}
+	for _, fn := range []string{"date_format", "str_to_date", "time_format", "from_unixtime"} {
+		cases = append(cases, struct {
+			sql      string
+			paramSQL string
+			params   []any
+		}{
+			sql:      fmt.Sprintf("select * from t where a = %s() and b = 1", fn),
+			paramSQL: fmt.Sprintf("SELECT * FROM `t` WHERE `a`=%s() AND `b`=?", fn),
+			params:   []any{int64(1)},
+		})
+	}
 
 	for _, c := range cases {
 		stmt, err := parser.New().ParseOneStmt(c.sql, "", "")
