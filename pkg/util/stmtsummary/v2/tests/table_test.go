@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -758,6 +759,91 @@ func TestStmtSummaryHistoryPreparedTimeRange(t *testing.T) {
 		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
 		require.Equal(t, testkit.Rows("window0"), baseline)
 		tk.MustQuery(fc.query, fc.end, fc.begin).Check(baseline)
+	}
+}
+
+func TestStmtSummaryHistoryPreparedTimeRangeDST(t *testing.T) {
+	for _, ca := range []struct {
+		name     string
+		timezone string
+		first    time.Time
+		second   time.Time
+	}{
+		{
+			name:     "NewYork",
+			timezone: "America/New_York",
+			first:    time.Date(2024, 11, 3, 5, 30, 0, 0, time.UTC),
+			second:   time.Date(2024, 11, 3, 6, 30, 0, 0, time.UTC),
+		},
+		{
+			name:     "LordHowe",
+			timezone: "Australia/Lord_Howe",
+			first:    time.Date(2024, 4, 6, 14, 45, 0, 0, time.UTC),
+			second:   time.Date(2024, 4, 6, 15, 15, 0, 0, time.UTC),
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			defer config.RestoreFunc()()
+			dir := t.TempDir()
+			filename := filepath.Join(dir, "tidb-statements.log")
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.Instance.StmtSummaryFilename = filename
+				conf.Instance.StmtSummaryEnablePersistent = true
+			})
+			require.NoError(t, stmtsummaryv2.Setup(&stmtsummaryv2.Config{Filename: filename}))
+			defer stmtsummaryv2.Close()
+			// Both windows have the same wall-clock time, but distinct Unix times.
+			for i, point := range []time.Time{ca.first, ca.second} {
+				end := point.Add(time.Minute)
+				// Keep filenames distinct even when the server's local time also folds.
+				path := filepath.Join(dir, "tidb-statements-"+end.Add(time.Duration(i)*time.Millisecond).In(time.Local).Format("2006-01-02T15-04-05.000")+".log")
+				content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"fold%d\",\"exec_count\":1}\n", point.Add(-time.Minute).Unix(), end.Unix(), i)
+				require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+			}
+			store := testkit.CreateMockStore(t)
+			tk := newTestKitWithRoot(t, store)
+			tk.MustExec("set time_zone = '" + ca.timezone + "'")
+			for _, cache := range []int{0, 1} {
+				tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+				for _, predicate := range []string{
+					"summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+					"summary_begin_time <= from_unixtime(?)",
+					"summary_end_time >= from_unixtime(?)",
+				} {
+					query := "select digest, sum(exec_count) from information_schema.statements_summary_history where " + predicate + " and digest in ('fold0', 'fold1') group by digest order by digest"
+					tk.MustExec("prepare dst_stmt from '" + strings.ReplaceAll(query, "'", "''") + "'")
+					for _, bounds := range [][2]int64{
+						{ca.first.Unix(), ca.first.Unix()},
+						{ca.second.Unix(), ca.second.Unix()},
+						// Unix bounds are reversed, while their local-time interval is valid.
+						{ca.first.Add(5 * time.Minute).Unix(), ca.second.Add(-5 * time.Minute).Unix()},
+					} {
+						tk.MustExec(fmt.Sprintf("set @end = %d, @begin = %d", bounds[0], bounds[1]))
+						execute := "execute dst_stmt using @end, @begin"
+						if predicate == "summary_begin_time <= from_unixtime(?)" {
+							execute = "execute dst_stmt using @end"
+						}
+						if predicate == "summary_end_time >= from_unixtime(?)" {
+							execute = "execute dst_stmt using @begin"
+						}
+						testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+						baseline := tk.MustQuery(execute).Rows()
+						testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+						require.Equal(t, testkit.Rows("fold0 1", "fold1 1"), baseline)
+						tk.MustQuery(execute).Check(baseline)
+						if predicate == "summary_begin_time <= from_unixtime(?)" {
+							tk.MustQuery(query, bounds[0]).Check(baseline)
+							continue
+						}
+						if predicate == "summary_end_time >= from_unixtime(?)" {
+							tk.MustQuery(query, bounds[1]).Check(baseline)
+							continue
+						}
+						tk.MustQuery(query, bounds[0], bounds[1]).Check(baseline)
+					}
+				}
+			}
+		})
 	}
 }
 

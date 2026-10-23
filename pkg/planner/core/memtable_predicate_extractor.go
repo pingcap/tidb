@@ -53,7 +53,9 @@ type extractHelper struct {
 	enableScalarPushDown bool
 	// Statement summary time pruning may resolve execution-bound constants.
 	enableDeferredConst bool
-	pushedDownFuncs     map[string]func(string) string
+	// Coarse pruning must not choose one instant for a repeated local time.
+	conservativeTimeRange bool
+	pushedDownFuncs       map[string]func(string) string
 
 	// Store whether the extracted strings for a specific column are converted to lower case
 	extractLowerString map[string]bool
@@ -655,7 +657,7 @@ func (helper extractHelper) extractTimeRange(
 			}
 
 			mysqlTime := timeDatum.GetMysqlTime()
-			timestamp := time.Date(mysqlTime.Year(),
+			localTime := time.Date(mysqlTime.Year(),
 				time.Month(mysqlTime.Month()),
 				mysqlTime.Day(),
 				mysqlTime.Hour(),
@@ -663,7 +665,12 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Second(),
 				mysqlTime.Microsecond()*1000,
 				timezone,
-			).UnixNano()
+			)
+			if helper.conservativeTimeRange && !isUniqueLocalTime(localTime, mysqlTime.CoreTime()) {
+				remained = append(remained, expr)
+				continue
+			}
+			timestamp := localTime.UnixNano()
 
 			switch fnName {
 			case ast.EQ:
@@ -698,6 +705,30 @@ func (helper extractHelper) extractTimeRange(
 		}
 	}
 	return
+}
+
+// isUniqueLocalTime rejects nonexistent wall-clock times and repeated times
+// whose SQL comparison can match records on either side of a zone transition.
+func isUniqueLocalTime(localTime time.Time, civil types.CoreTime) bool {
+	if types.FromGoTime(localTime) != civil {
+		return false
+	}
+	_, offset := localTime.Zone()
+	start, end := localTime.ZoneBounds()
+	for i, boundary := range []time.Time{start, end} {
+		if boundary.IsZero() {
+			continue
+		}
+		if i == 0 {
+			boundary = boundary.Add(-time.Nanosecond)
+		}
+		_, adjacentOffset := boundary.Zone()
+		if adjacentOffset != offset &&
+			types.FromGoTime(localTime.Add(time.Duration(offset-adjacentOffset)*time.Second)) == civil {
+			return false
+		}
+	}
+	return true
 }
 
 func (extractHelper) parseQuantiles(quantileSet set.StringSet) []float64 {
@@ -1712,6 +1743,7 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 	// predicates for the exact SQL comparison and the nonpersistent reader.
 	helper := e.extractHelper
 	helper.enableDeferredConst = true
+	helper.conservativeTimeRange = true
 	_, _, endTime := helper.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
 	_, startTime, _ := helper.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
 	return e.buildTimeRange(startTime, endTime)
