@@ -36,7 +36,7 @@ func explainHas(rows [][]any, substr string) bool {
 }
 
 func TestCommonHandleIndexOrdering(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+	testkit.RunTestWithDefaultPlanner(t, func(t *testing.T, tk *testkit.TestKit) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t_ch")
 		tk.MustExec(`CREATE TABLE t_ch (
