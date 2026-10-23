@@ -122,28 +122,7 @@ impl TableStatistics {
     /// fully loaded analyzed histogram, or `-1` when the table has none.
     #[must_use]
     pub(crate) fn analyze_row_count(&self) -> f64 {
-        for (id, column) in &self.columns {
-            if self
-                .column_load_status
-                .get(id)
-                .is_some_and(|status| status.is_full_load())
-            {
-                return column.total_row_count();
-            }
-        }
-        for (id, index) in &self.indexes {
-            if self.mv_index_ids.contains(id) {
-                continue;
-            }
-            if self
-                .index_load_status
-                .get(id)
-                .is_some_and(|status| status.is_full_load())
-            {
-                return index.total_row_count();
-            }
-        }
-        -1.0
+        tidb_planner::logical::init_stats::analyze_row_count(self)
     }
 
     /// Go `statistics.Table.GetStatsHealthy`.
@@ -368,66 +347,12 @@ impl TableStatistics {
         full_loaded_columns: &BTreeSet<i64>,
         full_loaded_indexes: &BTreeSet<i64>,
     ) -> Option<f64> {
-        let column = self.columns.get(&column_id)?;
-        // Go reads the histogram's NDV only when `IsStatsInitialized()`; an
-        // `EmptyColumn` placeholder -- a never-analyzed column a load request
-        // published -- takes the `RealtimeCount * distinctFactor` branch.
-        if !self
-            .column_load_status
-            .get(&column_id)
-            .is_some_and(|status| status.stats_initialized())
-        {
-            return None;
-        }
-        let version = column.histogram.last_update_version;
-        let analyzed_count = if full_loaded_columns.contains(&column_id) {
-            column.total_row_count() as i64
-        } else {
-            full_loaded_indexes
-                .iter()
-                .find_map(|id| {
-                    self.indexes.get(id).and_then(|index| {
-                        (index.histogram.last_update_version == version)
-                            .then(|| index.total_row_count() as i64)
-                    })
-                })
-                .unwrap_or_else(|| {
-                    full_loaded_columns
-                        .iter()
-                        .filter(|id| **id != column_id)
-                        .find_map(|id| {
-                            self.columns.get(id).and_then(|candidate| {
-                                let same_version =
-                                    candidate.histogram.last_update_version == version;
-                                // A candidate whose histogram never got
-                                // buckets stores its rows in TopN only, and
-                                // the persisted TopN total can sit BELOW the
-                                // analyze-time row count (TPC-H SF50
-                                // lineitem.l_quantity is 26 rows short of
-                                // 300,005,811). Charging the factor with
-                                // that short total skewed every borrowed
-                                // NDV; an evicted column must then fall
-                                // through to no-factor (Go's shape, which
-                                // loads the needed column itself).
-                                // REVERTED to this guard after an experiment
-                                // borrowing from any allLoaded column (the
-                                // literal Go-source shape): TPC-DS q13/q48/
-                                // q49/q91 flipped inconsistent and the full
-                                // capture dropped to 67/83. The guard is
-                                // empirically load-bearing on this capture.
-                                let buckets_loaded = !candidate.histogram.buckets.is_empty();
-                                (same_version && buckets_loaded)
-                                    .then(|| candidate.total_row_count() as i64)
-                            })
-                        })
-                        .unwrap_or(0)
-                })
-        };
-        let mut ndv = column.histogram.ndv as f64;
-        if analyzed_count > 0 {
-            ndv *= self.row_count as f64 / analyzed_count as f64;
-        }
-        Some(ndv)
+        tidb_planner::logical::init_stats::estimate_column_ndv(
+            self,
+            column_id,
+            full_loaded_columns,
+            full_loaded_indexes,
+        )
     }
 }
 
@@ -462,16 +387,8 @@ impl tidb_planner::logical::init_stats::TableStatsSnapshot for TableStatistics {
     fn index_stats_existence(&self) -> &BTreeMap<i64, bool> {
         &self.index_stats_existence
     }
-    fn analyze_row_count(&self) -> f64 {
-        TableStatistics::analyze_row_count(self)
-    }
-    fn estimate_column_ndv(
-        &self,
-        column_id: i64,
-        full_loaded_columns: &BTreeSet<i64>,
-        full_loaded_indexes: &BTreeSet<i64>,
-    ) -> Option<f64> {
-        TableStatistics::estimate_column_ndv(self, column_id, full_loaded_columns, full_loaded_indexes)
+    fn mv_index_ids(&self) -> &BTreeSet<i64> {
+        &self.mv_index_ids
     }
 }
 

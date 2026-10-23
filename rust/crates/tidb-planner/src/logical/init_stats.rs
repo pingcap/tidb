@@ -46,16 +46,110 @@ pub trait TableStatsSnapshot {
     /// Go `ColAndIdxExistenceMap`'s index entries: whether the histogram row
     /// is analyzed.
     fn index_stats_existence(&self) -> &BTreeMap<i64, bool>;
-    /// Go `HistColl.GetAnalyzeRowCount`.
-    fn analyze_row_count(&self) -> f64;
-    /// Go `cardinality.EstimateColumnNDV` over the items the statement's
-    /// predicate-column collection loaded in full.
-    fn estimate_column_ndv(
-        &self,
-        column_id: i64,
-        full_loaded_columns: &BTreeSet<i64>,
-        full_loaded_indexes: &BTreeSet<i64>,
-    ) -> Option<f64>;
+    /// The indexes whose Go `Index.Info.MVIndex` is set: their histograms
+    /// count array elements, not rows.
+    fn mv_index_ids(&self) -> &BTreeSet<i64>;
+}
+
+/// Go `HistColl.GetAnalyzeRowCount`: the row count observed by the first
+/// fully loaded analyzed histogram, or `-1` when the table has none.
+#[must_use]
+pub fn analyze_row_count(s: &dyn TableStatsSnapshot) -> f64 {
+    for (id, column) in s.columns() {
+        if s.column_load_status()
+            .get(id)
+            .is_some_and(|status| status.is_full_load())
+        {
+            return column.total_row_count();
+        }
+    }
+    for (id, index) in s.indexes() {
+        if s.mv_index_ids().contains(id) {
+            continue;
+        }
+        if s.index_load_status()
+            .get(id)
+            .is_some_and(|status| status.is_full_load())
+        {
+            return index.total_row_count();
+        }
+    }
+    -1.0
+}
+
+/// Go `cardinality.EstimateColumnNDV` and its `getTotalRowCount` helper.
+///
+/// Lite statistics initialization keeps every histogram's NDV metadata but
+/// loads buckets and TopN only for the items the query needs. An evicted
+/// column therefore borrows the analyzed row count from the first fully
+/// loaded, same-version index, then from a column. The Rust catalog keeps
+/// the payloads eagerly, so callers pass the items Go's predicate-statistics
+/// collection would have marked fully loaded for this query.
+pub fn estimate_column_ndv(
+    s: &dyn TableStatsSnapshot,
+    column_id: i64,
+    full_loaded_columns: &BTreeSet<i64>,
+    full_loaded_indexes: &BTreeSet<i64>,
+) -> Option<f64> {
+    let column = s.columns().get(&column_id)?;
+    // Go reads the histogram's NDV only when `IsStatsInitialized()`; an
+    // `EmptyColumn` placeholder -- a never-analyzed column a load request
+    // published -- takes the `RealtimeCount * distinctFactor` branch.
+    if !s
+        .column_load_status()
+        .get(&column_id)
+        .is_some_and(|status| status.stats_initialized())
+    {
+        return None;
+    }
+    let version = column.histogram.last_update_version;
+    let analyzed_count = if full_loaded_columns.contains(&column_id) {
+        column.total_row_count() as i64
+    } else {
+        full_loaded_indexes
+            .iter()
+            .find_map(|id| {
+                s.indexes().get(id).and_then(|index| {
+                    (index.histogram.last_update_version == version)
+                        .then(|| index.total_row_count() as i64)
+                })
+            })
+            .unwrap_or_else(|| {
+                full_loaded_columns
+                    .iter()
+                    .filter(|id| **id != column_id)
+                    .find_map(|id| {
+                        s.columns().get(id).and_then(|candidate| {
+                            let same_version = candidate.histogram.last_update_version == version;
+                            // A candidate whose histogram never got
+                            // buckets stores its rows in TopN only, and
+                            // the persisted TopN total can sit BELOW the
+                            // analyze-time row count (TPC-H SF50
+                            // lineitem.l_quantity is 26 rows short of
+                            // 300,005,811). Charging the factor with
+                            // that short total skewed every borrowed
+                            // NDV; an evicted column must then fall
+                            // through to no-factor (Go's shape, which
+                            // loads the needed column itself).
+                            // REVERTED to this guard after an experiment
+                            // borrowing from any allLoaded column (the
+                            // literal Go-source shape): TPC-DS q13/q48/
+                            // q49/q91 flipped inconsistent and the full
+                            // capture dropped to 67/83. The guard is
+                            // empirically load-bearing on this capture.
+                            let buckets_loaded = !candidate.histogram.buckets.is_empty();
+                            (same_version && buckets_loaded)
+                                .then(|| candidate.total_row_count() as i64)
+                        })
+                    })
+                    .unwrap_or(0)
+            })
+    };
+    let mut ndv = column.histogram.ndv as f64;
+    if analyzed_count > 0 {
+        ndv *= s.row_count() as f64 / analyzed_count as f64;
+    }
+    Some(ndv)
 }
 
 impl DataSource {
@@ -135,7 +229,8 @@ impl DataSource {
                 // range estimator, not an NDV.
                 let ndv = statistics
                     .and_then(|statistics| {
-                        statistics.estimate_column_ndv(
+                        estimate_column_ndv(
+                            statistics,
                             metadata.id,
                             &loaded_columns,
                             &loaded_indexes,
@@ -491,7 +586,7 @@ impl DataSource {
             allow_prefer_range_scan: true,
             pseudo_stats: statistics.is_none_or(|statistics| statistics.pseudo()),
             analyze_row_count: statistics
-                .map_or(-1, |statistics| statistics.analyze_row_count() as i64),
+                .map_or(-1, |statistics| analyze_row_count(statistics) as i64),
             modify_count: statistics.map_or(0, |statistics| statistics.modify_count()),
             has_partition_scan: false,
             has_index_force: false,
@@ -532,6 +627,7 @@ mod tests {
         column_load_status: BTreeMap<i64, StatsLoadedStatus>,
         index_load_status: BTreeMap<i64, StatsLoadedStatus>,
         index_stats_existence: BTreeMap<i64, bool>,
+        mv_index_ids: BTreeSet<i64>,
     }
 
     impl TableStatsSnapshot for Snapshot {
@@ -565,16 +661,8 @@ mod tests {
         fn index_stats_existence(&self) -> &BTreeMap<i64, bool> {
             &self.index_stats_existence
         }
-        fn analyze_row_count(&self) -> f64 {
-            1_000.0
-        }
-        fn estimate_column_ndv(
-            &self,
-            _column_id: i64,
-            _full_loaded_columns: &BTreeSet<i64>,
-            _full_loaded_indexes: &BTreeSet<i64>,
-        ) -> Option<f64> {
-            None
+        fn mv_index_ids(&self) -> &BTreeSet<i64> {
+            &self.mv_index_ids
         }
     }
 
