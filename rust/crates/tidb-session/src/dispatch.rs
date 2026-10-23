@@ -615,10 +615,39 @@ impl Session {
     ) -> Result<usize, DriverError> {
         let reads = ctx.mem_table_retrieval().take_pending();
         for read in &reads {
+            // A scan an installed retriever serves reads its own rows when it
+            // is first read.
+            if ctx.mem_table_retrieval().retriever_for(read).is_some() {
+                continue;
+            }
+            if let Some(retriever) = self.mem_table_retriever_for(read) {
+                ctx.mem_table_retrieval().install(retriever);
+                continue;
+            }
             let rows = self.retrieve_memory_table(read, ctx)?;
             ctx.mem_table_retrieval().supply(read, rows);
         }
         Ok(reads.len())
+    }
+
+    /// The retriever a scan reads its rows through, for the tables that need
+    /// only the statement's schema and a snapshot of this session
+    /// ([`tidb_executor::mem_table_retrieval::MemTableRetriever`]).
+    fn mem_table_retriever_for(
+        &self,
+        read: &tidb_executor::mem_table_retrieval::MemTableRead,
+    ) -> Option<std::sync::Arc<dyn tidb_executor::mem_table_retrieval::MemTableRetriever>> {
+        let retriever = crate::memtable_retrievers::InformationSchemaRetriever::new(
+            self.schema_visibility(),
+            self.table_storage_stats.clone(),
+            self.active_resource_group.clone(),
+        );
+        if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
+            return Some(std::sync::Arc::new(retriever));
+        }
+        let retriever = crate::instance_state::InstanceStateRetriever::new(self.viewer_state());
+        tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read)
+            .then(|| std::sync::Arc::new(retriever) as _)
     }
 
     /// Runs `attempt` over the session's catalog, retrieving the memory
@@ -712,11 +741,7 @@ impl Session {
                 read.db_name, table_name
             ))));
         };
-        let scratch = if read.needs_table_storage_statistics() {
-            self.table_storage_statistics_catalog(read.needs_table_storage_column_lengths())?
-        } else {
-            self.with_catalog_mut(|catalog| Ok(catalog.clone()))?
-        };
+        let scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
         // The columns the scan reads, which retrievers use to skip expensive
         // fields; a cluster table's scan names them by id (`offset + 1`).
         let mut required_names: std::collections::HashSet<String> = read
@@ -762,38 +787,17 @@ impl Session {
             tidb_executor::run_select_meta_in(sql, &scratch, "metrics_schema", ctx)
                 .map(|(_, rows)| rows)
         };
-        let rows = if table_name.go_lower_eq("PROCESSLIST") {
-            self.process_list_table_rows()
-        } else if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
+        let rows = if tidb_executor::driver::infoschema_meta::cluster_table_source(&table_name)
             .is_some()
         {
             self.cluster_table_rows(&table_name, &columns, required)?
-        } else if [
-            "TIDB_INDEX_USAGE",
-            "TIDB_TRX",
-            "DEADLOCKS",
-            "MEMORY_USAGE",
-            "MEMORY_USAGE_OPS_HISTORY",
-        ]
-        .iter()
-        .any(|name| table_name.go_lower_eq(name))
+        } else if ["TIDB_TRX", "DEADLOCKS"]
+            .iter()
+            .any(|name| table_name.go_lower_eq(name))
         {
             self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None, required)?
-        } else if table_name.go_lower_eq("TIDB_STATEMENTS_STATS")
-            || table_name.go_lower_eq("STATEMENTS_SUMMARY")
-            || table_name.go_lower_eq("STATEMENTS_SUMMARY_HISTORY")
-            || table_name.go_lower_eq("STATEMENTS_SUMMARY_EVICTED")
-        {
-            self.statement_summary_table_rows(&table_name, &columns, &self.session_time_zone())?
-        } else if table_name.go_lower_eq("TRX_SUMMARY") {
-            self.transaction_summary_table_rows(None)
         } else if table_name.go_lower_eq("DATA_LOCK_WAITS") {
             self.data_lock_waits_table_rows(required)?
-        } else if table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
-            || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_USER")
-            || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST")
-        {
-            self.client_errors_summary_table_rows(&table_name)?
         } else if table_name.go_lower_eq("TIKV_STORE_STATUS") {
             crate::memtable_retrievers::tikv_store_status_rows(
                 scratch.region_store().as_ref(),
@@ -1368,15 +1372,7 @@ impl Session {
         &self,
         registry: Option<&crate::process::ProcessRegistry>,
     ) -> Vec<Vec<tidb_datatype::Datum>> {
-        if !self.has_process_privilege() {
-            return Vec::new();
-        }
-        registry
-            .or_else(|| self.process.as_ref().map(|guard| guard.registry()))
-            .map_or_else(
-                || tidb_exec::txn_summary::RECORDER.rows(),
-                |registry| registry.transaction_history_rows(),
-            )
+        self.viewer_state().transaction_summary_rows(registry)
     }
 
     /// Go `stmtSummaryRetriever.initSummaryRowsReader` for the cumulative
@@ -1398,33 +1394,8 @@ impl Session {
         internal: bool,
         digests: Option<&std::collections::HashSet<String>>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        use tidb_parser::auth::UserIdentity;
-        let has_process = internal || self.has_process_privilege();
-        let user = self
-            .login_user
-            .as_deref()
-            .filter(|_| !internal)
-            .map(|login| {
-                let (username, hostname) = login.split_once('@').unwrap_or((login, ""));
-                let (auth_username, auth_hostname) = self.current_identity().unwrap_or(("", ""));
-                UserIdentity {
-                    username: username.to_owned(),
-                    hostname: hostname.to_owned(),
-                    current_user: false,
-                    auth_username: auth_username.to_owned(),
-                    auth_hostname: auth_hostname.to_owned(),
-                    auth_plugin: String::new(),
-                }
-            });
-        statement_summary_rows(
-            table_name,
-            columns,
-            zone,
-            user,
-            has_process,
-            digests,
-            self.dist_sql_scan_concurrency(),
-        )
+        self.viewer_state()
+            .statement_summary_rows(table_name, columns, zone, internal, digests)
     }
 
     /// `@@tidb_distsql_scan_concurrency`, the statement-summary history
@@ -1591,46 +1562,13 @@ impl Session {
         &mut self,
         needs_column_lengths: bool,
     ) -> Result<tidb_executor::Catalog, DriverError> {
-        let mut scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
-        let estimates = match &self.table_storage_stats {
-            Some(provider) => {
-                let physical_ids = tidb_executor::table_size_stats::physical_table_ids(&scratch);
-                match provider.load_table_row_stats(
-                    &self.active_resource_group,
-                    needs_column_lengths,
-                    &physical_ids,
-                ) {
-                    Ok(row_stats) => {
-                        tidb_executor::table_size_stats::table_storage_estimates_from_row_stats(
-                            &scratch, &row_stats,
-                        )
-                    }
-                    // The production provider already mirrors Go's
-                    // warn-and-serve-cache refresh, so it never returns Err;
-                    // a seam provider that does is served with zero size
-                    // columns for this statement rather than failing the
-                    // query, matching Go's reader never failing on a stats
-                    // refresh error. Go has no line for it: its refresh
-                    // warning is the provider's.
-                    Err(_) => {
-                        scratch.clear_table_storage_statistics();
-                        return Ok(scratch);
-                    }
-                }
-            }
-            // The in-process store is its own statistics handle: Go's
-            // `TableRowStatsCache` reads `stats_meta` and the column
-            // histograms, which here are the catalog's table statistics.
-            None => tidb_executor::table_size_stats::table_storage_estimates(&scratch),
-        };
-        for estimate in estimates {
-            scratch.set_table_storage_statistics(
-                estimate.table_id,
-                estimate.table,
-                &estimate.partitions,
-            );
-        }
-        Ok(scratch)
+        let scratch = self.with_catalog_mut(|catalog| Ok(catalog.clone()))?;
+        crate::memtable_retrievers::table_storage_statistics_catalog_of(
+            scratch,
+            self.table_storage_stats.as_deref(),
+            &self.active_resource_group,
+            needs_column_lengths,
+        )
     }
 
     /// Pinned Go `dataLockWaitsTableRetriever.retrieve` for pessimistic waits.
@@ -1716,9 +1654,10 @@ impl Session {
     }
 
     /// Pinned Go `memtableRetriever.setDataForClientErrorsSummary`.
-    fn client_errors_summary_table_rows(
-        &self,
+    pub(crate) fn client_errors_summary_rows(
         table_name: &str,
+        has_process: bool,
+        login_user: Option<&str>,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
         use chrono::{DateTime, Local};
         use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};
@@ -1770,7 +1709,6 @@ impl Session {
             }
         }
 
-        let has_process = self.has_process_privilege();
         if !has_process
             && (table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_GLOBAL")
                 || table_name.go_lower_eq("CLIENT_ERRORS_SUMMARY_BY_HOST"))
@@ -1788,9 +1726,7 @@ impl Session {
                 append_scoped(&mut rows, &host, stats);
             }
         } else {
-            let login_username = self
-                .login_user
-                .as_deref()
+            let login_username = login_user
                 .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
             for (user, stats) in infoschema::user_stats() {
                 if !has_process && login_username.is_some_and(|login| login != user) {
@@ -4000,7 +3936,7 @@ impl Session {
     }
 }
 
-fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
+pub(crate) fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
     use std::sync::atomic::Ordering;
 
     use tidb_datatype::{core_time_from_datetime, CoreTime, Datum, Time, TimeType};

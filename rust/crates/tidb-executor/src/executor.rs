@@ -76,6 +76,11 @@ pub enum ExecError {
         /// rather than being hard-coded at the wire boundary).
         charset: String,
     },
+    /// Go `plannererrors.ErrSpecificAccessDenied` (1227), which a memory-table
+    /// retriever raises when it is first read (Go `MemTableReaderExec.Next`),
+    /// carried with its privilege list so the statement reports it as the
+    /// typed driver error.
+    SpecificAccessDenied(String),
     /// A spill-to-disk operation failed (Go returns the underlying
     /// `os`/`chunk` error straight out of the operator's `Next`, so it reaches
     /// the client as a generic 1105 carrying that text).

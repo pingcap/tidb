@@ -285,6 +285,49 @@ pub(crate) fn tidb_index_usage_rows(
     rows
 }
 
+/// The tables [`table_rows`] answers, which a scan retrieves itself.
+pub(crate) const SERVED_TABLES: &[&str] = &[
+    "SCHEMATA",
+    "TABLES",
+    "PARTITIONS",
+    "VIEWS",
+    "COLUMNS",
+    "KEY_COLUMN_USAGE",
+    "STATISTICS",
+    "TABLE_CONSTRAINTS",
+    "CHECK_CONSTRAINTS",
+    "TIDB_CHECK_CONSTRAINTS",
+    "KEYWORDS",
+    "TIFLASH_REPLICA",
+    "REFERENTIAL_CONSTRAINTS",
+    "CHARACTER_SETS",
+    "ENGINES",
+    "TRIGGERS",
+    "ROUTINES",
+    "EVENTS",
+    "INSPECTION_RESULT",
+    "TIDB_INDEXES",
+    "METRICS_TABLES",
+    "PARAMETERS",
+    "PLUGINS",
+    "SEQUENCES",
+    "RUNAWAY_WATCHES",
+    "TIFLASH_TABLES",
+    "TIFLASH_SEGMENTS",
+    "RESOURCE_GROUPS",
+    "COLLATIONS",
+    "COLLATION_CHARACTER_SET_APPLICABILITY",
+    "SCHEMA_PRIVILEGES",
+    "TABLE_PRIVILEGES",
+    "COLUMN_PRIVILEGES",
+];
+
+/// Whether [`table_rows`] answers `name`.
+#[must_use]
+pub fn serves_table(name: &str) -> bool {
+    SERVED_TABLES.iter().any(|table| name.go_lower_eq(table))
+}
+
 /// The rows of one `information_schema` table, computed from `catalog` and
 /// filtered by what `visibility` may see.
 #[must_use]

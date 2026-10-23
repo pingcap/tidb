@@ -366,34 +366,32 @@ impl Session {
     /// only your own threads" -- and an internal session with no login user
     /// is not filtered at all, since there is nothing to compare against.
     pub(crate) fn visible_process_rows(&self, full: bool) -> Vec<process::ProcessRow> {
-        let rows: Vec<process::ProcessRow> = match &self.process {
-            Some(guard) => guard.registry().snapshot(),
-            None => vec![process::ProcessRow {
-                id: self.connection_id.unwrap_or(0),
-                user: self.process_list_user(),
-                host: String::new(),
-                db: self.current_db.clone(),
-                command: "Query".to_owned(),
-                time: 0,
-                state: self.status_text(),
-                info: Some(if full {
-                    "show full processlist".to_owned()
-                } else {
-                    "show processlist".to_owned()
-                }),
-                resource_group: self.active_resource_group.clone(),
-                ..process::ProcessRow::default()
-            }],
-        };
-        self.filter_process_rows(rows)
+        self.viewer_state().visible_process_rows(full)
+    }
+
+    /// What the instance-wide `information_schema` tables read of this
+    /// session: see [`crate::instance_state::ViewerState`].
+    pub(crate) fn viewer_state(&self) -> crate::instance_state::ViewerState {
+        crate::instance_state::ViewerState {
+            has_process: self.has_process_privilege(),
+            registry: self.process.as_ref().map(|guard| guard.registry().clone()),
+            connection_id: self.connection_id.unwrap_or(0),
+            process_user: self.process_list_user(),
+            current_db: self.current_db.clone(),
+            status: self.status_text(),
+            resource_group: self.active_resource_group.clone(),
+            login_user: self.login_user.clone(),
+            auth_identity: self
+                .current_identity()
+                .map(|(user, host)| (user.to_owned(), host.to_owned())),
+            scan_concurrency: self.dist_sql_scan_concurrency(),
+            visibility: self.schema_visibility(),
+            index_usage: std::sync::Arc::clone(&self.index_usage_collector),
+        }
     }
 
     fn filter_process_rows(&self, rows: Vec<process::ProcessRow>) -> Vec<process::ProcessRow> {
-        if self.has_process_privilege() {
-            return rows;
-        }
-        let me = self.process_list_user();
-        rows.into_iter().filter(|row| row.user == me).collect()
+        self.viewer_state().filter_process_rows(rows)
     }
 
     /// `SELECT * FROM information_schema.PROCESSLIST` rows, in the exact
@@ -409,7 +407,7 @@ impl Session {
     /// Memory arbitration and SQL CPU timing still need their statement
     /// owners. The other values are snapshots of the target's published state.
     pub(crate) fn process_list_table_rows(&self) -> Vec<Vec<Datum>> {
-        self.format_process_rows(self.visible_process_rows(true), &self.session_time_zone())
+        format_process_rows(self.visible_process_rows(true), &self.session_time_zone())
     }
 
     /// Snapshot the supplied local registry without registering a synthetic connection.
@@ -418,71 +416,74 @@ impl Session {
         registry: &process::ProcessRegistry,
         zone: &tidb_datatype::SessionTimeZone,
     ) -> Vec<Vec<Datum>> {
-        self.format_process_rows(self.filter_process_rows(registry.snapshot()), zone)
+        format_process_rows(self.filter_process_rows(registry.snapshot()), zone)
     }
+}
 
-    fn format_process_rows(
-        &self,
-        rows: Vec<process::ProcessRow>,
-        zone: &tidb_datatype::SessionTimeZone,
-    ) -> Vec<Vec<Datum>> {
-        rows.into_iter()
-            .map(|row| {
-                let txn_start = if row.cur_txn_start_ts == 0 {
-                    String::new()
+/// Go `ProcessInfo.ToRow` for each row: the columns of
+/// `information_schema.PROCESSLIST`.
+pub(crate) fn format_process_rows(
+    rows: Vec<process::ProcessRow>,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Vec<Vec<Datum>> {
+    rows.into_iter()
+        .map(|row| {
+            let txn_start = if row.cur_txn_start_ts == 0 {
+                String::new()
+            } else {
+                let time = tidb_expr::sessionexpr::get_time_from_ts(row.cur_txn_start_ts)
+                    .with_timezone(zone);
+                format!(
+                    "{}({})",
+                    time.format("%m-%d %H:%M:%S%.3f"),
+                    row.cur_txn_start_ts
+                )
+            };
+            vec![
+                Datum::UInt(row.id),
+                Datum::Bytes(row.user.into_bytes()),
+                Datum::Bytes(row.host.into_bytes()),
+                if row.db.is_empty() {
+                    Datum::Null
                 } else {
-                    let time = tidb_expr::sessionexpr::get_time_from_ts(row.cur_txn_start_ts)
-                        .with_timezone(zone);
-                    format!(
-                        "{}({})",
-                        time.format("%m-%d %H:%M:%S%.3f"),
-                        row.cur_txn_start_ts
-                    )
-                };
-                vec![
-                    Datum::UInt(row.id),
-                    Datum::Bytes(row.user.into_bytes()),
-                    Datum::Bytes(row.host.into_bytes()),
-                    if row.db.is_empty() {
-                        Datum::Null
-                    } else {
-                        Datum::Bytes(row.db.into_bytes())
-                    },
-                    Datum::Bytes(row.command.into_bytes()),
-                    Datum::Int(i64::try_from(row.time).unwrap_or(i64::MAX)),
-                    if row.state.is_empty() {
-                        Datum::Null
-                    } else {
-                        Datum::Bytes(row.state.into_bytes())
-                    },
-                    match row.info {
-                        Some(info) => {
-                            Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&info).into_owned())
-                        }
-                        None => Datum::Null,
-                    },
-                    Datum::Bytes(row.digest.into_bytes()),
-                    Datum::Int(row.mem_bytes),
-                    // MEM_ARBITRATION
-                    Datum::Null,
-                    // MEM_WAIT_ARBITRATE_START
-                    Datum::Null,
-                    // MEM_WAIT_ARBITRATE_BYTES
-                    Datum::Null,
-                    Datum::Int(row.disk_bytes),
-                    Datum::Bytes(txn_start.into_bytes()),
-                    Datum::Bytes(row.resource_group.into_bytes()),
-                    Datum::Bytes(row.session_alias.into_bytes()),
-                    row.affected_rows.map_or(Datum::Null, Datum::UInt),
-                    // TIDB_CPU
-                    Datum::Int(0),
-                    // TIKV_CPU
-                    Datum::Int(0),
-                ]
-            })
-            .collect()
-    }
+                    Datum::Bytes(row.db.into_bytes())
+                },
+                Datum::Bytes(row.command.into_bytes()),
+                Datum::Int(i64::try_from(row.time).unwrap_or(i64::MAX)),
+                if row.state.is_empty() {
+                    Datum::Null
+                } else {
+                    Datum::Bytes(row.state.into_bytes())
+                },
+                match row.info {
+                    Some(info) => {
+                        Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&info).into_owned())
+                    }
+                    None => Datum::Null,
+                },
+                Datum::Bytes(row.digest.into_bytes()),
+                Datum::Int(row.mem_bytes),
+                // MEM_ARBITRATION
+                Datum::Null,
+                // MEM_WAIT_ARBITRATE_START
+                Datum::Null,
+                // MEM_WAIT_ARBITRATE_BYTES
+                Datum::Null,
+                Datum::Int(row.disk_bytes),
+                Datum::Bytes(txn_start.into_bytes()),
+                Datum::Bytes(row.resource_group.into_bytes()),
+                Datum::Bytes(row.session_alias.into_bytes()),
+                row.affected_rows.map_or(Datum::Null, Datum::UInt),
+                // TIDB_CPU
+                Datum::Int(0),
+                // TIKV_CPU
+                Datum::Int(0),
+            ]
+        })
+        .collect()
+}
 
+impl Session {
     /// Whether this session may inspect process-wide diagnostic state.
     pub(crate) fn has_process_privilege(&self) -> bool {
         self.privilege_checks_bypassed()

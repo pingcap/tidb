@@ -28,7 +28,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use tidb_datatype::Datum;
 use tidb_executor::region_map::RegionStore;
 use tidb_executor::{Catalog, DriverError};
-use tidb_hack::GoToLower;
+use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_planner::logical::mem_table::QueryTimeRange;
 use tidb_planner::memtable_predicate_extractor::{
     HotRegionsHistoryTableExtractor, MetricSummaryTableExtractor, TableStorageStatsExtractor,
@@ -1231,5 +1231,108 @@ mod tests {
             ..hot
         };
         assert!(hot_region_row_with_schema_info(&elsewhere, &tables).is_empty());
+    }
+}
+
+pub(crate) fn table_storage_statistics_catalog_of(
+    mut scratch: tidb_executor::Catalog,
+    table_storage_stats: Option<&dyn crate::TableStorageStatsProvider>,
+    resource_group: &str,
+    needs_column_lengths: bool,
+) -> Result<tidb_executor::Catalog, DriverError> {
+    let estimates = match table_storage_stats {
+        Some(provider) => {
+            let physical_ids = tidb_executor::table_size_stats::physical_table_ids(&scratch);
+            match provider.load_table_row_stats(
+                resource_group,
+                needs_column_lengths,
+                &physical_ids,
+            ) {
+                Ok(row_stats) => {
+                    tidb_executor::table_size_stats::table_storage_estimates_from_row_stats(
+                        &scratch, &row_stats,
+                    )
+                }
+                // The production provider already mirrors Go's
+                // warn-and-serve-cache refresh, so it never returns Err;
+                // a seam provider that does is served with zero size
+                // columns for this statement rather than failing the
+                // query, matching Go's reader never failing on a stats
+                // refresh error. Go has no line for it: its refresh
+                // warning is the provider's.
+                Err(_) => {
+                    scratch.clear_table_storage_statistics();
+                    return Ok(scratch);
+                }
+            }
+        }
+        // The in-process store is its own statistics handle: Go's
+        // `TableRowStatsCache` reads `stats_meta` and the column
+        // histograms, which here are the catalog's table statistics.
+        None => tidb_executor::table_size_stats::table_storage_estimates(&scratch),
+    };
+    for estimate in estimates {
+        scratch.set_table_storage_statistics(
+            estimate.table_id,
+            estimate.table,
+            &estimate.partitions,
+        );
+    }
+    Ok(scratch)
+}
+
+/// Go's `memtableRetriever` for the `information_schema` tables whose rows
+/// are a function of the statement's schema and the session's identity: the
+/// executor builds them when the scan is first read, over the catalog the
+/// statement was built with and a snapshot of what the viewer may see.
+pub(crate) struct InformationSchemaRetriever {
+    visibility: SchemaVisibility,
+    table_storage_stats: Option<std::sync::Arc<dyn crate::TableStorageStatsProvider>>,
+    resource_group: String,
+}
+
+impl InformationSchemaRetriever {
+    pub(crate) fn new(
+        visibility: SchemaVisibility,
+        table_storage_stats: Option<std::sync::Arc<dyn crate::TableStorageStatsProvider>>,
+        resource_group: String,
+    ) -> Self {
+        Self {
+            visibility,
+            table_storage_stats,
+            resource_group,
+        }
+    }
+}
+
+impl tidb_executor::mem_table_retrieval::MemTableRetriever for InformationSchemaRetriever {
+    fn serves(&self, read: &tidb_executor::mem_table_retrieval::MemTableRead) -> bool {
+        read.db_name
+            .go_lower_eq(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
+            && crate::infoschema::serves_table(&read.table_name)
+    }
+
+    fn retrieve(
+        &self,
+        read: &tidb_executor::mem_table_retrieval::MemTableRead,
+        catalog: &Catalog,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        // Go `updateStatsCacheIfNeed`: the size columns of TABLES and
+        // PARTITIONS are read from the table-size cache, refreshed first.
+        let sized;
+        let catalog = if read.needs_table_storage_statistics() {
+            sized = table_storage_statistics_catalog_of(
+                catalog.clone(),
+                self.table_storage_stats.as_deref(),
+                &self.resource_group,
+                read.needs_table_storage_column_lengths(),
+            )?;
+            &sized
+        } else {
+            catalog
+        };
+        Ok(crate::infoschema::table_rows(&read.table_name, catalog, &self.visibility, ctx)
+            .unwrap_or_default())
     }
 }

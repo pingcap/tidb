@@ -1439,14 +1439,64 @@ enum MemoryTableRowSource<'a> {
     Stored(&'a [Vec<tidb_datatype::Datum>]),
     /// The session retrieved them for this scan (Go `memtableRetriever`).
     Retrieved(std::sync::Arc<Vec<Vec<tidb_datatype::Datum>>>),
+    /// The scan retrieves them itself when it is first read (Go
+    /// `MemTableReaderExec` over its own `memTableRetriever`).
+    Owned(
+        crate::mem_table_retrieval::MemTableRead,
+        std::sync::Arc<dyn crate::mem_table_retrieval::MemTableRetriever>,
+    ),
+}
+
+/// The rows a memory-table scan shapes, or the retriever that builds them when
+/// the scan is first read.
+enum MemoryTableRowsOrRetriever<'a> {
+    Rows(&'a [Vec<tidb_datatype::Datum>]),
+    Owned(
+        crate::mem_table_retrieval::MemTableRead,
+        std::sync::Arc<dyn crate::mem_table_retrieval::MemTableRetriever>,
+    ),
 }
 
 impl MemoryTableRows<'_> {
-    fn rows(&self) -> &[Vec<tidb_datatype::Datum>] {
+    fn rows(&self) -> MemoryTableRowsOrRetriever<'_> {
         match &self.source {
-            MemoryTableRowSource::Stored(rows) => rows,
-            MemoryTableRowSource::Retrieved(rows) => rows,
+            MemoryTableRowSource::Stored(rows) => MemoryTableRowsOrRetriever::Rows(rows),
+            MemoryTableRowSource::Retrieved(rows) => MemoryTableRowsOrRetriever::Rows(rows),
+            MemoryTableRowSource::Owned(read, retriever) => {
+                MemoryTableRowsOrRetriever::Owned(read.clone(), std::sync::Arc::clone(retriever))
+            }
         }
+    }
+}
+
+/// The retriever the executor owns for the virtual-table scan `plan`, when
+/// the statement's session gave one that serves its table.
+fn owned_mem_table_retriever(
+    plan: &PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Option<(
+    crate::mem_table_retrieval::MemTableRead,
+    std::sync::Arc<dyn crate::mem_table_retrieval::MemTableRetriever>,
+)> {
+    let read = mem_table_read_of(plan)?;
+    if !matches!(
+        catalog.table_in(&read.db_name, &read.table_name),
+        Some(super::TableEntry::Kv(_))
+    ) {
+        return None;
+    }
+    let retriever = ctx.mem_table_retrieval().retriever_for(&read)?;
+    Some((read, retriever))
+}
+
+/// Carries a retriever's failure into the executor that runs it.
+fn retrieval_error(error: DriverError) -> crate::ExecError {
+    match error {
+        DriverError::SpecificAccessDenied(privileges) => {
+            crate::ExecError::SpecificAccessDenied(privileges)
+        }
+        error => crate::ExecError::Mysql(error.to_mysql_error()),
     }
 }
 
@@ -1470,15 +1520,22 @@ fn memory_table_rows<'a>(
             source: MemoryTableRowSource::Stored(&stored.rows),
         }),
         super::TableEntry::Kv(virtual_table) => {
+            let column_names = virtual_table
+                .columns()
+                .iter()
+                .map(|column| column.name.clone())
+                .collect();
+            if let Some((read, retriever)) = owned_mem_table_retriever(plan, catalog, ctx) {
+                return Ok(MemoryTableRows {
+                    column_names,
+                    source: MemoryTableRowSource::Owned(read, retriever),
+                });
+            }
             let rows = mem_table_read_of(plan)
                 .and_then(|read| ctx.mem_table_retrieval().rows(&read))
                 .ok_or(DriverError::MemTableRetrievalNeeded)?;
             Ok(MemoryTableRows {
-                column_names: virtual_table
-                    .columns()
-                    .iter()
-                    .map(|column| column.name.clone())
-                    .collect(),
+                column_names,
                 source: MemoryTableRowSource::Retrieved(rows),
             })
         }
@@ -1522,32 +1579,48 @@ fn build_mem_table(
     // The extractor's claimed predicates left the Selection above this scan;
     // Go's reader requests only what they keep, so the whole materialized
     // table is filtered by them here.
-    let column_names: Vec<&str> = table.column_names.iter().map(String::as_str).collect();
-    let rows = table
-        .rows()
-        .iter()
-        .filter(|row| {
-            scan.extractor
-                .as_ref()
-                .is_none_or(|extractor| extractor.keeps_row(&column_names, row))
-        })
-        .map(|row| {
-            offsets
-                .iter()
-                .map(|offset| {
-                    row.get(*offset).cloned().ok_or_else(|| {
-                        DriverError::unsupported(
-                            "a memory-table row is shorter than its declared schema",
-                        )
+    let column_names = table.column_names.clone();
+    let extractor = scan.extractor.clone();
+    let shape = move |rows: &[Vec<tidb_datatype::Datum>]| {
+        let names: Vec<&str> = column_names.iter().map(String::as_str).collect();
+        rows.iter()
+            .filter(|row| {
+                extractor
+                    .as_ref()
+                    .is_none_or(|extractor| extractor.keeps_row(&names, row))
+            })
+            .map(|row| {
+                offsets
+                    .iter()
+                    .map(|offset| {
+                        row.get(*offset).cloned().ok_or_else(|| {
+                            DriverError::unsupported(
+                                "a memory-table row is shorter than its declared schema",
+                            )
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(Box::new(MemTableSourceExec::new(
-        meta(ctx, plan, plan_schema(plan)?),
-        rows,
-    )))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, DriverError>>()
+    };
+    let meta = meta(ctx, plan, plan_schema(plan)?);
+    Ok(match table.rows() {
+        MemoryTableRowsOrRetriever::Rows(rows) => {
+            Box::new(MemTableSourceExec::new(meta, shape(rows)?))
+        }
+        MemoryTableRowsOrRetriever::Owned(read, retriever) => {
+            let (snapshot, ctx) = (catalog.clone(), ctx.clone());
+            Box::new(MemTableSourceExec::lazy(
+                meta,
+                Box::new(move || {
+                    let rows = retriever
+                        .retrieve(&read, &snapshot, &ctx)
+                        .map_err(retrieval_error)?;
+                    shape(&rows).map_err(retrieval_error)
+                }),
+            ))
+        }
+    })
 }
 
 fn aggregate_function(
@@ -5813,6 +5886,7 @@ fn request_memory_table_rows(plan: &PhysicalPlan, catalog: &Catalog, ctx: &crate
         catalog.table_in(&read.db_name, &read.table_name),
         Some(super::TableEntry::Kv(_))
     ) || ctx.mem_table_retrieval().rows(&read).is_some()
+        || ctx.mem_table_retrieval().retriever_for(&read).is_some()
     {
         return;
     }
@@ -6351,46 +6425,69 @@ fn build_cluster_table_scan(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut rows = table
-        .rows()
-        .iter()
-        .map(|row| {
-            offsets
-                .iter()
-                .map(|offset| {
-                    row.get(*offset).cloned().ok_or_else(|| {
-                        DriverError::unsupported(
-                            "a memory-table row is shorter than its declared schema",
-                        )
-                    })
-                })
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     // `pushLimitDownToTiDBCop` keeps the scan in handle order for its pushed
     // Limit: Go's slow-query retriever then reads its files forwards, or
     // backwards for a descending scan (`SlowQueryExtractor.Desc`).
-    if scan.keep_order {
-        let handle = scan.handle_col_unique_id.and_then(|unique_id| {
-            schema
-                .columns
-                .iter()
-                .position(|column| column.unique_id == unique_id)
-        });
-        if let Some(position) = handle {
+    let handle_position = scan
+        .keep_order
+        .then(|| {
+            scan.handle_col_unique_id.and_then(|unique_id| {
+                schema
+                    .columns
+                    .iter()
+                    .position(|column| column.unique_id == unique_id)
+            })
+        })
+        .flatten();
+    let desc = scan.desc;
+    let shape = move |rows: &[Vec<tidb_datatype::Datum>]| {
+        let mut rows = rows
+            .iter()
+            .map(|row| {
+                offsets
+                    .iter()
+                    .map(|offset| {
+                        row.get(*offset).cloned().ok_or_else(|| {
+                            DriverError::unsupported(
+                                "a memory-table row is shorter than its declared schema",
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, DriverError>>()?;
+        if let Some(position) = handle_position {
             rows.sort_by(|left, right| {
                 let order = left[position]
                     .compare(&right[position], tidb_datatype::Collation::Binary)
                     .unwrap_or(std::cmp::Ordering::Equal);
-                if scan.desc {
+                if desc {
                     order.reverse()
                 } else {
                     order
                 }
             });
         }
-    }
-    Ok(Box::new(MemTableSourceExec::new(meta(ctx, plan, schema), rows)))
+        Ok::<_, DriverError>(rows)
+    };
+    let meta = meta(ctx, plan, schema);
+    Ok(match table.rows() {
+        MemoryTableRowsOrRetriever::Rows(rows) => {
+            Box::new(MemTableSourceExec::new(meta, shape(rows)?))
+        }
+        MemoryTableRowsOrRetriever::Owned(read, retriever) => {
+            let (snapshot, ctx) = (catalog.clone(), ctx.clone());
+            Box::new(MemTableSourceExec::lazy(
+                meta,
+                Box::new(move || {
+                    let rows = retriever
+                        .retrieve(&read, &snapshot, &ctx)
+                        .map_err(retrieval_error)?;
+                    shape(&rows).map_err(retrieval_error)
+                }),
+            ))
+        }
+    })
 }
 
 fn build_with_state(

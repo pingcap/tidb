@@ -94,17 +94,39 @@ impl MemTableRead {
     }
 }
 
+/// Go's `memTableRetriever` for the tables whose rows depend on the
+/// statement's schema and a snapshot of the session alone, so a scan reads
+/// them itself: [`MemTableRetriever::retrieve`] runs at the scan's first
+/// `Next`, over the catalog the statement was built with. The session
+/// installs one ([`MemTableRetrieval::install`]) when a scan asks for rows it
+/// serves, so a statement that reads no memory table pays for none.
+pub trait MemTableRetriever: Send + Sync {
+    /// Whether this retriever builds the rows of `read`'s table; any other
+    /// scan is answered by the session ([`MemTableRetrieval`]).
+    fn serves(&self, read: &MemTableRead) -> bool;
+
+    /// The rows of the scan `read`, one value per column of the table's
+    /// schema, from `catalog`, the statement's schema image.
+    fn retrieve(
+        &self,
+        read: &MemTableRead,
+        catalog: &crate::Catalog,
+        ctx: &crate::StmtContext,
+    ) -> Result<Vec<Vec<Datum>>, crate::DriverError>;
+}
+
 /// One statement's memory-table retrievals; see the module documentation.
 /// Clones of a statement context share it.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct MemTableRetrieval {
     state: Mutex<RetrievalState>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct RetrievalState {
     rows: HashMap<String, Arc<Vec<Vec<Datum>>>>,
     pending: Vec<MemTableRead>,
+    retrievers: Vec<Arc<dyn MemTableRetriever>>,
 }
 
 impl MemTableRead {
@@ -155,6 +177,21 @@ impl MemTableRetrieval {
     /// column of the table's schema.
     pub fn supply(&self, read: &MemTableRead, rows: Vec<Vec<Datum>>) {
         self.lock().rows.insert(read.key(), Arc::new(rows));
+    }
+
+    /// Installs a retriever the scans it serves read their rows through.
+    pub fn install(&self, retriever: Arc<dyn MemTableRetriever>) {
+        self.lock().retrievers.push(retriever);
+    }
+
+    /// The installed retriever that serves the scan `read`.
+    #[must_use]
+    pub fn retriever_for(&self, read: &MemTableRead) -> Option<Arc<dyn MemTableRetriever>> {
+        self.lock()
+            .retrievers
+            .iter()
+            .find(|retriever| retriever.serves(read))
+            .map(Arc::clone)
     }
 
     /// Whether a request is waiting.

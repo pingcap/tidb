@@ -82,6 +82,7 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         error @ (ExecError::SubqueryReturnsMoreThanOneRow
         | ExecError::CteMaxRecursionDepth(_)
         | ExecError::MemoryExceedForQuery { .. }
+        | ExecError::SpecificAccessDenied(_)
         | ExecError::InvalidJsonCharset { .. }) => DriverError::from(error).to_mysql_error(),
     }
 }

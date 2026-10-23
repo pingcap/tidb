@@ -156,6 +156,89 @@ fn a_missing_memory_table_is_reported_as_the_planner_resolves_it() {
     );
 }
 
+/// The tables a scan retrieves itself are exactly the ones `table_rows`
+/// answers, and no table the session's families answer is among them (their
+/// arms would be shadowed).
+#[test]
+fn the_tables_a_scan_retrieves_itself_are_the_ones_table_rows_answers() {
+    let catalog = tidb_executor::Catalog::default();
+    let ctx = tidb_executor::StmtContext::default();
+    let visibility = crate::infoschema::SchemaVisibility::unrestricted();
+    for table in crate::infoschema::SERVED_TABLES {
+        assert!(
+            crate::infoschema::table_rows(table, &catalog, &visibility, &ctx).is_some(),
+            "{table}"
+        );
+    }
+    for table in [
+        "PROCESSLIST",
+        "TIDB_TRX",
+        "STATEMENTS_SUMMARY",
+        "SLOW_QUERY",
+        "CLUSTER_INFO",
+        "DDL_JOBS",
+        "USER_PRIVILEGES",
+    ] {
+        assert!(!crate::infoschema::serves_table(table), "{table}");
+        assert!(
+            crate::infoschema::table_rows(table, &catalog, &visibility, &ctx).is_none(),
+            "{table}"
+        );
+    }
+}
+
+/// A scan is installed exactly one retriever: the schema-only family and the
+/// instance-state family serve disjoint tables, and both leave the session's
+/// own families (and every unknown table) to the session.
+#[test]
+fn a_scan_has_at_most_one_retriever() {
+    use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
+    let session = Session::new();
+    let read = |table: &str| MemTableRead {
+        plan_id: 1,
+        db_name: "information_schema".to_owned(),
+        table_name: table.to_owned(),
+        columns: Vec::new(),
+        column_ids: Vec::new(),
+        extractor: None,
+        query_time_range: Default::default(),
+        is_cluster_scan: false,
+    };
+    let schema = crate::memtable_retrievers::InformationSchemaRetriever::new(
+        session.schema_visibility(),
+        None,
+        "default".to_owned(),
+    );
+    let instance = crate::instance_state::InstanceStateRetriever::new(session.viewer_state());
+    for table in [
+        "SCHEMATA",
+        "TABLES",
+        "COLUMNS",
+        "PROCESSLIST",
+        "TRX_SUMMARY",
+        "STATEMENTS_SUMMARY",
+        "CLIENT_ERRORS_SUMMARY_GLOBAL",
+        "MEMORY_USAGE",
+        "TIDB_INDEX_USAGE",
+        "CLUSTER_PROCESSLIST",
+        "SLOW_QUERY",
+        "TIDB_TRX",
+        "NO_SUCH_TABLE",
+    ] {
+        let read = read(table);
+        assert!(
+            !(schema.serves(&read) && instance.serves(&read)),
+            "{table} is served twice"
+        );
+    }
+    assert!(schema.serves(&read("TABLES")) && !instance.serves(&read("TABLES")));
+    assert!(instance.serves(&read("PROCESSLIST")) && !schema.serves(&read("PROCESSLIST")));
+    for session_family in ["CLUSTER_PROCESSLIST", "SLOW_QUERY", "TIDB_TRX", "NO_SUCH_TABLE"] {
+        let read = read(session_family);
+        assert!(!schema.serves(&read) && !instance.serves(&read), "{session_family}");
+    }
+}
+
 /// A multi-table UPDATE or DELETE joining a memory table: the plan reads the
 /// memory table's own columns, with no hidden handle (it stores no rows), so
 /// the write splits each read row by those widths. `7 columns, expected 9`
