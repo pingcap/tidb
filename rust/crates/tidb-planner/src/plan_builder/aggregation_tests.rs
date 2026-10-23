@@ -1251,3 +1251,50 @@ fn single_table_delete_prunes_the_read_to_the_handle_and_index_columns() {
         (Some((vec![1], true)), Some(2))
     );
 }
+
+#[test]
+fn multi_table_delete_lays_out_each_target_in_the_pruned_read() {
+    // Go `pruneAndBuildColPositionInfoForDelete` + `TblColPosInfos`: every
+    // target keeps the handle's and the indexes' columns while the other
+    // sources are read whole, and each target's `DeleteTablePos` says where
+    // its columns and handle sit in a row of the pruned read.
+    use super::delete_pruning::{DeleteMultiInput, DeleteTarget};
+    use crate::physical::DeleteHandle;
+    let target = |visible: &str| DeleteTarget {
+        database: "test".to_owned(),
+        table: "t".to_owned(),
+        visible: visible.to_owned(),
+    };
+    let build = |targets: Vec<DeleteTarget>, has_fk: bool| {
+        let harness = Harness::new();
+        let mut builder = harness.builder();
+        builder.delete_multi = Some(DeleteMultiInput { targets, has_fk });
+        builder.allocate_delete_root = true;
+        let select = parse_select("SELECT * FROM t AS t1, t AS t2");
+        let (plan, _) = builder
+            .build_dml_source(&select, false)
+            .unwrap_or_else(|error| panic!("should build: {}", error.message()));
+        (
+            plan.schema().map(|schema| schema.columns.len()),
+            builder.delete_tables,
+        )
+    };
+    // One target: t1 loses `c`, t2 is read whole.
+    let (width, tables) = build(vec![target("t1")], false);
+    assert_eq!(width, Some(5));
+    assert_eq!(tables.len(), 1);
+    assert_eq!(tables[0].table, "t");
+    assert_eq!(tables[0].stored_width, 3);
+    assert_eq!(tables[0].columns, vec![(0, 0), (1, 1)]);
+    assert_eq!(tables[0].handle, DeleteHandle::Int(0));
+    // Both targets are pruned and the second starts after the first.
+    let (width, tables) = build(vec![target("t1"), target("t2")], false);
+    assert_eq!(width, Some(4));
+    assert_eq!(tables[1].columns, vec![(2, 0), (3, 1)]);
+    assert_eq!(tables[1].handle, DeleteHandle::Int(2));
+    // A foreign key anywhere declines every pruning.
+    let (width, tables) = build(vec![target("t1"), target("t2")], true);
+    assert_eq!(width, Some(6));
+    assert_eq!(tables[1].columns, vec![(3, 0), (4, 1), (5, 2)]);
+    assert_eq!(tables[1].handle, DeleteHandle::Int(3));
+}

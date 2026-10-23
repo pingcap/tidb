@@ -2887,6 +2887,39 @@ impl DeleteColPos {
     }
 }
 
+/// How `DeleteExec` finds a deleted table's handle in a row of the read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DeleteHandle {
+    /// An integer handle (a primary key that is the handle, or `_tidb_rowid`):
+    /// the position of its column in the row.
+    Int(usize),
+    /// A clustered common handle: the positions of its columns, in handle
+    /// order.
+    Common(Vec<usize>),
+    /// The hidden `_tidb_rowid` of a table with neither of the above.
+    Extra(usize),
+}
+
+/// Go `physicalop.TblColPosInfo` of one table a multi-table DELETE removes
+/// rows from: where its stored columns and its handle sit in a row of the
+/// (pruned) read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeleteTablePos {
+    /// Go `TblID`.
+    pub table_id: i64,
+    /// The base table's schema.
+    pub database: String,
+    /// The base table's stored name.
+    pub table: String,
+    /// The number of stored columns the table has.
+    pub stored_width: usize,
+    /// `(row position, table column offset)` of each stored column the read
+    /// carries; a column the pruning removed is absent.
+    pub columns: Vec<(usize, usize)>,
+    /// Go `HandleCols`, resolved to row positions.
+    pub handle: DeleteHandle,
+}
+
 /// The cached physical root of an INSERT/UPDATE/DELETE whose source is a
 /// SELECT. Go's rebuild visitor descends into `SelectPlan` and otherwise has
 /// no DML-local range state to update.
@@ -2907,6 +2940,9 @@ pub struct PhysicalDmlRoot {
     pub fk_triggers: Vec<FkTriggerNode>,
     /// Go `Delete.TblColPosInfos` of a pruned single-table DELETE.
     pub delete_col_pos: Option<DeleteColPos>,
+    /// Go `Delete.TblColPosInfos` of a multi-table DELETE, one per table
+    /// named in the statement's target list.
+    pub delete_tables: Vec<DeleteTablePos>,
 }
 
 /// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
@@ -4922,6 +4958,7 @@ impl PhysicalPlan {
                 update_expressions: op.update_expressions.clone(),
                 fk_triggers: op.fk_triggers.clone(),
                 delete_col_pos: op.delete_col_pos.clone(),
+                delete_tables: op.delete_tables.clone(),
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

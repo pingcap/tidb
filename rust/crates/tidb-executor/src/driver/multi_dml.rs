@@ -988,29 +988,28 @@ fn resolve_assignments(
 /// Runs a multi-table `DELETE`, returning the number of removed rows.
 pub(crate) fn run_multi_delete(
     delete: &tidb_ast::DeleteStmt,
-    targets: &[Vec<String>],
-    from: &tidb_ast::Join,
     catalog: &mut Catalog,
-    current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    tables: &[tidb_planner::physical::DeleteTablePos],
     fk_triggers: &[tidb_planner::physical::FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
-    let source = build_multi_layout(from, delete.with.as_ref(), catalog, current_db, ctx)?;
-    let target_slots = resolve_delete_targets(targets, &source)?;
-    let prune = prune_for_delete(&source, &target_slots, catalog, ctx);
+    if tables.is_empty() {
+        return Err(DriverError::unsupported(
+            "a multi-table DELETE plan carries no table layout",
+        ));
+    }
     let rows = {
         let plan = physical_plan
             .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
-        planned_source_rows(
-            &source,
+        delete_source_rows(
+            tables,
             plan,
             catalog,
             ctx,
             runtime,
             crate::mem_quota::label::DELETE,
-            prune.as_ref(),
         )?
     };
 
@@ -1020,17 +1019,13 @@ pub(crate) fn run_multi_delete(
     // UPDATE, whose key is the target position).
     let mut doomed: BTreeMap<(String, String, TableHandle), (usize, usize)> = BTreeMap::new();
     for (row_index, row) in rows.iter().enumerate() {
-        let ids = &row.ids;
-        for &slot in &target_slots {
-            let Some(id) = &ids[slot] else { continue };
-            let table = &source.tables[slot];
-            // `resolve_delete_targets` admitted only base sources.
-            let SourceOrigin::Base { database, name } = &table.origin else {
-                return Err(table.not_updatable("DELETE"));
+        for (position, table) in tables.iter().enumerate() {
+            let Some(id) = &row.ids[position] else {
+                continue;
             };
             doomed
-                .entry((database.clone(), name.clone(), id.clone()))
-                .or_insert((row_index, slot));
+                .entry((table.database.clone(), table.table.clone(), id.clone()))
+                .or_insert((row_index, position));
         }
     }
 
@@ -1044,6 +1039,96 @@ pub(crate) fn run_multi_delete(
     records.finish(catalog, ctx)?;
 
     Ok(deleted)
+}
+
+/// A row of a multi-table DELETE's read, split by Go's `TblColPosInfos`: each
+/// deleted table's row identity (`None` where an outer join NULL-padded that
+/// side) and its stored columns, NULL where the read pruned one.
+struct DeleteSourceRow {
+    ids: Vec<Option<TableHandle>>,
+    stored: Vec<Vec<Datum>>,
+}
+
+/// Runs the planned read under a multi-table DELETE and splits each row by
+/// the table layouts the planner decided (`logical_plan_builder.go:6200`).
+fn delete_source_rows(
+    tables: &[tidb_planner::physical::DeleteTablePos],
+    plan: &mut tidb_planner::physical::PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
+    memory_label: i64,
+) -> Result<Vec<DeleteSourceRow>, DriverError> {
+    use tidb_planner::physical::DeleteHandle;
+    let kv_tables = tables
+        .iter()
+        .map(|table| match catalog.get_in(&table.database, &table.table) {
+            Some(TableEntry::Kv(kv)) => Ok(kv.clone()),
+            _ => Err(DriverError::unsupported("a multi-table DELETE target is not a base table")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let zone = ctx.session_zone();
+    let accountant = ctx.statement_memory().write_accountant(memory_label);
+    let integer = |datum: &Datum| match datum {
+        Datum::Int(value) => Some(TableHandle::Int(*value)),
+        Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
+        _ => None,
+    };
+    let mut out = Vec::new();
+    let collected = super::physical_builder::execute_dml_source(
+        plan,
+        catalog,
+        ctx,
+        runtime.is_some(),
+        |row| {
+            let mut ids = Vec::with_capacity(tables.len());
+            let mut stored = Vec::with_capacity(tables.len());
+            for (table, kv) in tables.iter().zip(&kv_tables) {
+                let cell = |position: usize| {
+                    row.get(position).ok_or_else(|| {
+                        DriverError::unsupported(format!(
+                            "a multi-table read returned {} columns, expected position {position}",
+                            row.len()
+                        ))
+                    })
+                };
+                let id = match &table.handle {
+                    DeleteHandle::Int(position) | DeleteHandle::Extra(position) => {
+                        integer(cell(*position)?)
+                    }
+                    DeleteHandle::Common(positions) => {
+                        let values = positions
+                            .iter()
+                            .map(|position| cell(*position).cloned())
+                            .collect::<Result<Vec<Datum>, _>>()?;
+                        if values.iter().any(|value| matches!(value, Datum::Null)) {
+                            None
+                        } else {
+                            Some(
+                                kv.common_handle_of_values(&values, &zone)
+                                    .map_err(kv_write_error)?,
+                            )
+                        }
+                    }
+                };
+                ids.push(id);
+                let mut part = vec![Datum::Null; table.stored_width];
+                for (position, offset) in &table.columns {
+                    part[*offset] = cell(*position)?.clone();
+                }
+                accountant.account_row(&part).map_err(DriverError::from)?;
+                stored.push(part);
+            }
+            // Charge as rows arrive, before retaining them or pulling another chunk.
+            accountant.account_row(&row).map_err(DriverError::from)?;
+            out.push(DeleteSourceRow { ids, stored });
+            Ok(())
+        },
+    )?;
+    if let Some(runtime) = runtime {
+        runtime.extend(collected);
+    }
+    Ok(out)
 }
 
 /// Binds each written target name to the `FROM` sources it names.
@@ -1149,6 +1234,7 @@ pub(crate) fn multi_dml_physical_plan(
         }
     };
     let mut dml_keep = None;
+    let mut delete_multi = None;
     let (operator, select) = match dml {
         MultiDmlRef::Update(update) => {
             let tidb_ast::UpdateKind::Multi { from, .. } = &update.kind else {
@@ -1188,10 +1274,14 @@ pub(crate) fn multi_dml_physical_plan(
             for (database, table) in delete_privilege_tables(delete, catalog, current_db, ctx)? {
                 add_target(database, table, None);
             }
-            dml_keep = delete_prune(delete, targets_of(delete), from, catalog, current_db, ctx)
-                .ok()
-                .flatten()
-                .map(|prune| prune.keep);
+            delete_multi = Some(delete_multi_input(
+                delete,
+                targets_of(delete),
+                from,
+                catalog,
+                current_db,
+                ctx,
+            )?);
             (
                 "Delete",
                 multi_dml_select(
@@ -1206,9 +1296,11 @@ pub(crate) fn multi_dml_physical_plan(
         }
     };
     let specs: Vec<_> = specs.into_values().collect();
-    super::dml::physical_multi_dml_plan(
-        operator, &select, catalog, current_db, ctx, &specs, dml_keep,
-    )
+    let keep = match delete_multi {
+        Some(input) => super::dml::DmlKeep::MultiDelete(input),
+        None => super::dml::DmlKeep::Fixed(dml_keep),
+    };
+    super::dml::physical_multi_dml_plan(operator, &select, catalog, current_db, ctx, &specs, keep)
 }
 
 /// What a multi-table write's read keeps (Go prunes the rest from the read:
@@ -1352,56 +1444,40 @@ fn update_prune(
     Ok(prune_for_update(&source, &assignments, catalog))
 }
 
-/// Go `pruneAndBuildColPositionInfoForDelete`: each target table keeps the
-/// handle's and its indexes' columns; the other sources are read whole. Once
-/// any target is referenced by a foreign key no table is pruned.
-fn prune_for_delete(
-    source: &MultiLayout,
-    target_slots: &[usize],
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-) -> Option<MultiPrune> {
-    let base = |slot: usize| match &source.tables[slot].origin {
-        SourceOrigin::Base { database, name } => Some((database.clone(), name.clone())),
-        SourceOrigin::Derived => None,
-    };
-    if ctx.foreign_key_checks()
-        && target_slots.iter().any(|slot| {
-            base(*slot).is_some_and(|(database, name)| {
-                !crate::foreign_key::referring(catalog, &database, &name).is_empty()
-            })
-        })
-    {
-        return None;
-    }
-    build_prune(source, catalog, |slot, position, _| {
-        if !target_slots.contains(&slot) {
-            return true;
-        }
-        let Some((database, name)) = base(slot) else {
-            return true;
-        };
-        let Some(TableEntry::Kv(kv)) = stored_table(catalog, &database, &name) else {
-            return true;
-        };
-        match super::dml::delete_keep_mask(kv) {
-            Some(mask) => mask.get(position).copied().unwrap_or(true),
-            None => true,
-        }
-    })
-}
-
-fn delete_prune(
+/// What the planner needs to prune a multi-table DELETE's read and lay out
+/// its targets' rows (Go `pruneAndBuildColPositionInfoForDelete`): the
+/// resolved target tables, and whether a foreign key references any of them,
+/// which declines the pruning for every table.
+fn delete_multi_input(
     delete: &tidb_ast::DeleteStmt,
     targets: &[Vec<String>],
     from: &tidb_ast::Join,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<MultiPrune>, DriverError> {
+) -> Result<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput, DriverError> {
+    use tidb_planner::plan_builder::delete_pruning::{DeleteMultiInput, DeleteTarget};
     let source = build_multi_layout(from, delete.with.as_ref(), catalog, current_db, ctx)?;
-    let target_slots = resolve_delete_targets(targets, &source)?;
-    Ok(prune_for_delete(&source, &target_slots, catalog, ctx))
+    let mut resolved = Vec::new();
+    for slot in resolve_delete_targets(targets, &source)? {
+        let table = &source.tables[slot];
+        let SourceOrigin::Base { database, name } = &table.origin else {
+            return Err(table.not_updatable("DELETE"));
+        };
+        resolved.push(DeleteTarget {
+            database: database.clone(),
+            table: name.clone(),
+            visible: table.visible.go_to_lower(),
+        });
+    }
+    let has_fk = ctx.foreign_key_checks()
+        && resolved.iter().any(|target| {
+            !crate::foreign_key::referring(catalog, &target.database, &target.table).is_empty()
+        });
+    Ok(DeleteMultiInput {
+        targets: resolved,
+        has_fk,
+    })
 }
 
 /// The target names of a multi-table DELETE.

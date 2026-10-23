@@ -2729,12 +2729,14 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     operator: &str,
     dml_keep: Option<std::collections::BTreeSet<(String, String)>>,
     delete_prune_has_fk: Option<bool>,
+    delete_multi: Option<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput>,
 ) -> Result<
     (
         PhysicalPlan,
         Vec<Option<tidb_expr::expression::Expression>>,
         tidb_planner::physical::BasePhysicalPlan,
         Option<tidb_planner::physical::DeleteColPos>,
+        Vec<tidb_planner::physical::DeleteTablePos>,
     ),
     tidb_planner::plan_base::PlanError,
 > {
@@ -2793,6 +2795,7 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
     builder.dml_keep = dml_keep;
     builder.delete_prune_has_fk = delete_prune_has_fk;
+    builder.delete_multi = delete_multi;
     builder.allocate_delete_root = operator.eq_ignore_ascii_case("Delete");
     // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
     // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
@@ -2895,7 +2898,13 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     }
     ctx.phase_durations()
         .set_duration_rewrite(begin_rewrite.elapsed());
-    Ok((physical, update_expressions, root, builder.delete_col_pos.take()))
+    Ok((
+        physical,
+        update_expressions,
+        root,
+        builder.delete_col_pos.take(),
+        std::mem::take(&mut builder.delete_tables),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]

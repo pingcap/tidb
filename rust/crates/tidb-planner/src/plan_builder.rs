@@ -169,7 +169,7 @@ mod aggregation_tests;
 pub mod catalog;
 pub mod create_view;
 pub mod cte;
-mod delete_pruning;
+pub mod delete_pruning;
 pub mod dml_source;
 pub mod expand;
 pub mod field_name;
@@ -753,6 +753,11 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub delete_prune_has_fk: Option<bool>,
     /// The position information that pruning produced, for the `Delete` root.
     pub delete_col_pos: Option<crate::physical::DeleteColPos>,
+    /// Asks a multi-table DELETE's build to prune its read and to lay out its
+    /// targets' rows (`pruneAndBuildColPositionInfoForDelete`).
+    pub delete_multi: Option<delete_pruning::DeleteMultiInput>,
+    /// The layouts [`Self::delete_multi`] produced, for the `Delete` root.
+    pub delete_tables: Vec<crate::physical::DeleteTablePos>,
 
     /// Go `SessionVars`, narrowed exactly as the rewriter narrows it.
     pub flags: RewriterSessionFlags,
@@ -1555,6 +1560,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             dml_root: None,
             delete_prune_has_fk: None,
             delete_col_pos: None,
+            delete_multi: None,
+            delete_tables: Vec::new(),
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),
@@ -5065,6 +5072,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 self.dml_keep = Some(pairs);
             }
         }
+        let (keep_mask, drafts) = match self
+            .delete_multi
+            .take()
+            .and_then(|input| self.multi_delete_layout(&input, &source_schema, &source_names))
+        {
+            Some((mask, drafts)) => (Some(mask), drafts),
+            None => (None, Vec::new()),
+        };
         let keep = self.dml_keep.take();
         let kept = source_schema
             .columns
@@ -5072,6 +5087,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .enumerate()
             .filter(|(position, column)| {
                 column.id != EXTRA_COMMIT_TS_ID
+                    && keep_mask.as_ref().is_none_or(|mask| mask[*position])
                     && keep.as_ref().is_none_or(|keep| {
                         source_names.get(*position).is_some_and(|name| {
                             keep.contains(&(
@@ -5082,6 +5098,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     })
             })
             .collect::<Vec<_>>();
+        let kept_positions: Vec<usize> = kept.iter().map(|(position, _)| *position).collect();
+        self.delete_tables = drafts
+            .into_iter()
+            .filter_map(|draft| draft.finish(&kept_positions))
+            .collect();
         let expressions = kept
             .iter()
             .map(|(_, column)| Expression::Column((*column).clone()))
