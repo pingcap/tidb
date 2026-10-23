@@ -26,6 +26,7 @@ mod cluster_catalog_loader_source;
 mod cluster_config_source;
 mod cluster_ddl_alter_source;
 mod cluster_ddl_source;
+mod common_handle_row_source;
 mod cluster_index_id_source;
 mod cluster_sysvar_write_source;
 mod column_flag_builders_agree_source;

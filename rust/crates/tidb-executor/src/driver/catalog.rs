@@ -1009,7 +1009,9 @@ impl Catalog {
         databases.insert(
             "information_schema".to_owned(),
             Database {
-                id: 2,
+                // Go `autoid.InformationSchemaDBID`: a memory schema's id has
+                // the system flag, so it can never be a stored schema's id.
+                id: (1 << 62) | 1,
                 name: "INFORMATION_SCHEMA".to_owned(),
                 charset: TableCharset::default(),
                 placement_policy: None,
@@ -1038,8 +1040,9 @@ impl Catalog {
             HashMap::new()
         };
         for (id, key, display) in [
-            (4, "metrics_schema", "METRICS_SCHEMA"),
-            (5, "performance_schema", "PERFORMANCE_SCHEMA"),
+            // Go `autoid.MetricSchemaDBID` and `PerformanceSchemaDBID`.
+            ((1 << 62) | 20000, "metrics_schema", "METRICS_SCHEMA"),
+            ((1 << 62) | 10000, "performance_schema", "PERFORMANCE_SCHEMA"),
             (6, "sys", "sys"),
         ] {
             let tables = if key == "metrics_schema" {

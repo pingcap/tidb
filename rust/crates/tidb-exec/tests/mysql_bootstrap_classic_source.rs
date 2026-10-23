@@ -414,7 +414,13 @@ fn a_keyspace_of_either_layout_is_served_by_name() {
                 index.primary.then_some(index.id)
             })
             .expect("the primary index");
-        let prefix = tidb_codec::table_key::encode_index_seek_key(table.id, primary, &[]);
+        // A clustered primary key owns no index entry: the lock is the
+        // record's key.
+        let prefix = if table.is_common_handle {
+            tidb_codec::gen_table_record_prefix(table.id)
+        } else {
+            tidb_codec::table_key::encode_index_seek_key(table.id, primary, &[])
+        };
         assert!(advisory.key("rootlock").unwrap().starts_with(&prefix));
     }
 }

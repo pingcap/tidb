@@ -57,7 +57,8 @@ use crate::cluster_privilege_load::{
 };
 use crate::mysql_system_tables::{scan_system_table, SystemTableError, SystemTableView, SYSTEM_DB};
 use crate::system_row_write::{
-    canonical_text, defaults_row, delete_row, indexed_columns, insert_row, row_id_of, update_row,
+    canonical_text, decode_stored_row, defaults_row, delete_clustered_row, delete_row,
+    indexed_columns, insert_row, is_clustered, row_id_of, store_clustered_row, update_row,
     RowEncodeError, RowValues, NO, YES,
 };
 
@@ -665,14 +666,14 @@ fn read_rows<S: MetaSnapshot>(
     let timezone = SessionTimeZone::utc();
     let mut rows = Vec::new();
     for (key, value) in scan_system_table(snapshot, &view)? {
-        let values =
-            tidb_tablecodec::decode_table_row_to_map(&value, &column_types(table), Some(&timezone))
-                .map_err(|error| {
-                    AccountWriteError::Read(SystemTableError::Decode {
-                        name: format!("{SYSTEM_DB}.{}", table.name.original()),
-                        detail: error.to_string(),
-                    })
-                })?;
+        // A clustered table keeps its primary-key columns only in the record
+        // key, so the row is the decoded value plus the key's handle columns.
+        let values = decode_stored_row(table, &key, &value, Some(&timezone)).map_err(|error| {
+            AccountWriteError::Read(SystemTableError::Decode {
+                name: format!("{SYSTEM_DB}.{}", table.name.original()),
+                detail: error.to_string(),
+            })
+        })?;
         rows.push(StoredRow { key, values });
     }
     Ok(rows)
@@ -822,10 +823,17 @@ fn reconcile<S: MetaSnapshot>(
         }
     }
 
-    let missing = desired
-        .keys()
-        .filter(|identity| !by_key.contains_key(*identity))
-        .count();
+    // A clustered table's rows are keyed by their primary key and take no
+    // `_tidb_rowid`, so none is reserved for them.
+    let clustered = is_clustered(table);
+    let missing = if clustered {
+        0
+    } else {
+        desired
+            .keys()
+            .filter(|identity| !by_key.contains_key(*identity))
+            .count()
+    };
     let mut next_row_id = if missing == 0 {
         0
     } else {
@@ -895,15 +903,25 @@ fn reconcile<S: MetaSnapshot>(
                     fresh.insert(*id, Datum::Bytes(grantor.clone().into_bytes()));
                 }
                 apply_policy_values(table, account_table, identity, policy_values, &mut fresh)?;
-                plan.mutations.extend(insert_row(table, row_id, &fresh)?);
+                if clustered {
+                    plan.mutations
+                        .extend(store_clustered_row(table, None, &fresh)?);
+                } else {
+                    plan.mutations.extend(insert_row(table, row_id, &fresh)?);
+                }
                 note_changed(changed, account_table, identity);
             }
         }
     }
     // Whatever the desired image did not claim is a row the change removed.
     for (identity, row) in rewritten.into_iter().chain(by_key) {
-        plan.mutations
-            .extend(delete_row(table, &row.key, &row.values)?);
+        if clustered {
+            plan.mutations
+                .extend(delete_clustered_row(table, &row.values)?);
+        } else {
+            plan.mutations
+                .extend(delete_row(table, &row.key, &row.values)?);
+        }
         note_changed(changed, account_table, &identity);
     }
     fold_delete_then_insert(&mut plan.mutations)?;

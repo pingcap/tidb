@@ -315,6 +315,49 @@ fn a_next_gen_bootstrap_spends_one_schema_version_per_ddl_job() {
     assert_eq!(store.pairs[&key::next_global_id_kv_key()], b"7");
 }
 
+/// Every next-gen table's stored `TableInfo` equals what the Go bootstrap
+/// built with `-tags nextgen` stores, but for the creation timestamp and the
+/// empty index list a Rust-created view stores as `[]`.
+#[test]
+fn next_gen_table_infos_are_what_go_stores() {
+    const GO: &str = include_str!("data/mysql_bootstrap_nextgen_tableinfos.json");
+    let mut go: std::collections::BTreeMap<String, serde_json::Value> =
+        serde_json::from_str(GO).unwrap();
+    let write = plan_mysql_bootstrap(&mut MetaStore::default(), 7, &environment())
+        .expect("the keyspace bootstraps");
+    let mut seen = 0;
+    for mutation in &write.mutations {
+        let Ok((hash, field)) = tidb_meta::structure::decode_hash_data_key(mutation.key()) else {
+            continue;
+        };
+        if !field.starts_with(b"Table:") || !hash.starts_with(b"DB:") {
+            continue;
+        }
+        let mut info: serde_json::Value = serde_json::from_slice(mutation.value()).unwrap();
+        let database = match hash.as_slice() {
+            h if h == format!("DB:{}", tidb_metadef::system::SYSTEM_DATABASE_ID).as_bytes() => {
+                "mysql"
+            }
+            h if h == format!("DB:{}", tidb_metadef::system::SYS_DATABASE_ID).as_bytes() => "sys",
+            other => panic!("unexpected table under {}", String::from_utf8_lossy(other)),
+        };
+        let name = format!("{database}.{}", info["name"]["L"].as_str().unwrap());
+        let mut expected = go
+            .remove(&name)
+            .unwrap_or_else(|| panic!("{name} is not a table of the next-gen Go bootstrap"));
+        for value in [&mut info, &mut expected] {
+            value["update_timestamp"] = serde_json::Value::from(0);
+            if value["index_info"] == serde_json::Value::Array(Vec::new()) {
+                value["index_info"] = serde_json::Value::Null;
+            }
+        }
+        assert_eq!(info, expected, "{name}");
+        seen += 1;
+    }
+    assert_eq!(seen, 62);
+    assert!(go.is_empty(), "never created: {:?}", go.keys());
+}
+
 /// The next-gen layout against a Go bootstrap built with `-tags nextgen`
 /// (a throwaway `session` test over `mockstore`, whose meta it listed):
 /// every table's id and clustered-handle flag, the database ids, the counters
@@ -340,20 +383,11 @@ fn the_next_gen_layout_is_what_go_creates() {
             let full = format!("{name}.{}", table.name.lowercase());
             let expected = &go["tables"][&full];
             assert_eq!(expected["id"].as_i64(), Some(table.id), "{full} id");
-            // Go builds its next-gen direct tables under ON; this node keeps
-            // INT_ONLY for them (see `jobs.rs`), so the flag is Go's only for
-            // the DDL-owned tables, which `InitDDLTables` builds likewise.
-            let ddl_owned = tidb_metadef::DDL_TABLE_VERSION_TABLES
-                .iter()
-                .flat_map(|version| version.tables)
-                .any(|owned| owned.id == table.id);
-            if ddl_owned {
-                assert_eq!(
-                    expected["common_handle"].as_bool(),
-                    Some(table.is_common_handle),
-                    "{full} common handle"
-                );
-            }
+            assert_eq!(
+                expected["common_handle"].as_bool(),
+                Some(table.is_common_handle),
+                "{full} common handle"
+            );
             assert_eq!(
                 expected["view"].as_bool(),
                 Some(table.view.is_some()),
@@ -411,11 +445,13 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .iter()
         .filter(|mutation| tidb_tablecodec::is_record_key(mutation.key()))
         .count();
-    // One `mysql.user` row (PRIMARY + i_user), six `mysql.tidb` rows (PRIMARY
-    // each), and one `mysql.global_variables` row (PRIMARY each) per
-    // global-scope system variable in the captured fixture. The four DDL
-    // jobs file four `mysql.tidb_ddl_history` rows, whose integer primary key
-    // is the handle (no index entry).
+    // One `mysql.user` row, six `mysql.tidb` rows and one
+    // `mysql.global_variables` row per global-scope system variable in the
+    // captured fixture. Their primary keys are common handles (the key IS the
+    // record, no index entry), so only `mysql.user`'s `i_user` and the builtin
+    // binding lock row's three indexes (sql_index, time_index, digest_index)
+    // remain. The four DDL jobs file four `mysql.tidb_ddl_history` rows, whose
+    // integer primary key is the handle.
     const GLOBAL_VARIABLES_FIXTURE: &str =
         include_str!("../src/mysql_bootstrap/global_variables_fixture.tsv");
     assert!(GLOBAL_VARIABLES_FIXTURE
@@ -425,7 +461,6 @@ fn every_seeded_row_carries_the_index_entries_its_table_declares() {
         .lines()
         .filter(|line| !line.is_empty())
         .count();
-    // The builtin binding lock row owns sql_index, time_index and digest_index.
     assert_eq!(records, 8 + global_variable_rows + 4);
-    assert_eq!(index_entries, 11 + global_variable_rows);
+    assert_eq!(index_entries, 4);
 }

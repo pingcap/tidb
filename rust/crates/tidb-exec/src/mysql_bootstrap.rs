@@ -122,11 +122,14 @@ pub fn find_system_table<S: MetaSnapshot>(
     Ok(None)
 }
 
-/// What encoding `mysql.advisory_locks`' primary-index key takes, located by
-/// name in the schema (Go's `GET_LOCK` inserts through the info schema's
-/// `mysql.advisory_locks`, whatever ids the bootstrap gave it).
+/// What encoding the key Go's `GET_LOCK` locks takes, located by name in the
+/// schema (Go inserts through the info schema's `mysql.advisory_locks`,
+/// whatever ids the bootstrap gave it and whether its primary key is a
+/// clustered common handle, whose key is the record's, or not, whose key is
+/// the unique primary index entry's).
 #[derive(Clone, Debug)]
 pub struct AdvisoryLockTable {
+    info: TableInfo,
     codec_info: CodecTableInfo,
     primary_position: usize,
     table_id: i64,
@@ -149,12 +152,29 @@ impl AdvisoryLockTable {
             codec_info: codec_table_info(&info),
             primary_position,
             table_id: info.id,
+            info,
         })
     }
 
     /// Encodes the unique-primary-index key Go's INSERT into
     /// `mysql.advisory_locks` pessimistically locks.
     pub fn key(&self, lock_name: &str) -> Result<Vec<u8>, BootstrapError> {
+        if self.info.is_common_handle {
+            // A clustered primary key owns no index entry: the insert locks
+            // the record key.
+            let column = self
+                .info
+                .find_public_column_by_name("lock_name")
+                .ok_or_else(|| {
+                    BootstrapError::Encode("advisory_locks has no lock_name column".to_owned())
+                })?;
+            let mut values = crate::system_row_write::RowValues::new();
+            values.insert(column.read().id, Datum::new_string(lock_name));
+            let (key, _) =
+                crate::system_row_write::clustered_record_key(&self.info, &values)
+                    .map_err(encode_error)?;
+            return Ok(key);
+        }
         let primary = &self.codec_info.indices[self.primary_position];
         let mut values = vec![Datum::new_string(lock_name)];
         let (key, distinct) = generate_index_key(

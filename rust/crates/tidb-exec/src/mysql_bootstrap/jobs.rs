@@ -453,20 +453,16 @@ fn plan_with<S: MetaSnapshot>(
     let mut global_batches = Vec::new();
     if !classic {
         // `bootstrapSchemas`: `sys` and every `mysql.*` table at its reserved
-        // id, cut in one split. Go builds them under the metabuild default
-        // (`tidb_enable_clustered_index` ON: its next-gen `mysql.user`,
-        // `mysql.tidb` and most others have a common handle); this node
-        // keeps the INT_ONLY build every other tier of it reads and writes,
-        // because its account, system-variable and binding writers only know
-        // `_tidb_rowid` rows for those tables (a common-handle `mysql.user`
-        // fails `GRANT` with "user.User has no value for index `i_user`").
+        // id, cut in one split, built under the metabuild default
+        // (`tidb_enable_clustered_index` ON: `mysql.user`, `mysql.tidb`,
+        // `mysql.global_variables` and most others have a common handle).
         write_database(&mut overlay, tidb_metadef::system::SYS_DATABASE_ID, SYS_DB)?;
         let mut batch = Vec::new();
         for table in BOOTSTRAP_TABLES
             .iter()
             .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name))
         {
-            let info = build_bootstrap_table(table, start_ts, ClusteredIndexDefMode::IntOnly)?;
+            let info = build_bootstrap_table(table, start_ts, ClusteredIndexDefMode::On)?;
             write_table(&mut overlay, database_id, &info)?;
             batch.push(info.id);
             created_tables.push(info);

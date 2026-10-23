@@ -31,7 +31,9 @@ use tidb_meta::{key, value};
 use tidb_model::table_info::TableInfo;
 use tidb_txnkv::transaction::BufferMutation;
 
-use crate::system_row_write::{defaults_row, insert_row, RowEncodeError, NO, YES};
+use crate::system_row_write::{
+    defaults_row, insert_row, store_clustered_row, RowEncodeError, NO, YES,
+};
 
 use super::{
     text, BootstrapError, BOOTSTRAPPED_VAR, CLUSTER_ID_VAR, DDL_TABLE_VERSION_VAR,
@@ -116,7 +118,7 @@ pub fn seed(
             .iter()
             .filter(|row| row.table == table.name.lowercase())
             .count();
-        if used == 0 {
+        if used == 0 || clustered(table) {
             continue;
         }
         mutations.push(BufferMutation::set(
@@ -408,8 +410,19 @@ fn write_row(
         let column_id = column.read().id;
         values.insert(column_id, seed.value.clone());
     }
-    mutations.extend(insert_row(table, row_id, &values).map_err(encode)?);
+    if clustered(table) {
+        // A clustered table (an integer primary key as the handle, or a
+        // common handle) is keyed by its primary key and owns no
+        // `_tidb_rowid`.
+        mutations.extend(store_clustered_row(table, None, &values).map_err(encode)?);
+    } else {
+        mutations.extend(insert_row(table, row_id, &values).map_err(encode)?);
+    }
     Ok(())
+}
+
+fn clustered(table: &TableInfo) -> bool {
+    table.pk_is_handle || table.is_common_handle
 }
 
 fn encode(error: RowEncodeError) -> BootstrapError {

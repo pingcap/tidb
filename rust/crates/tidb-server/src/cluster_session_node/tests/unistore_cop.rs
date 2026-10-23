@@ -155,6 +155,37 @@ fn a_node_serves_a_store_of_either_layout_by_name() {
             vec![vec![first_user_table.to_owned()]],
             "{layout:?}"
         );
+        // The writers of the accounts, the global variables and the
+        // bindings, over the tables this layout stored (common handles for
+        // `mysql.user`, `mysql.db`, `mysql.tables_priv`, `mysql.global_variables`
+        // ... under the next-gen layout).
+        rows(&mut session, "create user layout_u identified by 'x'");
+        rows(&mut session, "grant select on test.layout_t to layout_u");
+        rows(&mut session, "grant create user on *.* to layout_u");
+        let grants = displayed(rows(&mut session, "show grants for layout_u"));
+        assert!(
+            grants.iter().any(|row| row[0].contains("SELECT")),
+            "{layout:?}: {grants:?}"
+        );
+        rows(&mut session, "alter user layout_u identified by 'y'");
+        rows(&mut session, "set global max_connections = 777");
+        assert_eq!(
+            displayed(rows(&mut session, "select @@global.max_connections")),
+            vec![vec!["777".to_owned()]],
+            "{layout:?}"
+        );
+        rows(
+            &mut session,
+            "create global binding for select * from test.layout_t using select * from test.layout_t",
+        );
+        assert_eq!(
+            displayed(rows(&mut session, "show global bindings")).len(),
+            1,
+            "{layout:?}"
+        );
+        rows(&mut session, "revoke select on test.layout_t from layout_u");
+        rows(&mut session, "drop user layout_u");
+        rows(&mut session, "set global max_connections = default");
     }
     tidb_ddl::bootstrap_publish::override_layout_on_this_thread(None);
 }

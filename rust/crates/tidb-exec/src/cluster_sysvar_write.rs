@@ -38,7 +38,8 @@ use crate::cluster_catalog::ClusterCatalog;
 use crate::cluster_catalog::MetaSnapshot;
 use crate::mysql_system_tables::{scan_system_table, SystemTableError, SystemTableView, SYSTEM_DB};
 use crate::system_row_write::{
-    defaults_row, delete_row, insert_row, row_id_of, update_row, RowEncodeError, RowValues,
+    decode_stored_row, defaults_row, delete_clustered_row, delete_row, insert_row, is_clustered,
+    row_id_of, store_clustered_row, update_row, RowEncodeError, RowValues,
 };
 
 const GLOBAL_VARIABLES_TABLE: &str = "global_variables";
@@ -133,8 +134,9 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
     let view = full_view(table);
     let mut by_name: BTreeMap<String, StoredRow> = BTreeMap::new();
     for (key, value) in scan_system_table(snapshot, &view)? {
-        let values = tidb_tablecodec::decode_table_row_to_map(&value, &column_types(table), None)
-            .map_err(|error| {
+        // A clustered table keeps its primary-key column only in the record
+        // key, so the row is the decoded value plus the key's handle columns.
+        let values = decode_stored_row(table, &key, &value, None).map_err(|error| {
             SysvarWriteError::Read(SystemTableError::Decode {
                 name: format!("{SYSTEM_DB}.{GLOBAL_VARIABLES_TABLE}"),
                 detail: error.to_string(),
@@ -144,10 +146,17 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
         by_name.insert(name, StoredRow { key, values });
     }
 
-    let missing = desired
-        .keys()
-        .filter(|name| !by_name.contains_key(&name.to_ascii_lowercase()))
-        .count();
+    // A clustered table's rows are keyed by their primary key and take no
+    // `_tidb_rowid`, so none is reserved for them.
+    let clustered = is_clustered(table);
+    let missing = if clustered {
+        0
+    } else {
+        desired
+            .keys()
+            .filter(|name| !by_name.contains_key(&name.to_ascii_lowercase()))
+            .count()
+    };
     let mut next_row_id = if missing == 0 {
         0
     } else {
@@ -180,7 +189,12 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
                 let mut fresh = defaults_row(table, now)?;
                 fresh.insert(name_id, Datum::Bytes(key.clone().into_bytes()));
                 fresh.insert(value_id, Datum::Bytes(value.clone().into_bytes()));
-                plan.mutations.extend(insert_row(table, row_id, &fresh)?);
+                if clustered {
+                    plan.mutations
+                        .extend(store_clustered_row(table, None, &fresh)?);
+                } else {
+                    plan.mutations.extend(insert_row(table, row_id, &fresh)?);
+                }
                 plan.changed.push(key);
             }
         }
@@ -188,8 +202,13 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
     // Whatever `desired` did not claim is a row a `SET GLOBAL ... = DEFAULT`
     // removed.
     for (name, row) in by_name {
-        plan.mutations
-            .extend(delete_row(table, &row.key, &row.values)?);
+        if clustered {
+            plan.mutations
+                .extend(delete_clustered_row(table, &row.values)?);
+        } else {
+            plan.mutations
+                .extend(delete_row(table, &row.key, &row.values)?);
+        }
         plan.changed.push(name);
     }
     Ok(plan)

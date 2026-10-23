@@ -55,7 +55,21 @@ pub fn override_layout_on_this_thread(layout: Option<BootstrapLayout>) {
 fn layout() -> BootstrapLayout {
     LAYOUT_OVERRIDE
         .with(std::cell::Cell::get)
+        .or_else(layout_from_test_environment)
         .unwrap_or_else(BootstrapLayout::of_kernel)
+}
+
+/// Debug builds only: `TIDB_RS_TEST_BOOTSTRAP_LAYOUT=nextgen|classic` runs a
+/// whole test binary over the other kernel's layout.
+fn layout_from_test_environment() -> Option<BootstrapLayout> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    match std::env::var("TIDB_RS_TEST_BOOTSTRAP_LAYOUT").ok()?.as_str() {
+        "nextgen" => Some(BootstrapLayout::NextGen),
+        "classic" => Some(BootstrapLayout::Classic),
+        _ => None,
+    }
 }
 
 /// Plans and commits the bootstrap on one transaction.

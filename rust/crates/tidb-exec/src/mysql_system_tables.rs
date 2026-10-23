@@ -61,7 +61,7 @@ use std::fmt;
 use tidb_codec::table_key::cut_row_key_prefix;
 use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::{decode as decode_datums, encode_key, encode_row_key, gen_table_record_prefix};
-use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_tablecodec::{decode_index_handle, decode_table_row_to_map};
@@ -223,6 +223,10 @@ pub struct SystemTableView {
     types: BTreeMap<i64, FieldType>,
     /// Which projected columns the record key carries instead of the value.
     handle: HandleLayout,
+    /// The declared type of each projected key column, which the row decoder
+    /// is never handed (the value has no entry for it) but a key's flattened
+    /// datums are restored with.
+    key_types: BTreeMap<String, FieldType>,
     /// Public secondary-index name -> `(index ID, indexed column count)`.
     indexes: BTreeMap<String, (i64, usize)>,
 }
@@ -283,6 +287,7 @@ impl SystemTableView {
             ids,
             types,
             handle: HandleLayout::RowId,
+            key_types: BTreeMap::new(),
             indexes: BTreeMap::new(),
         }
     }
@@ -300,6 +305,7 @@ impl SystemTableView {
         let key_columns = handle.columns();
         let mut ids = BTreeMap::new();
         let mut types = BTreeMap::new();
+        let mut key_types = BTreeMap::new();
         for column in table.cols().iter_deref() {
             let column = column.read();
             if column.state != SchemaState::PUBLIC {
@@ -312,7 +318,18 @@ impl SystemTableView {
             ids.insert(lowercase.to_owned(), column.id);
             // A key column has no entry in the row value, so handing its type
             // to the row decoder would only invite it to look for one.
-            if !key_columns.iter().any(|key| key == lowercase) {
+            if key_columns.iter().any(|key| key == lowercase) {
+                key_types.insert(lowercase.to_owned(), column.field_type.clone());
+                // A common handle's string column whose sort key loses the
+                // original bytes is restored from the row value too.
+                if table.is_common_handle
+                    && column
+                        .field_type
+                        .need_restored_data_with_collation(new_collation_enabled())
+                {
+                    types.insert(column.id, column.field_type.clone());
+                }
+            } else {
                 types.insert(column.id, column.field_type.clone());
             }
         }
@@ -335,6 +352,7 @@ impl SystemTableView {
             ids,
             types,
             handle,
+            key_types,
             indexes,
         }
     }
@@ -528,9 +546,10 @@ pub fn scan_system_table_index_prefixed<S: MetaSnapshot>(
 ///
 /// A [`HandleLayout::RowId`] table's key holds only an anonymous
 /// `_tidb_rowid`, which names no declared column, so it decodes to nothing.
-fn decode_handle_columns(
+pub(crate) fn decode_handle_columns(
     view: &SystemTableView,
     key: &[u8],
+    timezone: Option<&SessionTimeZone>,
 ) -> Result<Vec<(String, Datum)>, SystemTableError> {
     let columns = view.handle.columns();
     if columns.is_empty() {
@@ -552,11 +571,29 @@ fn decode_handle_columns(
             // big-endian bytes sort in signed order.
             vec![Datum::Int((u64::from_be_bytes(bytes) ^ (1 << 63)) as i64)]
         }
-        HandleLayout::Common(_) | HandleLayout::RowId => decode_datums(encoded, columns.len())
-            .map_err(|error| SystemTableError::Decode {
-                name: view.name.clone(),
-                detail: error.to_string(),
-            })?,
+        // Go `tablecodec.DecodeHandleToDatumMap`: a common handle's datums
+        // come out of the key flattened (a TIMESTAMP as its packed integer)
+        // and are restored to their column types.
+        HandleLayout::Common(_) | HandleLayout::RowId => {
+            let mut datums =
+                decode_datums(encoded, columns.len()).map_err(|error| SystemTableError::Decode {
+                    name: view.name.clone(),
+                    detail: error.to_string(),
+                })?;
+            if datums.len() == columns.len() {
+                for (column, datum) in columns.iter().zip(datums.iter_mut()) {
+                    let Some(field_type) = view.key_types.get(column) else {
+                        continue;
+                    };
+                    *datum = tidb_tablecodec::unflatten_datum(datum.clone(), field_type, timezone)
+                        .map_err(|error| SystemTableError::Decode {
+                            name: view.name.clone(),
+                            detail: error.to_string(),
+                        })?;
+                }
+            }
+            datums
+        }
     };
     if decoded.len() != columns.len() {
         return Err(SystemTableError::Decode {
@@ -618,9 +655,10 @@ impl<'view> SystemRow<'view> {
                     detail: error.to_string(),
                 }
             })?;
-        for (column, datum) in decode_handle_columns(view, key)? {
+        for (column, datum) in decode_handle_columns(view, key, timezone)? {
             if let Some(id) = view.ids.get(&column) {
-                values.insert(*id, datum);
+                // A restored column is already there, as the original bytes.
+                values.entry(*id).or_insert(datum);
             }
         }
         Ok(Self { view, values })
@@ -1302,6 +1340,6 @@ mod clustered_handle_tests {
         };
         let view = SystemTableView::project("mysql.user", &table, &["host"]);
         assert_eq!(view.handle(), &HandleLayout::RowId);
-        assert!(decode_handle_columns(&view, BUCKET_KEY).unwrap().is_empty());
+        assert!(decode_handle_columns(&view, BUCKET_KEY, None).unwrap().is_empty());
     }
 }

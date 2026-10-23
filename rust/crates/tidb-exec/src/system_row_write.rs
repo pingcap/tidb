@@ -174,6 +174,58 @@ pub fn update_row(
         .map_err(|error| encode_error(error.to_string()))
 }
 
+/// Whether `table`'s rows are keyed by their primary key (an integer primary
+/// key as the handle, or a common handle) rather than by an allocated
+/// `_tidb_rowid`: Go's `tbl.Meta().PKIsHandle || IsCommonHandle`.
+#[must_use]
+pub fn is_clustered(table: &TableInfo) -> bool {
+    table.pk_is_handle || table.is_common_handle
+}
+
+/// The stored row `key`/`value` of `table` as a whole row: the decoded value
+/// and, for a clustered table, the primary-key columns that live only in the
+/// record key (Go's `tablecodec.DecodeRowKey` handle columns).
+pub fn decode_stored_row(
+    table: &TableInfo,
+    key: &[u8],
+    value: &[u8],
+    timezone: Option<&tidb_datatype::SessionTimeZone>,
+) -> Result<RowValues, RowEncodeError> {
+    let types = table
+        .cols()
+        .iter_deref()
+        .map(|column| {
+            let column = column.read();
+            (column.id, column.field_type.clone())
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut values = tidb_tablecodec::decode_table_row_to_map(value, &types, timezone)
+        .map_err(|error| encode_error(error.to_string()))?;
+    if is_clustered(table) {
+        let view = crate::mysql_system_tables::SystemTableView::project(
+            table_name(table),
+            table,
+            &table
+                .cols()
+                .iter_deref()
+                .map(|column| column.read().name.lowercase().to_owned())
+                .collect::<Vec<_>>()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        for (column, datum) in crate::mysql_system_tables::decode_handle_columns(&view, key, timezone)
+            .map_err(|error| encode_error(error.to_string()))?
+        {
+            if let Some(column) = table.find_public_column_by_name(&column) {
+                // A restored column is already there, as the original bytes.
+                values.entry(column.read().id).or_insert(datum);
+            }
+        }
+    }
+    Ok(values)
+}
+
 /// The mutations that remove one stored row and every index entry it owns.
 pub fn delete_row(
     table: &TableInfo,
@@ -265,7 +317,19 @@ fn clustered_record_key_with_collation(
         HandleLayout::Common(columns) => {
             let mut datums = Vec::with_capacity(columns.len());
             for column in columns {
-                datums.push(named(column)?.clone());
+                // In new-collation mode the key holds the column's SORT KEY, and
+                // the key codec takes the collation from the datum: a plain
+                // `Bytes` value would encode as binary (see `collated_value`).
+                let field_type = table
+                    .find_public_column_by_name(column)
+                    .map(|stored| stored.read().field_type.clone());
+                let value = named(column)?.clone();
+                datums.push(match field_type {
+                    Some(field_type) => {
+                        collated_value(typed_value(&value, &field_type)?, &field_type)
+                    }
+                    None => value,
+                });
             }
             let encoded = Encoder::new(use_new_collation)
                 .encode_key(&datums)
@@ -498,17 +562,24 @@ enum IndexOp {
 }
 
 fn encode_row(table: &TableInfo, values: &RowValues) -> Result<Vec<u8>, RowEncodeError> {
-    // A clustered handle's columns live in the record key and nowhere else --
-    // the same rule the reader states in `SystemTableView::project`. A writer
-    // that also put them in the value would store a second copy TiDB never
-    // wrote.
+    // A clustered handle's columns live in the record key and nowhere else
+    // -- the same rule the reader states in `SystemTableView::project` --
+    // except a common handle's string column whose sort key loses the
+    // original bytes (Go `tables.TryGetCommonPkColumnRestoredIds`): its
+    // original value is restored from the row value. A writer that put the
+    // others in the value too would store a second copy TiDB never wrote.
     let handle = HandleLayout::of(table);
     let key_columns = handle.columns();
+    let use_new_collation = new_collation_enabled();
     let mut column_ids = Vec::with_capacity(table.columns.len());
     let mut row = Vec::with_capacity(table.columns.len());
     for column in table.cols().iter_deref() {
         let column = column.read();
-        if key_columns.iter().any(|key| key == column.name.lowercase()) {
+        let restored = table.is_common_handle
+            && column
+                .field_type
+                .need_restored_data_with_collation(use_new_collation);
+        if key_columns.iter().any(|key| key == column.name.lowercase()) && !restored {
             continue;
         }
         let value = values.get(&column.id).ok_or_else(|| {
