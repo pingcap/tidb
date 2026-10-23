@@ -156,7 +156,10 @@ field (as `WakeUpModeForceLock` does today).
 - `kv.LockCtx` gains `SkipLocked bool`; `kv.ReturnedValue` gains `SkipLocked bool`.
   Skipped keys are reported through `LockCtx.Values` (the same surface
   `LockOnlyIfExists` uses to report not-locked keys), plus an `IterateSkippedKeys`
-  helper.
+  helper. `IterateValuesNotLocked` excludes entries marked
+  `ReturnedValue.SkipLocked`, so consumers of not-locked values (e.g. TiDB's
+  PointGet/BatchPointGet pessimistic lock cache) never observe skipped keys as
+  readable values.
 - The pessimistic lock action sets the request field and consumes the per-key
   `Results` with a dedicated response handler. Key errors are terminal (no lock
   resolving / waiting); a legacy-shaped response (no `results`) is converted into a
