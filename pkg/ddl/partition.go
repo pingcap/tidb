@@ -736,12 +736,12 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 	}
 
 	exprCtx := ctx.GetExprCtx()
-	err := generatePartitionDefinitionsFromInterval(exprCtx, s, tbInfo)
+	partitionDefs, err := generatePartitionDefinitionsFromInterval(exprCtx, s, tbInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(exprCtx, s.Definitions, tbInfo, s.Num)
+	defs, err := buildPartitionDefinitionsInfo(exprCtx, partitionDefs, tbInfo, s.Num)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1046,7 +1046,7 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 	}
 	partOption := &ast.PartitionOptions{PartitionMethod: partitionMethod}
 	// Generate the definitions from interval, first and last
-	err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo)
+	_, err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo)
 	if err != nil {
 		return nil
 	}
@@ -1170,40 +1170,41 @@ func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
 	return ret
 }
 
-// generatePartitionDefinitionsFromInterval generates partition Definitions according to INTERVAL options on partOptions
-func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo) error {
+// generatePartitionDefinitionsFromInterval returns definitions for the INTERVAL
+// options without changing the request, including when validation fails.
+func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo) ([]*ast.PartitionDefinition, error) {
 	if partOptions.Interval == nil {
-		return nil
+		return partOptions.Definitions, nil
 	}
 	if tbInfo.Partition.Type != ast.PartitionTypeRange {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only allowed on RANGE partitioning")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only allowed on RANGE partitioning")
 	}
 	if len(partOptions.ColumnNames) > 1 || len(tbInfo.Partition.Columns) > 1 {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column")
 	}
 	var partCol *model.ColumnInfo
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
 		if partCol == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, could not find any RANGE COLUMNS")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, could not find any RANGE COLUMNS")
 		}
 		// Only support Datetime, date and INT column types for RANGE INTERVAL!
 		switch partCol.FieldType.EvalType() {
 		case types.ETInt, types.ETDatetime:
 		default:
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports Date, Datetime and INT types")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports Date, Datetime and INT types")
 		}
 	}
 	// Allow given partition definitions, but check it later!
 	definedPartDefs := partOptions.Definitions
-	partOptions.Definitions = make([]*ast.PartitionDefinition, 0, 1)
+	definitions := make([]*ast.PartitionDefinition, 0, 1)
 	if partOptions.Interval.FirstRangeEnd == nil || partOptions.Interval.LastRangeEnd == nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined")
 	}
 	switch partOptions.Interval.IntervalExpr.TimeUnit {
 	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitMinute, ast.TimeUnitSecond:
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit")
 	}
 	first := ast.PartitionDefinitionClauseLessThan{
 		Exprs: []ast.ExprNode{*partOptions.Interval.FirstRangeEnd},
@@ -1214,20 +1215,20 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 	if len(tbInfo.Partition.Columns) > 0 {
 		colTypes := collectColumnsType(tbInfo)
 		if len(colTypes) != len(tbInfo.Partition.Columns) {
-			return dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+			return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
 		}
 		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, first.Exprs); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, last.Exprs); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		if err := checkPartitionValuesIsInt(ctx, "FIRST PARTITION", first.Exprs, tbInfo); err != nil {
-			return err
+			return nil, err
 		}
 		if err := checkPartitionValuesIsInt(ctx, "LAST PARTITION", last.Exprs, tbInfo); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if partOptions.Interval.NullPart {
@@ -1249,7 +1250,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 			}
 			partExpr = ast.NewValueExpr(minv, "", "")
 		}
-		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
+		definitions = append(definitions, &ast.PartitionDefinition{
 			Name: ast.NewCIStr("P_NULL"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{partExpr},
@@ -1257,13 +1258,15 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 		})
 	}
 
-	err := GeneratePartDefsFromInterval(ctx, ast.AlterTablePartition, tbInfo, partOptions)
+	options := *partOptions
+	options.Definitions = definitions
+	definitions, err := generatePartDefsFromInterval(ctx, ast.AlterTablePartition, tbInfo, &options)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if partOptions.Interval.MaxValPart {
-		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
+		definitions = append(definitions, &ast.PartitionDefinition{
 			Name: ast.NewCIStr("P_MAXVALUE"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
@@ -1272,20 +1275,21 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 	}
 
 	if len(definedPartDefs) > 0 {
-		err := comparePartitionDefinitions(ctx, partOptions.Definitions, definedPartDefs)
+		err := comparePartitionDefinitions(ctx, definitions, definedPartDefs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Seems valid, so keep the defined so that the user defined names are kept etc.
-		partOptions.Definitions = definedPartDefs
+		definitions = definedPartDefs
 	} else if len(tbInfo.Partition.Definitions) > 0 {
-		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition, partCol)
+		options.Definitions = definitions
+		err := comparePartitionAstAndModel(ctx, &options, tbInfo.Partition, partCol)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return definitions, nil
 }
 
 func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]types.Datum, error) {
@@ -1372,17 +1376,30 @@ func astIntValueExprFromStr(s string, unsigned bool) (ast.ExprNode, error) {
 //
 // partition definitions will be set on partitionOptions
 func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions) error {
+	definitions, err := generatePartDefsFromInterval(ctx, tp, tbInfo, partitionOptions)
+	if err != nil {
+		return err
+	}
+	if partitionOptions != nil {
+		partitionOptions.Definitions = definitions
+	}
+	return nil
+}
+
+// generatePartDefsFromInterval keeps the existing definition prefix in a new
+// slice so appending generated partitions cannot change the request's backing array.
+func generatePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions) ([]*ast.PartitionDefinition, error) {
 	if partitionOptions == nil {
-		return nil
+		return nil, nil
 	}
 	var sb strings.Builder
 	err := partitionOptions.Interval.IntervalExpr.Expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	intervalString := driver.UnwrapFromSingleQuotes(sb.String())
 	if len(intervalString) < 1 || intervalString[:1] < "1" || intervalString[:1] > "9" {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL, should be a positive number")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL, should be a positive number")
 	}
 	var currVal types.Datum
 	var startExpr, lastExpr, currExpr ast.ExprNode
@@ -1391,7 +1408,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 	if len(tbInfo.Partition.Columns) == 1 {
 		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
 		if partCol == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL COLUMNS partitioning: could not find partitioning column")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL COLUMNS partitioning: could not find partitioning column")
 		}
 	}
 	timeUnit = partitionOptions.Interval.IntervalExpr.TimeUnit
@@ -1407,20 +1424,20 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 		startExpr = *partitionOptions.Interval.LastRangeEnd
 		lastExpr = partitionOptions.Expr
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
 	}
 	lastVal, err := expression.EvalSimpleAst(ctx, lastExpr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	evalCtx := ctx.GetEvalCtx()
 	if partCol != nil {
 		lastVal, err = lastVal.ConvertTo(evalCtx.TypeCtx(), &partCol.FieldType)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	partDefs := partitionOptions.Definitions
+	partDefs := slices.Clone(partitionOptions.Definitions)
 	if len(partDefs) == 0 {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
@@ -1459,27 +1476,27 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 		}
 		currVal, err = expression.EvalSimpleAst(ctx, currExpr)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if partCol != nil {
 			currVal, err = currVal.ConvertTo(evalCtx.TypeCtx(), &partCol.FieldType)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 		cmp, err := currVal.Compare(evalCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if cmp > 0 {
 			lastStr, err := lastVal.ToString()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			sb.Reset()
 			err = startExpr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 			if err != nil {
-				return err
+				return nil, err
 			}
 			startStr := sb.String()
 			errStr := fmt.Sprintf("INTERVAL: expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
@@ -1487,14 +1504,14 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			if timeUnit != ast.TimeUnitInvalid {
 				errStr = errStr + " " + timeUnit.String()
 			}
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
 		}
 		valStr, err := currVal.ToString()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(valStr) == 0 || valStr[0:1] == "'" {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
 		}
 		partName := "P_LT_" + valStr
 		if timeUnit != ast.TimeUnitInvalid {
@@ -1518,14 +1535,13 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 		}
 		// The last loop still not reach the max value, return error.
 		if i == mysql.PartitionCountLimit-1 {
-			return errors.Trace(dbterror.ErrTooManyPartitions)
+			return nil, errors.Trace(dbterror.ErrTooManyPartitions)
 		}
 	}
 	if len(tbInfo.Partition.Definitions)+len(partDefs) > mysql.PartitionCountLimit {
-		return errors.Trace(dbterror.ErrTooManyPartitions)
+		return nil, errors.Trace(dbterror.ErrTooManyPartitions)
 	}
-	partitionOptions.Definitions = partDefs
-	return nil
+	return partDefs, nil
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant

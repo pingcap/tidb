@@ -3351,6 +3351,7 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		return errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	partitionNames := spec.PartitionNames
 	if spec.Tp == ast.AlterTableDropFirstPartition {
 		intervalOptions := getPartitionIntervalFromTable(ctx.GetExprCtx(), meta)
 		if intervalOptions == nil {
@@ -3361,8 +3362,9 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, table info already contains partition definitions")
 		}
-		spec.Partition.Interval = intervalOptions
-		err = GeneratePartDefsFromInterval(ctx.GetExprCtx(), spec.Tp, meta, spec.Partition)
+		options := *spec.Partition
+		options.Interval = intervalOptions
+		definitions, err := generatePartDefsFromInterval(ctx.GetExprCtx(), spec.Tp, meta, &options)
 		if err != nil {
 			return err
 		}
@@ -3370,27 +3372,28 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 		if intervalOptions.NullPart {
 			pNullOffset = 1
 		}
-		if len(spec.Partition.Definitions) == 0 ||
-			len(spec.Partition.Definitions) >= len(meta.Partition.Definitions)-pNullOffset {
+		if len(definitions) == 0 ||
+			len(definitions) >= len(meta.Partition.Definitions)-pNullOffset {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, number of partitions does not match")
 		}
-		if len(spec.PartitionNames) != 0 || len(spec.Partition.Definitions) <= 1 {
+		if len(partitionNames) != 0 || len(definitions) <= 1 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				"FIRST PARTITION, given value does not generate a list of partition names to be dropped")
 		}
-		for i := range spec.Partition.Definitions {
-			spec.PartitionNames = append(spec.PartitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
+		partitionNames = make([]ast.CIStr, 0, len(definitions))
+		for i := range definitions {
+			partitionNames = append(partitionNames, meta.Partition.Definitions[i+pNullOffset].Name)
 		}
 		// Use the last generated partition as First, i.e. do not drop the last name in the slice
-		spec.PartitionNames = spec.PartitionNames[:len(spec.PartitionNames)-1]
+		partitionNames = partitionNames[:len(partitionNames)-1]
 
 		query, ok := ctx.Value(sessionctx.QueryString).(string)
 		if ok {
-			partNames := make([]string, 0, len(spec.PartitionNames))
+			partNames := make([]string, 0, len(partitionNames))
 			sqlMode := ctx.GetSessionVars().SQLMode
-			for i := range spec.PartitionNames {
-				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
+			for i := range partitionNames {
+				partNames = append(partNames, stringutil.Escape(partitionNames[i].O, sqlMode))
 			}
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
 			syntacticStart := strings.Index(query, syntacticSugar)
@@ -3404,8 +3407,8 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 			ctx.SetValue(sessionctx.QueryString, newQuery)
 		}
 	}
-	partNames := make([]string, len(spec.PartitionNames))
-	for i, partCIName := range spec.PartitionNames {
+	partNames := make([]string, len(partitionNames))
+	for i, partCIName := range partitionNames {
 		partNames[i] = partCIName.L
 	}
 	err = CheckDropTablePartition(meta, partNames)
@@ -6391,6 +6394,7 @@ func validateTableAffinity(tblInfo *model.TableInfo, affinity *model.TableAffini
 // BuildAddedPartitionInfo build alter table add partition info
 func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) (*model.PartitionInfo, error) {
 	numParts := uint64(0)
+	partDefs := spec.PartDefinitions
 	switch meta.Partition.Type {
 	case ast.PartitionTypeNone:
 		// OK
@@ -6405,11 +6409,11 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 
 	case ast.PartitionTypeRange:
 		if spec.Tp == ast.AlterTableAddLastPartition {
-			err := buildAddedPartitionDefs(ctx, meta, spec)
+			var err error
+			partDefs, err = buildAddedPartitionDefs(ctx, meta, spec)
 			if err != nil {
 				return nil, err
 			}
-			spec.PartDefinitions = spec.Partition.Definitions
 		} else {
 			if len(spec.PartDefinitions) == 0 {
 				return nil, ast.ErrPartitionsMustBeDefined.GenWithStackByArgs(meta.Partition.Type)
@@ -6445,7 +6449,7 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 		Enable:  meta.Partition.Enable,
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(ctx, spec.PartDefinitions, meta, numParts)
+	defs, err := buildPartitionDefinitionsInfo(ctx, partDefs, meta, numParts)
 	if err != nil {
 		return nil, err
 	}
@@ -6455,22 +6459,22 @@ func BuildAddedPartitionInfo(ctx expression.BuildContext, meta *model.TableInfo,
 	return part, nil
 }
 
-func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) error {
+func buildAddedPartitionDefs(ctx expression.BuildContext, meta *model.TableInfo, spec *ast.AlterTableSpec) ([]*ast.PartitionDefinition, error) {
 	partInterval := getPartitionIntervalFromTable(ctx, meta)
 	if partInterval == nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			"LAST PARTITION, does not seem like an INTERVAL partitioned table")
 	}
 	if partInterval.MaxValPart {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("LAST PARTITION when MAXVALUE partition exists")
 	}
-
-	spec.Partition.Interval = partInterval
 
 	if len(spec.PartDefinitions) > 0 {
-		return errors.Trace(dbterror.ErrUnsupportedAddPartition)
+		return nil, errors.Trace(dbterror.ErrUnsupportedAddPartition)
 	}
-	return GeneratePartDefsFromInterval(ctx, spec.Tp, meta, spec.Partition)
+	options := *spec.Partition
+	options.Interval = partInterval
+	return generatePartDefsFromInterval(ctx, spec.Tp, meta, &options)
 }
 
 // LockTables uses to execute lock tables statement.

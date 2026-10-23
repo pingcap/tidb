@@ -194,3 +194,123 @@ func parseStorageClassAlterSpec(t *testing.T, sql string) *ast.AlterTableSpec {
 	require.Len(t, alterStmt.Specs, 1)
 	return alterStmt.Specs[0]
 }
+
+func TestIntervalPartitionDefinitionsPreserveRequest(t *testing.T) {
+	ctx := metabuild.NewContext()
+	tbInfo := buildStorageClassTableInfo(t, ctx, `create table t (id int)
+partition by range (id) (partition p0 values less than (10), partition p1 values less than (20))`)
+	for _, sql := range []string{
+		`alter table t last partition less than (40)`,
+		`alter table t last partition less than (35)`,
+	} {
+		t.Run(sql, func(t *testing.T) {
+			spec := parseStorageClassAlterSpec(t, sql)
+			original := parseStorageClassAlterSpec(t, sql)
+			first, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), tbInfo, spec)
+			if sql == `alter table t last partition less than (35)` {
+				require.ErrorContains(t, err, "not matching FIRST + n INTERVALs")
+				require.Nil(t, first)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, []string{"30", "40"}, []string{first.Definitions[0].LessThan[0], first.Definitions[1].LessThan[0]})
+			}
+			require.Equal(t, original, spec)
+			second, secondErr := BuildAddedPartitionInfo(ctx.GetExprCtx(), tbInfo, spec)
+			require.Equal(t, first, second)
+			if err != nil {
+				require.EqualError(t, secondErr, err.Error())
+			} else {
+				require.NoError(t, secondErr)
+			}
+			require.Equal(t, original, spec)
+		})
+	}
+	t.Run("existing definitions do not share append capacity", func(t *testing.T) {
+		var first ast.ExprNode = ast.NewValueExpr(20, "", "")
+		var last ast.ExprNode = ast.NewValueExpr(30, "", "")
+		prefix := &ast.PartitionDefinition{Name: ast.NewCIStr("prefix")}
+		sentinel := &ast.PartitionDefinition{Name: ast.NewCIStr("untouched")}
+		backing := []*ast.PartitionDefinition{prefix, sentinel, sentinel}
+		options := &ast.PartitionOptions{
+			PartitionMethod: ast.PartitionMethod{
+				Interval: &ast.PartitionInterval{
+					IntervalExpr:  ast.PartitionIntervalExpr{Expr: ast.NewValueExpr(10, "", ""), TimeUnit: ast.TimeUnitInvalid},
+					FirstRangeEnd: &first,
+					LastRangeEnd:  &last,
+				},
+			},
+			Definitions: backing[:1],
+		}
+		require.NoError(t, GeneratePartDefsFromInterval(ctx.GetExprCtx(), ast.AlterTablePartition, tbInfo, options))
+		require.Len(t, options.Definitions, 3)
+		require.Same(t, prefix, options.Definitions[0])
+		require.Same(t, sentinel, backing[1])
+		require.Same(t, sentinel, backing[2])
+	})
+}
+
+func TestBuildIntervalPartitionInfoPreservesRequest(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		interval string
+		wantErr  string
+		bounds   []string
+		names    []string
+	}{
+		{
+			name:     "NULL and MAXVALUE partitions",
+			interval: `interval (10) first partition less than (10) last partition less than (30) null partition maxvalue partition`,
+			bounds:   []string{"-2147483648", "10", "20", "30", "MAXVALUE"},
+		},
+		{
+			name: "user-defined names",
+			interval: `interval (10) first partition less than (10) last partition less than (30)
+(partition first_named values less than (10),
+partition middle_named values less than (20), partition last_named values less than (30))`,
+			bounds: []string{"10", "20", "30"},
+			names:  []string{"first_named", "middle_named", "last_named"},
+		},
+		{
+			name: "unsupported user-defined options",
+			interval: `interval (10) first partition less than (10) last partition less than (30)
+(partition first_named values less than (10) comment 'first',
+partition middle_named values less than (20), partition last_named values less than (30))`,
+			wantErr: "partition first_named does have unsupported options",
+		},
+		{
+			name:     "unmatched endpoint",
+			interval: `interval (10) first partition less than (10) last partition less than (25)`,
+			wantErr:  "not matching FIRST + n INTERVALs",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := metabuild.NewContext()
+			sql := `create table t (id int) partition by range columns (id) ` + tt.interval
+			stmt, err := parser.New().ParseOneStmt(sql, "", "")
+			require.NoError(t, err)
+			original, err := parser.New().ParseOneStmt(sql, "", "")
+			require.NoError(t, err)
+			request := stmt.(*ast.CreateTableStmt).Partition
+			for range 2 {
+				tbInfo := buildStorageClassTableInfo(t, ctx, `create table t (id int)`)
+				err = buildTablePartitionInfo(ctx, request, tbInfo)
+				if tt.wantErr != "" {
+					require.ErrorContains(t, err, tt.wantErr)
+				} else {
+					require.NoError(t, err)
+					bounds := make([]string, 0, len(tbInfo.Partition.Definitions))
+					names := make([]string, 0, len(tbInfo.Partition.Definitions))
+					for _, def := range tbInfo.Partition.Definitions {
+						bounds = append(bounds, def.LessThan[0])
+						names = append(names, def.Name.O)
+					}
+					require.Equal(t, tt.bounds, bounds)
+					if tt.names != nil {
+						require.Equal(t, tt.names, names)
+					}
+				}
+				require.Equal(t, original.(*ast.CreateTableStmt).Partition, request)
+			}
+		})
+	}
+}
