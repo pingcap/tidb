@@ -82,7 +82,7 @@ The divergence outlives a single query. A function result can be stored and inde
 an index on a generated column, an index on an expression, or a `CHECK` constraint, so a
 disagreement between the node that wrote a value and the node that later reads or re-checks it
 can corrupt an index or drop a row. So the requirement is one result per input, the same on
-every component, every CPU and every version.
+every component and every CPU.
 
 ## Detailed Design
 
@@ -109,6 +109,9 @@ particular, out of scope here:
   for example); unifying the codes and the wording is not part of this design.
 - **Order-dependent aggregation** such as `SUM`, `AVG` and variance, whose result depends on
   the order rows are combined rather than on a single function value.
+- **Function versioning:** which result changes need a new version, and how a cluster records,
+  chooses and changes the version used by a stored expression or a statement. That is a
+  separate design; this design supplies shared implementations it can choose from.
 
 ### Function groups
 
@@ -204,46 +207,33 @@ compute the same results.
 
 ### Versioning and rolling upgrade
 
-A result must only ever change deliberately and cluster-wide, never as a silent side effect of
-rebuilding on a new machine or math-library version. The rules:
+A result must only change deliberately, never as a side effect of rebuilding on a new machine,
+compiler or math-library version. The library provides what that needs from the computation:
 
-- **Each shared function carries a version.** The existing per-engine implementations are
-  version 0; the first shared implementation of a function is version 1. A result changes only
-  by introducing a new version of that function.
-- **The shared library's version is pinned by the cluster version,** so every component of a
-  release computes the same version of a function.
-- **A component keeps computing the current version until the whole cluster has moved to the
-  new one,** which turns a potentially silent, per-node change into an explicit, cluster-wide
-  switch.
-- **A persisted use of a function records the function and its version.** Where a computed
-  value is stored, in a `CHECK` constraint, a generated column (including a stored one) or a
-  functional index, the schema records which function and version produced it. An upgrade that
-  adds a new version then cannot silently change or invalidate the stored value: the recorded
-  version says how it was computed, so the engine can keep using that version for that object
-  or migrate it deliberately. This is the mechanism behind the stored-and-indexed-values
-  compatibility point below.
+- **Reproducible results.** A given build of the library gives the same result for a function
+  on every engine and every CPU, and every component of a release links the same build, pinned
+  by the cluster version.
+- **Detectable changes.** The library adds tests, a fixed corpus and a results identity, that
+  reasonably identify result changes, so a change is not silent.
+- **Several versions side by side.** The library can provide more than one implementation of a
+  function at a time.
 
-During a rolling upgrade the cluster runs mixed versions. The component that plans and runs
-the query, the optimizer and execution engine in `tidb-server` today, decides per function
-whether it may be pushed down yet, so a function is never evaluated at one version on one node
-and another version on another. The precise rule (for example, push a function down only once
-every node that could evaluate it supports the target version) is an open question below.
+Function versioning, a separate design, decides which result changes need a new version, which
+version a stored expression or a statement uses, and when a cluster moves to a new one. It is
+needed without this library: session settings, toolchain upgrades and bug fixes already change
+the results behind stored expressions (#70100).
 
 ### Compatibility
 
 - **Stored and indexed derived values.** Indexes on generated columns, indexes on
-  expressions, and `CHECK` constraints persist computed values. Recording the function and
-  version that produced each such value (see Versioning) keeps an upgrade from silently making
-  a persisted value disagree with a fresh computation; the upgrade path decides whether a
-  stored value is kept at its recorded version or recomputed deliberately.
+  expressions, `CHECK` constraints and partition expressions persist computed values. Which
+  version each one uses is decided by function versioning (see Versioning).
 - **Internal components:** parser and planner are unaffected; the executor and the coprocessor
   pushdown path change their function implementation but not their interfaces.
 - **External components:** TiKV and TiFlash link the same library; BR restores data without
   recomputing these functions; TiCDC replicates stored values, not recomputations. PD is
   unaffected.
-- **Upgrade and downgrade:** covered by the versioning rules. A downgrade to a version that
-  lacks a function version must be prevented from using results computed at the newer version
-  where those results are persisted.
+- **Upgrade and downgrade:** handled by function versioning (see Versioning).
 
 ## Test Design
 
@@ -266,8 +256,8 @@ every node that could evaluate it supports the target version) is an open questi
 ### Compatibility Tests
 
 - Indexes on generated columns and on expressions over these functions, and `CHECK`
-  constraints: write under one version, read and re-check under the next, across the upgrade
-  gate.
+  constraints: written before and read and re-checked after an engine switches a function to
+  its shared implementation.
 - A rolling upgrade with mixed versions, exercising pushdown of an in-scope function while the
   cluster is mixed.
 - Backup and restore, and change-data-capture, of tables holding such derived values.
@@ -302,15 +292,11 @@ mixed workloads move within noise; the server binary grows by a few megabytes.
 
 **Risks (unintended, may or may not happen):**
 
-- **Result changes invalidating persisted derived values.** Addressed by function versioning
-  and by recording the function version in the generated column, functional index or `CHECK`
-  constraint that stored the value (see Versioning), so a stored value keeps its version across
-  an upgrade. The residual risk is an incomplete implementation of that recording.
+- **Result changes invalidating persisted derived values.** Addressed by function versioning,
+  a separate design (see Versioning).
 - **Mixed-version push-down.** During a rolling upgrade a function could be evaluated at one
-  version on one node and another version on another. Avoiding that needs each `tidb-server`
-  to know which coprocessor function versions every other node (TiKV, TiFlash and other TiDB
-  nodes) supports before it pushes a function down, so it requires a thorough implementation of
-  version tracking across the cluster, not just a local check.
+  version on one node and another version on another. Avoiding that is up to the engines that
+  use the library, through function versioning (see Versioning).
 - **Regex semantic shift:** unifying on one regular-expression engine can change which strings
   match for patterns that rely on engine-specific syntax, a user-visible change to assess per
   function.
@@ -350,7 +336,6 @@ module exists (for example DuckDB's Go bindings), as does a Rust binding to CORE
   Owning it removes a per-engine source of divergence but adds a status to every function's
   interface; the SQL-mode-dependent policy and the error wording stay with each engine either
   way.
-- The exact mixed-version push-down rule during a rolling upgrade.
 - Whether the engines run a startup self-check that each reproduces the library's results
   identity, and if so what a node does on a mismatch: log, stop pushing these functions down,
   or refuse to start.
