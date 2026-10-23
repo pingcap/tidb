@@ -5536,14 +5536,6 @@ impl ClusterServerSession {
         )))
     }
 
-    fn binding_records_changed(&self) -> bool {
-        self.commit_hooks().binding_records_changed(&self.buffer)
-    }
-
-    fn refresh_committed_bindings(&self, changed: bool) {
-        self.commit_hooks().refresh_committed_bindings(changed);
-    }
-
     /// The tables this connection's catalog left out, with their reasons.
     #[must_use]
     pub fn skipped_tables(&self) -> &[SkippedTable] {
@@ -6440,72 +6432,22 @@ impl ClusterServerSession {
         self.commit_explicit()
     }
 
-    /// Publishes the buffer when the session is not inside `BEGIN`.
-    ///
-    /// An empty buffer -- every read statement -- publishes nothing and spends
-    /// no timestamp, as a Go COMMIT of a transaction that wrote nothing does.
+    /// Publishes the buffer when the session is not inside `BEGIN`; see
+    /// [`TxnManager::flush_if_autocommit`].
     fn flush_if_autocommit(
         &mut self,
         read_ts: Option<u64>,
         write_transaction: Option<transactions::WriteTransactionSlot>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
-        if self.txn.explicit.is_some() || self.session.in_transaction() {
-            return Ok(());
-        }
-        // Go's autocommit `CommitTxn`, which a failed commit has run too.
-        self.session
-            .set_txn_isolation_level_one_shot_state_for_next_txn();
-        let write_details = self.txn.buffer_write_details();
-        self.txn.note_autocommit_txn_bytes(self.buffer.staged_bytes());
-        if let Some(write_transaction) = write_transaction {
-            let transaction = write_transaction
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .take();
-            if let Some(mut transaction) = transaction {
-                if let Some(checker) = self.schema_lease_checker() {
-                    transaction.set_schema_lease_checker(checker);
-                }
-                let bindings_changed = self.binding_records_changed();
-                return match transaction.commit(&self.buffer) {
-                    Ok(committed) => {
-                        self.record_committed_txn_info(committed);
-                        self.refresh_committed_bindings(bindings_changed);
-                        TxnManager::record_write_details(&mut self.session, write_details);
-                        self.session.publish_table_delta();
-                        Ok(())
-                    }
-                    Err(error) => {
-                        self.buffer.reset();
-                        self.session.clear_table_delta();
-                        Err(self.try_replace_write_conflict_error(error))
-                    }
-                };
-            }
-        }
-        let outcome = self.commit_autocommit_buffer(read_ts, resource_group);
-        if outcome.is_ok() {
-            TxnManager::record_write_details(&mut self.session, write_details);
-            self.session.publish_table_delta();
-        } else {
-            self.session.clear_table_delta();
-        }
-        outcome
-    }
-
-    fn buffer_write_details(&self) -> (isize, isize) {
-        let (write_size, write_keys) = self.buffer.write_details();
-        (write_size as isize, write_keys as isize)
-    }
-
-    fn record_write_details(&mut self, (write_size, write_keys): (isize, isize)) {
-        if write_size > 0 {
-            tidb_txnkv::client_go_metrics::observe_txn_write_size_bytes(write_size, false);
-            self.session
-                .txn_write_throughput_sli()
-                .add_txn_write_size(write_size, write_keys);
-        }
+        let hooks = self.commit_hooks();
+        self.txn.flush_if_autocommit(
+            &mut self.session,
+            &hooks,
+            read_ts,
+            write_transaction,
+            resource_group,
+        )
     }
 
     fn rollback_prefetched_write(write_transaction: Option<transactions::WriteTransactionSlot>) {
@@ -6529,30 +6471,6 @@ impl ClusterServerSession {
             schema_version: self.schema_version,
             catalog: self.session.shared_catalog(),
         }
-    }
-
-    /// Go `SetOptionsBeforeCommit` (`base.go:560-616`): the checker a commit
-    /// carries; see [`NodeCommitHooks`].
-    fn schema_lease_checker(&self) -> Option<Arc<dyn SchemaLeaseChecker>> {
-        self.commit_hooks().schema_lease_checker()
-    }
-
-    /// Publishes one autocommit statement's staged writes as its own
-    /// transaction; see [`TxnManager::commit_autocommit_buffer`].
-    fn commit_autocommit_buffer(
-        &mut self,
-        read_ts: Option<u64>,
-        resource_group: &str,
-    ) -> Result<(), SqlQueryError> {
-        let hooks = self.commit_hooks();
-        self.txn
-            .commit_autocommit_buffer(&self.session, &hooks, read_ts, resource_group)
-    }
-
-    /// Go `doCommitWithRetry`'s `tryReplaceWriteConflictError`; see
-    /// [`NodeCommitHooks`].
-    fn try_replace_write_conflict_error(&self, error: SqlQueryError) -> SqlQueryError {
-        self.commit_hooks().rewrite_write_conflict(error)
     }
 
     /// Go's `kv.CommitHook`: a transaction that committed records its own

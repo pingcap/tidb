@@ -33,7 +33,9 @@ use tidb_exec::sql_query_error::SqlQueryError;
 use tidb_executor::cluster_storage::{BufferCheckpoint, MutationBuffer};
 use tidb_txnkv::transaction::SchemaLeaseChecker;
 
-use crate::cluster_transactions::{ClusterTransactions, CommittedTxnInfo, OpenClusterTransaction};
+use crate::cluster_transactions::{
+    ClusterTransactions, CommittedTxnInfo, OpenClusterTransaction, WriteTransactionSlot,
+};
 use crate::lazy_transaction::{LazyClusterTransaction, TransactionOpener};
 use crate::{SavepointStack, Session};
 
@@ -412,6 +414,62 @@ impl TxnManager {
                 Err(hooks.rewrite_write_conflict(error))
             }
         }
+    }
+
+    /// Publishes the buffer when the session is not inside `BEGIN`: the
+    /// autocommit statement's `CommitTxn` (Go `autoCommitAfterStmt`).
+    ///
+    /// An empty buffer -- every read statement -- publishes nothing and spends
+    /// no timestamp, as a Go COMMIT of a transaction that wrote nothing does.
+    pub fn flush_if_autocommit(
+        &mut self,
+        session: &mut Session,
+        hooks: &dyn CommitHooks,
+        read_ts: Option<u64>,
+        write_transaction: Option<WriteTransactionSlot>,
+        resource_group: &str,
+    ) -> Result<(), SqlQueryError> {
+        if self.explicit.is_some() || session.in_transaction() {
+            return Ok(());
+        }
+        // Go's autocommit `CommitTxn`, which a failed commit has run too.
+        session.set_txn_isolation_level_one_shot_state_for_next_txn();
+        let write_details = self.buffer_write_details();
+        self.autocommit_txn_bytes = self.buffer.staged_bytes();
+        if let Some(write_transaction) = write_transaction {
+            let transaction = write_transaction
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .take();
+            if let Some(mut transaction) = transaction {
+                if let Some(checker) = hooks.schema_lease_checker() {
+                    transaction.set_schema_lease_checker(checker);
+                }
+                let bindings_changed = hooks.binding_records_changed(&self.buffer);
+                return match transaction.commit(&self.buffer) {
+                    Ok(committed) => {
+                        Self::record_committed_txn_info(session, committed);
+                        hooks.refresh_committed_bindings(bindings_changed);
+                        Self::record_write_details(session, write_details);
+                        session.publish_table_delta();
+                        Ok(())
+                    }
+                    Err(error) => {
+                        self.buffer.reset();
+                        session.clear_table_delta();
+                        Err(hooks.rewrite_write_conflict(error))
+                    }
+                };
+            }
+        }
+        let outcome = self.commit_autocommit_buffer(session, hooks, read_ts, resource_group);
+        if outcome.is_ok() {
+            Self::record_write_details(session, write_details);
+            session.publish_table_delta();
+        } else {
+            session.clear_table_delta();
+        }
+        outcome
     }
 
     /// Ends the explicit transaction by publishing its buffer at its own start
