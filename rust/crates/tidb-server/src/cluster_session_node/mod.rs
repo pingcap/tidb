@@ -388,6 +388,7 @@ fn jitter_below(upper: u32) -> u32 {
 }
 
 mod bdr_role_store;
+mod catalog_follower;
 mod binding_maintenance;
 mod boot;
 use tidb_ddl::worker as ddl;
@@ -3790,7 +3791,16 @@ impl ClusterSessionFactory {
 
         Ok(ClusterServerSession {
             session,
-            statistics_loading,
+            follower: catalog_follower::CatalogFollower::new(
+                Arc::clone(&self.catalog),
+                storage,
+                Arc::clone(&self.auto_ids),
+                statistics_loading,
+                Arc::clone(&self.transactions),
+                self.global_vars.clone(),
+                loaded.schema_version,
+                built.skipped,
+            ),
             bindings: self.bindings.clone(),
             stats_usage: Arc::clone(&self.stats_usage),
             global_vars: self.global_vars.clone(),
@@ -3803,7 +3813,6 @@ impl ClusterSessionFactory {
             buffer,
             activate_statement_txn: false,
             slot,
-            storage,
             transactions: Arc::clone(&self.transactions),
             ddl: Arc::clone(&self.ddl),
             accounts: Arc::clone(&self.accounts),
@@ -3812,9 +3821,7 @@ impl ClusterSessionFactory {
             approximate_table_counts: Arc::clone(&self.approximate_table_counts),
             stats_lock: Arc::clone(&self.stats_lock),
             catalog: Arc::clone(&self.catalog),
-            schema_version: loaded.schema_version,
             stats: Arc::clone(&self.stats),
-            skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
             schema_pins: Arc::clone(&self.schema_pins),
             connection_id: connection_id,
@@ -4913,7 +4920,10 @@ impl tidb_session::binding::GlobalBindingWriter for InternalBindingWriter {
 /// One connection's wide-SQL session over cluster storage.
 pub struct ClusterServerSession {
     session: Session,
-    statistics_loading: ClusterStatisticsLoading,
+    /// The node's catalog this connection follows: the schema version its
+    /// tables were built from, what it left out, and the handles it rebuilds
+    /// them over. See [`catalog_follower::CatalogFollower`].
+    follower: catalog_follower::CatalogFollower,
     bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
     /// Go Domain's node-global pending statistics deltas.
     stats_usage: Arc<tidb_stats_handle_usage::StatsUsageHandle>,
@@ -4932,10 +4942,6 @@ pub struct ClusterServerSession {
     activate_statement_txn: bool,
     /// The slot every table of `session` reads through; rebound per statement.
     slot: Arc<Mutex<SwappableSnapshot>>,
-    /// The handles every table of `session` was built over, kept so the
-    /// connection's catalog can be rebuilt after a DDL without disturbing the
-    /// snapshot slot or the staged writes.
-    storage: ClusterTableStorage,
     transactions: Arc<dyn ClusterTransactions>,
     /// The route a stored-schema change takes; see [`ClusterDdl`].
     ddl: Arc<dyn ClusterDdl>,
@@ -4954,16 +4960,10 @@ pub struct ClusterServerSession {
     stats_lock: Arc<dyn ClusterStatsLock>,
     /// The node's catalog, which this connection follows.
     catalog: Arc<SharedClusterCatalog>,
-    /// The schema version `session`'s tables were built from. A move in
-    /// `catalog` past this is what makes the connection rebuild them.
-    schema_version: i64,
     /// The node's statistics, republished on its own cadence by the stats
     /// reload thread -- an `ANALYZE` changes these without changing the
     /// schema version, so they are followed separately.
     stats: Arc<SharedStats>,
-    /// Tables of the cluster this connection's catalog could not include,
-    /// answered by name when a statement names one. Rebuilt with the catalog.
-    skipped: Vec<SkippedTable>,
     /// The node's auto-increment allocators, needed on every catalog rebuild
     /// so the rebuilt tables keep the ranges the old ones had reserved.
     auto_ids: Arc<dyn TableAutoIds>,
@@ -5539,7 +5539,7 @@ impl ClusterServerSession {
     /// The tables this connection's catalog left out, with their reasons.
     #[must_use]
     pub fn skipped_tables(&self) -> &[SkippedTable] {
-        &self.skipped
+        &self.follower.skipped
     }
 
     /// Runs one client statement after refreshing the catalog and opening any
@@ -5630,7 +5630,7 @@ impl ClusterServerSession {
         // drop under a statement mid-flight. Dropped with the scope.
         let _statement_pin = self
             .schema_pins
-            .hold(self.connection_id, self.schema_version);
+            .hold(self.connection_id, self.follower.schema_version());
         let savepoint = self.buffer.checkpoint();
         self.session.set_selected_lock_keys(
             self.txn.explicit
@@ -6400,7 +6400,7 @@ impl ClusterServerSession {
     /// as Go does -- so none of them opens one either.
     fn begin_if_autocommit_off(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
         self.txn
-            .enter_if_autocommit_off(&self.session, resource_group, self.schema_version);
+            .enter_if_autocommit_off(&self.session, resource_group, self.follower.schema_version());
         Ok(())
     }
 
@@ -6408,7 +6408,7 @@ impl ClusterServerSession {
     /// once; see [`TxnManager::open`].
     fn open_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
         self.txn
-            .open(&self.session, resource_group, self.schema_version)
+            .open(&self.session, resource_group, self.follower.schema_version())
     }
 
     /// Publishes the transaction a statement ended from the INSIDE.
@@ -6468,7 +6468,7 @@ impl ClusterServerSession {
         NodeCommitHooks {
             bindings: self.bindings.clone(),
             schema_validator: self.schema_validator.clone(),
-            schema_version: self.schema_version,
+            schema_version: self.follower.schema_version(),
             catalog: self.session.shared_catalog(),
         }
     }
@@ -6505,7 +6505,7 @@ impl ClusterServerSession {
                     &self.session,
                     name,
                     &resource_group,
-                    self.schema_version,
+                    self.follower.schema_version(),
                 )?;
             }
             TransactionControl::RollbackToSavepoint(name) => {
@@ -6537,10 +6537,7 @@ impl ClusterServerSession {
     /// timestamp cannot see. Go holds the transaction's `InfoSchema` for the
     /// same reason.
     fn rebuild_catalog_if_stale(&mut self) {
-        if self.txn.explicit.is_some() || self.session.in_transaction() {
-            return;
-        }
-        self.rebuild_catalog_now();
+        self.follower.rebuild_if_stale(&mut self.session, &self.txn);
     }
 
     /// The unguarded rebuild: `BEGIN` calls this directly because the session
@@ -6549,37 +6546,7 @@ impl ClusterServerSession {
     /// (`domain.GetSnapshotInfoSchema(startTS)`) — a table committed before
     /// `BEGIN` is visible to every statement of the new transaction.
     fn rebuild_catalog_now(&mut self) {
-        let loaded = self.catalog.load();
-        // Go pins InfoSchema independently of Domain.StatsHandle. Statistics
-        // reads already see current publications, including inside a transaction.
-        if loaded.schema_version == self.schema_version {
-            return;
-        }
-        let mut built = cluster_session_catalog_with_templates(
-            &loaded,
-            &self.storage,
-            None,
-            self.auto_ids.as_ref(),
-            &self.storage,
-            None,
-        );
-        built
-            .catalog
-            .set_local_temporary_id_allocator(Arc::new(ClusterLocalTemporaryIds {
-                transactions: Arc::clone(&self.transactions),
-                global_vars: self.global_vars.clone(),
-            }));
-        self.statistics_loading.attach(&mut built.catalog);
-        let shared = self.session.shared_catalog();
-        let mut catalog = shared.lock().unwrap_or_else(|poison| poison.into_inner());
-        // The region map is store metadata the schema rebuild does not own.
-        built.catalog.set_region_store(catalog.region_store());
-        *catalog = built.catalog;
-        drop(catalog);
-        self.schema_version = loaded.schema_version;
-        self.session
-            .set_plan_cache_schema_version(loaded.schema_version as u64);
-        self.skipped = built.skipped;
+        self.follower.rebuild(&mut self.session);
     }
 
     /// Decides what this mode does with a statement that changes stored state:

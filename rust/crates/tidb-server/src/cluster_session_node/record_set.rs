@@ -112,7 +112,7 @@ impl ClusterServerSession {
         let statement = ReadStatement {
             _pin: self
                 .schema_pins
-                .hold(self.connection_id, self.schema_version),
+                .hold(self.connection_id, self.follower.schema_version()),
             read_ts: scope.read_ts,
             savepoint: self.buffer.checkpoint(),
             autocommit: scope.autocommit,
