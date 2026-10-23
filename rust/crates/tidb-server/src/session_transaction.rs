@@ -23,14 +23,7 @@
 //! is lazy, which Go's `OnInitialize` (`activeNow = true`) refutes.
 
 /// Go `SetOptionsOnTxnActive`: capture the validated session values once.
-pub(crate) fn transaction_options(
-    vars: &tidb_session::SessionVars,
-) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
-    options_from_values(|name| {
-        vars.system_value(name)
-            .expect("transaction options are registered")
-    })
-}
+pub(crate) use tidb_session::txn_manager::transaction_options;
 
 /// A restricted operation without a retained SQL session starts with the
 /// global values a new system session would inherit.
@@ -51,18 +44,13 @@ fn options_from_values<V: AsRef<str>>(
     use tidb_vardef::tidb_vars::{
         TIDB_ENABLE1_PC, TIDB_ENABLE_ASYNC_COMMIT, TIDB_TXN_ASSERTION_LEVEL,
     };
-    tidb_exec::session_commit_protocol::SessionTransactionOptions {
-        commit_protocol: tidb_txnkv::transaction::CommitProtocol {
-            async_commit: tidb_vardef::option_values::tidb_opt_on(
-                get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
-            ),
-            one_pc: tidb_vardef::option_values::tidb_opt_on(get(TIDB_ENABLE1_PC).as_ref()),
-        },
-        assertion_level: match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
+    tidb_session::txn_manager::options_from_values(
+        get(TIDB_ENABLE_ASYNC_COMMIT).as_ref(),
+        get(TIDB_ENABLE1_PC).as_ref(),
+        match tidb_opt_assertion_level(get(TIDB_TXN_ASSERTION_LEVEL).as_ref()) {
             AssertionLevel::Off => tidb_proto::KvrpcAssertionLevel::Off,
             AssertionLevel::Fast => tidb_proto::KvrpcAssertionLevel::Fast,
             AssertionLevel::Strict => tidb_proto::KvrpcAssertionLevel::Strict,
         },
-        kv_context: None,
-    }
+    )
 }

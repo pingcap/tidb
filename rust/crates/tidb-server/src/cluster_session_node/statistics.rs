@@ -310,7 +310,7 @@ impl ClusterServerSession {
         tables: &[AnalyzeStatement],
     ) -> Result<WriteOutcome, SqlQueryError> {
         let statement_memory = self.session.routed_statement_memory();
-        if self.explicit.is_some() || self.session.in_transaction() {
+        if self.txn.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
         self.record_new_txn_in_stmt();

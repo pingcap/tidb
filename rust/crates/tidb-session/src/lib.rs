@@ -1391,6 +1391,7 @@ pub use table_lock::ClusterDdlLockEffect;
 mod table_privilege;
 pub mod cluster_transactions;
 pub mod lazy_transaction;
+pub mod txn_manager;
 mod savepoints;
 pub use savepoints::SavepointStack;
 mod txn;

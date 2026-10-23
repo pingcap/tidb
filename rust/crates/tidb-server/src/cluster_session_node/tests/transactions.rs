@@ -1082,7 +1082,7 @@ fn ending_the_transaction_clears_the_cluster_savepoint_stack() {
         session.control_transaction("BEGIN").expect("begin");
         session.control_transaction("SAVEPOINT s1").expect("s1");
         session.control_transaction(ending).expect("ending");
-        assert!(session.savepoints.is_empty(), "{ending} kept a savepoint");
+        assert!(session.txn.savepoints_is_empty(), "{ending} kept a savepoint");
         session.control_transaction("BEGIN").expect("begin");
         assert!(
             session.control_transaction("ROLLBACK TO s1").is_err(),

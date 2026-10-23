@@ -53,7 +53,7 @@ impl ClusterServerSession {
                 .open_snapshot_at(ts, resource_group)
                 .map_err(SqlQueryError::unknown);
         }
-        if let Some(transaction) = &self.explicit {
+        if let Some(transaction) = &self.txn.explicit {
             let locking = shape == StatementReadShape::LockingRead;
             let snapshot = match retry_read_ts {
                 Some(ts) => transaction.snapshot_at_for(ts, locking),
@@ -103,7 +103,7 @@ impl ClusterServerSession {
         shape: StatementReadShape,
         resource_group: &str,
     ) -> Result<ReadStatement, SqlQueryError> {
-        if let Some(transaction) = &self.explicit {
+        if let Some(transaction) = &self.txn.explicit {
             transaction
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
@@ -195,7 +195,7 @@ impl ClusterServerSession {
         .map_err(|error| self.record_statement_failure(error))?;
         let buffers_rows = shape == StatementReadShape::LockingRead
             && self
-                .explicit
+                .txn.explicit
                 .as_ref()
                 .is_some_and(|transaction| transaction.is_pessimistic());
         let (opened, snapshot) = if buffers_rows || shape == StatementReadShape::AutocommitWrite {

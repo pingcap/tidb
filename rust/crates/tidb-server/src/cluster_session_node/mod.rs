@@ -394,7 +394,7 @@ use tidb_ddl::worker as ddl;
 mod ddl_job_history_store;
 mod ddl_notifier;
 pub(crate) mod gc_worker;
-use tidb_session::lazy_transaction;
+use tidb_session::txn_manager::{CommitHooks, TxnManager};
 mod non_transactional_dml;
 mod record_set;
 mod ru_stats_writer;
@@ -408,7 +408,6 @@ pub use boot::run_cluster_session_node;
 pub(crate) use boot::run_cluster_session_node_with_spill;
 pub use ddl::{ClusterDdl, RealClusterDdl};
 pub use tidb_exec::real_tikv_ddl::ClusterDdlReport;
-use tidb_hack::GoToLower;
 #[cfg(test)]
 use transactions::sql_error;
 pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterTransactions};
@@ -3795,8 +3794,13 @@ impl ClusterSessionFactory {
             bindings: self.bindings.clone(),
             stats_usage: Arc::clone(&self.stats_usage),
             global_vars: self.global_vars.clone(),
+            txn: TxnManager::new(
+                Arc::clone(&self.transactions),
+                Arc::new(NodeSchemaPins(Arc::clone(&self.schema_pins))),
+                connection_id,
+                buffer.clone(),
+            ),
             buffer,
-            autocommit_txn_bytes: 0,
             activate_statement_txn: false,
             slot,
             storage,
@@ -3810,14 +3814,10 @@ impl ClusterSessionFactory {
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
             stats: Arc::clone(&self.stats),
-            explicit: None,
-            lazy_uniqueness_check_enabled: false,
-            savepoints: tidb_session::SavepointStack::default(),
             skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
             schema_pins: Arc::clone(&self.schema_pins),
             connection_id: connection_id,
-            transaction_pin: None,
             schema_validator: self.schema_validator.clone(),
             historical_stats_worker: Arc::clone(&self.historical_stats_worker),
         })
@@ -4215,7 +4215,7 @@ impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
     }
 
     fn txn_valid(&self) -> Result<bool, tidb_sqlexec::SqlExecError> {
-        self.with_session(|session| Ok(session.explicit.is_some()))
+        self.with_session(|session| Ok(session.txn.explicit.is_some()))
     }
 
     fn sql_executor(&self) -> Arc<dyn tidb_sqlexec::SqlExecutor> {
@@ -4372,7 +4372,7 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
 
     fn transaction_start_ts(&self, active: bool) -> Result<u64, tidb_sqlexec::SqlExecError> {
         self.with_session(|session| {
-            if let Some(transaction) = session.explicit.as_ref() {
+            if let Some(transaction) = session.txn.explicit.as_ref() {
                 return Ok(transaction.start_ts());
             }
             if active {
@@ -4922,10 +4922,11 @@ pub struct ClusterServerSession {
     /// This connection's staged writes, published by `COMMIT` (or by the end
     /// of an autocommit statement).
     buffer: MutationBuffer,
-    /// Go `doCommitWithRetry`'s `txnSize`, read from the buffer just before
-    /// the autocommit commit that may fail: the commit resets the buffer, and
-    /// the retry budget is decided after it.
-    autocommit_txn_bytes: usize,
+    /// The session's transaction manager over the store seam (Go
+    /// `sessiontxn.TxnManager` and its `LazyTxn`): the transaction a `BEGIN` or
+    /// an `autocommit = 0` statement holds, its savepoints, schema pin and
+    /// commit.
+    txn: TxnManager,
     /// Whether the running write is one whose transaction Go's executor
     /// builder activates before it runs ([`Self::activates_txn_at_build`]).
     activate_statement_txn: bool,
@@ -4960,31 +4961,6 @@ pub struct ClusterServerSession {
     /// reload thread -- an `ANALYZE` changes these without changing the
     /// schema version, so they are followed separately.
     stats: Arc<SharedStats>,
-    /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
-    /// where a statement prepares a timestamp of its own after planning and
-    /// waits for it at its first read.
-    explicit: Option<Box<dyn OpenClusterTransaction>>,
-    /// Go LazyTxn captures this policy when the transaction becomes valid.
-    lazy_uniqueness_check_enabled: bool,
-    /// The transaction's savepoints, oldest first: for each, the name
-    /// lowercased and the buffer image taken when it was declared.
-    ///
-    /// The driver session owns the savepoint RULES -- which names exist, which
-    /// ones a `ROLLBACK TO` or `RELEASE` drops, and the 1305 an unknown name
-    /// reports -- exactly as it owns `in_transaction`. This owns what those
-    /// rules mean for cluster storage, where the session's catalog image
-    /// restores nothing (every table shares one `Arc` buffer). It is the same
-    /// `MutationBuffer::staged()`/`restore()` pair
-    /// [`ClusterServerSession::with_bound_statement`] already uses for
-    /// statement-level rollback, held under a name.
-    ///
-    /// The two stacks stay in step because both apply the same rules to the
-    /// same statement sequence, and the session's error arm runs FIRST -- a
-    /// name this stack could not find is one the session already refused.
-    savepoints: tidb_session::SavepointStack<(
-        BufferCheckpoint,
-        std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
-    )>,
     /// Tables of the cluster this connection's catalog could not include,
     /// answered by name when a statement names one. Rebuilt with the catalog.
     skipped: Vec<SkippedTable>,
@@ -4996,11 +4972,6 @@ pub struct ClusterServerSession {
     schema_pins: Arc<schema_sync::SchemaPinRegistry>,
     /// This connection's id, the registry's key.
     connection_id: u64,
-    /// Held from `BEGIN` to `COMMIT`/`ROLLBACK` (dropped with the session on
-    /// a disconnect): while it lives, the schema-sync acknowledger reports
-    /// nothing newer than this transaction's catalog to a Go DDL owner --
-    /// Go's metadata lock, at transaction scope.
-    transaction_pin: Option<schema_sync::SchemaPinGuard>,
     /// The node's schema validator; see [`ClusterSessionFactory`].
     schema_validator: Option<Arc<SchemaValidator>>,
     /// The domain-global mailbox successful ANALYZE results enqueue into.
@@ -5111,7 +5082,7 @@ impl ClusterServerSession {
     /// read and read back by its publication after the read handle is gone --
     /// autocommit publishes THERE, not at a fresh one, see `StatementReadTs`.
     fn begin_statement_scope(&mut self, notify_executor_breakpoint: bool) -> StatementScope {
-        let autocommit = self.explicit.is_none() && self.session.historical_read_ts().is_none();
+        let autocommit = self.txn.explicit.is_none() && self.session.historical_read_ts().is_none();
         if autocommit {
             self.session.current_tso().clear();
         }
@@ -5139,6 +5110,78 @@ impl ClusterServerSession {
             }
             self.session.current_tso().clear();
         }
+    }
+}
+
+/// The node's [`tidb_session::txn_manager::SchemaPins`]: its MDL registry.
+struct NodeSchemaPins(Arc<schema_sync::SchemaPinRegistry>);
+
+impl tidb_session::txn_manager::SchemaPins for NodeSchemaPins {
+    fn hold(&self, connection_id: u64, version: i64) -> Box<dyn Send> {
+        Box::new(self.0.hold(connection_id, version))
+    }
+}
+
+/// What a commit reads off this node: the schema lease checker, the binding
+/// cache and the catalog a write-conflict message is rewritten against.
+struct NodeCommitHooks {
+    bindings: Option<Arc<dyn crate::cluster_binding_seam::ClusterBindings>>,
+    schema_validator: Option<Arc<SchemaValidator>>,
+    schema_version: i64,
+    catalog: tidb_session::SharedCatalog,
+}
+
+impl CommitHooks for NodeCommitHooks {
+    /// Go `SetOptionsBeforeCommit` (`base.go:560-616`): the checker a commit
+    /// carries -- the node's validator and the schema version this
+    /// transaction was planned against (`GetTxnInfoSchema().SchemaMetaVersion()`:
+    /// the version pinned at `BEGIN`, or the autocommit statement's own).
+    /// The physical tables it wrote and the MDL switch are read at commit.
+    fn schema_lease_checker(&self) -> Option<Arc<dyn SchemaLeaseChecker>> {
+        self.schema_validator.as_ref().map(|validator| {
+            Arc::new(schema_lease::SessionSchemaLeaseChecker::new(
+                Arc::clone(validator),
+                self.schema_version,
+            )) as Arc<dyn SchemaLeaseChecker>
+        })
+    }
+
+    fn binding_records_changed(&self, buffer: &MutationBuffer) -> bool {
+        self.bindings
+            .as_ref()
+            .is_some_and(|bindings| bindings.has_changes(buffer))
+    }
+
+    fn refresh_committed_bindings(&self, changed: bool) {
+        if changed {
+            if let Some(bindings) = &self.bindings {
+                if let Err(error) = bindings.reload() {
+                    // The commit succeeded. Retain the last image and let the
+                    // lease worker retry; never replay a committed statement.
+                    eprintln!("committed binding cache reload failed: {error}");
+                }
+            }
+        }
+    }
+
+    /// Go `doCommitWithRetry`'s `tryReplaceWriteConflictError`
+    /// (`pkg/session/session.go:862`), against the transaction's infoschema
+    /// (`GetTxnInfoSchema`): the connection's catalog, which is not rebuilt
+    /// while a transaction is open.
+    fn rewrite_write_conflict(&self, error: SqlQueryError) -> SqlQueryError {
+        if error.write_conflict.is_none() {
+            return error;
+        }
+        let catalog = self
+            .catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let redaction = tidb_txnkv::driver::transaction_error::Redaction::current();
+        transactions::try_replace_write_conflict_error(error, redaction, |table_id| {
+            catalog
+                .table_names_by_id(table_id)
+                .map(|(schema, table)| (Some(schema), table))
+        })
     }
 }
 
@@ -5189,7 +5232,7 @@ impl ClusterServerSession {
         // point: `Session::control_transaction` sets `in_transaction` for any
         // BEGIN spelling, so honoring the refusal afterwards would leave the
         // session inside a transaction that this node never opened -- no
-        // `self.explicit`, so every following statement reads at a fresh
+        // `self.txn.explicit`, so every following statement reads at a fresh
         // timestamp, its writes stay in the buffer, and its COMMIT publishes
         // without a conflict check. The read-only node already refuses here
         // (`real_tikv_node`); this one used to fall through an empty arm.
@@ -5260,7 +5303,7 @@ impl ClusterServerSession {
                 // store transaction would be published by the next
                 // statement's `commit_if_session_left_transaction`, so a
                 // COMMIT the client saw fail would take effect after all.
-                if self.explicit.is_some() && !self.session.in_transaction() {
+                if self.txn.explicit.is_some() && !self.session.in_transaction() {
                     self.discard_explicit()?;
                 }
                 return Err(map_error(error));
@@ -5276,7 +5319,7 @@ impl ClusterServerSession {
                 // `doCommitWithRetry` opens its region only over a valid
                 // transaction.
                 drop(simple_exec.take());
-                let _commit_txn = CommitTxnRegions::begin(self.explicit.is_some());
+                let _commit_txn = CommitTxnRegions::begin(self.txn.explicit.is_some());
                 self.commit_explicit()?;
             }
             Some(TransactionControl::Rollback) => {
@@ -5494,21 +5537,11 @@ impl ClusterServerSession {
     }
 
     fn binding_records_changed(&self) -> bool {
-        self.bindings
-            .as_ref()
-            .is_some_and(|bindings| bindings.has_changes(&self.buffer))
+        self.commit_hooks().binding_records_changed(&self.buffer)
     }
 
     fn refresh_committed_bindings(&self, changed: bool) {
-        if changed {
-            if let Some(bindings) = &self.bindings {
-                if let Err(error) = bindings.reload() {
-                    // The commit succeeded. Retain the last image and let the
-                    // lease worker retry; never replay a committed statement.
-                    eprintln!("committed binding cache reload failed: {error}");
-                }
-            }
-        }
+        self.commit_hooks().refresh_committed_bindings(changed);
     }
 
     /// The tables this connection's catalog left out, with their reasons.
@@ -5542,7 +5575,7 @@ impl ClusterServerSession {
         read_only: bool,
     ) -> Result<(), SqlQueryError> {
         self.rebuild_catalog_if_stale();
-        if read_only && self.explicit.is_none() && !self.session.in_transaction() {
+        if read_only && self.txn.explicit.is_none() && !self.session.in_transaction() {
             let vars = self.session.vars();
             if vars.snapshot_ts() != 0
                 || vars
@@ -5555,8 +5588,9 @@ impl ClusterServerSession {
         self.begin_if_autocommit_off(resource_group)?;
         // Go `SetOptionsOnTxnActive` reads the session values when the
         // transaction activates, so a pending one follows each statement's.
-        if let Some(transaction) = &self.explicit {
-            transaction.set_activation_options(self.statement_transaction_options());
+        if let Some(transaction) = &self.txn.explicit {
+            transaction
+                .set_activation_options(TxnManager::statement_transaction_options(&self.session));
         }
         Ok(())
     }
@@ -5607,7 +5641,7 @@ impl ClusterServerSession {
             .hold(self.connection_id, self.schema_version);
         let savepoint = self.buffer.checkpoint();
         self.session.set_selected_lock_keys(
-            self.explicit
+            self.txn.explicit
                 .as_ref()
                 .filter(|transaction| transaction.is_pessimistic())
                 .map(|_| {
@@ -5662,7 +5696,10 @@ impl ClusterServerSession {
             }
         };
         self.session.end_external_mpp_query_scope(outcome.is_err());
-        if outcome.is_ok() && self.explicit.is_some() && self.lazy_uniqueness_check_enabled {
+        if outcome.is_ok()
+            && self.txn.explicit.is_some()
+            && self.txn.lazy_uniqueness_check_enabled()
+        {
             self.buffer.preserve_statement_presumptions(savepoint);
         }
         self.buffer.release(savepoint);
@@ -5699,7 +5736,7 @@ impl ClusterServerSession {
         if outcome.is_err()
             && (is_dml || shape == StatementReadShape::LockingRead)
             && self
-                .explicit
+                .txn.explicit
                 .as_ref()
                 .is_some_and(|txn| txn.is_pessimistic())
             && self.session.in_transaction()
@@ -5760,7 +5797,7 @@ impl ClusterServerSession {
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
-        if let Some(transaction) = self.explicit.as_ref() {
+        if let Some(transaction) = self.txn.explicit.as_ref() {
             transaction
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
@@ -5771,7 +5808,7 @@ impl ClusterServerSession {
                 )
                 .map_err(SqlQueryError::unknown)?;
         }
-        let write_transaction = (self.explicit.is_none()
+        let write_transaction = (self.txn.explicit.is_none()
             && shape == StatementReadShape::AutocommitWrite)
             .then(|| Arc::new(Mutex::new(None)));
         // Go `handlePessimisticDML`'s statement loop: run, lock the staged
@@ -5791,7 +5828,7 @@ impl ClusterServerSession {
             // Selected rows belong to this execution attempt, not an earlier
             // plan or a partially executed failed read.
             self.session.take_selected_lock_keys();
-            if let Some(transaction) = self.explicit.as_ref() {
+            if let Some(transaction) = self.txn.explicit.as_ref() {
                 let _ = transaction.take_statement_lock_failure();
             }
             *lock_retry
@@ -5808,7 +5845,7 @@ impl ClusterServerSession {
             // (`tryUpdatePointPlan`) and locks it inside execution with the
             // session's `LockWaitTimeout` (`getLockWaitTime`).
             let autocommit_write =
-                self.explicit.is_none() && shape == StatementReadShape::AutocommitWrite;
+                self.txn.explicit.is_none() && shape == StatementReadShape::AutocommitWrite;
             let autocommit_pessimistic =
                 autocommit_write && self.autocommit_write_is_pessimistic(retrying);
             if autocommit_write {
@@ -5863,7 +5900,7 @@ impl ClusterServerSession {
             // that activation; a failed open is reported by the read or
             // commit that follows.
             if self.activate_statement_txn
-                && self.explicit.is_none()
+                && self.txn.explicit.is_none()
                 && shape != StatementReadShape::AutocommitWrite
             {
                 let _ = self
@@ -5877,7 +5914,7 @@ impl ClusterServerSession {
             // inside a pending `autocommit = 0` transaction that is its
             // activation.
             if self.activate_statement_txn {
-                if let Some(transaction) = self.explicit.as_ref() {
+                if let Some(transaction) = self.txn.explicit.as_ref() {
                     if let Err(error) = transaction.activate() {
                         let _ = self.finish_snapshot();
                         break Err(SqlQueryError::unknown(error));
@@ -5889,7 +5926,7 @@ impl ClusterServerSession {
             // for the transaction an autocommit statement ends: recorded
             // only when the statement activated one (`TxnCtx.StartTS != 0`),
             // before the commit whose hook overwrites it.
-            if self.explicit.is_none() && self.session.historical_read_ts().is_none() {
+            if self.txn.explicit.is_none() && self.session.historical_read_ts().is_none() {
                 if let Some(start_ts) = read_ts.get() {
                     self.session.record_started_txn_info(start_ts);
                 }
@@ -5897,7 +5934,7 @@ impl ClusterServerSession {
             // Go `TxnCtx.GetForUpdateTS` as the statement left it: a deferred
             // handle advances the for-update timestamp at its first read,
             // after the open published the transaction's earlier one.
-            if let Some(transaction) = self.explicit.as_ref() {
+            if let Some(transaction) = self.txn.explicit.as_ref() {
                 self.session
                     .current_for_update_ts()
                     .publish(transaction.for_update_ts());
@@ -5913,7 +5950,7 @@ impl ClusterServerSession {
                     }
                     match self.lock_pessimistic_statement_keys(savepoint) {
                         Ok(PessimisticStep::Done) => {
-                            if let Some(transaction) = self.explicit.as_ref() {
+                            if let Some(transaction) = self.txn.explicit.as_ref() {
                                 if let Err(error) = transaction.finish_pessimistic_statement(true) {
                                     break Err(SqlQueryError::unknown(error));
                                 }
@@ -5945,17 +5982,16 @@ impl ClusterServerSession {
                         // Go `finishStmt` -> `autoCommitAfterStmt`: outside a
                         // transaction, `session.CommitTxn` ->
                         // `session.doCommitWithRetry`.
-                        let _commit = (self.explicit.is_none() && !self.session.in_transaction())
-                            .then(|| {
-                                (
-                                    tidb_util::tracing::begin_thread_region_scope(
-                                        "session.CommitTxn",
-                                    ),
-                                    tidb_util::tracing::begin_thread_region_scope(
-                                        "session.doCommitWithRetry",
-                                    ),
-                                )
-                            });
+                        let ends_transaction =
+                            self.txn.explicit.is_none() && !self.session.in_transaction();
+                        let _commit = ends_transaction.then(|| {
+                            (
+                                tidb_util::tracing::begin_thread_region_scope("session.CommitTxn"),
+                                tidb_util::tracing::begin_thread_region_scope(
+                                    "session.doCommitWithRetry",
+                                ),
+                            )
+                        });
                         self.flush_if_autocommit(
                             read_ts.get(),
                             write_transaction.clone(),
@@ -5972,12 +6008,12 @@ impl ClusterServerSession {
                     // on that lock: act on the lock's outcome as
                     // `handlePessimisticLockError` does.
                     let failure = self
-                        .explicit
+                        .txn.explicit
                         .as_ref()
                         .and_then(|transaction| transaction.take_statement_lock_failure());
                     // An autocommit statement's lock found a newer committed
                     // version of a row it read.
-                    let autocommit_retry = if self.explicit.is_none() {
+                    let autocommit_retry = if self.txn.explicit.is_none() {
                         lock_retry
                             .lock()
                             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -6038,12 +6074,12 @@ impl ClusterServerSession {
             // Go `autoCommitAfterStmt`: a statement that failed outside a
             // transaction is rolled back under `session.RollbackTxn`.
             let _rollback_txn =
-                (!committing && self.explicit.is_none() && !self.session.in_transaction())
+                (!committing && self.txn.explicit.is_none() && !self.session.in_transaction())
                     .then(|| tidb_util::tracing::start_thread_region_ex("session.RollbackTxn"));
             Self::rollback_prefetched_write(write_transaction);
             // Cancel the client's active fair scope. Ordinary locks remain
             // transaction-owned, following Go StmtRollback.
-            if let Some(transaction) = self.explicit.as_ref() {
+            if let Some(transaction) = self.txn.explicit.as_ref() {
                 let _ = transaction.finish_pessimistic_statement(false);
                 // The statement's writes go; the transaction keeps its
                 // earlier writes and native lock ownership.
@@ -6099,7 +6135,7 @@ impl ClusterServerSession {
         &mut self,
         savepoint: &BufferCheckpoint,
     ) -> Result<PessimisticStep, SqlQueryError> {
-        let Some(transaction) = self.explicit.as_ref() else {
+        let Some(transaction) = self.txn.explicit.as_ref() else {
             return Ok(PessimisticStep::Done);
         };
         if !transaction.is_pessimistic() {
@@ -6140,7 +6176,7 @@ impl ClusterServerSession {
         keys: Vec<Vec<u8>>,
         wait: tidb_txnkv::transaction::LockWaitTime,
     ) -> Result<PessimisticStep, SqlQueryError> {
-        let transaction = self.explicit.as_ref().expect("pessimistic transaction");
+        let transaction = self.txn.explicit.as_ref().expect("pessimistic transaction");
         // Table-selected native flags decide which keys need locking. A
         // live session switch cannot override an earlier key's selected policy.
         let key_set: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
@@ -6262,7 +6298,7 @@ impl ClusterServerSession {
         error.code == ERR_WRITE_CONFLICT
             && !self.session.vars().batch_insert()
             && retried < self.autocommit_retry_budget()
-            && self.explicit.is_none()
+            && self.txn.explicit.is_none()
             && !self.session.in_transaction()
     }
 
@@ -6290,7 +6326,7 @@ impl ClusterServerSession {
         // 100 MiB `TxnTotalSizeLimit`, so the ratio is ~0 and the budget is
         // the full limit; the scaling is kept so a large statement retries
         // less, as Go's does.
-        let txn_bytes = self.autocommit_txn_bytes as u64;
+        let txn_bytes = self.txn.autocommit_txn_bytes() as u64;
         let size_limit = tidb_config::config_tree::config::get_global_config()
             .performance
             .txn_total_size_limit
@@ -6371,119 +6407,16 @@ impl ClusterServerSession {
     /// statements never reach here -- each commits the open transaction first,
     /// as Go does -- so none of them opens one either.
     fn begin_if_autocommit_off(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
-        if self.explicit.is_some() || self.session.is_autocommit() {
-            return Ok(());
-        }
-        self.enter_pending_explicit(resource_group)
-    }
-
-    /// Go `resolveTxnMode` of `newProviderWithRequest`: `BEGIN <mode>` wins, a
-    /// bare `BEGIN` falls back to `@@tidb_txn_mode` -- whose default is
-    /// PESSIMISTIC (`vardef.DefTiDBTxnMode`). The session resolved the keyword
-    /// half at `BEGIN`; the variable half covers `SET autocommit = 0`, which
-    /// carries no keyword.
-    fn explicit_transaction_is_pessimistic(&self) -> bool {
-        match self.session.txn_mode() {
-            Some(mode) => mode.is_pessimistic(),
-            None => tidb_planner::txn_mode::txn_mode_variable(
-                &self
-                    .session
-                    .vars()
-                    .get_system("tidb_txn_mode")
-                    .unwrap_or_else(|_| "pessimistic".to_owned()),
-            )
-            .is_pessimistic(),
-        }
-    }
-
-    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)`
-    /// (`pkg/session/session.go:4908`): the `autocommit = 0` transaction is
-    /// entered but left pending. It takes its timestamp, publishes
-    /// `TxnCtx.StartTS` and registers in `information_schema.tidb_trx` at the
-    /// first statement that activates it (`lazy_transaction`).
-    fn enter_pending_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
-        if self.session.historical_read_ts().is_some() {
-            return self.open_explicit(resource_group);
-        }
-        let pessimistic = self.explicit_transaction_is_pessimistic();
-        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
-        // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
-        let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
-        let transactions = Arc::clone(&self.transactions);
-        let current_tso = self.session.current_tso();
-        let observer = self.session.transaction_observer();
-        let resource_group = resource_group.to_owned();
-        let opener: lazy_transaction::TransactionOpener = Box::new(move |options| {
-            let transaction =
-                transactions.begin(pessimistic, fair_locking, &resource_group, options)?;
-            current_tso.publish(transaction.start_ts());
-            if let Some(observer) = observer {
-                observer.activated(transaction.start_ts());
-            }
-            Ok(transaction)
-        });
-        self.explicit = Some(Box::new(lazy_transaction::LazyClusterTransaction::new(
-            pessimistic,
-            self.statement_transaction_options(),
-            self.buffer.clone(),
-            opener,
-        )));
-        self.pin_explicit_schema();
+        self.txn
+            .enter_if_autocommit_off(&self.session, resource_group, self.schema_version);
         Ok(())
-    }
-
-    /// Go `SetOptionsOnTxnActive`'s inputs: the validated session values and
-    /// the statement ctx the transaction's requests report through.
-    fn statement_transaction_options(
-        &self,
-    ) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
-        crate::session_transaction::transaction_options(self.session.vars())
-            .with_statement_kv_context(self.session.statement_kv_context_cell())
-    }
-
-    /// The transaction reads this catalog version until it ends; the pin is
-    /// what a Go owner's `WaitVersionSynced` waits out (Go
-    /// `CheckOldRunningTxn`, at this port's whole-transaction scope).
-    fn pin_explicit_schema(&mut self) {
-        self.lazy_uniqueness_check_enabled = !self.session.pessimistic_constraint_check_in_place();
-        self.transaction_pin = Some(
-            self.schema_pins
-                .hold(self.connection_id, self.schema_version),
-        );
     }
 
     /// Go `EnterNewTxnWithBeginStmt`: `BEGIN` activates the transaction at
-    /// once (`OnInitialize`'s `activeNow`, `isolation/base.go:88`), so its
-    /// timestamp is taken here.
+    /// once; see [`TxnManager::open`].
     fn open_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
-        if let Some(ts) = self.session.historical_read_ts() {
-            self.session.current_tso().publish(ts);
-            if let Some(observer) = self.session.transaction_observer() {
-                observer.activated(ts);
-            }
-            return Ok(());
-        }
-        let pessimistic = self.explicit_transaction_is_pessimistic();
-        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
-        // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
-        let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
-        let transaction = self
-            .transactions
-            .begin(
-                pessimistic,
-                fair_locking,
-                resource_group,
-                self.statement_transaction_options(),
-            )
-            .map_err(SqlQueryError::unknown)?;
-        transaction.bind_mutation_buffer(&self.buffer);
-        self.session.current_tso().publish(transaction.start_ts());
-        if let Some(observer) = self.session.transaction_observer() {
-            observer.activated(transaction.start_ts());
-        }
-        self.explicit = Some(transaction);
-        self.pin_explicit_schema();
-        Ok(())
+        self.txn
+            .open(&self.session, resource_group, self.schema_version)
     }
 
     /// Publishes the transaction a statement ended from the INSIDE.
@@ -6501,7 +6434,7 @@ impl ClusterServerSession {
     /// line: an `explicit` the session no longer believes in is always one to
     /// publish.
     fn commit_if_session_left_transaction(&mut self) -> Result<(), SqlQueryError> {
-        if self.explicit.is_none() || self.session.in_transaction() {
+        if self.txn.explicit.is_none() || self.session.in_transaction() {
             return Ok(());
         }
         self.commit_explicit()
@@ -6517,14 +6450,14 @@ impl ClusterServerSession {
         write_transaction: Option<transactions::WriteTransactionSlot>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
-        if self.explicit.is_some() || self.session.in_transaction() {
+        if self.txn.explicit.is_some() || self.session.in_transaction() {
             return Ok(());
         }
         // Go's autocommit `CommitTxn`, which a failed commit has run too.
         self.session
             .set_txn_isolation_level_one_shot_state_for_next_txn();
-        let write_details = self.buffer_write_details();
-        self.autocommit_txn_bytes = self.buffer.staged_bytes();
+        let write_details = self.txn.buffer_write_details();
+        self.txn.note_autocommit_txn_bytes(self.buffer.staged_bytes());
         if let Some(write_transaction) = write_transaction {
             let transaction = write_transaction
                 .lock()
@@ -6539,7 +6472,7 @@ impl ClusterServerSession {
                     Ok(committed) => {
                         self.record_committed_txn_info(committed);
                         self.refresh_committed_bindings(bindings_changed);
-                        self.record_write_details(write_details);
+                        TxnManager::record_write_details(&mut self.session, write_details);
                         self.session.publish_table_delta();
                         Ok(())
                     }
@@ -6553,7 +6486,7 @@ impl ClusterServerSession {
         }
         let outcome = self.commit_autocommit_buffer(read_ts, resource_group);
         if outcome.is_ok() {
-            self.record_write_details(write_details);
+            TxnManager::record_write_details(&mut self.session, write_details);
             self.session.publish_table_delta();
         } else {
             self.session.clear_table_delta();
@@ -6588,72 +6521,38 @@ impl ClusterServerSession {
         }
     }
 
+    /// What a commit reads off this node; see [`CommitHooks`].
+    fn commit_hooks(&self) -> NodeCommitHooks {
+        NodeCommitHooks {
+            bindings: self.bindings.clone(),
+            schema_validator: self.schema_validator.clone(),
+            schema_version: self.schema_version,
+            catalog: self.session.shared_catalog(),
+        }
+    }
+
     /// Go `SetOptionsBeforeCommit` (`base.go:560-616`): the checker a commit
-    /// carries -- the node's validator and the schema version this
-    /// transaction was planned against (`GetTxnInfoSchema().SchemaMetaVersion()`:
-    /// the version pinned at `BEGIN`, or the autocommit statement's own).
-    /// The physical tables it wrote and the MDL switch are read at commit.
+    /// carries; see [`NodeCommitHooks`].
     fn schema_lease_checker(&self) -> Option<Arc<dyn SchemaLeaseChecker>> {
-        self.schema_validator.as_ref().map(|validator| {
-            Arc::new(schema_lease::SessionSchemaLeaseChecker::new(
-                Arc::clone(validator),
-                self.schema_version,
-            )) as Arc<dyn SchemaLeaseChecker>
-        })
+        self.commit_hooks().schema_lease_checker()
     }
 
     /// Publishes one autocommit statement's staged writes as its own
-    /// transaction, at the timestamp the statement read at. A failed
-    /// publication discards them, which is what a failed COMMIT does.
-    ///
-    /// A publication that lost the race against a commit made after the read is
-    /// now a 9007 the client is told about, where publishing at a fresh
-    /// timestamp made it a silent overwrite.
+    /// transaction; see [`TxnManager::commit_autocommit_buffer`].
     fn commit_autocommit_buffer(
         &mut self,
         read_ts: Option<u64>,
         resource_group: &str,
     ) -> Result<(), SqlQueryError> {
-        let bindings_changed = self.binding_records_changed();
-        match self.transactions.commit_with_schema_lease(
-            &self.buffer,
-            read_ts,
-            resource_group,
-            self.schema_lease_checker(),
-            crate::session_transaction::transaction_options(self.session.vars())
-                .with_statement_kv_context(self.session.statement_kv_context_cell()),
-            self.session.transaction_observer(),
-        ) {
-            Ok(committed) => {
-                self.record_committed_txn_info(committed);
-                self.refresh_committed_bindings(bindings_changed);
-                Ok(())
-            }
-            Err(error) => {
-                self.buffer.reset();
-                Err(self.try_replace_write_conflict_error(error))
-            }
-        }
+        let hooks = self.commit_hooks();
+        self.txn
+            .commit_autocommit_buffer(&self.session, &hooks, read_ts, resource_group)
     }
 
-    /// Go `doCommitWithRetry`'s `tryReplaceWriteConflictError`
-    /// (`pkg/session/session.go:862`), against the transaction's infoschema
-    /// (`GetTxnInfoSchema`): the connection's catalog, which is not rebuilt
-    /// while a transaction is open.
+    /// Go `doCommitWithRetry`'s `tryReplaceWriteConflictError`; see
+    /// [`NodeCommitHooks`].
     fn try_replace_write_conflict_error(&self, error: SqlQueryError) -> SqlQueryError {
-        if error.write_conflict.is_none() {
-            return error;
-        }
-        let catalog = self.session.shared_catalog();
-        let catalog = catalog
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let redaction = tidb_txnkv::driver::transaction_error::Redaction::current();
-        transactions::try_replace_write_conflict_error(error, redaction, |table_id| {
-            catalog
-                .table_names_by_id(table_id)
-                .map(|(schema, table)| (Some(schema), table))
-        })
+        self.commit_hooks().rewrite_write_conflict(error)
     }
 
     /// Go's `kv.CommitHook`: a transaction that committed records its own
@@ -6670,182 +6569,41 @@ impl ClusterServerSession {
     }
 
     /// Ends the explicit transaction by publishing its buffer at its own start
-    /// timestamp.
-    ///
-    /// A `COMMIT` with no transaction open is the autocommit path: it can only
-    /// find writes the previous statement already published, so the buffer is
-    /// empty and nothing is spent.
+    /// timestamp; see [`TxnManager::commit`].
     fn commit_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.finish_snapshot()?;
-        self.savepoints.clear();
-        self.session.current_tso().clear();
-        self.transaction_pin = None;
-        let Some(mut transaction) = self.explicit.take() else {
-            if let Some(observer) = self.session.transaction_observer() {
-                observer.finished();
-            }
-            // No transaction and no statement read: the buffer can only hold
-            // what a previous statement already published, so there is nothing
-            // to publish and no timestamp to publish it at.
-            let resource_group = self.session.current_resource_group().to_owned();
-            return self.commit_autocommit_buffer(None, &resource_group);
-        };
-        if let Some(checker) = self.schema_lease_checker() {
-            transaction.set_schema_lease_checker(checker);
-        }
-        let bindings_changed = self.binding_records_changed();
-        let write_details = self.buffer_write_details();
-        // Go `session.Commit`'s `recordOnTransactionExecution`
-        // (`session.go:897`): the transaction's wall-clock duration since
-        // `BEGIN` and its statement count, labeled by pessimistic/optimistic
-        // mode and the commit's outcome.
-        let txn_mode = if transaction.is_pessimistic() {
-            "pessimistic"
-        } else {
-            "optimistic"
-        };
-        let txn_opened_at = transaction.opened_at();
-        let txn_statement_count = transaction.statement_count() as f64;
-        // Go `CommitTxn` -> `setLastTxnInfoBeforeTxnEnd`: the start-only
-        // record is written before the commit, and the commit hook
-        // overwrites it only when a commit really ran.
-        let start_ts = transaction.start_ts_if_active();
-        if let Some(start_ts) = start_ts {
-            self.session.record_started_txn_info(start_ts);
-        }
-        let commit_result = transaction.commit(&self.buffer);
-        if let Some(observer) = self.session.transaction_observer() {
-            observer.finished();
-        }
-        let (duration_label, num_label) = if commit_result.is_ok() {
-            ("commit", "ok")
-        } else {
-            ("abort", "error")
-        };
-        // A pending transaction no statement activated has no commit to
-        // observe (`doCommitWithRetry` returns for an invalid transaction).
-        if start_ts.is_some() {
-            tidb_session::metrics::TRANSACTION_DURATION
-                .with_label_values(&[txn_mode, duration_label, "general"])
-                .observe(txn_opened_at.elapsed().as_secs_f64());
-            tidb_session::metrics::STATEMENT_PER_TRANSACTION
-                .with_label_values(&[txn_mode, num_label, "general"])
-                .observe(txn_statement_count);
-        }
-        match commit_result {
-            Ok(committed) => {
-                self.record_committed_txn_info(committed);
-                self.refresh_committed_bindings(bindings_changed);
-                self.record_write_details(write_details);
-                self.session.publish_table_delta();
-                Ok(())
-            }
-            Err(error) => {
-                self.buffer.reset();
-                self.session.clear_table_delta();
-                Err(self.try_replace_write_conflict_error(error))
-            }
-        }
+        let hooks = self.commit_hooks();
+        self.txn.commit(&mut self.session, &hooks)
     }
 
     /// Applies one savepoint statement to the connection's buffer, after the
-    /// driver session has accepted it.
-    ///
-    /// Each arm is the byte half of the rule the session just applied:
-    /// declaring a name replaces any earlier entry and pushes the image on
-    /// top; `ROLLBACK TO` puts the named image back and drops the savepoints
-    /// above it, keeping the named one so it can be rolled back to again;
-    /// `RELEASE` drops the named one and those above it, touching no bytes.
+    /// driver session has accepted it: the byte half of the rule the session
+    /// just applied; see [`TxnManager::add_savepoint`].
     fn apply_savepoint(&mut self, control: &TransactionControl) -> Result<(), SqlQueryError> {
         match control {
             TransactionControl::Savepoint(name) => {
-                // Go's `executeSavepoint` calls `Txn(true)`, so with autocommit
-                // OFF the SAVEPOINT is what ACTIVATES the pending transaction:
-                // the session just opened its own here, and this must open the
-                // node's, or the image below would be taken over a buffer whose
-                // transaction has not started (captured: under autocommit = 0,
-                // `SAVEPOINT sp; INSERT; ROLLBACK TO sp` leaves the row gone and
-                // the COMMIT publishes nothing).
                 let resource_group = self.session.current_resource_group().to_owned();
-                self.begin_if_autocommit_off(&resource_group)?;
-                if let Some(transaction) = self.explicit.as_ref() {
-                    transaction.activate().map_err(SqlQueryError::unknown)?;
-                }
-                // In autocommit the statement succeeds while recording nothing,
-                // exactly as the session's does -- which is what leaves a later
-                // `ROLLBACK TO` to report 1305 (captured).
-                if self.explicit.is_none() {
-                    return Ok(());
-                }
-                let image = self.buffer.checkpoint();
-                let delta = self.session.table_delta_savepoint();
-                self.savepoints.add(name, (image, delta));
+                self.txn.add_savepoint(
+                    &self.session,
+                    name,
+                    &resource_group,
+                    self.schema_version,
+                )?;
             }
             TransactionControl::RollbackToSavepoint(name) => {
-                if let Some((image, delta)) = self.savepoints.rollback_to(name) {
-                    self.buffer.restore(image.clone());
-                    self.session.restore_table_delta_savepoint(delta.clone());
-                }
+                self.txn.rollback_to_savepoint(&self.session, name);
             }
-            TransactionControl::ReleaseSavepoint(name) => {
-                self.savepoints.release(name);
-            }
+            TransactionControl::ReleaseSavepoint(name) => self.txn.release_savepoint(name),
             _ => {}
         }
         Ok(())
     }
 
     /// Drops the explicit transaction without publishing anything, along with
-    /// every write it staged.
+    /// every write it staged; see [`TxnManager::rollback`].
     fn discard_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.finish_snapshot()?;
-        self.session.clear_table_delta();
-        self.savepoints.clear();
-        self.session.current_tso().clear();
-        self.transaction_pin = None;
-        let result = match self.explicit.take() {
-            Some(transaction) => {
-                // Go `pkg/session/metrics`: a rolled-back transaction counts
-                // as an abort, and its statement count is observed under the
-                // error result label.
-                let txn_mode = if transaction.is_pessimistic() {
-                    "pessimistic"
-                } else {
-                    "optimistic"
-                };
-                let txn_opened_at = transaction.opened_at();
-                let txn_statement_count = transaction.statement_count() as f64;
-                // Go `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`.
-                let start_ts = transaction.start_ts_if_active();
-                if let Some(start_ts) = start_ts {
-                    self.session.record_started_txn_info(start_ts);
-                }
-                let result = transaction.rollback();
-                if let Some(observer) = self.session.transaction_observer() {
-                    observer.finished();
-                }
-                // A pending transaction no statement activated was never a
-                // transaction to abort.
-                if start_ts.is_some() {
-                    tidb_session::metrics::TRANSACTION_DURATION
-                        .with_label_values(&[txn_mode, "abort", "general"])
-                        .observe(txn_opened_at.elapsed().as_secs_f64());
-                    tidb_session::metrics::STATEMENT_PER_TRANSACTION
-                        .with_label_values(&[txn_mode, "error", "general"])
-                        .observe(txn_statement_count);
-                }
-                result.map_err(SqlQueryError::unknown)
-            }
-            None => {
-                if let Some(observer) = self.session.transaction_observer() {
-                    observer.finished();
-                }
-                Ok(())
-            }
-        };
-        // Rollback needs the native buffer's lock flags to release every key.
-        self.buffer.reset();
-        result
+        self.txn.rollback(&mut self.session)
     }
 
     /// Rebinds this connection's tables to the node's current catalog.
@@ -6861,7 +6619,7 @@ impl ClusterServerSession {
     /// timestamp cannot see. Go holds the transaction's `InfoSchema` for the
     /// same reason.
     fn rebuild_catalog_if_stale(&mut self) {
-        if self.explicit.is_some() || self.session.in_transaction() {
+        if self.txn.explicit.is_some() || self.session.in_transaction() {
             return;
         }
         self.rebuild_catalog_now();
@@ -7252,7 +7010,7 @@ impl ClusterServerSession {
     /// commits one: MySQL and Go both commit implicitly before a statement
     /// that changes stored state outside it.
     fn run_account_statement(&mut self, sql: &str) -> Result<WriteOutcome, SqlQueryError> {
-        if self.explicit.is_some() || self.session.in_transaction() {
+        if self.txn.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
         self.record_new_txn_in_stmt();
@@ -7458,7 +7216,7 @@ impl ClusterServerSession {
     }
 
     fn notifier_transaction(&self) -> Result<&dyn OpenClusterTransaction, SqlQueryError> {
-        self.explicit
+        self.txn.explicit
             .as_deref()
             .ok_or_else(|| SqlQueryError::unknown("DDL notifier handler has no active transaction"))
     }
@@ -8012,7 +7770,7 @@ impl ClusterServerSession {
         self.session
             .begin_ddl_statement(parsed)
             .map_err(map_error)?;
-        if self.explicit.is_some() || self.session.in_transaction() {
+        if self.txn.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
         self.record_new_txn_in_stmt();
@@ -8112,7 +7870,7 @@ impl ClusterServerSession {
             .require_statement_table_privileges(parsed)
             .map_err(map_error)?;
         if !self.session.ddl_preserves_transaction(parsed)
-            && (self.explicit.is_some() || self.session.in_transaction())
+            && (self.txn.explicit.is_some() || self.session.in_transaction())
         {
             self.control_transaction("COMMIT")?;
         }
@@ -8396,13 +8154,13 @@ impl QuerySession for ClusterServerSession {
         }
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
-        if let Some(transaction) = self.explicit.as_ref() {
+        if let Some(transaction) = self.txn.explicit.as_ref() {
             transaction.note_statement();
         }
         // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
         // for every statement no transaction continues into: neither this
         // node's explicit transaction nor one the session itself opened.
-        if self.explicit.is_none() {
+        if self.txn.explicit.is_none() {
             self.session.start_statement_transaction_scope();
         }
         self.session.clear_statement_message();
@@ -8609,7 +8367,7 @@ impl QuerySession for ClusterServerSession {
             .retain_process_statement_with_digest(statement.sql(), statement.digest());
         // A `BEGIN` is a `BEGIN` whichever protocol carried it. Run as an
         // ordinary statement it would flip only the driver session's own flag
-        // and leave `self.explicit` unopened -- the two pieces of transaction
+        // and leave `self.txn.explicit` unopened -- the two pieces of transaction
         // state disagreeing, with every following statement reading at a fresh
         // timestamp and a racing writer never detected. Routed here the state
         // cannot diverge, whoever calls this.
@@ -8933,13 +8691,13 @@ impl QuerySession for ClusterServerSession {
         let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
-        if let Some(transaction) = self.explicit.as_ref() {
+        if let Some(transaction) = self.txn.explicit.as_ref() {
             transaction.note_statement();
         }
         // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
         // for every statement no transaction continues into: neither this
         // node's explicit transaction nor one the session itself opened.
-        if self.explicit.is_none() {
+        if self.txn.explicit.is_none() {
             self.session.start_statement_transaction_scope();
         }
         self.session.clear_statement_message();
