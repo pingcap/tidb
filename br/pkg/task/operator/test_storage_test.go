@@ -17,6 +17,7 @@ package operator
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -27,10 +28,13 @@ import (
 )
 
 func TestStorageConfigLogRedaction(t *testing.T) {
+	const contextJSON = `{"tenant":"#FAKE_CONTEXT"}`
 	for _, storageURI := range []string{
 		// Reject missing buckets and malformed URLs before any storage requests.
 		"s3://FAKE_USER:FAKE_PASS@/?access-key=FAKE_AK&secret-access-key=FAKE_SK&session-token=FAKE_STS#FAKE_FRAGMENT",
 		"s3://FAKE_USER:FAKE_PASS@bucket/path%zz?access-key=FAKE_AK&secret-access-key=FAKE_SK",
+		"s3:///?sse-kms-context=" + url.QueryEscape(contextJSON),
+		"s3:///?sse-kms-context=" + contextJSON,
 	} {
 		t.Run(storageURI, func(t *testing.T) {
 			core, logs := observer.New(zap.InfoLevel)
@@ -41,6 +45,7 @@ func TestStorageConfigLogRedaction(t *testing.T) {
 					S3: storage.S3BackendOptions{
 						AccessKey: "FAKE_AK", SecretAccessKey: "FAKE_SK", SessionToken: "FAKE_STS",
 						Region: "us-east-1", Endpoint: "https://FAKE_USER:FAKE_PASS@s3.example.com/?sig=FAKE_SIGNATURE",
+						SseKmsContext: contextJSON,
 					},
 					GCS: storage.GCSBackendOptions{Endpoint: "https://gcs.example.com/?sig=FAKE_SIGNATURE"},
 					Azblob: storage.AzblobBackendOptions{

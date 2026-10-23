@@ -122,8 +122,9 @@ func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
 		}
 	}
 	s3 := &backup.S3{
-		Bucket:       "backup-bucket",
-		SessionToken: "session-token-value",
+		Bucket:                  "backup-bucket",
+		SessionToken:            "session-token-value",
+		SseKmsEncryptionContext: "eyJ0ZW5hbnQiOiJjb250ZXh0LXZhbHVlIn0=",
 	}
 	info := &backup.StreamBackupTaskInfo{
 		Name:    "backup-task",
@@ -132,6 +133,7 @@ func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
 	original := info.String()
 	redacted := (TaskInfoRedacted{Info: info}).String()
 	require.NotContains(t, redacted, s3.SessionToken)
+	require.NotContains(t, redacted, s3.SseKmsEncryptionContext)
 	require.Contains(t, redacted, s3.Bucket)
 	require.Contains(t, redacted, info.Name)
 	require.Equal(t, original, info.String())
