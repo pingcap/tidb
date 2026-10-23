@@ -394,6 +394,7 @@ use tidb_ddl::worker as ddl;
 mod ddl_job_history_store;
 mod ddl_notifier;
 pub(crate) mod gc_worker;
+mod lazy_transaction;
 mod non_transactional_dml;
 mod record_set;
 mod ru_stats_writer;
@@ -3811,7 +3812,7 @@ impl ClusterSessionFactory {
             stats: Arc::clone(&self.stats),
             explicit: None,
             lazy_uniqueness_check_enabled: false,
-            savepoints: Vec::new(),
+            savepoints: tidb_session::SavepointStack::default(),
             skipped: built.skipped,
             auto_ids: Arc::clone(&self.auto_ids),
             schema_pins: Arc::clone(&self.schema_pins),
@@ -4980,8 +4981,7 @@ pub struct ClusterServerSession {
     /// The two stacks stay in step because both apply the same rules to the
     /// same statement sequence, and the session's error arm runs FIRST -- a
     /// name this stack could not find is one the session already refused.
-    savepoints: Vec<(
-        String,
+    savepoints: tidb_session::SavepointStack<(
         BufferCheckpoint,
         std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
     )>,
@@ -5506,7 +5506,13 @@ impl ClusterServerSession {
                 return Ok(());
             }
         }
-        self.begin_if_autocommit_off(resource_group)
+        self.begin_if_autocommit_off(resource_group)?;
+        // Go `SetOptionsOnTxnActive` reads the session values when the
+        // transaction activates, so a pending one follows each statement's.
+        if let Some(transaction) = &self.explicit {
+            transaction.set_activation_options(self.statement_transaction_options());
+        }
+        Ok(())
     }
 
     /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
@@ -5841,6 +5847,18 @@ impl ClusterServerSession {
                     .lock()
                     .unwrap_or_else(|poison| poison.into_inner())
                     .start_ts();
+            }
+            // Go's executor builder activates a DML's transaction before the
+            // statement runs (`updateForUpdateTS` -> `GetStmtForUpdateTS`);
+            // inside a pending `autocommit = 0` transaction that is its
+            // activation.
+            if self.activate_statement_txn {
+                if let Some(transaction) = self.explicit.as_ref() {
+                    if let Err(error) = transaction.activate() {
+                        let _ = self.finish_snapshot();
+                        break Err(SqlQueryError::unknown(error));
+                    }
+                }
             }
             let outcome = run(&mut self.session);
             // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`
@@ -6332,24 +6350,16 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.is_autocommit() {
             return Ok(());
         }
-        self.open_explicit(resource_group)
+        self.enter_pending_explicit(resource_group)
     }
 
-    fn open_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
-        if let Some(ts) = self.session.historical_read_ts() {
-            self.session.current_tso().publish(ts);
-            if let Some(observer) = self.session.transaction_observer() {
-                observer.activated(ts);
-            }
-            return Ok(());
-        }
-
-        // Go `newProviderWithRequest`: `BEGIN <mode>` wins, a bare `BEGIN`
-        // falls back to `@@tidb_txn_mode` -- whose default is PESSIMISTIC
-        // (`vardef.DefTiDBTxnMode`). The session resolved the keyword half at
-        // `BEGIN`; the variable half covers `SET autocommit = 0`, which
-        // carries no keyword.
-        let pessimistic = match self.session.txn_mode() {
+    /// Go `resolveTxnMode` of `newProviderWithRequest`: `BEGIN <mode>` wins, a
+    /// bare `BEGIN` falls back to `@@tidb_txn_mode` -- whose default is
+    /// PESSIMISTIC (`vardef.DefTiDBTxnMode`). The session resolved the keyword
+    /// half at `BEGIN`; the variable half covers `SET autocommit = 0`, which
+    /// carries no keyword.
+    fn explicit_transaction_is_pessimistic(&self) -> bool {
+        match self.session.txn_mode() {
             Some(mode) => mode.is_pessimistic(),
             None => tidb_planner::txn_mode::txn_mode_variable(
                 &self
@@ -6359,7 +6369,77 @@ impl ClusterServerSession {
                     .unwrap_or_else(|_| "pessimistic".to_owned()),
             )
             .is_pessimistic(),
-        };
+        }
+    }
+
+    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)`
+    /// (`pkg/session/session.go:4908`): the `autocommit = 0` transaction is
+    /// entered but left pending. It takes its timestamp, publishes
+    /// `TxnCtx.StartTS` and registers in `information_schema.tidb_trx` at the
+    /// first statement that activates it (`lazy_transaction`).
+    fn enter_pending_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
+        if self.session.historical_read_ts().is_some() {
+            return self.open_explicit(resource_group);
+        }
+        let pessimistic = self.explicit_transaction_is_pessimistic();
+        // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
+        // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
+        let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
+        let transactions = Arc::clone(&self.transactions);
+        let current_tso = self.session.current_tso();
+        let observer = self.session.transaction_observer();
+        let resource_group = resource_group.to_owned();
+        let opener: lazy_transaction::TransactionOpener = Box::new(move |options| {
+            let transaction =
+                transactions.begin(pessimistic, fair_locking, &resource_group, options)?;
+            current_tso.publish(transaction.start_ts());
+            if let Some(observer) = observer {
+                observer.activated(transaction.start_ts());
+            }
+            Ok(transaction)
+        });
+        self.explicit = Some(Box::new(lazy_transaction::LazyClusterTransaction::new(
+            pessimistic,
+            self.statement_transaction_options(),
+            self.buffer.clone(),
+            opener,
+        )));
+        self.pin_explicit_schema();
+        Ok(())
+    }
+
+    /// Go `SetOptionsOnTxnActive`'s inputs: the validated session values and
+    /// the statement ctx the transaction's requests report through.
+    fn statement_transaction_options(
+        &self,
+    ) -> tidb_exec::session_commit_protocol::SessionTransactionOptions {
+        crate::session_transaction::transaction_options(self.session.vars())
+            .with_statement_kv_context(self.session.statement_kv_context_cell())
+    }
+
+    /// The transaction reads this catalog version until it ends; the pin is
+    /// what a Go owner's `WaitVersionSynced` waits out (Go
+    /// `CheckOldRunningTxn`, at this port's whole-transaction scope).
+    fn pin_explicit_schema(&mut self) {
+        self.lazy_uniqueness_check_enabled = !self.session.pessimistic_constraint_check_in_place();
+        self.transaction_pin = Some(
+            self.schema_pins
+                .hold(self.connection_id, self.schema_version),
+        );
+    }
+
+    /// Go `EnterNewTxnWithBeginStmt`: `BEGIN` activates the transaction at
+    /// once (`OnInitialize`'s `activeNow`, `isolation/base.go:88`), so its
+    /// timestamp is taken here.
+    fn open_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
+        if let Some(ts) = self.session.historical_read_ts() {
+            self.session.current_tso().publish(ts);
+            if let Some(observer) = self.session.transaction_observer() {
+                observer.activated(ts);
+            }
+            return Ok(());
+        }
+        let pessimistic = self.explicit_transaction_is_pessimistic();
         // Go `OnPessimisticStmtStart` (`isolation/base.go:711`): fair locking
         // follows the session's `@@tidb_pessimistic_txn_fair_locking`.
         let fair_locking = self.session.vars().pessimistic_transaction_fair_locking();
@@ -6369,8 +6449,7 @@ impl ClusterServerSession {
                 pessimistic,
                 fair_locking,
                 resource_group,
-                crate::session_transaction::transaction_options(self.session.vars())
-                    .with_statement_kv_context(self.session.statement_kv_context_cell()),
+                self.statement_transaction_options(),
             )
             .map_err(SqlQueryError::unknown)?;
         transaction.bind_mutation_buffer(&self.buffer);
@@ -6378,15 +6457,8 @@ impl ClusterServerSession {
         if let Some(observer) = self.session.transaction_observer() {
             observer.activated(transaction.start_ts());
         }
-        self.lazy_uniqueness_check_enabled = !self.session.pessimistic_constraint_check_in_place();
         self.explicit = Some(transaction);
-        // The transaction reads this catalog version until it ends; the pin
-        // is what a Go owner's `WaitVersionSynced` waits out (Go
-        // `CheckOldRunningTxn`, at this port's whole-transaction scope).
-        self.transaction_pin = Some(
-            self.schema_pins
-                .hold(self.connection_id, self.schema_version),
-        );
+        self.pin_explicit_schema();
         Ok(())
     }
 
@@ -6613,7 +6685,10 @@ impl ClusterServerSession {
         // Go `CommitTxn` -> `setLastTxnInfoBeforeTxnEnd`: the start-only
         // record is written before the commit, and the commit hook
         // overwrites it only when a commit really ran.
-        self.session.record_started_txn_info(transaction.start_ts());
+        let start_ts = transaction.start_ts_if_active();
+        if let Some(start_ts) = start_ts {
+            self.session.record_started_txn_info(start_ts);
+        }
         let commit_result = transaction.commit(&self.buffer);
         if let Some(observer) = self.session.transaction_observer() {
             observer.finished();
@@ -6623,12 +6698,16 @@ impl ClusterServerSession {
         } else {
             ("abort", "error")
         };
-        tidb_session::metrics::TRANSACTION_DURATION
-            .with_label_values(&[txn_mode, duration_label, "general"])
-            .observe(txn_opened_at.elapsed().as_secs_f64());
-        tidb_session::metrics::STATEMENT_PER_TRANSACTION
-            .with_label_values(&[txn_mode, num_label, "general"])
-            .observe(txn_statement_count);
+        // A pending transaction no statement activated has no commit to
+        // observe (`doCommitWithRetry` returns for an invalid transaction).
+        if start_ts.is_some() {
+            tidb_session::metrics::TRANSACTION_DURATION
+                .with_label_values(&[txn_mode, duration_label, "general"])
+                .observe(txn_opened_at.elapsed().as_secs_f64());
+            tidb_session::metrics::STATEMENT_PER_TRANSACTION
+                .with_label_values(&[txn_mode, num_label, "general"])
+                .observe(txn_statement_count);
+        }
         match commit_result {
             Ok(committed) => {
                 self.record_committed_txn_info(committed);
@@ -6665,32 +6744,27 @@ impl ClusterServerSession {
                 // the COMMIT publishes nothing).
                 let resource_group = self.session.current_resource_group().to_owned();
                 self.begin_if_autocommit_off(&resource_group)?;
+                if let Some(transaction) = self.explicit.as_ref() {
+                    transaction.activate().map_err(SqlQueryError::unknown)?;
+                }
                 // In autocommit the statement succeeds while recording nothing,
                 // exactly as the session's does -- which is what leaves a later
                 // `ROLLBACK TO` to report 1305 (captured).
                 if self.explicit.is_none() {
                     return Ok(());
                 }
-                let name = name.go_to_lower();
                 let image = self.buffer.checkpoint();
                 let delta = self.session.table_delta_savepoint();
-                self.savepoints.retain(|(existing, _, _)| *existing != name);
-                self.savepoints.push((name, image, delta));
+                self.savepoints.add(name, (image, delta));
             }
             TransactionControl::RollbackToSavepoint(name) => {
-                let name = name.go_to_lower();
-                if let Some(index) = self.savepoints.iter().position(|(sp, _, _)| *sp == name) {
-                    self.buffer.restore(self.savepoints[index].1.clone());
-                    self.session
-                        .restore_table_delta_savepoint(self.savepoints[index].2.clone());
-                    self.savepoints.truncate(index + 1);
+                if let Some((image, delta)) = self.savepoints.rollback_to(name) {
+                    self.buffer.restore(image.clone());
+                    self.session.restore_table_delta_savepoint(delta.clone());
                 }
             }
             TransactionControl::ReleaseSavepoint(name) => {
-                let name = name.go_to_lower();
-                if let Some(index) = self.savepoints.iter().position(|(sp, _, _)| *sp == name) {
-                    self.savepoints.truncate(index);
-                }
+                self.savepoints.release(name);
             }
             _ => {}
         }
@@ -6718,17 +6792,24 @@ impl ClusterServerSession {
                 let txn_opened_at = transaction.opened_at();
                 let txn_statement_count = transaction.statement_count() as f64;
                 // Go `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`.
-                self.session.record_started_txn_info(transaction.start_ts());
+                let start_ts = transaction.start_ts_if_active();
+                if let Some(start_ts) = start_ts {
+                    self.session.record_started_txn_info(start_ts);
+                }
                 let result = transaction.rollback();
                 if let Some(observer) = self.session.transaction_observer() {
                     observer.finished();
                 }
-                tidb_session::metrics::TRANSACTION_DURATION
-                    .with_label_values(&[txn_mode, "abort", "general"])
-                    .observe(txn_opened_at.elapsed().as_secs_f64());
-                tidb_session::metrics::STATEMENT_PER_TRANSACTION
-                    .with_label_values(&[txn_mode, "error", "general"])
-                    .observe(txn_statement_count);
+                // A pending transaction no statement activated was never a
+                // transaction to abort.
+                if start_ts.is_some() {
+                    tidb_session::metrics::TRANSACTION_DURATION
+                        .with_label_values(&[txn_mode, "abort", "general"])
+                        .observe(txn_opened_at.elapsed().as_secs_f64());
+                    tidb_session::metrics::STATEMENT_PER_TRANSACTION
+                        .with_label_values(&[txn_mode, "error", "general"])
+                        .observe(txn_statement_count);
+                }
                 result.map_err(SqlQueryError::unknown)
             }
             None => {

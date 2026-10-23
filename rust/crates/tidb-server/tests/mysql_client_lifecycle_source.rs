@@ -30,7 +30,7 @@ use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
     ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,
     PreparedStatement, PreparedWrite, QueryResult, QuerySession, QuerySessionFactory,
-    ResultSetSource, SessionContext, SessionTransaction, SqlQueryError, WireStatus, WriteOutcome,
+    ResultSetSource, SessionContext, SqlQueryError, WireStatus, WriteOutcome,
     SERVER_STATUS_IN_TRANS,
 };
 use tidb_session::ResultMaterializationAuthority;
@@ -1779,23 +1779,24 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
 
 /// A wire fixture that owns only the transaction state machine:
 /// `control_transaction` delegates to the same
-/// classifier plus [`SessionTransaction`], and a text `execute` reports whether
+/// classifier plus an open flag, and a text `execute` reports whether
 /// a transaction is open — proving BEGIN/COMMIT change real session state rather
 /// than merely painting an OK packet.
 #[derive(Default)]
 struct TransactionSession {
-    transaction: SessionTransaction,
+    /// Whether a `BEGIN` is open: the whole state this fixture owns.
+    transaction_open: bool,
 }
 
 impl QuerySession for TransactionSession {
     /// The status word every OK packet of this session carries, read live off
     /// the transaction the session actually owns -- Go `cc.ctx.Status()`.
     fn wire_status(&self) -> WireStatus {
-        WireStatus::autocommit_session(self.transaction.is_active())
+        WireStatus::autocommit_session(self.transaction_open)
     }
 
     fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        if self.transaction.is_active() {
+        if self.transaction_open {
             return Err(SqlQueryError::unknown(
                 "this test session runs no statement inside a transaction",
             ));
@@ -1821,16 +1822,12 @@ impl QuerySession for TransactionSession {
     fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
         match classify_transaction_control(sql) {
             None => Ok(None),
-            Some(TransactionControl::Begin { mode }) => {
-                self.transaction
-                    .begin(mode)
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            Some(TransactionControl::Begin { .. }) => {
+                self.transaction_open = true;
                 Ok(Some(true))
             }
-            Some(control @ (TransactionControl::Commit | TransactionControl::Rollback)) => {
-                self.transaction
-                    .end(control == TransactionControl::Commit)
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+            Some(TransactionControl::Commit | TransactionControl::Rollback) => {
+                self.transaction_open = false;
                 Ok(Some(false))
             }
             // This test session drives only BEGIN/COMMIT/ROLLBACK.

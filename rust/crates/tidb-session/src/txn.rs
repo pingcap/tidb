@@ -107,7 +107,7 @@ pub(crate) struct Transaction {
     read_committed: bool,
     /// The transaction's savepoint stack, oldest first -- Go's
     /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
-    savepoints: Vec<Savepoint>,
+    savepoints: crate::SavepointStack<Savepoint>,
     /// The session's LOCAL temporary tables as they stood at `BEGIN`.
     ///
     /// Their ROWS are transactional in Go and their SCHEMA is not, and the
@@ -165,7 +165,7 @@ impl Transaction {
             _historical_hold: None,
             mode,
             read_committed,
-            savepoints: Vec::new(),
+            savepoints: crate::SavepointStack::default(),
             local_temporary_at_open,
         }
     }
@@ -213,10 +213,6 @@ pub(crate) enum StatementFinish {
 /// statement-level rollback, just held under a name for longer than one
 /// statement.
 pub(crate) struct Savepoint {
-    /// The name, lowercased: Go's `AddSavepoint`/`RollbackToSavepoint` match
-    /// `strings.ToLower(name)`, so `SAVEPOINT SP1` and `ROLLBACK TO sp1` are
-    /// the same savepoint.
-    name: String,
     /// The transaction's working catalog as of this savepoint.
     ///
     /// Kept even after a `ROLLBACK TO` restores from it, because Go's
@@ -528,12 +524,17 @@ impl Session {
         // the one door that must reset it, matching `Transaction::open`.
         self.staged_writes = std::sync::Arc::default();
         // Go publishes `TxnCtx.StartTS` the moment the transaction
-        // activates; `@@tidb_current_ts` reads exactly that.
-        self.current_tso().publish(txn.start_ts);
-        if let Some(process) = &self.process {
-            process
-                .registry()
-                .transaction_started(process.id(), txn.start_ts);
+        // activates; `@@tidb_current_ts` reads exactly that. A server that
+        // owns the statement transactions publishes its store transaction's
+        // timestamp at ITS activation, which for an `autocommit = 0`
+        // transaction is a later statement than this one.
+        if !self.statement_txns_are_external() {
+            self.current_tso().publish(txn.start_ts);
+            if let Some(process) = &self.process {
+                process
+                    .registry()
+                    .transaction_started(process.id(), txn.start_ts);
+            }
         }
         self.txn = Some(txn);
         Ok(())
@@ -687,7 +688,7 @@ impl Session {
             _historical_hold: historical_hold,
             mode: SessionTxnMode::Optimistic,
             read_committed: false,
-            savepoints: Vec::new(),
+            savepoints: crate::SavepointStack::default(),
             local_temporary_at_open,
         });
         self.current_tso().publish(ts);
@@ -935,16 +936,16 @@ impl Session {
         let Some(txn) = &mut self.txn else {
             return Ok(());
         };
-        let name = go_to_lower(name);
         let image = txn.working.clone();
-        txn.savepoints.retain(|savepoint| savepoint.name != name);
-        txn.savepoints.push(Savepoint {
+        txn.savepoints.add(
             name,
-            image,
-            local_temporary,
-            global_temporary,
-            table_delta,
-        });
+            Savepoint {
+                image,
+                local_temporary,
+                global_temporary,
+                table_delta,
+            },
+        );
         Ok(())
     }
 
@@ -960,42 +961,36 @@ impl Session {
     /// With no transaction open Go's `txn.Valid()` is false and the error is
     /// the same 1305 an unknown name gets.
     fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        let lowered = go_to_lower(name);
-        // go appends the statement error into the warning buffer as well
-        // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
-        // refused ROLLBACK TO carries the same 1305 row.
-        let txn = match self.txn.as_mut() {
-            Some(txn) => txn,
-            None => {
-                self.append_warning(
-                    crate::WarningLevel::Error,
-                    1305,
-                    format!("SAVEPOINT {name} does not exist"),
-                );
-                return Err(DriverError::SavepointNotExists(name.to_owned()));
-            }
+        // Go `TxnCtx.RollbackToSavepoint` is only reached with a valid
+        // transaction (`executeRollback`), so no transaction is the same 1305
+        // an unknown name gets.
+        let found = self
+            .txn
+            .as_mut()
+            .and_then(|txn| {
+                txn.savepoints.rollback_to(name).map(|savepoint| {
+                    (
+                        savepoint.image.clone(),
+                        savepoint.local_temporary.clone(),
+                        savepoint.global_temporary.clone(),
+                        savepoint.table_delta.clone(),
+                    )
+                })
+            });
+        let Some((image, local_temporary, global_temporary, table_delta)) = found else {
+            // go appends the statement error into the warning buffer as well
+            // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
+            // refused ROLLBACK TO carries the same 1305 row.
+            self.append_warning(
+                crate::WarningLevel::Error,
+                1305,
+                format!("SAVEPOINT {name} does not exist"),
+            );
+            return Err(DriverError::SavepointNotExists(name.to_owned()));
         };
-        let index = match txn
-            .savepoints
-            .iter()
-            .position(|savepoint| savepoint.name == lowered)
-        {
-            Some(index) => index,
-            None => {
-                drop(txn);
-                self.append_warning(
-                    crate::WarningLevel::Error,
-                    1305,
-                    format!("SAVEPOINT {name} does not exist"),
-                );
-                return Err(DriverError::SavepointNotExists(name.to_owned()));
-            }
-        };
-        txn.working = txn.savepoints[index].image.clone();
-        let local_temporary = txn.savepoints[index].local_temporary.clone();
-        let global_temporary = txn.savepoints[index].global_temporary.clone();
-        let table_delta = txn.savepoints[index].table_delta.clone();
-        txn.savepoints.truncate(index + 1);
+        if let Some(txn) = self.txn.as_mut() {
+            txn.working = image;
+        }
         self.restore_local_temporary_rows(local_temporary);
         self.global_temporary_data = global_temporary;
         self.restore_table_delta_savepoint(table_delta);
@@ -1006,24 +1001,17 @@ impl Session {
     /// plus `TxnCtx.ReleaseSavepoint`: drops the named savepoint AND every
     /// savepoint taken after it (`Savepoints[:i]`), touching no data.
     fn release_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        let lowered = go_to_lower(name);
-        let index = match self.txn.as_ref().and_then(|txn| {
-            txn.savepoints
-                .iter()
-                .position(|savepoint| savepoint.name == lowered)
-        }) {
-            Some(index) => index,
-            None => {
-                self.append_warning(
-                    crate::WarningLevel::Error,
-                    1305,
-                    format!("SAVEPOINT {name} does not exist"),
-                );
-                return Err(DriverError::SavepointNotExists(name.to_owned()));
-            }
-        };
-        if let Some(txn) = &mut self.txn {
-            txn.savepoints.truncate(index);
+        let released = self
+            .txn
+            .as_mut()
+            .is_some_and(|txn| txn.savepoints.release(name));
+        if !released {
+            self.append_warning(
+                crate::WarningLevel::Error,
+                1305,
+                format!("SAVEPOINT {name} does not exist"),
+            );
+            return Err(DriverError::SavepointNotExists(name.to_owned()));
         }
         Ok(())
     }

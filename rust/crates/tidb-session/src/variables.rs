@@ -1685,7 +1685,9 @@ impl Session {
                 if *scope != Some(tidb_ast::SysVarScope::Global)
                     && name.eq_ignore_ascii_case("tidb_current_ts")
                 {
-                    return Ok(Expr::Int(self.current_tso().value().to_string()));
+                    // Go's `GetSession` hook returns `FormatUint`, so the value is a
+                    // string like every system variable's.
+                    return Ok(Expr::String(self.current_tso().value().to_string()));
                 }
                 // `@@tidb_last_txn_info` is Go's `SessionVars.LastTxnInfo`
                 // read: client-go's `TxnInfo` JSON for the last ACTIVATED

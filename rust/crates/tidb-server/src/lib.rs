@@ -146,7 +146,6 @@ pub use resultset_source::ResultSetSource;
 pub use secure_transport::{
     SecureTransportError, SecureTransportPolicy, TransportDecision, TransportKind,
 };
-pub use session_transaction::SessionTransaction;
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
     ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,

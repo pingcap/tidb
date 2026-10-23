@@ -14018,6 +14018,77 @@ fn last_txn_info_is_recorded_only_by_the_transaction_that_ended() {
     );
 }
 
+/// Go `PrepareTxnCtx` enters the `autocommit = 0` transaction with
+/// `EnterNewTxnBeforeStmt` (`activeNow = false`): it stays pending, spending
+/// no timestamp, until a statement activates it. Captured on the Go oracle:
+/// with `autocommit = 0`, `SELECT 1`, `SET @a`, `SHOW TABLES` and `EXPLAIN
+/// SELECT 1` leave `@@tidb_current_ts` at 0, a row a peer commits after
+/// `SELECT 1` is visible to the next table read, and a row a peer commits
+/// after a table read is not. This node opened the store transaction at the
+/// entry of every statement.
+#[test]
+fn autocommit_off_transaction_is_pending_until_a_statement_activates_it() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1015)).unwrap();
+    let mut peer = stack.factory.open_session(session_context(1016)).unwrap();
+    rows(&mut session, "CREATE TABLE test.t_pending (a INT PRIMARY KEY)");
+    let active = |session: &mut ClusterServerSession| {
+        displayed(rows(session, "SELECT @@tidb_current_ts > 0"))[0][0].clone()
+    };
+    rows(&mut session, "SET autocommit = 0");
+    for statement in [
+        "SELECT 1",
+        "SET @a = 1",
+        "SHOW TABLES",
+        "EXPLAIN SELECT 1",
+        "SELECT now()",
+    ] {
+        rows(&mut session, statement);
+        assert_eq!(active(&mut session), "0", "after {statement}");
+    }
+    peer.execute_write("INSERT INTO test.t_pending VALUES (21)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM test.t_pending")),
+        [["1"]],
+        "the transaction is still pending, so it reads what the peer committed"
+    );
+    assert_eq!(active(&mut session), "1");
+    // Go's `GetSession` hook for `tidb_current_ts` returns `FormatUint`, a
+    // string like every system variable's value.
+    let current_ts = rows(&mut session, "SELECT @@tidb_current_ts");
+    assert_eq!(current_ts[0][0].kind(), tidb_datatype::DatumKind::String);
+    peer.execute_write("INSERT INTO test.t_pending VALUES (22)")
+        .unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM test.t_pending")),
+        [["1"]],
+        "the activated transaction keeps its snapshot"
+    );
+    session.control_transaction("COMMIT").unwrap();
+    assert_eq!(active(&mut session), "0");
+    // A pending transaction that never activates commits and rolls back
+    // without taking a timestamp.
+    rows(&mut session, "SELECT 1");
+    session.control_transaction("COMMIT").unwrap();
+    rows(&mut session, "SELECT 1");
+    session.control_transaction("ROLLBACK").unwrap();
+    // DML activates at build, SAVEPOINT activates.
+    session
+        .execute_write("INSERT INTO test.t_pending VALUES (23)")
+        .unwrap();
+    assert_eq!(active(&mut session), "1");
+    session.control_transaction("COMMIT").unwrap();
+    rows(&mut session, "SELECT 1");
+    session.control_transaction("SAVEPOINT s1").unwrap();
+    assert_eq!(active(&mut session), "1");
+    session.control_transaction("ROLLBACK").unwrap();
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM test.t_pending")),
+        [["3"]]
+    );
+}
+
 /// Go `normalizeSplitPolicy` records CREATE TABLE's and ALTER TABLE's region
 /// split policies on the table (`ActionAlterTableSetRegionSplitPolicy`), SHOW
 /// CREATE TABLE prints them, and a new index on a table with policies warns

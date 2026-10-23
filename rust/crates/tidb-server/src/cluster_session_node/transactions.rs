@@ -407,6 +407,25 @@ pub trait OpenClusterTransaction: Send {
     /// The transaction timestamp shared by every statement until it ends.
     fn start_ts(&self) -> u64;
 
+    /// Go `baseTxnContextProvider.ActivateTxn`: waits the transaction's
+    /// timestamp and makes it valid. An eagerly opened transaction is
+    /// active already; a pending one (`lazy_transaction`) opens here.
+    fn activate(&self) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Go `TxnCtx.StartTS` as `setLastTxnInfoBeforeTxnEnd` reads it: the
+    /// start timestamp, or `None` for a pending transaction that no
+    /// statement activated. Asking never activates.
+    fn start_ts_if_active(&self) -> Option<u64> {
+        Some(self.start_ts())
+    }
+
+    /// Go `SetOptionsOnTxnActive`: the session values a pending transaction
+    /// opens with are the ones in force when it activates, so the session
+    /// refreshes them at every statement until then.
+    fn set_activation_options(&self, _options: SessionTransactionOptions) {}
+
     /// The wall clock this transaction began at (Go's
     /// `tidb_session_transaction_duration_seconds` start point).
     fn opened_at(&self) -> std::time::Instant;

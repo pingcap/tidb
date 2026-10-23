@@ -1275,7 +1275,7 @@ fn tidb_current_ts_reports_the_open_transactions_timestamp() {
 
     assert_eq!(
         rows(&mut session, "SELECT @@tidb_current_ts"),
-        vec![vec![Datum::Int(0)]],
+        vec![vec![Datum::new_string("0")]],
         "no transaction is open outside one"
     );
 
@@ -1283,20 +1283,22 @@ fn tidb_current_ts_reports_the_open_transactions_timestamp() {
     let read = rows(&mut session, "SELECT count(*) FROM t");
     assert_eq!(read, vec![vec![Datum::Int(1)]]);
     let inside = rows(&mut session, "SELECT @@tidb_current_ts");
-    let Datum::Int(start_ts) = inside[0][0] else {
-        panic!("@@tidb_current_ts must return a signed integer")
+    // Go's `GetSession` hook returns `FormatUint`: a string.
+    let Datum::String(start_ts) = &inside[0][0] else {
+        panic!("@@tidb_current_ts must return a string")
     };
+    let start_ts: u64 = start_ts.as_utf8().unwrap().parse().unwrap();
     assert!(start_ts > 0, "the open transaction's start ts is reported");
     assert_eq!(
         rows(&mut session, "SELECT TIDB_CURRENT_TSO()"),
-        inside,
+        vec![vec![Datum::Int(start_ts as i64)]],
         "the variable and the builtin read the same published timestamp"
     );
 
     session.control_transaction("COMMIT").expect("commit");
     assert_eq!(
         rows(&mut session, "SELECT @@tidb_current_ts"),
-        vec![vec![Datum::Int(0)]],
+        vec![vec![Datum::new_string("0")]],
         "a committed transaction is no longer open"
     );
 }

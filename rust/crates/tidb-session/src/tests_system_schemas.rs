@@ -468,7 +468,10 @@ fn tidb_trx_reads_live_transactions_with_go_visibility_and_digest_history() {
     assert_eq!(own.len(), 1);
     assert_eq!(own[0][0], "22");
     assert_eq!(own[0][1], "bob");
-    assert_eq!(own[0][2], "Running");
+    // Captured on the Go oracle: the statement reading TIDB_TRX sees its own
+    // transaction Idle (`ExecuteStmt` has returned its record set, and
+    // `LazyTxn.onStmtEnd` run, before any row is fetched).
+    assert_eq!(own[0][2], "Idle");
     let (_, begin_digest) = tidb_parser::normalize_digest("BEGIN");
     let (_, select_digest) = tidb_parser::normalize_digest(
         "SELECT SESSION_ID, USER, STATE, ALL_SQL_DIGESTS \
