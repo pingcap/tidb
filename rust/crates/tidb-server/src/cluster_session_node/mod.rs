@@ -5104,6 +5104,52 @@ impl CommitTxnRegions {
 }
 
 impl ClusterServerSession {
+    /// The per-statement transaction context both statement lifecycles open
+    /// (Go `PrepareTxnCtx` builds a fresh `TxnCtx` before every statement no
+    /// transaction continues into): an autocommit statement starts with no
+    /// published timestamp, and its own timestamp is filled in by its first
+    /// read and read back by its publication after the read handle is gone --
+    /// autocommit publishes THERE, not at a fresh one, see `StatementReadTs`.
+    fn begin_statement_scope(&mut self, notify_executor_breakpoint: bool) -> StatementScope {
+        let autocommit = self.explicit.is_none() && self.session.historical_read_ts().is_none();
+        if autocommit {
+            self.session.current_tso().clear();
+        }
+        let read_ts = transactions::StatementReadTs::new(self.session.current_tso())
+            .with_observer(self.session.transaction_observer())
+            .with_phase_durations(self.session.phase_durations());
+        self.session
+            .begin_external_executor_breakpoint_scope(notify_executor_breakpoint);
+        StatementScope { read_ts, autocommit }
+    }
+
+    /// The end of [`Self::begin_statement_scope`]: the autocommit
+    /// transaction's observation ends, Go's `FinishExecuteStmt` still reads
+    /// this statement's `TxnCtx.StartTS` (its slow log and
+    /// `tidb_last_query_info`), and the published timestamp goes with the
+    /// transaction.
+    fn end_statement_scope(&mut self, scope: &StatementScope) {
+        self.session.end_external_executor_breakpoint_scope();
+        if scope.autocommit {
+            if let Some(observer) = self.session.transaction_observer() {
+                observer.finished();
+            }
+            if let Some(ts) = scope.read_ts.get() {
+                self.session.record_statement_txn_start_ts(ts);
+            }
+            self.session.current_tso().clear();
+        }
+    }
+}
+
+/// One statement's transaction context: see
+/// [`ClusterServerSession::begin_statement_scope`].
+struct StatementScope {
+    read_ts: transactions::StatementReadTs,
+    autocommit: bool,
+}
+
+impl ClusterServerSession {
     /// Go `TiDBContext.ExecuteStmt` (`pkg/server/driver_tidb.go:376`): every
     /// error `session.ExecuteStmt` returns is appended to the statement
     /// context as an `Error`-level warning, which `SHOW WARNINGS`, `SHOW
@@ -5683,18 +5729,7 @@ impl ClusterServerSession {
         is_dml: bool,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        let autocommit = self.explicit.is_none() && self.session.historical_read_ts().is_none();
-        if autocommit {
-            self.session.current_tso().clear();
-        }
-        // The statement's own timestamp, filled in by its first read and read
-        // back by its publication after the read handle is gone. Autocommit
-        // publishes THERE, not at a fresh one: see `StatementReadTs`.
-        let read_ts = transactions::StatementReadTs::new(self.session.current_tso())
-            .with_observer(self.session.transaction_observer())
-            .with_phase_durations(self.session.phase_durations());
-        self.session
-            .begin_external_executor_breakpoint_scope(notify_executor_breakpoint);
+        let scope = self.begin_statement_scope(notify_executor_breakpoint);
         let result = self.attempt_statement_inner(
             shape,
             &savepoint,
@@ -5702,25 +5737,14 @@ impl ClusterServerSession {
             retrying,
             is_dml,
             run,
-            &read_ts,
+            &scope.read_ts,
         );
-        self.session.end_external_executor_breakpoint_scope();
-        // The TSO clear is statement TEARDOWN, not a success step: every exit
-        // of the attempt -- including the `?`s inside the loop -- must leave
-        // no failed statement's timestamp published, or `SET @x =
-        // @@tidb_current_ts` after a failed autocommit statement reads a
-        // timestamp of a transaction that is not open.
-        if autocommit {
-            if let Some(observer) = self.session.transaction_observer() {
-                observer.finished();
-            }
-            // Go's `FinishExecuteStmt` still reads this statement's
-            // `TxnCtx.StartTS` (its slow log and `tidb_last_query_info`).
-            if let Some(ts) = read_ts.get() {
-                self.session.record_statement_txn_start_ts(ts);
-            }
-            self.session.current_tso().clear();
-        }
+        // The teardown is not a success step: every exit of the attempt --
+        // including the `?`s inside the loop -- must leave no failed
+        // statement's timestamp published, or `SET @x = @@tidb_current_ts`
+        // after a failed autocommit statement reads a timestamp of a
+        // transaction that is not open.
+        self.end_statement_scope(&scope);
         result
     }
 

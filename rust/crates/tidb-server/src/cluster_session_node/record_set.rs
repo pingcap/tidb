@@ -108,23 +108,16 @@ impl ClusterServerSession {
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
         }
-        let autocommit = self.explicit.is_none() && self.session.historical_read_ts().is_none();
-        if autocommit {
-            // Go PrepareTxnCtx creates a fresh TxnCtx before the next statement.
-            self.session.current_tso().clear();
-        }
+        let scope = self.begin_statement_scope(true);
         let statement = ReadStatement {
             _pin: self
                 .schema_pins
                 .hold(self.connection_id, self.schema_version),
-            read_ts: transactions::StatementReadTs::new(self.session.current_tso())
-                .with_observer(self.session.transaction_observer())
-                .with_phase_durations(self.session.phase_durations()),
+            read_ts: scope.read_ts,
             savepoint: self.buffer.checkpoint(),
-            autocommit,
+            autocommit: scope.autocommit,
             resource_group: resource_group.to_owned(),
         };
-        self.session.begin_external_executor_breakpoint_scope(true);
         let setup = self
             .open_read_snapshot(shape, None, &statement.read_ts, resource_group, false)
             .and_then(|snapshot| {
@@ -166,18 +159,11 @@ impl ClusterServerSession {
             self.buffer.restore(statement.savepoint);
             finished
         };
-        if statement.autocommit && self.session.historical_read_ts().is_none() {
-            if let Some(observer) = self.session.transaction_observer() {
-                observer.finished();
-            }
-        }
         self.buffer.release(statement.savepoint);
-        self.session.end_external_executor_breakpoint_scope();
-        // Keep this statement's timestamp until the next statement prepares
-        // its transaction context, matching Go PrepareTxnCtx.
-        if let Some(read_ts) = statement.read_ts.get() {
-            self.session.current_tso().publish(read_ts);
-        }
+        self.end_statement_scope(&StatementScope {
+            read_ts: statement.read_ts.clone(),
+            autocommit: statement.autocommit,
+        });
         self.session.set_selected_lock_keys(None);
         self.session
             .retry_auto_ids()
