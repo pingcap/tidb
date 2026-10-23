@@ -96,6 +96,29 @@ func TestStmtFileInvalidLine(t *testing.T) {
 	require.Equal(t, time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local).Unix(), f.end)
 }
 
+func TestStmtFileAbsoluteConfiguredFilename(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	dir := t.TempDir()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Instance.StmtSummaryFilename = filepath.Join(dir, "tidb-statements.log")
+	})
+
+	end := time.Date(2022, 12, 27, 16, 21, 20, 245000000, time.Local)
+	rotated := filepath.Join(dir, "tidb-statements-2022-12-27T16-21-20.245.log")
+	content := fmt.Sprintf("{\"begin\":%d,\"end\":%d}\n", end.Unix()-10, end.Unix())
+	require.NoError(t, os.WriteFile(rotated, []byte(content), 0o600))
+
+	f, err := openStmtFile(rotated)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, f.close()) })
+	require.Equal(t, end.Unix(), f.end)
+
+	checker := stmtChecker{timeRanges: []*StmtTimeRange{{Begin: end.Unix() + 1, End: end.Unix() + 2}}}
+	require.False(t, checker.isTimeValid(f.begin, f.end))
+}
+
 type stmtDirEntryInfoError struct {
 	os.DirEntry
 }
