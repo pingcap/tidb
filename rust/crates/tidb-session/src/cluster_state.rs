@@ -472,9 +472,24 @@ impl ViewerState {
             .as_deref()
             .and_then(|identity| identity.split_once('@').map(|(user, _)| user));
         let has_process = self.has_process;
+        let own_connection = self.own_process_id;
         let transactions: Vec<_> = registry
             .transaction_snapshot()
             .into_iter()
+            .map(|mut transaction| {
+                // Go `ExecuteStmt` returns the record set before any row is
+                // fetched, and its deferred `LazyTxn.onStmtEnd` has by then
+                // made the transaction Idle with no current statement: the
+                // statement reading `TIDB_TRX` sees its own row that way.
+                // The rows here are built while the statement still runs.
+                if Some(transaction.session_id) == own_connection
+                    && transaction.state == "Running"
+                {
+                    transaction.state = "Idle";
+                    transaction.current_sql_digest = None;
+                }
+                transaction
+            })
             .filter(|transaction| {
                 has_process
                     || login_username.is_none_or(|username| username == transaction.user.as_str())

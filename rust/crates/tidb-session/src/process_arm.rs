@@ -279,6 +279,7 @@ impl Session {
             has_process: self.has_process_privilege(),
             registry: self.process.as_ref().map(|guard| guard.registry().clone()),
             connection_id: self.connection_id.unwrap_or(0),
+            own_process_id: self.process.as_ref().map(|guard| guard.id()),
             process_user: self.process_list_user(),
             current_db: self.current_db.clone(),
             status: self.status_text(),

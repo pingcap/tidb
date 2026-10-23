@@ -43,6 +43,9 @@ pub(crate) struct ViewerState {
     /// This connection's id, user name, current schema, status text and
     /// resource group, which stand for it when there is no registry.
     pub(crate) connection_id: u64,
+    /// The id the session's process-registry guard registered, absent when no
+    /// server front end owns the session.
+    pub(crate) own_process_id: Option<u64>,
     pub(crate) process_user: String,
     pub(crate) current_db: String,
     pub(crate) status: String,
