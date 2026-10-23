@@ -932,3 +932,199 @@ func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
 		require.Equal(t, task.busyThreshold, time.Second)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("n"), []byte("x"))
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'n'}}, 101)
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'n'}, {'x'}}, 202)
+	cluster.SplitRegionBuckets(regionIDs[2], [][]byte{{'x'}, {}}, 303)
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+
+	req := &kv.Request{StoreBatchSize: 3}
+	tasks, err := buildCopTasks(bo, buildCopRanges("a", "b", "o", "p", "y", "z"), &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 1},
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+
+	pbTasks := tasks[0].ToPBBatchTasks()
+	require.Len(t, pbTasks, 2)
+	versionByRegion := make(map[uint64]uint64, len(pbTasks))
+	for _, pbTask := range pbTasks {
+		versionByRegion[pbTask.GetRegionId()] = pbTask.GetBucketsVersion()
+	}
+	require.Equal(t, map[uint64]uint64{
+		regionIDs[1]: 202,
+		regionIDs[2]: 303,
+	}, versionByRegion)
+}
+
+func TestHandleBatchCopResponse(t *testing.T) {
+	t.Run("updates child buckets on version mismatch", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
+	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
+}
+
+func testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("m"))
+	cluster.SplitRegionBuckets(regionIDs[0], [][]byte{{}, {'m'}}, 7)
+	cluster.SplitRegionBuckets(regionIDs[1], [][]byte{{'m'}, {'n'}, {}}, 11)
+
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, tikvStore.Close())
+	}()
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	defer copStore.Close()
+
+	cache := copStore.GetRegionCache()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{}
+
+	parentTasks, err := buildCopTasks(bo, buildCopRanges("a", "b"), &buildCopTaskOpt{
+		req:   req,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, parentTasks, 1)
+	childTasks, err := buildCopTasks(bo, buildCopRanges("n", "o"), &buildCopTaskOpt{
+		req:   req,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, childTasks, 1)
+	parentTask := parentTasks[0]
+	childTask := childTasks[0]
+	require.Equal(t, uint64(7), parentTask.bucketsVer)
+	require.Equal(t, uint64(11), childTask.bucketsVer)
+
+	childTask.taskID = 1
+	var storeBatchedNum atomic.Uint64
+	var storeBatchedFallbackNum atomic.Uint64
+	worker := &copIteratorWorker{
+		store:                   copStore,
+		req:                     req,
+		storeBatchedNum:         &storeBatchedNum,
+		storeBatchedFallbackNum: &storeBatchedFallbackNum,
+	}
+	parentRPCCtx := &tikv.RPCContext{
+		Region:        parentTask.region,
+		BucketVersion: parentTask.bucketsVer,
+	}
+	bucketKeys := [][]byte{[]byte("m"), []byte("n"), {}}
+	resp := &coprocessor.Response{
+		BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+			{
+				TaskId: childTask.taskID,
+				RegionError: &errorpb.Error{
+					BucketVersionNotMatch: &errorpb.BucketVersionNotMatch{
+						Version: 99,
+						Keys:    bucketKeys,
+					},
+				},
+			},
+		},
+	}
+
+	_, remains, err := worker.handleBatchCopResponse(bo, parentRPCCtx, resp, map[uint64]*batchedCopTask{
+		childTask.taskID: {task: childTask},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, remains)
+
+	loc, err := cache.LocateKey(bo.TiKVBackoffer(), []byte("n"))
+	require.NoError(t, err)
+	require.Equal(t, regionIDs[1], loc.Region.GetID())
+	require.Equal(t, uint64(99), loc.Buckets.GetVersion())
+	require.Equal(t, bucketKeys, loc.Buckets.GetKeys())
+}
+
+func testHandleBatchCopResponseFallbackCountersAfterRegionSplit(t *testing.T) {
+	// One failed batched child whose Region split in the meantime rebuilds
+	// into several retry tasks.
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithMultiRegions(cluster, []byte("f"), []byte("h"))
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, tikvStore.Close())
+	}()
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	defer copStore.Close()
+	cache := copStore.GetRegionCache()
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{}
+
+	tasks, err := buildCopTasks(bo, buildCopRanges("f", "h"), &buildCopTaskOpt{
+		req:   req,
+		cache: cache,
+	})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	failedChild := tasks[0]
+
+	// Split the child's Region underneath it and drop the stale cache entry,
+	// so the retry rebuild has to resolve two Regions.
+	newRegionID, newPeerID := cluster.AllocID(), cluster.AllocID()
+	cluster.Split(failedChild.region.GetID(), newRegionID, []byte("g"), []uint64{newPeerID}, newPeerID)
+	cache.InvalidateCachedRegion(failedChild.region)
+
+	failedChild.taskID = 1
+	var storeBatchedNum atomic.Uint64
+	var storeBatchedFallbackNum atomic.Uint64
+	worker := &copIteratorWorker{
+		store:                   copStore,
+		req:                     req,
+		storeBatchedNum:         &storeBatchedNum,
+		storeBatchedFallbackNum: &storeBatchedFallbackNum,
+	}
+	_, retryTasks, err := worker.handleBatchCopResponse(
+		bo,
+		nil,
+		&coprocessor.Response{
+			BatchResponses: []*coprocessor.StoreBatchTaskResponse{
+				{
+					TaskId: failedChild.taskID,
+					RegionError: &errorpb.Error{
+						EpochNotMatch: &errorpb.EpochNotMatch{},
+					},
+				},
+			},
+		},
+		map[uint64]*batchedCopTask{
+			failedChild.taskID: {task: failedChild},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, retryTasks, 2)
+	for _, task := range retryTasks {
+		require.Empty(t, task.batchTaskList)
+	}
+	// One failed batched input rebuilds into one retry task per new Region,
+	// but counts as exactly one fallback.
+	require.Zero(t, storeBatchedNum.Load())
+	require.Equal(t, uint64(1), storeBatchedFallbackNum.Load())
+}
+>>>>>>> 16c97eb67f9 (store/copr: fix batch fallback counters after Region split (#70341))
