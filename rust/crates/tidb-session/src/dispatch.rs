@@ -646,6 +646,21 @@ impl Session {
             return Some(std::sync::Arc::new(retriever));
         }
         let retriever = crate::instance_state::InstanceStateRetriever::new(self.viewer_state());
+        if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
+            return Some(std::sync::Arc::new(retriever));
+        }
+        let retriever = crate::memtable_retrievers::CatalogTablesRetriever::new(
+            self.schema_visibility(),
+            self.sem_hides_cluster_metadata(),
+        );
+        if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
+            return Some(std::sync::Arc::new(retriever));
+        }
+        let retriever = crate::account_state::AccountRetriever::new(self.account_state());
+        if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
+            return Some(std::sync::Arc::new(retriever));
+        }
+        let retriever = crate::account_state::VariablesRetriever::new(self.variables_state());
         tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read)
             .then(|| std::sync::Arc::new(retriever) as _)
     }
@@ -798,11 +813,6 @@ impl Session {
             self.diagnostic_table_rows(&table_name.to_ascii_uppercase(), None, required)?
         } else if table_name.go_lower_eq("DATA_LOCK_WAITS") {
             self.data_lock_waits_table_rows(required)?
-        } else if table_name.go_lower_eq("TIKV_STORE_STATUS") {
-            crate::memtable_retrievers::tikv_store_status_rows(
-                scratch.region_store().as_ref(),
-                self.sem_hides_cluster_metadata(),
-            )?
         } else if table_name.go_lower_eq("CLUSTER_LOG") {
             self.cluster_log_table_rows(cluster_log_extractors)?
         } else if table_name.go_lower_eq("SLOW_QUERY") {
@@ -813,14 +823,6 @@ impl Session {
                 })
                 .collect();
             self.slow_query_table_rows(&extractors)?
-        } else if table_name.go_lower_eq("USER_PRIVILEGES") {
-            self.user_privileges_table_rows()
-        } else if table_name.go_lower_eq("USER_ATTRIBUTES") {
-            self.user_attributes_table_rows(&scratch, ctx)
-        } else if table_name.go_lower_eq("VARIABLES_INFO") {
-            self.variables_info_table_rows()
-        } else if table_name.go_lower_eq("ATTRIBUTES") {
-            infoschema::attributes_rows(&scratch, &self.schema_visibility())?
         } else if table_name.go_lower_eq("INSPECTION_RULES") {
             crate::inspection::inspection_rules_rows()
         } else if table_name.go_lower_eq("INSPECTION_SUMMARY") {
@@ -862,56 +864,6 @@ impl Session {
                 )?);
             }
             rows
-        } else if table_name.go_lower_eq("TABLE_STORAGE_STATS") {
-            let mut rows = Vec::new();
-            for scan in scans_of("TABLE_STORAGE_STATS") {
-                if let Some(MemTablePredicateExtractor::TableStorageStats(extractor)) =
-                    &scan.extractor
-                {
-                    rows.extend(crate::memtable_retrievers::table_storage_stats_rows(
-                        extractor,
-                        &scratch,
-                        scratch.region_store().as_ref(),
-                        &self.schema_visibility(),
-                    )?);
-                }
-            }
-            rows
-        } else if table_name.go_lower_eq("TIKV_REGION_PEERS") {
-            let mut rows = Vec::new();
-            for scan in scans_of("TIKV_REGION_PEERS") {
-                if let Some(MemTablePredicateExtractor::TikvRegionPeers(extractor)) =
-                    &scan.extractor
-                {
-                    rows.extend(crate::memtable_retrievers::tikv_region_peers_rows(
-                        extractor,
-                        scratch.region_store().as_ref(),
-                    )?);
-                }
-            }
-            rows
-        } else if table_name.go_lower_eq("TIKV_REGION_STATUS") {
-            let mut rows = Vec::new();
-            for scan in scans_of("TIKV_REGION_STATUS") {
-                let extractor = match &scan.extractor {
-                    Some(MemTablePredicateExtractor::TiKVRegionStatus(extractor)) => {
-                        Some(extractor)
-                    }
-                    _ => None,
-                };
-                rows.extend(crate::memtable_retrievers::tikv_region_status_rows(
-                    extractor,
-                    &scratch,
-                    scratch.region_store().as_ref(),
-                    &self.schema_visibility(),
-                )?);
-            }
-            rows
-        } else if table_name.go_lower_eq("TIDB_HOT_REGIONS") {
-            crate::memtable_retrievers::tidb_hot_regions_rows(
-                &scratch,
-                scratch.region_store().as_ref(),
-            )?
         } else if table_name.go_lower_eq("TIDB_HOT_REGIONS_HISTORY") {
             let mut rows = Vec::new();
             for scan in scans_of("TIDB_HOT_REGIONS_HISTORY") {
@@ -1003,24 +955,8 @@ impl Session {
             self.with_catalog_mut(|catalog| {
                 Ok(infoschema::ddl_jobs_rows(&jobs, &visibility, catalog))
             })?
-        } else if table_name.go_lower_eq("PROFILING") {
-            crate::memtable_retrievers::pseudo_profiling_rows(
-                tidb_vardef::option_values::tidb_opt_on(
-                    &self.vars.get_system("profiling").unwrap_or_default(),
-                ),
-            )
-        } else if table_name.go_lower_eq("KEYSPACE_META") {
-            crate::memtable_retrievers::keyspace_meta_rows()
-        } else if table_name.go_lower_eq("PLACEMENT_POLICIES") {
-            crate::memtable_retrievers::placement_policies_rows(&scratch)
         } else if table_name.go_lower_eq("ANALYZE_STATUS") {
             self.analyze_status_rows()?
-        } else if read
-            .db_name
-            .go_lower_eq(tidb_executor::driver::perfschema::PERFORMANCE_SCHEMA)
-            && table_name.go_lower_eq("SESSION_VARIABLES")
-        {
-            self.session_variables_table_rows()?
         } else if table_name.go_lower_eq("CLUSTER_CONFIG") {
             self.cluster_config_table_rows(cluster_config_filters)?
         } else if table_name.go_lower_eq("TIDB_SERVERS_INFO") {
@@ -1036,169 +972,6 @@ impl Session {
             infoschema::table_rows(&table_name, &scratch, &visibility, ctx).unwrap_or_default()
         };
         Ok(rows)
-    }
-
-    /// Go `memtableRetriever.setDataForVariablesInfo`: one row per system
-    /// variable the viewer may see. DEFAULT_VALUE is what bootstrap seeds
-    /// for a GLOBAL-scoped variable (`GlobalSystemVariableInitialValue`),
-    /// CURRENT_VALUE is `GetSessionOrGlobalSystemVar` ("" when that read
-    /// fails), MIN/MAX are reported only for the numeric types, and
-    /// POSSIBLE_VALUES only for an enum.
-    fn variables_info_table_rows(&self) -> Vec<Vec<tidb_datatype::Datum>> {
-        use tidb_datatype::Datum;
-        let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-        let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
-        for definition in sysvar::SYS_VARS {
-            if self.sem_hides_sysvar(definition.name) {
-                continue;
-            }
-            let current = self.vars.get_system(definition.name).unwrap_or_default();
-            let default = if definition.has_global_scope() {
-                crate::vars::global_system_variable_initial_value(definition)
-            } else {
-                sysvar::effective_default(definition)
-            };
-            let numeric = matches!(
-                definition.var_type,
-                sysvar::VarType::Unsigned | sysvar::VarType::Int | sysvar::VarType::Float
-            );
-            let (min, max) = if numeric {
-                (
-                    Datum::Int(definition.min_value),
-                    Datum::UInt(definition.max_value),
-                )
-            } else {
-                (Datum::Null, Datum::Null)
-            };
-            let possible = if definition.var_type == sysvar::VarType::Enum {
-                text(&definition.possible_values.join(","))
-            } else {
-                Datum::Null
-            };
-            rows.push(vec![
-                text(definition.name),
-                text(&definition.scope_string()),
-                text(&default),
-                text(&current),
-                min,
-                max,
-                possible,
-                text(if definition.is_noop() { "YES" } else { "NO" }),
-            ]);
-        }
-        rows
-    }
-
-    /// Go `infoschema.GetDataFromSessionVariables`, the rows of
-    /// `performance_schema.session_variables`: every variable the viewer may
-    /// see, with `GetSessionOrGlobalSystemVar`'s value. Unlike
-    /// `VARIABLES_INFO`, a value that cannot be read fails the statement.
-    fn session_variables_table_rows(&self) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-        let text = |value: &str| tidb_datatype::Datum::Bytes(value.as_bytes().to_vec());
-        let mut rows = Vec::with_capacity(sysvar::SYS_VARS.len());
-        for definition in sysvar::SYS_VARS {
-            if self.sem_hides_sysvar(definition.name) {
-                continue;
-            }
-            let value = self
-                .vars
-                .get_system(definition.name)
-                .map_err(crate::variables::var_error)?;
-            rows.push(vec![text(definition.name), text(&value)]);
-        }
-        Ok(rows)
-    }
-
-    /// Go `memtableRetriever.setDataForUserAttributes`: read the metadata
-    /// object from the real `mysql.user` table, then apply MySQL 8.0.22's
-    /// account-visibility rules before exposing the virtual rows. The query
-    /// runs against the statement's catalog snapshot, so account DML and
-    /// `INFORMATION_SCHEMA.USER_ATTRIBUTES` cannot observe different rows.
-    fn user_attributes_table_rows(
-        &self,
-        catalog: &Catalog,
-        ctx: &tidb_executor::StmtContext,
-    ) -> Vec<Vec<tidb_datatype::Datum>> {
-        let Ok((_columns, rows)) = tidb_executor::run_select_meta_in(
-            "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
-             FROM mysql.user",
-            catalog,
-            "mysql",
-            ctx,
-        ) else {
-            // A bare in-process catalog has no bootstrapped mysql.user table.
-            // Go's restricted reader returns no rows in that shape rather than
-            // fabricating account metadata.
-            return Vec::new();
-        };
-
-        let Some((viewer_user, viewer_host)) = self.current_identity() else {
-            return rows;
-        };
-        let Some(registry) = self.privileges.as_ref() else {
-            return rows;
-        };
-        if self.privilege_bypassed {
-            return rows;
-        }
-
-        let can_read_all = registry.has_priv_mask_with_roles(
-            viewer_user,
-            viewer_host,
-            self.active_roles(),
-            tidb_mysql::consts::SystemDB,
-            "user",
-            privilege::GlobalPriv::Select.bit() | privilege::GlobalPriv::Update.bit(),
-        );
-        let can_create_user = registry.has_priv_mask_with_roles(
-            viewer_user,
-            viewer_host,
-            self.active_roles(),
-            "",
-            "",
-            privilege::GlobalPriv::CreateUser.bit(),
-        );
-        let caller_is_system_user = registry.has_dynamic_priv_with_roles(
-            viewer_user,
-            viewer_host,
-            self.active_roles(),
-            "SYSTEM_USER",
-            false,
-        );
-
-        rows.into_iter()
-            .filter(|row| {
-                if row.len() != 3 || can_read_all {
-                    return row.len() == 3;
-                }
-                let Some(user) = crate::datum_text(&row[0]) else {
-                    return false;
-                };
-                let Some(host) = crate::datum_text(&row[1]) else {
-                    return false;
-                };
-                // `record.match(viewer)` in Go selects a stored account row
-                // whose host pattern matches the viewer. The registry's
-                // account matcher is the same host-pattern implementation.
-                let is_self = registry.account_matches(
-                    &(user.clone(), host.clone()),
-                    viewer_user,
-                    viewer_host,
-                );
-                if is_self {
-                    return true;
-                }
-                if !can_create_user {
-                    return false;
-                }
-                if caller_is_system_user {
-                    return true;
-                }
-                // `SYSTEM_USER` is a dynamic privilege with SUPER fallback,
-                // so a CREATE USER caller cannot inspect a protected target.
-                !registry.has_dynamic_priv(&user, &host, "SYSTEM_USER", false)
-            })
-            .collect()
     }
 
     /// Go's receiving cluster table reader. It borrows live process/history

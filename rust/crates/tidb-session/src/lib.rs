@@ -1364,6 +1364,7 @@ mod identity;
 pub mod infoschema;
 mod inspection;
 mod load_stats_arm;
+mod account_state;
 mod instance_state;
 mod memtable_retrievers;
 mod non_prepared_plan_cache;

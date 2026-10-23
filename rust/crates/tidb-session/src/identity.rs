@@ -247,6 +247,30 @@ impl Session {
         }
     }
 
+    /// What the account tables read of this session (see
+    /// [`crate::account_state::AccountState`]).
+    pub(crate) fn account_state(&self) -> crate::account_state::AccountState {
+        crate::account_state::AccountState {
+            privileges: self.privileges.clone(),
+            privilege_bypassed: self.privilege_bypassed,
+            login_user: self.login_user.clone(),
+            current_user: self.current_user.clone(),
+            active_roles: self.active_roles.to_vec(),
+        }
+    }
+
+    /// What the variable tables read of this session (see
+    /// [`crate::account_state::VariablesState`]): its variables, and whether
+    /// SEM hides the invisible ones (`sem_hides_sysvar` without the name).
+    pub(crate) fn variables_state(&self) -> crate::account_state::VariablesState {
+        crate::account_state::VariablesState {
+            vars: self.vars.clone(),
+            hide_invisible: tidb_util::sem_compat::is_enabled()
+                && self.privilege_context().is_some()
+                && !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false),
+        }
+    }
+
     /// Go `UserPrivileges.DBIsVisible` (`privileges.go` around line 935): may
     /// this session SEE the schema at all.
     ///
@@ -1098,129 +1122,6 @@ impl Session {
         }
     }
 
-    /// `SELECT * FROM information_schema.USER_PRIVILEGES` rows, in Go's
-    /// `MySQLPrivilege.UserPrivilegesTable` order: EVERY account's static
-    /// privileges first (one row per privilege, in `mysql.AllGlobalPrivs`
-    /// print order, or a single `USAGE` row for an account with none), then
-    /// EVERY account's DYNAMIC privileges. Accounts are visited in username
-    /// order, since Go walks a B-tree keyed by username.
-    ///
-    /// `IS_GRANTABLE` means different things in the two halves (captured):
-    /// a static row reports the account's `GRANT OPTION`, while a dynamic
-    /// row reports that one privilege's own `with_grant_option`.
-    ///
-    /// Visibility (Go: "Seeing all users requires SELECT ON * FROM mysql.*.
-    /// The SUPER privilege (or any other dynamic privilege) doesn't help
-    /// here. This is verified against MySQL."): without global or `mysql.*`
-    /// `SELECT`, a session sees every one of its own host-pattern rows.
-    pub(crate) fn user_privileges_table_rows(&self) -> Vec<Vec<Datum>> {
-        let Some(registry) = &self.privileges else {
-            return Vec::new();
-        };
-        let identity = self
-            .login_user
-            .as_deref()
-            .and_then(|identity| identity.split_once('@'))
-            .map(|(user, host)| (user.to_owned(), host.to_owned()));
-        // Go's `UserPrivilegesTable` deliberately calls the raw privilege
-        // cache rather than the SkipWithGrant-aware manager wrapper. A
-        // bypassed no-row identity therefore sees no account rows here; it
-        // does not gain an information-schema account inventory.
-        let show_all = identity.as_ref().is_none_or(|(user, host)| {
-            let own_raw_cache = registry.has_matching_global_or_schema_priv(
-                user,
-                host,
-                tidb_mysql::consts::SystemDB,
-                privilege::GlobalPriv::Select.bit(),
-            );
-            if self.privilege_bypassed {
-                return own_raw_cache;
-            }
-            let roles = self
-                .current_identity()
-                .is_some_and(|(current_user, current_host)| {
-                    registry
-                        .effective_roles(
-                            &(current_user.to_owned(), current_host.to_owned()),
-                            self.active_roles(),
-                        )
-                        .into_iter()
-                        .any(|(role_user, role_host)| {
-                            registry.has_matching_global_or_schema_priv(
-                                &role_user,
-                                &role_host,
-                                tidb_mysql::consts::SystemDB,
-                                privilege::GlobalPriv::Select.bit(),
-                            )
-                        })
-                });
-            own_raw_cache || roles
-        });
-        let visible = |account: &(String, String)| {
-            show_all
-                || identity
-                    .as_ref()
-                    .is_some_and(|(user, host)| registry.account_matches(account, user, host))
-        };
-
-        let grantee = |(user, host): &(String, String)| format!("'{user}'@'{host}'");
-        let cell = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
-        let flag = |grantable: bool| cell(if grantable { "YES" } else { "NO" });
-
-        let mut static_accounts = registry.global_priv_masks();
-        static_accounts.sort_by(|(left, _), (right, _)| left.cmp(right));
-        let mut rows = Vec::new();
-        for (account, privs) in &static_accounts {
-            if !visible(account) {
-                continue;
-            }
-            let grantable = flag(privs & privilege::GlobalPriv::GrantOption.bit() != 0);
-            let named: Vec<&privilege::GlobalPriv> = privilege::ALL_GLOBAL_PRIVS
-                .iter()
-                .filter(|priv_| privs & priv_.bit() != 0)
-                .collect();
-            if named.is_empty() {
-                // Go emits USAGE only for a truly empty static mask, and it
-                // is never grantable. A lone mysql.GrantPriv bit is greater
-                // than the Usage sentinel but is deliberately absent from
-                // mysql.AllGlobalPrivs, so it produces no static row at all.
-                if *privs == 0 {
-                    rows.push(vec![
-                        cell(&grantee(account)),
-                        cell("def"),
-                        cell("USAGE"),
-                        flag(false),
-                    ]);
-                }
-                continue;
-            }
-            for priv_ in named {
-                rows.push(vec![
-                    cell(&grantee(account)),
-                    cell("def"),
-                    cell(priv_.print_name()),
-                    grantable.clone(),
-                ]);
-            }
-        }
-
-        let mut dynamic_accounts = registry.accounts_with_dynamic_privs();
-        dynamic_accounts.sort();
-        for account in &dynamic_accounts {
-            if !visible(account) {
-                continue;
-            }
-            for (name, grantable) in registry.dynamic_priv_rows(&account.0, &account.1) {
-                rows.push(vec![
-                    cell(&grantee(account)),
-                    cell("def"),
-                    cell(&name),
-                    flag(grantable),
-                ]);
-            }
-        }
-        rows
-    }
 }
 
 /// Go `plannererrors.ErrViewNoExplain` (1345).

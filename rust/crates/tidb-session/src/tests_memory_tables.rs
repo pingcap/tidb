@@ -187,16 +187,16 @@ fn the_tables_a_scan_retrieves_itself_are_the_ones_table_rows_answers() {
     }
 }
 
-/// A scan is installed exactly one retriever: the schema-only family and the
-/// instance-state family serve disjoint tables, and both leave the session's
-/// own families (and every unknown table) to the session.
+/// A scan has at most one retriever: the families serve disjoint tables, and
+/// they leave the session's own families (and every unknown table) to the
+/// session.
 #[test]
 fn a_scan_has_at_most_one_retriever() {
     use tidb_executor::mem_table_retrieval::{MemTableRead, MemTableRetriever};
     let session = Session::new();
-    let read = |table: &str| MemTableRead {
+    let read = |db: &str, table: &str| MemTableRead {
         plan_id: 1,
-        db_name: "information_schema".to_owned(),
+        db_name: db.to_owned(),
         table_name: table.to_owned(),
         columns: Vec::new(),
         column_ids: Vec::new(),
@@ -204,38 +204,58 @@ fn a_scan_has_at_most_one_retriever() {
         query_time_range: Default::default(),
         is_cluster_scan: false,
     };
-    let schema = crate::memtable_retrievers::InformationSchemaRetriever::new(
-        session.schema_visibility(),
-        None,
-        "default".to_owned(),
-    );
-    let instance = crate::instance_state::InstanceStateRetriever::new(session.viewer_state());
-    for table in [
-        "SCHEMATA",
-        "TABLES",
-        "COLUMNS",
-        "PROCESSLIST",
-        "TRX_SUMMARY",
-        "STATEMENTS_SUMMARY",
-        "CLIENT_ERRORS_SUMMARY_GLOBAL",
-        "MEMORY_USAGE",
-        "TIDB_INDEX_USAGE",
-        "CLUSTER_PROCESSLIST",
-        "SLOW_QUERY",
-        "TIDB_TRX",
-        "NO_SUCH_TABLE",
+    let retrievers: Vec<Box<dyn MemTableRetriever>> = vec![
+        Box::new(crate::memtable_retrievers::InformationSchemaRetriever::new(
+            session.schema_visibility(),
+            None,
+            "default".to_owned(),
+        )),
+        Box::new(crate::instance_state::InstanceStateRetriever::new(
+            session.viewer_state(),
+        )),
+        Box::new(crate::memtable_retrievers::CatalogTablesRetriever::new(
+            session.schema_visibility(),
+            false,
+        )),
+        Box::new(crate::account_state::AccountRetriever::new(
+            session.account_state(),
+        )),
+        Box::new(crate::account_state::VariablesRetriever::new(
+            session.variables_state(),
+        )),
+    ];
+    let servers = |db: &str, table: &str| {
+        retrievers
+            .iter()
+            .filter(|retriever| retriever.serves(&read(db, table)))
+            .count()
+    };
+    for (db, table, expected) in [
+        ("information_schema", "SCHEMATA", 1),
+        ("information_schema", "TABLES", 1),
+        ("information_schema", "COLUMNS", 1),
+        ("information_schema", "PROCESSLIST", 1),
+        ("information_schema", "TRX_SUMMARY", 1),
+        ("information_schema", "STATEMENTS_SUMMARY", 1),
+        ("information_schema", "CLIENT_ERRORS_SUMMARY_GLOBAL", 1),
+        ("information_schema", "MEMORY_USAGE", 1),
+        ("information_schema", "TIDB_INDEX_USAGE", 1),
+        ("information_schema", "USER_PRIVILEGES", 1),
+        ("information_schema", "USER_ATTRIBUTES", 1),
+        ("information_schema", "VARIABLES_INFO", 1),
+        ("information_schema", "PROFILING", 1),
+        ("information_schema", "TIKV_STORE_STATUS", 1),
+        ("information_schema", "TIKV_REGION_STATUS", 1),
+        ("information_schema", "TABLE_STORAGE_STATS", 1),
+        ("information_schema", "ATTRIBUTES", 1),
+        ("information_schema", "PLACEMENT_POLICIES", 1),
+        ("performance_schema", "session_variables", 1),
+        ("information_schema", "CLUSTER_PROCESSLIST", 0),
+        ("information_schema", "SLOW_QUERY", 0),
+        ("information_schema", "TIDB_TRX", 0),
+        ("information_schema", "NO_SUCH_TABLE", 0),
     ] {
-        let read = read(table);
-        assert!(
-            !(schema.serves(&read) && instance.serves(&read)),
-            "{table} is served twice"
-        );
-    }
-    assert!(schema.serves(&read("TABLES")) && !instance.serves(&read("TABLES")));
-    assert!(instance.serves(&read("PROCESSLIST")) && !schema.serves(&read("PROCESSLIST")));
-    for session_family in ["CLUSTER_PROCESSLIST", "SLOW_QUERY", "TIDB_TRX", "NO_SUCH_TABLE"] {
-        let read = read(session_family);
-        assert!(!schema.serves(&read) && !instance.serves(&read), "{session_family}");
+        assert_eq!(servers(db, table), expected, "{db}.{table}");
     }
 }
 

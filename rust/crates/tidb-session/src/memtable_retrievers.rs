@@ -1336,3 +1336,91 @@ impl tidb_executor::mem_table_retrieval::MemTableRetriever for InformationSchema
             .unwrap_or_default())
     }
 }
+
+/// Go's `memTableRetriever`s for the tables read from the statement's schema
+/// image and the store's region map: the PD-backed region and store tables,
+/// `ATTRIBUTES`, `PLACEMENT_POLICIES` and `KEYSPACE_META`. A scan builds them
+/// at its first `Next` from the catalog it was built with.
+pub(crate) struct CatalogTablesRetriever {
+    visibility: SchemaVisibility,
+    /// Whether SEM hides the cluster metadata from the viewer
+    /// (`sem_hides_cluster_metadata`).
+    hides_cluster_metadata: bool,
+}
+
+impl CatalogTablesRetriever {
+    pub(crate) fn new(visibility: SchemaVisibility, hides_cluster_metadata: bool) -> Self {
+        Self {
+            visibility,
+            hides_cluster_metadata,
+        }
+    }
+}
+
+impl tidb_executor::mem_table_retrieval::MemTableRetriever for CatalogTablesRetriever {
+    fn serves(&self, read: &tidb_executor::mem_table_retrieval::MemTableRead) -> bool {
+        !read.is_cluster_scan
+            && read
+                .db_name
+                .go_lower_eq(tidb_executor::driver::infoschema_meta::INFORMATION_SCHEMA)
+            && [
+                "TIKV_STORE_STATUS",
+                "TIKV_REGION_STATUS",
+                "TIKV_REGION_PEERS",
+                "TABLE_STORAGE_STATS",
+                "TIDB_HOT_REGIONS",
+                "ATTRIBUTES",
+                "PLACEMENT_POLICIES",
+                "KEYSPACE_META",
+            ]
+            .iter()
+            .any(|name| read.table_name.go_lower_eq(name))
+    }
+
+    fn retrieve(
+        &self,
+        read: &tidb_executor::mem_table_retrieval::MemTableRead,
+        catalog: &Catalog,
+        _ctx: &tidb_executor::StmtContext,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        use tidb_planner::memtable_predicate_extractor::MemTablePredicateExtractor as Extractor;
+        let table = read.table_name.as_str();
+        let store = catalog.region_store();
+        if table.go_lower_eq("TIKV_STORE_STATUS") {
+            return tikv_store_status_rows(store.as_ref(), self.hides_cluster_metadata);
+        }
+        if table.go_lower_eq("ATTRIBUTES") {
+            return crate::infoschema::attributes_rows(catalog, &self.visibility);
+        }
+        if table.go_lower_eq("PLACEMENT_POLICIES") {
+            return Ok(placement_policies_rows(catalog));
+        }
+        if table.go_lower_eq("KEYSPACE_META") {
+            return Ok(keyspace_meta_rows());
+        }
+        if table.go_lower_eq("TIDB_HOT_REGIONS") {
+            return tidb_hot_regions_rows(catalog, store.as_ref());
+        }
+        if table.go_lower_eq("TABLE_STORAGE_STATS") {
+            return match &read.extractor {
+                Some(Extractor::TableStorageStats(extractor)) => {
+                    table_storage_stats_rows(extractor, catalog, store.as_ref(), &self.visibility)
+                }
+                _ => Ok(Vec::new()),
+            };
+        }
+        if table.go_lower_eq("TIKV_REGION_PEERS") {
+            return match &read.extractor {
+                Some(Extractor::TikvRegionPeers(extractor)) => {
+                    tikv_region_peers_rows(extractor, store.as_ref())
+                }
+                _ => Ok(Vec::new()),
+            };
+        }
+        let extractor = match &read.extractor {
+            Some(Extractor::TiKVRegionStatus(extractor)) => Some(extractor),
+            _ => None,
+        };
+        tikv_region_status_rows(extractor, catalog, store.as_ref(), &self.visibility)
+    }
+}
