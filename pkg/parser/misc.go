@@ -189,6 +189,7 @@ var tokenMap = map[string]int{
 	"STATS_SAMPLE_RATE":              statsSampleRate,
 	"STATS_COL_CHOICE":               statsColChoice,
 	"STATS_COL_LIST":                 statsColList,
+	"AUTO":                           auto,
 	"AUTO_ID_CACHE":                  autoIdCache,
 	"AUTO_INCREMENT":                 autoIncrement,
 	"AUTO_RANDOM":                    autoRandom,
