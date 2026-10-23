@@ -1459,11 +1459,9 @@ func TestPurgeMaterializedViewLogNextUnixSecondsOnlyUpdatesForInternalSQL(t *tes
 		mlogID,
 	)).Check(testkit.Rows("auto"))
 
-	// DATE schedule expressions are evaluated at midnight in the persisted schedule timezone.
+	// DATE schedule expressions are evaluated at midnight UTC.
 	mlogTable.Meta().MaterializedViewLog.PurgeNext = "CAST('2030-01-02' AS DATE)"
-	tz, err := mlogTable.Meta().MaterializedViewLog.PurgeScheduleTimeZone.GetLocation()
-	require.NoError(t, err)
-	wantNextUnixSeconds := time.Date(2030, 1, 2, 0, 0, 0, 0, tz).Unix()
+	wantNextUnixSeconds := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC).Unix()
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = null where MLOG_ID = %d", mlogID))
 	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
 	tk.MustQuery(fmt.Sprintf(
@@ -1477,7 +1475,7 @@ func TestPurgeMaterializedViewLogNextUnixSecondsOnlyUpdatesForInternalSQL(t *tes
 	info.PurgeScheduleSQLMode = mysql.ModePipesAsConcat
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = null where MLOG_ID = %d", mlogID))
 	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
-	wantNextUnixSeconds = time.Date(2030, 1, 13, 0, 0, 0, 0, tz).Unix()
+	wantNextUnixSeconds = time.Date(2030, 1, 13, 0, 0, 0, 0, time.UTC).Unix()
 	tk.MustQuery(fmt.Sprintf(
 		"select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,
@@ -1487,11 +1485,19 @@ func TestPurgeMaterializedViewLogNextUnixSecondsOnlyUpdatesForInternalSQL(t *tes
 	info.PurgeScheduleSQLMode = mysql.ModeNoBackslashEscapes
 	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge_info set NEXT_PURGE_UNIX_SECONDS = null where MLOG_ID = %d", mlogID))
 	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
-	wantNextUnixSeconds = time.Date(2030, 1, 2, 0, 0, 0, 0, tz).Unix()
+	wantNextUnixSeconds = time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC).Unix()
 	tk.MustQuery(fmt.Sprintf(
 		"select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
 		mlogID,
 	)).Check(testkit.Rows(strconv.FormatInt(wantNextUnixSeconds, 10)))
+
+	info.PurgeNext = "CAST('2021-03-14 02:30:00' AS DATETIME)"
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	mustExecMViewPurgeInternal(t, tk, "purge materialized view log on t_purge_internal_next")
+	tk.MustQuery(fmt.Sprintf(
+		"select NEXT_PURGE_UNIX_SECONDS from mysql.tidb_mlog_purge_info where MLOG_ID = %d",
+		mlogID,
+	)).Check(testkit.Rows("1615689000"))
 }
 
 func TestPurgeMaterializedViewLogInternalSQLStartWithNoNextSetsNextUnixSecondsNull(t *testing.T) {

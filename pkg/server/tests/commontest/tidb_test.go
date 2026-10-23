@@ -347,6 +347,18 @@ func TestMultiStatements(t *testing.T) {
 	ts.RunTestMultiStatements(t)
 }
 
+func TestNonPreparedPlanCacheMultiStatements(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTestNonPreparedPlanCacheMultiStatements(t)
+}
+
+func TestNonPreparedPlanCacheMultiStatementsPointGet(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTestNonPreparedPlanCacheMultiStatementsPointGet(t)
+}
+
 func TestSocketForwarding(t *testing.T) {
 	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK

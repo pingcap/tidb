@@ -129,6 +129,35 @@ func TestUpdateMaterializedViewBaseInfoOnCreateMissingBaseTable(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestGetTableInfoAndCancelNonExistJob(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	err = kv.RunInNewTxn(context.Background(), store, true, func(_ context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+
+		for _, tc := range []struct {
+			name     string
+			tableID  int64
+			schemaID int64
+		}{
+			{name: "missing table", tableID: 2, schemaID: 1},
+			{name: "missing database", tableID: 2, schemaID: 2},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				job := &model.Job{State: model.JobStateRunning}
+				_, err := getTableInfoAndCancelNonExistJob(metaMut, job, tc.tableID, tc.schemaID)
+				require.Error(t, err)
+				require.Equal(t, model.JobStateCancelled, job.State)
+			})
+		}
+		return nil
+	})
+	require.NoError(t, err)
+}
+
 func TestUpdateMaterializedViewBaseInfoOnDropPropagatesGetTableError(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -160,6 +189,67 @@ func TestUpdateMaterializedViewBaseInfoOnDropWithoutBaseTables(t *testing.T) {
 	extraInfos, err := updateMaterializedViewBaseInfoOnDrop(&jobContext{}, &model.Job{TableID: droppingTable.ID}, droppingTable)
 	require.NoError(t, err)
 	require.Empty(t, extraInfos)
+}
+
+func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
+	base := &model.TableInfo{
+		ID:   1,
+		Name: ast.NewCIStr("base"),
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{
+			MLogID:   2,
+			MViewIDs: []int64{3},
+		},
+	}
+	mlog := &model.TableInfo{
+		ID:   2,
+		Name: ast.NewCIStr("$mlog$base"),
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID:       base.ID,
+			DependentMViewIDs: []int64{3},
+		},
+	}
+	oldMView := &model.TableInfo{
+		ID:   3,
+		Name: ast.NewCIStr("mv"),
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{base.ID},
+		},
+	}
+	shadow := &model.TableInfo{
+		ID:   4,
+		Name: ast.NewCIStr("__mv_shadow"),
+		MaterializedViewShadow: &model.MaterializedViewShadowInfo{
+			SourceMViewID: oldMView.ID,
+		},
+	}
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, oldMView, shadow})
+
+	involving, err := buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.NoError(t, err)
+	require.Equal(t, []model.InvolvingSchemaInfo{
+		{Database: "test", Table: "mv", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "base", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "__mv_shadow", Mode: model.ExclusiveInvolving},
+		{Database: "test", Table: "$mlog$base", Mode: model.ExclusiveInvolving},
+	}, involving)
+
+	// A MLog that does not list the old MV is unrelated to this cutover and is
+	// intentionally omitted from the involving-schema lock set.
+	mlog.MaterializedViewLog.DependentMViewIDs = nil
+	involving, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.NoError(t, err)
+	require.Len(t, involving, 3)
+	require.NotContains(t, involving, model.InvolvingSchemaInfo{Database: "test", Table: "$mlog$base", Mode: model.ExclusiveInvolving})
+
+	oldMView.MaterializedView.BaseTableIDs = []int64{base.ID, shadow.ID}
+	_, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
+		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
+	)
+	require.ErrorContains(t, err, "materialized view must reference exactly one base table")
 }
 
 func TestBuildDropTableInvolvingSchemaInfo(t *testing.T) {

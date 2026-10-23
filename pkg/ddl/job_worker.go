@@ -69,29 +69,6 @@ var (
 	mockDDLErrOnce = int64(0)
 )
 
-// rollbackTxnError marks an error that must roll back the whole DDL transaction
-// before the job error is persisted.
-type rollbackTxnError struct {
-	cause error
-}
-
-func (e *rollbackTxnError) Error() string {
-	return e.cause.Error()
-}
-
-func (e *rollbackTxnError) Unwrap() error {
-	return e.cause
-}
-
-func newRollbackTxnError(err error) error {
-	return &rollbackTxnError{cause: err}
-}
-
-func isRollbackTxnError(err error) bool {
-	var target *rollbackTxnError
-	return goerrors.As(err, &target)
-}
-
 // GetWaitTimeWhenErrorOccurred return waiting interval when processing DDL jobs encounter errors.
 func GetWaitTimeWhenErrorOccurred() time.Duration {
 	return time.Duration(atomic.LoadInt64(&WaitTimeWhenErrorOccurred))
@@ -131,11 +108,15 @@ type jobContext struct {
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
 	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
-	// DXF propagates add-index reorganization RU v2 through:
-	// BackfillTaskMeta.Summary.IndexKVSize -> recordDistTaskRU -> reorgCtx.ru ->
-	// reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
-	// accountPendingReorgRU -> Job.RU. It is persisted only after the matching
-	// table-state transition succeeds.
+	// mustRollbackTxnOnError is set before a DDL step executes an internal SQL
+	// statement that can modify state in the DDL transaction. StmtCommit or
+	// StmtRollback can move prior metadata mutations out of the current statement
+	// buffer, so any error after that must discard the whole DDL transaction.
+	// Currently, only MView/MLog DDL paths use this mechanism.
+	mustRollbackTxnOnError bool
+	// DXF propagates add-index reorganization RU v2 through recordDistTaskRU ->
+	// reorgCtx.ru -> reorgFnResult.ru -> stageReorgResultRU -> pendingReorgRU ->
+	// accountPendingReorgRU -> Job.RU, reading the workload from the task meta.
 	pendingReorgRU float64
 	// Keep storage-class history changes pending until a batched multi-schema
 	// step is known to commit its TableInfo changes.
@@ -417,13 +398,14 @@ func JobNeedGC(job *model.Job) bool {
 		switch job.Type {
 		case model.ActionDropSchema, model.ActionDropTable,
 			model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+			model.ActionDropMaterializedViewShadow,
 			model.ActionTruncateTable,
 			model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 			model.ActionDropColumn, model.ActionModifyColumn,
 			model.ActionAddIndex, model.ActionAddPrimaryKey,
 			model.ActionReorganizePartition, model.ActionRemovePartitioning,
-			model.ActionAlterTablePartitioning:
+			model.ActionAlterTablePartitioning, model.ActionMViewRefreshOutOfPlaceCutover:
 			return true
 		case model.ActionCreateMaterializedView:
 			// CREATE MATERIALIZED VIEW may create a physical table before the initial
@@ -672,9 +654,11 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	if !kerneltype.IsNextGen() {
 		return nil
 	}
-	// For reorganization jobs, only distributed add-index currently accounts
-	// the reorganization workload itself. Other reorganization jobs account the
-	// DDL transaction below, but their reorganization RU v2 is not fully accounted.
+	// The reorganization work itself is accounted separately from this
+	// DDL-transaction sample: distributed add-index charges the ingest KV size,
+	// while transactional backfill workers charge their committed transaction
+	// bytes. Reorganization paths without either hook still only account the DDL
+	// transaction below.
 	txn, err := w.sess.Txn()
 	if err != nil {
 		return errors.Trace(err)
@@ -694,6 +678,7 @@ func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
 	jobW *model.JobW,
 ) (int64, error) {
+	jobCtx.mustRollbackTxnOnError = false
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
 	defer r.End()
@@ -709,19 +694,20 @@ func (w *worker) transitOneJobStep(
 	// time range of another concurrent job updates, such as 'cancel/pause' job
 	// or on owner change, overlap with us, we will report 'write conflict', but
 	// if they don't overlap, we query and check inside our txn to detect the conflict.
-	currBytes, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
-	if err != nil {
+	if err = w.checkJobMetaUnchanged(jobCtx, jobW); err != nil {
 		// TODO maybe we can unify where to rollback, they are scatting around.
 		w.sess.Rollback()
 		return 0, err
 	}
-	if !bytes.Equal(currBytes, jobW.Bytes) {
-		w.sess.Rollback()
-		return 0, errors.New("job meta changed by others")
-	}
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {
+			if err := w.checkBeforeCommit(); err != nil {
+				return 0, err
+			}
+			if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
+			}
 			job.State = model.JobStateSynced
 		}
 		// Inject the failpoint to prevent the progress of index creation.
@@ -781,27 +767,37 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
-	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
-		// If the running job meets an error
-		// and the job state is rolling back, it means that we have already handled this error.
-		// Some DDL jobs (such as adding indexes) may need to update the table info and the schema version,
-		// then shouldn't discard the KV modification.
-		// And the job state is rollback done, it means the job was already finished, also shouldn't discard too.
-		// Otherwise, we should discard the KV modification when running job.
-		if isRollbackTxnError(runJobErr) {
+	if runJobErr != nil {
+		if jobCtx.mustRollbackTxnOnError {
+			// Internal SQL can commit or roll back its own statement buffer.
+			// Discard all mutations from this job step, including ones made while
+			// the job is already rolling back.
 			w.sess.Rollback()
+			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
 				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 				return 0, txnErr
 			}
+			// Rollback ends the transaction checked above. Recheck in the new
+			// transaction so it does not overwrite a concurrent job update.
+			if txnErr = w.checkJobMetaUnchanged(jobCtx, jobW); txnErr != nil {
+				w.sess.Rollback()
+				jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+				return 0, txnErr
+			}
 			jobCtx.metaMut = meta.NewMutator(txn)
-		} else {
+			schemaVer = 0
+		} else if !job.IsRollingback() && !job.IsRollbackDone() {
+			// If the running job meets an error and the job state is rolling back,
+			// the rollback path may have intentionally updated table info and the
+			// schema version. Keep those mutations unless the error explicitly
+			// requires the whole transaction to be rolled back.
 			w.sess.Reset()
+			// If error happens after updateSchemaVersion(), then the schemaVer is updated.
+			// Result in the retry duration is up to 2 * lease.
+			schemaVer = 0
 		}
-		// If error happens after updateSchemaVersion(), then the schemaVer is updated.
-		// Result in the retry duration is up to 2 * lease.
-		schemaVer = 0
 	}
 
 	err = w.registerMDLInfo(job, schemaVer)
@@ -845,6 +841,17 @@ func (w *worker) transitOneJobStep(
 	}
 
 	return schemaVer, nil
+}
+
+func (w *worker) checkJobMetaUnchanged(jobCtx *jobContext, jobW *model.JobW) error {
+	currBytes, err := jobCtx.sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, jobW.Job.ID)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(currBytes, jobW.Bytes) {
+		return errors.New("job meta changed by others")
+	}
+	return nil
 }
 
 func (w *worker) checkBeforeCommit() error {
@@ -1105,6 +1112,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
 	case model.ActionCreateTable:
 		ver, err = w.onCreateTable(jobCtx, job)
+	case model.ActionCreateMaterializedViewShadow:
+		ver, err = w.onCreateMaterializedViewShadow(jobCtx, job)
 	case model.ActionCreateMaterializedViewLog:
 		ver, err = w.onCreateMaterializedViewLog(jobCtx, job)
 	case model.ActionCreateMaterializedView:
@@ -1116,7 +1125,8 @@ func (w *worker) runOneJobStep(
 	case model.ActionCreateView:
 		ver, err = onCreateView(jobCtx, job)
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence,
-		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+		model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog,
+		model.ActionDropMaterializedViewShadow:
 		ver, err = w.onDropTableOrView(jobCtx, job)
 	case model.ActionDropTablePartition:
 		ver, err = w.onDropTablePartition(jobCtx, job)
@@ -1164,6 +1174,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterMaterializedViewAttributes(jobCtx, job, w.sess)
 	case model.ActionAlterMaterializedViewLogPurge:
 		ver, err = onAlterMaterializedViewLogPurge(jobCtx, job, w.sess)
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		ver, err = w.onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx, job)
 	case model.ActionModifyTableAutoIDCache:
 		ver, err = onModifyTableAutoIDCache(jobCtx, job)
 	case model.ActionAddTablePartition:

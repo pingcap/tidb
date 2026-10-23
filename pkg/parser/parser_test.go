@@ -467,6 +467,38 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 	}
 }
 
+func TestRefreshMaterializedViewStatements(t *testing.T) {
+	table := []testCase{
+		{"REFRESH MATERIALIZED VIEW mv FAST", true, "REFRESH MATERIALIZED VIEW `mv` FAST"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE FAST"},
+		{"REFRESH MATERIALIZED VIEW mv FAST AS OF TIMESTAMP '2021-04-15 00:00:00' WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` FAST AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00' WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE DELTA APPLY WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv FAST OUT OF PLACE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DELTA APPLY", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB 42", true, "CANCEL MATERIALIZED VIEW REFRESH JOB 42"},
+	}
+	RunTest(t, table, false, false)
+
+	p := parser.New()
+	stmt, err := p.ParseOneStmt("REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY", "", "")
+	require.NoError(t, err)
+	refreshStmt, ok := stmt.(*ast.RefreshMaterializedViewStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.RefreshMaterializedViewTypeComplete, refreshStmt.Type)
+	require.Equal(t, ast.RefreshMaterializedViewCompleteTypeDeltaApply, refreshStmt.CompleteType)
+
+	stmt, err = p.ParseOneStmt("CANCEL MATERIALIZED VIEW REFRESH JOB 42", "", "")
+	require.NoError(t, err)
+	cancelStmt, ok := stmt.(*ast.CancelMaterializedViewJobStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.CancelMaterializedViewJobTypeRefresh, cancelStmt.Tp)
+	require.Equal(t, int64(42), cancelStmt.JobID)
+}
+
 func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 	p := parser.New()
 	dupCases := []struct {
@@ -622,6 +654,18 @@ func TestRecommendIndex(t *testing.T) {
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
 		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1'"},
+		{"recommend index return result for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for ''", true, "RECOMMEND INDEX RETURN RESULT FOR ''"},
+		{"recommend index return result", false, ""},
+		{"recommend index return result with A = 1", false, ""},
+		{"recommend index return for 'select * from t'", false, ""},
+		{"recommend index return results for 'select * from t'", false, ""},
+		{"recommend index `return` `result` for 'select * from t'", false, ""},
+		{"recommend index return result for select * from t", false, ""},
+		{"select return, result from result", true, "SELECT `return`,`result` FROM `result`"},
 		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
@@ -630,6 +674,16 @@ func TestRecommendIndex(t *testing.T) {
 		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
 	}
 	RunTest(t, table, false, false)
+
+	p := parser.New()
+	for _, sql := range []string{
+		`recommend index run for 'select * from t where a=1'`,
+		`recommend index return result for 'select * from t where a=1'`,
+	} {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		require.True(t, ast.IsReadOnly(stmt, true), sql)
+	}
 }
 
 func TestAdminStmt(t *testing.T) {
@@ -6376,6 +6430,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
 
 		// create view with `(` select statement `)`
@@ -6390,6 +6445,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`) WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = current_user view v as (select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS (SELECT * FROM `t`)"},
 
 		// create view with union statement
@@ -6404,6 +6460,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 
 		// create view with union all statement
@@ -6418,6 +6475,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 
 		// create view with `(` union statement `)`
@@ -6432,7 +6490,11 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`) WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
+		{"create view v as select * from t with check option", true, "CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
+		{"create view v as select * from t with check", false, ""},
+		{"create view v as select * from t with cascaded local check option", false, ""},
 	}
 	RunTest(t, table, false, false)
 
@@ -6467,6 +6529,15 @@ func TestView(t *testing.T) {
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
 	require.Equal(t, ast.SecurityDefiner, v.Security)
 	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
+
+	// A bare `WITH CHECK OPTION` is the unqualified form of the clause. MySQL treats
+	// it as CASCADED, and the clause is not part of the select statement text.
+	st, err = p.ParseOneStmt("create view v as select * from t with check option", "", "")
+	require.NoError(t, err)
+	v, ok = st.(*ast.CreateViewStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, "select * from t", v.Select.Text())
 
 	src = `
 CREATE VIEW v1 AS SELECT * FROM t;
@@ -6727,7 +6798,7 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t partition a with default buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH DEFAULT BUCKETS"},
 		{"analyze table t with default cmsketch width", false, ""},
 		{"analyze table t with default cmsketch depth", false, ""},
-		{"analyze table t with default ndvrate", false, ""},
+		{"analyze table t with default ndvrate", true, "ANALYZE TABLE `t` WITH DEFAULT NDVRATE"},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}

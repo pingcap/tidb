@@ -217,7 +217,7 @@ type CreateTableArgs struct {
 
 func (a *CreateTableArgs) getArgsV1(job *Job) []any {
 	switch job.Type {
-	case ActionCreateTable:
+	case ActionCreateTable, ActionCreateMaterializedViewShadow:
 		return []any{a.TableInfo, a.FKCheck}
 	case ActionCreateView:
 		return []any{a.TableInfo, a.OnExistReplace, a.OldViewTblID}
@@ -230,7 +230,7 @@ func (a *CreateTableArgs) getArgsV1(job *Job) []any {
 func (a *CreateTableArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
 	switch job.Type {
-	case ActionCreateTable:
+	case ActionCreateTable, ActionCreateMaterializedViewShadow:
 		return errors.Trace(job.decodeArgs(a.TableInfo, &a.FKCheck))
 	case ActionCreateView:
 		return errors.Trace(job.decodeArgs(a.TableInfo, &a.OnExistReplace, &a.OldViewTblID))
@@ -329,7 +329,7 @@ type DropTableArgs struct {
 func (a *DropTableArgs) getArgsV1(job *Job) []any {
 	// Only table-like drop jobs have submission arguments in V1.
 	switch job.Type {
-	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog:
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow:
 		return []any{a.Identifiers, a.FKCheck}
 	}
 	return nil
@@ -341,7 +341,7 @@ func (a *DropTableArgs) getFinishedArgsV1(*Job) []any {
 
 func (a *DropTableArgs) decodeV1(job *Job) error {
 	switch job.Type {
-	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog:
+	case ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow:
 		return job.decodeArgs(&a.Identifiers, &a.FKCheck)
 	}
 	return nil
@@ -717,21 +717,19 @@ func GetModifyTableCommentArgs(job *Job) (*ModifyTableCommentArgs, error) {
 
 // AlterMaterializedViewRefreshArgs contains ALTER MATERIALIZED VIEW refresh arguments.
 type AlterMaterializedViewRefreshArgs struct {
-	RefreshMethod           string           `json:"refresh_method,omitempty"`
-	RefreshStartWith        string           `json:"refresh_start_with,omitempty"`
-	RefreshNext             string           `json:"refresh_next,omitempty"`
-	RefreshScheduleSQLMode  mysql.SQLMode    `json:"refresh_schedule_sql_mode,omitempty"`
-	RefreshScheduleTimeZone TimeZoneLocation `json:"refresh_schedule_time_zone,omitempty"`
-	UpdateRefreshSchedule   bool             `json:"update_refresh_schedule,omitempty"`
+	RefreshMethod          string        `json:"refresh_method,omitempty"`
+	RefreshStartWith       string        `json:"refresh_start_with,omitempty"`
+	RefreshNext            string        `json:"refresh_next,omitempty"`
+	RefreshScheduleSQLMode mysql.SQLMode `json:"refresh_schedule_sql_mode,omitempty"`
+	UpdateRefreshSchedule  bool          `json:"update_refresh_schedule,omitempty"`
 }
 
 func (a *AlterMaterializedViewRefreshArgs) getArgsV1(*Job) []any {
-	refreshScheduleTimeZone := a.RefreshScheduleTimeZone.Clone()
-	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, a.RefreshScheduleSQLMode, &refreshScheduleTimeZone, a.UpdateRefreshSchedule}
+	return []any{a.RefreshMethod, a.RefreshStartWith, a.RefreshNext, a.RefreshScheduleSQLMode, a.UpdateRefreshSchedule}
 }
 
 func (a *AlterMaterializedViewRefreshArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext, &a.RefreshScheduleSQLMode, &a.RefreshScheduleTimeZone, &a.UpdateRefreshSchedule))
+	return errors.Trace(job.decodeArgs(&a.RefreshMethod, &a.RefreshStartWith, &a.RefreshNext, &a.RefreshScheduleSQLMode, &a.UpdateRefreshSchedule))
 }
 
 // GetAlterMaterializedViewRefreshArgs decodes ALTER MATERIALIZED VIEW refresh arguments.
@@ -765,26 +763,54 @@ func GetAlterMaterializedViewAttributesArgs(job *Job) (*AlterMaterializedViewAtt
 
 // AlterMaterializedViewLogPurgeArgs contains ALTER MATERIALIZED VIEW LOG purge arguments.
 type AlterMaterializedViewLogPurgeArgs struct {
-	PurgeMethod           string           `json:"purge_method,omitempty"`
-	PurgeStartWith        string           `json:"purge_start_with,omitempty"`
-	PurgeNext             string           `json:"purge_next,omitempty"`
-	PurgeScheduleSQLMode  mysql.SQLMode    `json:"purge_schedule_sql_mode,omitempty"`
-	PurgeScheduleTimeZone TimeZoneLocation `json:"purge_schedule_time_zone,omitempty"`
-	UpdatePurgeSchedule   bool             `json:"update_purge_schedule,omitempty"`
+	PurgeMethod          string        `json:"purge_method,omitempty"`
+	PurgeStartWith       string        `json:"purge_start_with,omitempty"`
+	PurgeNext            string        `json:"purge_next,omitempty"`
+	PurgeScheduleSQLMode mysql.SQLMode `json:"purge_schedule_sql_mode,omitempty"`
+	UpdatePurgeSchedule  bool          `json:"update_purge_schedule,omitempty"`
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) getArgsV1(*Job) []any {
-	purgeScheduleTimeZone := a.PurgeScheduleTimeZone.Clone()
-	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, a.PurgeScheduleSQLMode, &purgeScheduleTimeZone, a.UpdatePurgeSchedule}
+	return []any{a.PurgeMethod, a.PurgeStartWith, a.PurgeNext, a.PurgeScheduleSQLMode, a.UpdatePurgeSchedule}
 }
 
 func (a *AlterMaterializedViewLogPurgeArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext, &a.PurgeScheduleSQLMode, &a.PurgeScheduleTimeZone, &a.UpdatePurgeSchedule))
+	return errors.Trace(job.decodeArgs(&a.PurgeMethod, &a.PurgeStartWith, &a.PurgeNext, &a.PurgeScheduleSQLMode, &a.UpdatePurgeSchedule))
 }
 
 // GetAlterMaterializedViewLogPurgeArgs decodes ALTER MATERIALIZED VIEW LOG purge arguments.
 func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPurgeArgs, error) {
 	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
+}
+
+// RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs contains the metadata
+// needed to atomically replace an MV with its freshly built shadow table.
+type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
+	OldMViewID                         int64   `json:"old_mview_id,omitempty"`
+	ShadowTableID                      int64   `json:"shadow_table_id,omitempty"`
+	BuildReadTSO                       uint64  `json:"build_read_tso,omitempty"`
+	ExpectedOldMViewRevision           *uint64 `json:"expected_old_mview_revision,omitempty"`
+	ExpectedLastSuccessReadTSO         uint64  `json:"expected_last_success_read_tso,omitempty"`
+	ExpectedLastSuccessReadTSONull     bool    `json:"expected_last_success_read_tso_null,omitempty"`
+	NextRefreshUnixSeconds             *int64  `json:"next_refresh_unix_seconds,omitempty"`
+	ShouldUpdateNextRefreshUnixSeconds bool    `json:"should_update_next_refresh_unix_seconds,omitempty"`
+}
+
+func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
+	return []any{a.OldMViewID, a.ShadowTableID, a.BuildReadTSO, a.ExpectedLastSuccessReadTSO,
+		a.ExpectedLastSuccessReadTSONull, a.NextRefreshUnixSeconds, a.ShouldUpdateNextRefreshUnixSeconds,
+		a.ExpectedOldMViewRevision}
+}
+
+func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.OldMViewID, &a.ShadowTableID, &a.BuildReadTSO,
+		&a.ExpectedLastSuccessReadTSO, &a.ExpectedLastSuccessReadTSONull, &a.NextRefreshUnixSeconds,
+		&a.ShouldUpdateNextRefreshUnixSeconds, &a.ExpectedOldMViewRevision))
+}
+
+// GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs gets cutover args.
+func GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job *Job) (*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs, error) {
+	return getOrDecodeArgs[*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs](&RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{}, job)
 }
 
 // ModifyTableCharsetAndCollateArgs is the arguments for ActionModifyTableCharsetAndCollate ddl.

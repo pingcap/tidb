@@ -103,42 +103,42 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
-	assertValue := func(expected string) {
+	assertValue := func(expected, sampledNDVThreshold string) {
 		res := MustExecToRecodeSet(t, se, fmt.Sprintf(
-			"select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s'",
-			vardef.TiDBEnableAdaptiveLimitScan,
+			"select variable_value, @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan, (select variable_value from mysql.GLOBAL_VARIABLES where variable_name='%s') from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+			vardef.TiDBAnalyzeSampledNDVThreshold, vardef.TiDBEnableAdaptiveLimitScan,
 		))
+		defer func() { require.NoError(t, res.Close()) }()
 		chk := res.NewChunk(nil)
 		require.NoError(t, res.Next(ctx, chk))
 		require.Equal(t, 1, chk.NumRows())
 		require.Equal(t, expected, chk.GetRow(0).GetString(0))
-		require.NoError(t, res.Close())
-
-		res = MustExecToRecodeSet(t, se, "select @@global.tidb_enable_adaptive_limit_scan, @@session.tidb_enable_adaptive_limit_scan")
-		chk = res.NewChunk(nil)
-		require.NoError(t, res.Next(ctx, chk))
-		require.Equal(t, 1, chk.NumRows())
-		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(0) == 1)
 		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(1) == 1)
-		require.NoError(t, res.Close())
+		require.Equal(t, expected == vardef.On, chk.GetRow(0).GetInt64(2) == 1)
+		require.Equal(t, sampledNDVThreshold, chk.GetRow(0).GetString(3))
 	}
-
 	// Initial bootstrap uses the new-cluster policy.
-	assertValue(vardef.On)
+	assertValue(vardef.On, "500000000")
+	// The upgrade backfill must preserve an existing value.
+	upgradeToVer317(se, version316)
+	upgradeToVer319(se, version318)
+	assertValue(vardef.On, "500000000")
 
-	// The upgrade is idempotent and must not overwrite an existing setting.
-	MustExec(t, se, "set global tidb_enable_adaptive_limit_scan=ON")
-	upgradeToVer287(se, version286)
-	assertValue(vardef.On)
-
-	// Simulate a v286 cluster where this unreleased variable does not exist.
+	// Simulate an existing cluster before the version317 backfill. It has no
+	// ndv_rate column yet, and its saved options must not gain a rate.
+	MustExec(t, se, "alter table mysql.analyze_options drop column ndv_rate")
+	MustExec(t, se, "insert into mysql.analyze_options (table_id) values (1)")
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version286)))
-	RevertVersionAndVariables(t, se, version286)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version316)))
+	RevertVersionAndVariables(t, se, version316)
 	MustExec(t, se, fmt.Sprintf(
 		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
 		vardef.TiDBEnableAdaptiveLimitScan,
+	))
+	MustExec(t, se, fmt.Sprintf(
+		"delete from mysql.GLOBAL_VARIABLES where variable_name='%s'",
+		vardef.TiDBAnalyzeSampledNDVThreshold,
 	))
 	require.NoError(t, txn.Commit(ctx))
 	store.SetOption(StoreBootstrappedKey, nil)
@@ -152,7 +152,13 @@ func TestAdaptiveLimitScanClusterDefaults(t *testing.T) {
 	ver, err := GetBootstrapVersion(se)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
-	assertValue(vardef.Off)
+	assertValue(vardef.Off, "0")
+	res := MustExecToRecodeSet(t, se, "select ndv_rate from mysql.analyze_options where table_id = 1")
+	defer func() { require.NoError(t, res.Close()) }()
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(ctx, chk))
+	require.Equal(t, 1, chk.NumRows())
+	require.Equal(t, float64(-1), chk.GetRow(0).GetFloat64(0))
 }
 
 func TestUpgradeToVer282RefreshesBindingDigest(t *testing.T) {

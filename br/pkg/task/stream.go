@@ -58,6 +58,7 @@ import (
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	taskrepo "github.com/pingcap/tidb/br/pkg/task/repo"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -1637,8 +1638,13 @@ func restoreStream(
 		if restoreGCFunc, oldGCRatio, err = DisableGC(g, mgr.GetStorage()); err != nil {
 			return errors.Trace(err)
 		}
-		restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
-		return errors.Trace(err)
+		if cfg.RetainLatestMVCCVersion {
+			restoreRocksDBMaxBackgroundJobsFunc, oldRocksDBMaxBackgroundJobs, err = KeepRocksDBMaxBackgroundJobsLow(g, mgr.GetStorage())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
 	}); err != nil {
 		return errors.Trace(err)
 	}
@@ -1657,17 +1663,22 @@ func restoreStream(
 			log.Warn("the original gc-ratio is negative, reset by default value 1.1", zap.String("old-gc-ratio", oldGCRatio))
 			oldGCRatio = utils.DefaultGcRatioVal
 		}
-		log.Info("start to restore tikv config",
-			zap.String("gc-ratio", oldGCRatio),
-			zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
+		restoreFields := []zap.Field{zap.String("gc-ratio", oldGCRatio)}
+		if oldRocksDBMaxBackgroundJobs != "" {
+			restoreFields = append(restoreFields, zap.String("max-background-jobs", oldRocksDBMaxBackgroundJobs))
+		}
+		log.Info("start to restore tikv config", restoreFields...)
 		err = cfg.RestoreRegistry.GlobalOperationAfterSetResettingStatus(ctx, cfg.RestoreID, func() error {
 			if err := restoreGCFunc(oldGCRatio); err != nil {
 				log.Error("failed to restore gc", zap.Error(err))
 				return errors.Trace(err)
 			}
-			if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
-				log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
-				return errors.Trace(err)
+			// Only restore if we lowered it for retain-latest-mvcc-version.
+			if restoreRocksDBMaxBackgroundJobsFunc != nil {
+				if err := restoreRocksDBMaxBackgroundJobsFunc(oldRocksDBMaxBackgroundJobs); err != nil {
+					log.Error("failed to restore rocksdb.max-background-jobs", zap.Error(err))
+					return errors.Trace(err)
+				}
 			}
 			return nil
 		})
@@ -2240,26 +2251,27 @@ func getFullBackupTS(
 	ctx context.Context,
 	cfg *RestoreConfig,
 ) (uint64, uint64, error) {
-	_, s, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
+	rootBackend, rootStorage, err := GetStorage(ctx, cfg.FullBackupStorage, &cfg.Config)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
+	ref := &taskrepo.SnapshotStorageRef{
+		BackupID:    cfg.BackupID,
+		RootBackend: rootBackend,
+		RootStorage: rootStorage,
+	}
+	if err := ref.Validate(ctx); err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	backupMetaBytes, err := ref.GetBackupMetaBytes(ctx, &cfg.CipherInfo)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	decryptedMetaData, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, &cfg.CipherInfo)
-	if err != nil {
+	backupMeta := &backuppb.BackupMeta{}
+	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
 		return 0, 0, errors.Trace(err)
 	}
-
-	backupmeta := &backuppb.BackupMeta{}
-	if err = backupmeta.Unmarshal(decryptedMetaData); err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptedMetaData, backupmeta); err != nil {
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(backupMetaBytes, backupMeta); err != nil {
 		if cfg.CheckRequirements {
 			return 0, 0, errors.Trace(err)
 		}
@@ -2267,7 +2279,7 @@ func getFullBackupTS(
 	}
 
 	// start and end are identical in full backup, pick random one
-	return backupmeta.GetEndVersion(), backupmeta.GetClusterId(), nil
+	return backupMeta.GetEndVersion(), backupMeta.GetClusterId(), nil
 }
 
 func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restoreutils.RewriteRules {
@@ -2546,6 +2558,7 @@ func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName st
 
 	originalRestoreTS := cfg.RestoreTS
 	registrationInfo := registry.RegistrationInfo{
+		FilterHashInput:   taskrepo.SnapshotRegistrationFilterHashInput(cfg.FilterStr, cfg.BackupID),
 		StartTS:           cfg.StartTS,
 		RestoredTS:        cfg.RestoreTS,
 		FilterStrings:     cfg.FilterStr,

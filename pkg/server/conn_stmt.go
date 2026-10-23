@@ -233,6 +233,8 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 }
 
 func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args []param.BinaryParam, useCursor bool) (err error) {
+	// Binary execution bypasses Parse and ExecutePreparedStmt, including their timing resets.
+	cc.ctx.GetSessionVars().DurationParse = 0
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
 	//nolint:forcetypeassert
