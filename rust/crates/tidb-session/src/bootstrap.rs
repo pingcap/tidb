@@ -38,6 +38,16 @@
 use crate::Session;
 use tidb_executor::DriverError;
 
+/// Go master's `systemTablesOfMaterializedViewNextGenVersion`, which
+/// `tidb_metadef::BOOTSTRAP_TABLES` carries for the cluster tier.
+const MATERIALIZED_VIEW_TABLES: [&str; 5] = [
+    "tidb_mview_refresh_info",
+    "tidb_mlog_purge_info",
+    "tidb_mview_refresh_hist",
+    "tidb_mview_refresh_alert",
+    "tidb_mlog_purge_hist",
+];
+
 /// Go `bindinfo.BuiltinPseudoSQL4BindLock`: the pseudo statement the builtin
 /// row carries, used by Go to simulate `LOCK TABLE` on `mysql.bind_info`.
 pub(crate) const BUILTIN_PSEUDO_SQL_FOR_BIND_LOCK: &str = "builtin_pseudo_sql_for_bind_lock";
@@ -140,15 +150,6 @@ impl Session {
     }
 
     fn run_bootstrap_statements(&mut self) -> Result<(), DriverError> {
-        /// Go master's `systemTablesOfMaterializedViewNextGenVersion`, which
-        /// `tidb_metadef::BOOTSTRAP_TABLES` carries for the cluster tier.
-        const MATERIALIZED_VIEW_TABLES: [&str; 5] = [
-            "tidb_mview_refresh_info",
-            "tidb_mlog_purge_info",
-            "tidb_mview_refresh_hist",
-            "tidb_mview_refresh_alert",
-            "tidb_mlog_purge_hist",
-        ];
         let settings = tidb_executor::CreateTableSettings {
             sql_mode: self.scanner_sql_mode(),
             parser_config: self.vars.build_parser_config(),
@@ -210,11 +211,11 @@ impl Session {
             }
             if classic {
                 // `mysql` is the first id Go draws, `sys` the second, `test`
-                // follows the 53 tables and the two views (114); the counter
-                // ends at 116 with the resource-group job.
+                // follows the 53 tables and the two views (114). The tables'
+                // jobs end at 109; the view below draws 110.
                 catalog.register_database_with_id("mysql", 1);
                 catalog.register_database_with_id("test", 114);
-                catalog.reserve_ids_through(116);
+                catalog.reserve_ids_through(109);
             }
             Ok(())
         })?;
@@ -262,6 +263,14 @@ impl Session {
         // Go `doDDLWorks` ends with `ALTER RESOURCE GROUP default
         // BACKGROUND=(TASK_TYPES='stats')` (`kv.InternalTxnStats`).
         self.bootstrap_default_resource_group_background()?;
+        if classic {
+            // Go's counter ends at 116 with the resource-group job, and each
+            // of the 58 jobs is in the history.
+            self.with_catalog_mut(|catalog| {
+                catalog.reserve_ids_through(116);
+                file_classic_bootstrap_jobs(catalog)
+            })?;
+        }
 
         // Go `doDMLWorks`' bootstrap `root`@`%` row, minus the
         // `HIGH_PRIORITY` scheduler hint: every static privilege column `Y`
@@ -321,9 +330,154 @@ impl Session {
     }
 }
 
+/// The 58 DDL jobs Go's classic bootstrap runs, filed in the meta history as
+/// its worker leaves them: `CREATE DATABASE sys` (database 2, job 3), one
+/// `CREATE TABLE` per `mysql.*` table (table `4 + 2k`, job `5 + 2k`), the two
+/// views (110 / 111 and 112 / 113), `CREATE DATABASE test` (114 / 115) and
+/// `ALTER RESOURCE GROUP default` (job 116, group id 1), each at its own
+/// schema version. Only the meta history is filled: the
+/// `mysql.tidb_ddl_history` copy Go also writes is a SQL insert this tier
+/// would pay for 58 times on every fresh store.
+fn file_classic_bootstrap_jobs(catalog: &mut tidb_executor::Catalog) -> Result<(), DriverError> {
+    use tidb_executor::ddl::job_history::done_schema_state;
+    use tidb_model::{ActionType, JobState};
+
+    struct BootstrapJob {
+        action: ActionType,
+        schema_id: i64,
+        table_id: i64,
+        schema_name: &'static str,
+        table_name: &'static str,
+        query: String,
+        id: i64,
+    }
+    let mut jobs = vec![BootstrapJob {
+        action: ActionType::ACTION_CREATE_SCHEMA,
+        schema_id: 2,
+        table_id: 0,
+        schema_name: "sys",
+        table_name: "",
+        query: "CREATE DATABASE IF NOT EXISTS `sys`".to_owned(),
+        id: 3,
+    }];
+    for (position, table) in tidb_metadef::BOOTSTRAP_TABLES
+        .iter()
+        .filter(|table| !MATERIALIZED_VIEW_TABLES.contains(&table.name))
+        .enumerate()
+    {
+        let position = i64::try_from(position).expect("a table position fits in i64");
+        jobs.push(BootstrapJob {
+            action: ActionType::ACTION_CREATE_TABLE,
+            schema_id: 1,
+            table_id: 4 + 2 * position,
+            schema_name: "mysql",
+            table_name: table.name,
+            query: table.create_sql.to_owned(),
+            id: 5 + 2 * position,
+        });
+    }
+    jobs.push(BootstrapJob {
+        action: ActionType::ACTION_CREATE_VIEW,
+        schema_id: 1,
+        table_id: 110,
+        schema_name: "mysql",
+        table_name: "tidb_mdl_view",
+        query: tidb_metadef::system_tables_def::CREATE_TI_DBMDLVIEW.to_owned(),
+        id: 111,
+    });
+    jobs.push(BootstrapJob {
+        action: ActionType::ACTION_CREATE_VIEW,
+        schema_id: 2,
+        table_id: 112,
+        schema_name: "sys",
+        table_name: "schema_unused_indexes",
+        query: tidb_metadef::system_tables_def::CREATE_SCHEMA_UNUSED_INDEXES_VIEW.to_owned(),
+        id: 113,
+    });
+    jobs.push(BootstrapJob {
+        action: ActionType::ACTION_CREATE_SCHEMA,
+        schema_id: 114,
+        table_id: 0,
+        schema_name: "test",
+        table_name: "",
+        query: "CREATE DATABASE IF NOT EXISTS test".to_owned(),
+        id: 115,
+    });
+    jobs.push(BootstrapJob {
+        action: ActionType::ACTION_ALTER_RESOURCE_GROUP,
+        schema_id: 1,
+        table_id: 0,
+        schema_name: "default",
+        table_name: "",
+        query: format!(
+            "ALTER RESOURCE GROUP `default` BACKGROUND=(TASK_TYPES='{}')",
+            tidb_txnkv::INTERNAL_TXN_STATS
+        ),
+        id: 116,
+    });
+    for (position, bootstrap) in jobs.into_iter().enumerate() {
+        let version = i64::try_from(position).expect("a job position fits in i64") + 1;
+        let mut job = tidb_model::Job::default();
+        job.version = tidb_model::JobVersion::V2;
+        job.id = bootstrap.id;
+        job.type_ = bootstrap.action;
+        job.schema_id = bootstrap.schema_id;
+        job.table_id = bootstrap.table_id;
+        job.schema_name = bootstrap.schema_name.to_owned().into();
+        job.table_name = bootstrap.table_name.to_owned().into();
+        job.state = JobState::SYNCED;
+        job.schema_state = done_schema_state(bootstrap.action);
+        job.query = bootstrap.query.into();
+        job.start_ts = catalog.allocate_tso();
+        job.real_start_ts = catalog.allocate_tso();
+        job.sequence_number = u64::try_from(version).expect("a version is positive");
+        let mut history = tidb_model::HistoryInfo {
+            schema_version: version,
+            finished_ts: catalog.allocate_tso(),
+            ..tidb_model::HistoryInfo::default()
+        };
+        if bootstrap.table_id != 0 {
+            let mut info = tidb_model::TableInfo::default();
+            info.id = bootstrap.table_id;
+            info.name = tidb_ast::CiString::new(bootstrap.table_name);
+            history.table_info = Some(tidb_model::go_runtime::GoShared::new(info));
+        } else if bootstrap.action == ActionType::ACTION_CREATE_SCHEMA {
+            let mut info = tidb_model::DBInfo::default();
+            info.id = bootstrap.schema_id;
+            info.name = tidb_ast::CiString::new(bootstrap.schema_name);
+            history.db_info = Some(tidb_model::go_runtime::GoShared::new(info));
+        }
+        job.binlog_info = Some(tidb_model::go_runtime::GoShared::new(history));
+        catalog.add_history_ddl_job(&mut job)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A classic-kernel store has Go's 58 bootstrap jobs in its DDL history
+    /// (jobs 3 .. 116) and its next user table is 117 with job 118.
+    #[test]
+    fn a_classic_store_has_the_bootstrap_jobs_in_its_history() {
+        if tidb_config::kerneltype::is_next_gen() {
+            return;
+        }
+        let mut session = Session::new();
+        let text = crate::tests_support::row_text;
+        let jobs = text(session.run("ADMIN SHOW DDL JOBS 100"));
+        assert_eq!(jobs.len(), 58);
+        assert_eq!(
+            (jobs[0][0].as_str(), jobs[0][3].as_str()),
+            ("116", "alter resource group")
+        );
+        assert_eq!((jobs[57][0].as_str(), jobs[57][1].as_str()), ("3", "sys"));
+        session.run("CREATE TABLE test.layout_t (a INT)").unwrap();
+        let newest = text(session.run("ADMIN SHOW DDL JOBS 1"));
+        assert_eq!(newest[0][0], "118");
+        assert_eq!(newest[0][6], "117");
+    }
 
     /// Go `createSessionWithOpt` never runs `bootstrap()`; bootstrap belongs
     /// to `bootstrapSessionImpl` and precedes ordinary session creation.
