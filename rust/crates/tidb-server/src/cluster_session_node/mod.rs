@@ -7659,6 +7659,57 @@ impl ClusterServerSession {
         Ok(Some(lowered))
     }
 
+    /// Runs a statement whose stored-state change takes a route of its own
+    /// (Go's DDL, account, `SET GLOBAL`, ANALYZE and statistics executors), and
+    /// answers `None` for an ordinary statement. Both the write door and the
+    /// result-set door come through here, so what a routed statement does
+    /// cannot depend on which answer shape it would otherwise have taken.
+    fn run_routed_statement(
+        &mut self,
+        route: StatementRoute,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        let outcome = match route {
+            StatementRoute::Ddl(statement) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))
+            }
+            StatementRoute::DdlSequence(statements) => self
+                .observe_routed_write(sql, stmt, |node| {
+                    node.run_ddl_sequence(sql, stmt, &statements)
+                }),
+            StatementRoute::MixedTemporaryDrop { statement, local } => self
+                .observe_routed_write(sql, stmt, |node| {
+                    node.run_mixed_temporary_drop(sql, stmt, &statement, local)
+                }),
+            StatementRoute::LocalTemporaryDdl => self
+                .observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql, stmt)),
+            StatementRoute::Accounts => {
+                self.observe_routed_write(sql, stmt, |node| node.run_account_statement(sql))
+            }
+            StatementRoute::GlobalVars => {
+                self.observe_routed_write(sql, stmt, |node| node.run_global_var_statement(sql))
+            }
+            StatementRoute::Analyze(tables) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))
+            }
+            StatementRoute::LoadStats => Err(SqlQueryError::unknown(
+                "LOAD STATS requires client-local file transfer",
+            )),
+            StatementRoute::FlushStatsDelta(targets) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_flush_stats_delta(&targets))
+            }
+            StatementRoute::StatsLock(statement) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_stats_lock(&statement))
+            }
+            StatementRoute::DropStats(physical_ids) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_drop_stats(&physical_ids))
+            }
+            StatementRoute::Ordinary => return Ok(None),
+        };
+        outcome.map(Some)
+    }
+
     /// Runs a [`StatementRoute::DdlSequence`] the way Go's loop does: each
     /// part is its own DDL, and the first failure ends the statement with
     /// the earlier parts already applied.
@@ -8088,67 +8139,9 @@ impl QuerySession for ClusterServerSession {
         self.rebuild_catalog_if_stale();
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
-        match self.schema_route(stmt)? {
-            StatementRoute::Ddl(statement) => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))
-                    .map(Some)
-            }
-            StatementRoute::DdlSequence(statements) => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| {
-                        node.run_ddl_sequence(sql, stmt, &statements)
-                    })
-                    .map(Some)
-            }
-            StatementRoute::MixedTemporaryDrop { statement, local } => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| {
-                        node.run_mixed_temporary_drop(sql, stmt, &statement, local)
-                    })
-                    .map(Some);
-            }
-            StatementRoute::LocalTemporaryDdl => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_local_temporary_ddl(sql, stmt))
-                    .map(Some);
-            }
-            StatementRoute::Accounts => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_account_statement(sql))
-                    .map(Some)
-            }
-            StatementRoute::GlobalVars => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_global_var_statement(sql))
-                    .map(Some)
-            }
-            StatementRoute::Analyze(tables) => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))
-                    .map(Some)
-            }
-            StatementRoute::LoadStats => {
-                return Err(SqlQueryError::unknown(
-                    "LOAD STATS requires client-local file transfer",
-                ))
-            }
-            StatementRoute::FlushStatsDelta(targets) => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_flush_stats_delta(&targets))
-                    .map(Some);
-            }
-            StatementRoute::StatsLock(statement) => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_stats_lock(&statement))
-                    .map(Some)
-            }
-            StatementRoute::DropStats(physical_ids) => {
-                return self
-                    .observe_routed_write(sql, stmt, |node| node.run_drop_stats(&physical_ids))
-                    .map(Some)
-            }
-            StatementRoute::Ordinary => {}
+        let route = self.schema_route(stmt)?;
+        if let Some(outcome) = self.run_routed_statement(route, sql, stmt)? {
+            return Ok(Some(outcome));
         }
         if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))
         {
@@ -8626,79 +8619,11 @@ impl QuerySession for ClusterServerSession {
         // The text protocol reaches DDL through `execute_write`; this covers a
         // front end that goes straight to the result-set path, so a routed
         // statement runs exactly once either way.
-        match self.schema_route(stmt)? {
-            StatementRoute::Ddl(statement) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::DdlSequence(statements) => {
-                self.observe_routed_write(sql, stmt, |node| {
-                    node.run_ddl_sequence(sql, stmt, &statements)
-                })?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::MixedTemporaryDrop { statement, local } => {
-                self.observe_routed_write(sql, stmt, |node| {
-                    node.run_mixed_temporary_drop(sql, stmt, &statement, local)
-                })?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::LocalTemporaryDdl => {
-                self.observe_routed_write(sql, stmt, |node| {
-                    node.run_local_temporary_ddl(sql, stmt)
-                })?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::Accounts => {
-                self.observe_routed_write(sql, stmt, |node| node.run_account_statement(sql))?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::GlobalVars => {
-                self.observe_routed_write(sql, stmt, |node| node.run_global_var_statement(sql))?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::Analyze(tables) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::LoadStats => {
-                return Err(SqlQueryError::unknown(
-                    "LOAD STATS requires client-local file transfer",
-                ))
-            }
-            StatementRoute::FlushStatsDelta(targets) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_flush_stats_delta(&targets))?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::StatsLock(statement) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_stats_lock(&statement))?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::DropStats(physical_ids) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_drop_stats(&physical_ids))?;
-                return Ok(QueryResult::new(Box::new(
-                    crate::pipeline_session::affected_rows_source(0),
-                )));
-            }
-            StatementRoute::Ordinary => {}
+        let route = self.schema_route(stmt)?;
+        if self.run_routed_statement(route, sql, stmt)?.is_some() {
+            return Ok(QueryResult::new(Box::new(
+                crate::pipeline_session::affected_rows_source(0),
+            )));
         }
         if let Stmt::Dml(dml) = stmt {
             if let tidb_ast::DmlStmt::Batch(batch) = dml.as_ref() {
