@@ -61,8 +61,8 @@ func TestMaterializedViewRefreshOperators(t *testing.T) {
 				tk.MustExec("update t_refresh_ops set v = 1 where id = 3")
 			}
 			tk.MustExec("begin pessimistic")
-			// Execute the existing internal AST directly: the REFRESH SQL entry point
-			// belongs to the later runtime and utility-statement PRs.
+			// Execute the internal AST directly to inspect operator statistics
+			// independently of the refresh lifecycle.
 			plan, stats := executeRefreshOperator(t, tk, &ast.RefreshMaterializedViewImplementStmt{
 				RefreshStmt: &ast.RefreshMaterializedViewStmt{
 					ViewName: &ast.TableName{Name: ast.NewCIStr("mv_refresh_ops")},

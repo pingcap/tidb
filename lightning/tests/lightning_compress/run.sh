@@ -38,9 +38,7 @@ for BACKEND in tidb local; do
 
     # restart lightning from checkpoint, the second line should be written successfully
     export GO_FAILPOINTS=
-    set +e
-    run_lightning --backend $BACKEND --config "$CUR/$BACKEND-config.toml" -d "$CUR/data.$compress" --enable-checkpoint=1 2> /dev/null
-    set -e
+    run_lightning --backend $BACKEND --config "$CUR/$BACKEND-config.toml" -d "$CUR/data.$compress" --enable-checkpoint=1
 
     run_sql 'SELECT count(*), sum(PROCESSLIST_TIME), sum(THREAD_OS_ID), count(PROCESSLIST_STATE) FROM compress.threads'
     check_contains 'count(*): 43'
