@@ -337,6 +337,48 @@ func TestStatementsSummaryExtractorPreparedTimeRange(t *testing.T) {
 	require.Equal(t, time.Unix(1577923200, 0).UTC(), extractor.CoarseTimeRange.EndTime.UTC())
 }
 
+func TestStatementsSummaryExtractorPreparedTimeRangeDST(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	for _, ca := range []struct {
+		name      string
+		timezone  string
+		bound     string
+		skipRange bool
+	}{
+		{"NewYorkFold", "America/New_York", "2024-11-03 01:30:00", true},
+		{"NewYorkGap", "America/New_York", "2024-03-10 02:30:00", true},
+		{"LordHoweFold", "Australia/Lord_Howe", "2024-04-07 01:45:00", true},
+		{"NewYorkAfterFold", "America/New_York", "2024-11-03 03:30:00", false},
+		{"UTC", "+00:00", "2024-11-03 01:30:00", false},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			tk.MustExec("set time_zone = '" + ca.timezone + "'")
+			tk.MustExec("prepare dst_stmt from 'select digest from information_schema.statements_summary_history where summary_begin_time <= cast(? as datetime) and summary_end_time >= cast(? as datetime)'")
+			tk.MustExec("set @bound = '" + ca.bound + "'")
+			tk.MustQuery("execute dst_stmt using @bound, @bound")
+			plan := tk.Session().ShowProcess().Plan
+			if execute, ok := plan.(*plannercore.Execute); ok {
+				plan = execute.Plan
+			}
+			physical, ok := plan.(base.PhysicalPlan)
+			require.True(t, ok, "%T", plan)
+			for len(physical.Children()) > 0 {
+				physical = physical.Children()[0]
+			}
+			memTable, ok := physical.(*physicalop.PhysicalMemTable)
+			require.True(t, ok, "%T", physical)
+			extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+			require.False(t, extractor.SkipRequest)
+			if ca.skipRange {
+				require.Nil(t, extractor.CoarseTimeRange)
+				return
+			}
+			require.NotNil(t, extractor.CoarseTimeRange)
+		})
+	}
+}
+
 func TestClusterLogTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
