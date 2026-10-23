@@ -3278,7 +3278,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		})
 		return ver, errors.Trace(err)
 	case model.StateDeleteOnly:
-		ver, err = w.enableReorganizePartitionWrites(jobCtx, job, tblInfo)
+		ver, err = enableReorganizePartitionWrites(jobCtx, job, tblInfo)
 		if err != nil {
 			return ver, err
 		}
@@ -3287,7 +3287,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		return ver, errors.Trace(err)
 	case model.StateWriteOnly:
-		ver, err = w.startReorganizePartitionBackfill(jobCtx, job, tblInfo)
+		ver, err = startReorganizePartitionBackfill(job, tblInfo)
 		if err != nil {
 			return ver, err
 		}
@@ -3309,7 +3309,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		accountPendingReorgRU(jobCtx, job, err)
 		return ver, errors.Trace(err)
 	case model.StateDeleteReorganization:
-		ver, err = w.retireReorganizePartitionIndexes(jobCtx, job, tblInfo)
+		ver, err = retireReorganizePartitionIndexes(job, tblInfo)
 		if err != nil {
 			return ver, err
 		}
@@ -3515,7 +3515,7 @@ func prepareReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo,
 
 // enableReorganizePartitionWrites waits for configured TiFlash replicas and
 // marks the new indexes write-only. The caller publishes StateWriteOnly.
-func (w *worker) enableReorganizePartitionWrites(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
+func enableReorganizePartitionWrites(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
 	// All nodes must delete from both partition sets before any node starts
 	// inserting into both. Otherwise a delete using the older schema could leave
 	// a ghost row in the new partitions. Updates that move rows must likewise
@@ -3563,7 +3563,7 @@ func (w *worker) enableReorganizePartitionWrites(jobCtx *jobContext, job *model.
 
 // startReorganizePartitionBackfill ensures all nodes can write the new partitions
 // before taking the snapshot used to copy existing rows.
-func (w *worker) startReorganizePartitionBackfill(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
+func startReorganizePartitionBackfill(job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
 	// Insert this state to confirm all servers can see the new partitions when reorg is running,
 	// so that new data will be updated in both old and new partitions when reorganizing.
 	job.SnapshotVer = 0
@@ -3654,7 +3654,7 @@ func (w *worker) backfillReorganizePartition(jobCtx *jobContext, job *model.Job,
 
 // retireReorganizePartitionIndexes stops inserts into replaced indexes before
 // finishing the job can schedule their data for deletion.
-func (w *worker) retireReorganizePartitionIndexes(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
+func retireReorganizePartitionIndexes(job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
 	// Clients in StateDeleteReorganization may still insert into the old indexes.
 	// If we finished the DDL now, delete-range GC could remove the old index data,
 	// then a client using that schema could insert another entry. GC would not
