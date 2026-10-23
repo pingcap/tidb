@@ -26,7 +26,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -948,19 +947,17 @@ func soundex(str string, isBinary bool) string {
 	return buf.String()
 }
 
-// isSoundexLetter reports whether r is a letter for SOUNDEX. MySQL takes every character above U+00FF
-// as a letter and looks the others up in the Latin-1 table; a byte of a binary string is a letter only
-// when it is an ASCII letter.
+// isSoundexLetter reports whether r is a letter for SOUNDEX. MySQL 8.0 takes every non-ASCII character from
+// U+00C0 up as a letter (including U+00D7 and U+00F7) and none below it; a byte of a binary string is a
+// letter only when it is an ASCII letter.
 func isSoundexLetter(r rune, isBinary bool) bool {
 	switch {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
 		return true
-	case isBinary || r < utf8.RuneSelf:
+	case isBinary:
 		return false
-	case r > 0xFF:
-		return true
 	}
-	return unicode.IsLetter(r)
+	return r >= 0xC0
 }
 
 func soundexCode(r rune) byte {

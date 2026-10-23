@@ -772,6 +772,13 @@ func TestSoundex(t *testing.T) {
 		{"😀abc", "😀120"},
 		{"١abc", "١120"},
 		{"²abc", "A120"},
+		// U+00C0 is the boundary: U+00D7 and U+00F7 are letters, U+00AA, U+00B5 and U+00BA are not
+		{"×abc", "×120"},
+		{"÷abc", "÷120"},
+		{"ÿabc", "ÿ120"},
+		{"ªabc", "A120"},
+		{"µabc", "A120"},
+		{"ºabc", "A120"},
 		// only the ASCII letters of a binary string are letters
 		{[]byte("Hello"), "H400"},
 		{[]byte{0xC3, 0xA9, 'a', 'b', 'c'}, "A120"},
