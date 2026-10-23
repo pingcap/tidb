@@ -17,10 +17,12 @@ package types
 import (
 	"encoding/json"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -49,6 +51,11 @@ import (
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.c[*]') -> [1, "2"]
 		select json_extract('{"a": "b", "c": [1, "2"]}', '$.*') -> ["b", [1, "2"]]
 */
+
+var (
+	lastStr = []rune("last")
+	toStr   = []rune("to")
+)
 
 // if index is positive, it represents the [index]
 // if index is negative, it represents the [len() + index]
@@ -261,25 +268,32 @@ func (pe JSONPathExpression) CouldMatchMultipleValues() bool {
 }
 
 type jsonPathStream struct {
-	pathExpr string
+	pathExpr []rune
 	pos      int
+}
+
+// isJSONPathWhiteSpace follows `is_whitespace` in MySQL's
+// sql-common/json_path.cc, which only treats the ASCII whitespace characters
+// as whitespace in a JSON path.
+func isJSONPathWhiteSpace(c rune) bool {
+	return c == ' ' || ('\t' <= c && c <= '\r')
 }
 
 func (s *jsonPathStream) skipWhiteSpace() {
 	for ; s.pos < len(s.pathExpr); s.pos++ {
-		if !unicode.IsSpace(rune(s.pathExpr[s.pos])) {
+		if !isJSONPathWhiteSpace(s.pathExpr[s.pos]) {
 			break
 		}
 	}
 }
 
-func (s *jsonPathStream) read() byte {
+func (s *jsonPathStream) read() rune {
 	b := s.pathExpr[s.pos]
 	s.pos++
 	return b
 }
 
-func (s *jsonPathStream) peek() byte {
+func (s *jsonPathStream) peek() rune {
 	return s.pathExpr[s.pos]
 }
 
@@ -291,18 +305,23 @@ func (s *jsonPathStream) exhausted() bool {
 	return s.pos >= len(s.pathExpr)
 }
 
-func (s *jsonPathStream) readWhile(f func(byte) bool) (str string, metEnd bool) {
+func (s *jsonPathStream) readWhile(f func(rune) bool) (str []rune, metEnd bool) {
 	start := s.pos
 	for ; !s.exhausted(); s.skip(1) {
 		if !f(s.peek()) {
 			return s.pathExpr[start:s.pos], false
 		}
 	}
-	return s.pathExpr[start:s.pos], true
+	return s.pathExpr[start:], true
 }
 
 func parseJSONPathExpr(pathExpr string) (pe JSONPathExpression, err error) {
-	s := &jsonPathStream{pathExpr: pathExpr, pos: 0}
+	// Converting to []rune replaces invalid UTF-8 with U+FFFD, so check it
+	// before the conversion.
+	if !utf8.ValidString(pathExpr) {
+		return JSONPathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(0)
+	}
+	s := &jsonPathStream{pathExpr: []rune(pathExpr), pos: 0}
 	s.skipWhiteSpace()
 	if s.exhausted() || s.read() != '$' {
 		return JSONPathExpression{}, ErrInvalidJSONPath.GenWithStackByArgs(1)
@@ -354,16 +373,16 @@ func parseJSONPathWildcard(s *jsonPathStream, p *JSONPathExpression) bool {
 	return true
 }
 
-func (s *jsonPathStream) tryReadString(expected string) bool {
+func (s *jsonPathStream) tryReadString(expected []rune) bool {
 	recordPos := s.pos
 
 	i := 0
-	str, meetEnd := s.readWhile(func(b byte) bool {
+	str, meetEnd := s.readWhile(func(b rune) bool {
 		i += 1
 		return i <= len(expected)
 	})
 
-	if meetEnd || str != expected {
+	if meetEnd || !slices.Equal(str, expected) {
 		s.pos = recordPos
 		return false
 	}
@@ -373,7 +392,7 @@ func (s *jsonPathStream) tryReadString(expected string) bool {
 func (s *jsonPathStream) tryReadIndexNumber() (int, bool) {
 	recordPos := s.pos
 
-	str, meetEnd := s.readWhile(func(b byte) bool {
+	str, meetEnd := s.readWhile(func(b rune) bool {
 		return b >= '0' && b <= '9'
 	})
 	if meetEnd {
@@ -381,7 +400,7 @@ func (s *jsonPathStream) tryReadIndexNumber() (int, bool) {
 		return 0, false
 	}
 
-	index, err := strconv.Atoi(str)
+	index, err := strconv.Atoi(string(str))
 	if err != nil || index > math.MaxUint32 {
 		s.pos = recordPos
 		return 0, false
@@ -408,16 +427,16 @@ func (s *jsonPathStream) tryParseArrayIndex() (jsonPathArrayIndex, bool) {
 		}
 		return jsonPathArrayIndexFromStart(index), true
 	case c == 'l':
-		if !s.tryReadString("last") {
+		if !s.tryReadString(lastStr) {
 			s.pos = recordPos
 			return 0, false
 		}
+		// Keep the whitespace after `last` if it's not followed by '-', so the
+		// caller can still check the end of the path and the " to " of a range.
+		lastEndPos := s.pos
 		s.skipWhiteSpace()
-		if s.exhausted() {
-			return jsonPathArrayIndexFromLast(0), true
-		}
-
-		if s.peek() != '-' {
+		if s.exhausted() || s.peek() != '-' {
+			s.pos = lastEndPos
 			return jsonPathArrayIndexFromLast(0), true
 		}
 		s.skip(1)
@@ -453,9 +472,13 @@ func parseJSONPathArray(s *jsonPathStream, p *JSONPathExpression) bool {
 		var selection jsonPathArraySelection
 		selection = jsonPathArraySelectionIndex{start}
 		// try to read " to " and the end
-		if unicode.IsSpace(rune(s.peek())) {
+		if isJSONPathWhiteSpace(s.peek()) {
 			s.skipWhiteSpace()
-			if s.tryReadString("to") && unicode.IsSpace(rune(s.peek())) {
+			if s.tryReadString(toStr) {
+				// `to` must be followed by whitespace, like MySQL.
+				if s.exhausted() || !isJSONPathWhiteSpace(s.peek()) {
+					return false
+				}
 				s.skipWhiteSpace()
 				if s.exhausted() {
 					return false
@@ -501,7 +524,7 @@ func parseJSONPathMember(s *jsonPathStream, p *JSONPathExpression) bool {
 		var wasQuoted bool
 		if s.peek() == '"' {
 			s.skip(1)
-			str, meetEnd := s.readWhile(func(b byte) bool {
+			str, meetEnd := s.readWhile(func(b rune) bool {
 				if b == '\\' {
 					s.skip(1)
 					return true
@@ -512,12 +535,13 @@ func parseJSONPathMember(s *jsonPathStream, p *JSONPathExpression) bool {
 				return false
 			}
 			s.skip(1)
-			dotKey = str
+			dotKey = string(str)
 			wasQuoted = true
 		} else {
-			dotKey, _ = s.readWhile(func(b byte) bool {
-				return !(unicode.IsSpace(rune(b)) || b == '.' || b == '[' || b == '*')
+			dotKeyInRune, _ := s.readWhile(func(b rune) bool {
+				return !(isJSONPathWhiteSpace(b) || b == '.' || b == '[' || b == '*')
 			})
+			dotKey = string(dotKeyInRune)
 		}
 		dotKey = "\"" + dotKey + "\""
 
@@ -534,20 +558,76 @@ func parseJSONPathMember(s *jsonPathStream, p *JSONPathExpression) bool {
 	return true
 }
 
+// isEcmascriptIdentifier follows `is_ecmascript_identifier` in MySQL's
+// sql-common/json_path.cc, which decides whether a key in a JSON path needs to
+// be quoted.
 func isEcmascriptIdentifier(s string) bool {
-	if s == "" {
+	// MySQL decodes the name as UTF-8, and malformed UTF-8 is not an identifier.
+	if s == "" || !utf8.ValidString(s) {
 		return false
 	}
 
-	for i := 0; i < len(s); i++ {
-		if (i != 0 && s[i] >= '0' && s[i] <= '9') ||
-			(s[i] >= 'a' && s[i] <= 'z') || (s[i] >= 'A' && s[i] <= 'Z') ||
-			s[i] == '_' || s[i] == '$' || s[i] >= 0x80 {
+	for i, c := range s {
+		// accept letter
+		if isJSONPathLetter(c) {
 			continue
 		}
+		// accept '$' and '_'
+		if c == '$' || c == '_' {
+			continue
+		}
+
+		// the first character must be a letter or '$' or '_'
+		if i == 0 {
+			return false
+		}
+
+		// accept unicode combining mark
+		if isUnicodeCombiningMark(c) {
+			continue
+		}
+		// accept digit
+		if isJSONPathDigit(c) {
+			continue
+		}
+		// accept unicode connector punctuation
+		if unicode.Is(unicode.Pc, c) {
+			continue
+		}
+		// accept ZWNJ and ZWJ
+		if c == 0x200C || c == 0x200D {
+			continue
+		}
+
 		return false
 	}
 	return true
+}
+
+// isUnicodeCombiningMark follows `unicode_combining_mark` in MySQL, which only
+// covers the Combining Diacritical Marks block. MySQL also uses it to exclude
+// these code points from `is_letter`, because the lowest bytes of some of
+// them are ASCII letters.
+func isUnicodeCombiningMark(c rune) bool {
+	return 0x300 <= c && c <= 0x36F
+}
+
+// isJSONPathLetter follows `is_letter` in MySQL. MySQL checks the code point
+// with `my_isalpha(&my_charset_utf8mb4_bin, codepoint)`, which only looks up
+// the lowest byte of the code point in the ctype table of utf8mb4.
+func isJSONPathLetter(c rune) bool {
+	if isUnicodeCombiningMark(c) {
+		return false
+	}
+	b := byte(c)
+	return ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z') || (0x80 <= b && b <= 0xFE)
+}
+
+// isJSONPathDigit follows `is_digit` in MySQL, which also only checks the
+// lowest byte of the code point.
+func isJSONPathDigit(c rune) bool {
+	b := byte(c)
+	return '0' <= b && b <= '9'
 }
 
 // ParseJSONPathExpr parses a JSON path expression. Returns a JSONPathExpression
