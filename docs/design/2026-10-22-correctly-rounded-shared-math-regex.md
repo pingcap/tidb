@@ -15,7 +15,7 @@
     * [MySQL-compatible functions](#mysql-compatible-functions)
     * [Build and linking per engine, and the cgo question](#build-and-linking-per-engine-and-the-cgo-question)
     * [Distribution and integrity of the archives](#distribution-and-integrity-of-the-archives)
-    * [Versioning and rolling upgrade](#versioning-and-rolling-upgrade)
+    * [Versioning](#versioning)
     * [Compatibility](#compatibility)
 * [Test Design](#test-design)
     * [Functional Tests](#functional-tests)
@@ -79,10 +79,10 @@ Three independent causes produce the numeric divergence:
    has three algebraic forms across the three engines today.
 
 The divergence outlives a single query. A function result can be stored and indexed, through
-an index on a generated column, an index on an expression, or a `CHECK` constraint, so a
-disagreement between the node that wrote a value and the node that later reads or re-checks it
-can corrupt an index or drop a row. So the requirement is one result per input, the same on
-every component and every CPU.
+an index on a generated column, an index on an expression, a `CHECK` constraint, or a
+partition key on a generated column, so a disagreement between the node that wrote a value and
+the node that later reads or re-checks it can corrupt an index or drop a row. So the
+requirement is one result per input, the same on every component and every CPU.
 
 ## Detailed Design
 
@@ -112,6 +112,13 @@ particular, out of scope here:
 - **Function versioning:** which result changes need a new version, and how a cluster records,
   chooses and changes the version used by a stored expression or a statement. That is a
   separate design; this design supplies shared implementations it can choose from.
+- **Regular-expression behavior changes in the engines that adopt the shared engine.** Moving
+  an engine to the shared regular-expression engine can change which strings match, for
+  patterns that rely on engine-specific syntax. How much change is acceptable, and whether an
+  engine needs a compatibility mode, is for the engines that adopt it to decide.
+- **A startup self-check.** The library can carry one like any other function, running its own
+  functions over embedded test cases; whether to provide it, and what an engine does when it
+  fails, is for the engines to decide.
 
 ### Function groups
 
@@ -135,9 +142,9 @@ framework extends to other behavior that diverges across engines; string collati
 The library's functions are **correctly rounded**: a result is the representable double
 nearest the exact mathematical value. It is defined by the input alone, so it does not depend
 on the CPU, the compiler or the math-library version, and that is the property that makes the
-bits identical everywhere by construction. (`SQRT` and `RADIANS` are already a single IEEE
-operation and identical everywhere; the library carries them for completeness and as a guard
-against regression.) The library returns the computed value, including an infinity or a NaN
+bits identical everywhere by construction. (`SQRT` is already a single IEEE operation and
+identical everywhere; the library carries it for completeness and as a guard against
+regression.) The library returns the computed value, including an infinity or a NaN
 for an out-of-domain input; mapping that to a SQL value, NULL, warning or error is the
 engine's job, as it is today.
 
@@ -153,12 +160,9 @@ value: `COT` as `1/tan`, `DEGREES` and `RADIANS` as a multiply by a rounded cons
 two-argument `LOG(base, x)` as `ln(x)/ln(base)`. Some edge-case results are MySQL choices as
 well, for example whether an out-of-domain input yields an error, a NULL or a NaN.
 
-This design treats MySQL compatibility as separate from the correctly rounded result and
-handles it within the same framework: where it is wanted, the library carries a distinct
-MySQL-compatible function (for example a MySQL `COT`) next to the correctly rounded one,
-selected per cluster or session. Either choice is fully deterministic across the cluster.
-Whether to offer the MySQL-compatible variants at all, or to prefer correct rounding
-everywhere, and which is the default, is an open question below.
+The library can carry a distinct MySQL-compatible function (for example a MySQL `COT`) next to
+the correctly rounded one, each deterministic on every engine and CPU. Which variants it
+carries, and which one an engine uses, are decided outside this design.
 
 ### Build and linking per engine, and the cgo question
 
@@ -193,7 +197,7 @@ so the build is hermetic and the archive's bits are checked.
 
 For TiDB the per-platform archives are committed inside a versioned Go module, one per
 platform that evaluates the library in TiDB: Linux and macOS, each on amd64 and arm64, so
-four per version. The no-cgo build paths (Windows, and the FreeBSD cross-compile) use the
+four per library release. The no-cgo build paths (Windows, and the FreeBSD cross-compile) use the
 fail-closed stub and need no archive. Go records a cryptographic hash of every module it pulls into the
 consuming project's `go.sum`, so the exact archive bits are pinned and any change is caught at
 build time; a loose build artifact could not be pinned this way, which is why the archive
@@ -205,7 +209,7 @@ source yields the same bits on any builder, and it publishes a results identity 
 library's output over a fixed corpus) that a build or test can compare to confirm two archives
 compute the same results.
 
-### Versioning and rolling upgrade
+### Versioning
 
 A result must only change deliberately, never as a side effect of rebuilding on a new machine,
 compiler or math-library version. The library provides what that needs from the computation:
@@ -226,12 +230,13 @@ the results behind stored expressions (#70100).
 ### Compatibility
 
 - **Stored and indexed derived values.** Indexes on generated columns, indexes on
-  expressions, `CHECK` constraints and partition expressions persist computed values. Which
-  version each one uses is decided by function versioning (see Versioning).
+  expressions, `CHECK` constraints and partition keys on generated columns persist computed
+  values. Which version each one uses is decided by function versioning (see Versioning).
 - **Internal components:** parser and planner are unaffected; the executor and the coprocessor
   pushdown path change their function implementation but not their interfaces.
 - **External components:** TiKV and TiFlash link the same library; BR restores data without
-  recomputing these functions; TiCDC replicates stored values, not recomputations. PD is
+  recomputing these functions; a MySQL or TiDB downstream of TiCDC recomputes generated
+  columns and their index entries, so it must use the same function versions. PD is
   unaffected.
 - **Upgrade and downgrade:** handled by function versioning (see Versioning).
 
@@ -243,8 +248,7 @@ the results behind stored expressions (#70100).
   NaN, out-of-domain inputs) with expected bit-exact outputs, run as a unit test in each engine
   and as a language-neutral data set shared by all three.
 - Existing expression unit tests whose expected values were generated by the Go standard math
-  library are regenerated against the shared library, since the standard library is not the
-  oracle any more.
+  library are regenerated against the shared library, since the shared library is the oracle.
 
 ### Scenario Tests
 
@@ -255,9 +259,9 @@ the results behind stored expressions (#70100).
 
 ### Compatibility Tests
 
-- Indexes on generated columns and on expressions over these functions, and `CHECK`
-  constraints: written before and read and re-checked after an engine switches a function to
-  its shared implementation.
+- Indexes on generated columns and on expressions over these functions, `CHECK` constraints,
+  and partition keys on generated columns: written before and read and re-checked after an
+  engine switches a function to its shared implementation.
 - A rolling upgrade with mixed versions, exercising pushdown of an in-scope function while the
   cluster is mixed.
 - Backup and restore, and change-data-capture, of tables holding such derived values.
@@ -297,12 +301,9 @@ mixed workloads move within noise; the server binary grows by a few megabytes.
 - **Mixed-version push-down.** During a rolling upgrade a function could be evaluated at one
   version on one node and another version on another. Avoiding that is up to the engines that
   use the library, through function versioning (see Versioning).
-- **Regex semantic shift:** unifying on one regular-expression engine can change which strings
-  match for patterns that rely on engine-specific syntax, a user-visible change to assess per
-  function.
-- **Per-platform archive supply.** The Go module ships four archives per version (Linux and
-  macOS, each amd64 and arm64; see Distribution). Each must be built, checksummed and present,
-  and a missing or mismatched one fails the build rather than falling back.
+- **Per-platform archive supply.** The Go module ships four archives per library release
+  (Linux and macOS, each amd64 and arm64; see Distribution). Each must be built, checksummed
+  and present, and a missing or mismatched one fails the build rather than falling back.
 
 ## Investigation & Alternatives
 
@@ -326,20 +327,11 @@ module exists (for example DuckDB's Go bindings), as does a Rust binding to CORE
 
 ## Unresolved Questions
 
-- Whether to offer MySQL-compatible variants of the functions where MySQL differs from the
-  correctly rounded result (`COT`, `DEGREES`, `RADIANS`, `LOG(base, x)`, and some edge cases),
-  or to prefer correct rounding everywhere, and if both are offered, which is the default and
-  how a cluster or session selects it.
 - Whether the shared library also owns the classification of a result (in domain, out of
   domain, overflow, NaN), returning it alongside the value so the value, NULL and error choice
   is deterministic by construction, or whether each engine keeps classifying as it does today.
   Owning it removes a per-engine source of divergence but adds a status to every function's
   interface; the SQL-mode-dependent policy and the error wording stay with each engine either
   way.
-- Whether the engines run a startup self-check that each reproduces the library's results
-  identity, and if so what a node does on a mismatch: log, stop pushing these functions down,
-  or refuse to start.
-- How much change in regular-expression behavior is acceptable when unifying on one engine,
-  and whether a compatibility mode is needed for patterns whose meaning changes.
 - Where the shared library lives (repository, owner, organization, visibility) and its name
   and license. Published names are permanent, so this is decided before anything is published.
