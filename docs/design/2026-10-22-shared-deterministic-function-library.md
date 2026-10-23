@@ -1,4 +1,4 @@
-# Deterministic, correctly rounded math and regex across TiDB, TiKV and TiFlash
+# A shared library for deterministic SQL functions across TiDB, TiKV and TiFlash
 
 - Author(s): [Mattias Jonsson](https://github.com/mjonss)
 - Discussion PR: https://github.com/pingcap/tidb/pull/72218
