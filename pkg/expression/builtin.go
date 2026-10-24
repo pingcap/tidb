@@ -502,6 +502,10 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 		if err != nil {
 			return baseBuiltinFunc{}, err
 		}
+		// A cast to a binary string has the binary collation, not the connection one.
+		if tp.GetCharset() == charset.CharsetBin {
+			bf.SetCharsetAndCollation(charset.CharsetBin, charset.CollationBin)
+		}
 	}
 	return bf, nil
 }
