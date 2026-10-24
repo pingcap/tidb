@@ -138,6 +138,12 @@ fn check_cardinality_query_fixture(session: &mut Session, name: &str) {
 /// scan estimate using loaded join-key NDV, separately from the access floor.
 #[test]
 fn index_join_inner_row_count_upper_bound_matches_go() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT, b INT, INDEX idx(b))")
@@ -148,6 +154,12 @@ fn index_join_inner_row_count_upper_bound_matches_go() {
 
 #[test]
 fn ordering_index_selectivity_threshold_matches_go_fixture() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT PRIMARY KEY, b INT, c INT, d INT, INDEX ib(b), INDEX ic(c))")
@@ -162,6 +174,12 @@ fn ordering_index_selectivity_threshold_matches_go_fixture() {
 
 #[test]
 fn index_merge_disjuncts_use_their_own_ranges_and_union_overlap() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT PRIMARY KEY,b INT,c INT,d INT,INDEX ib(b),INDEX ic(c))")
@@ -192,6 +210,12 @@ fn index_merge_disjuncts_use_their_own_ranges_and_union_overlap() {
 
 #[test]
 fn ordering_index_selectivity_ratio_matches_go_fixture() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT PRIMARY KEY, b INT, c INT, INDEX ib(b), INDEX ic(c))")
@@ -240,6 +264,12 @@ fn index_lookup_limit_and_topn_preserve_table_rows() {
 /// cached table's `stats_meta` version.
 #[test]
 fn process_stats_info_reports_the_get_stats_table_version() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let registry = process::ProcessRegistry::default();
     let mut session = Session::new();
     let guard = registry.register(
@@ -870,6 +900,12 @@ fn appended_integer_handle_range_keeps_the_declared_index_estimate() {
 /// execution range.
 #[test]
 fn appended_handle_range_uses_partial_column_statistics() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run(
@@ -1187,6 +1223,12 @@ fn cross_validation_on_clustered_pk_range_matches_go() {
 /// before ANALYZE and analyzed counts after later modifications.
 #[test]
 fn determinate_objective_uses_analyzed_row_count_after_inserts() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE ignore_realtime_stats (a INT, b INT)")
@@ -1444,6 +1486,12 @@ fn flush_stats_delta_restores_statement_and_savepoint_deltas() {
 /// the small remaining NDV bounds an out-of-range estimate after inserts.
 #[test]
 fn small_ndv_out_of_range_index_reader_rows_match_go() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE issue_64137 (a INT, KEY idx_a(a))")
@@ -1779,6 +1827,12 @@ fn truncated_integer_handle_ranges_match_go_cardinality_estimates() {
 /// items are attached to the statement's scans without leaking to later SQL.
 #[test]
 fn explain_marks_missing_stats_for_selected_index() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE explain_partial_index (a INT, b INT, payload INT, KEY idx_ab(a,b))")
@@ -1936,6 +1990,12 @@ fn explain_marks_missing_stats_for_selected_index() {
 /// prints the index's `stats:partial[...]` status.
 #[test]
 fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE explain_determinate_pseudo (a INT, b INT, payload INT, KEY idx_ab(a,b))")
@@ -1996,6 +2056,12 @@ fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
 /// states by changing the cached item load statuses around the same queries.
 #[test]
 fn explain_partial_stats_match_go_plan_matrix() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT, b INT, c INT, PRIMARY KEY(a), KEY idx(b))")
@@ -2427,6 +2493,12 @@ fn dnf_selectivity_safety_cases_match_go_smoke_coverage() {
 /// floor, for either column, without inventing analyzed column statistics.
 #[test]
 fn builtin_in_estimate_without_stats_keeps_selection_floor() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE builtin_in_pseudo (a INT, b INT)")
@@ -2632,6 +2704,12 @@ fn analyzed_ordering_threshold_preserves_go_cost_choice() {
 /// histogram must not remove the most selective dimension from the estimate.
 #[test]
 fn virtual_column_index_estimation_preserves_the_selective_suffix() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session.run("SET tidb_analyze_version = 2").unwrap();
     session.run("CREATE TABLE virtual_estimate(a INT, b INT, c INT, d INT AS (c + 1) VIRTUAL, INDEX iabd(a,b,d))").unwrap();
@@ -4489,6 +4567,12 @@ fn a_full_table_scan_under_pseudo_stats_pays_gos_risk_penalty() {
 /// modifications cross Go's strict `> 0.7` threshold.
 #[test]
 fn outdated_statistics_follow_the_session_pseudo_switch() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     struct RestoreOutdatedRatio(f64);
     impl Drop for RestoreOutdatedRatio {
         fn drop(&mut self) {
@@ -4914,6 +4998,12 @@ fn prepared_explain_index_probe_strings_match_go() {
 /// recreation through the production local session path.
 #[test]
 fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
@@ -5020,6 +5110,12 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
 /// estimate without replacing the analyzed histogram.
 #[test]
 fn unknown_value_estimates_follow_modify_delta_lifecycle() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     let prior_auto_analyze =
         row_text(session.run("SELECT @@global.tidb_enable_auto_analyze"))[0][0].clone();
@@ -5369,6 +5465,12 @@ fn ordering_ratio_increases_merge_join_cost() {
 /// mock index histogram and required correlated Apply shape.
 #[test]
 fn ordering_ratio_increases_apply_cost() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session.run("CREATE TABLE t1(a INT, b INT, c INT, INDEX ibc(b,c))").unwrap();
     session.run("CREATE TABLE t2(a INT, b INT, c INT)").unwrap();

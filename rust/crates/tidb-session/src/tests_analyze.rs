@@ -93,6 +93,12 @@ fn top_est_rows(session: &mut Session, sql: &str) -> String {
 /// -- a histogram that merely "looks analyzed" would not reproduce them.
 #[test]
 fn first_analyze_without_cached_statistics_collects_small_table_distribution() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session.run("CREATE TABLE fresh_stats (a INT)").unwrap();
     session
@@ -144,9 +150,17 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
 
     // After: the real row count, and no `stats:pseudo` -- Go drops the token
     // once a table has one initialized histogram.
+    // On the store the freshly analyzed index `kb` is still evicted, which
+    // the Go server marks (asked of it: `stats:partial[kb:allEvicted]`); the
+    // in-process tier loads every histogram eagerly.
+    let expected = if crate::tests_support::in_process_tier() {
+        "keep order:false"
+    } else {
+        "keep order:false, stats:partial[kb:allEvicted]"
+    };
     assert_eq!(
         scan_row(&mut session, "EXPLAIN SELECT * FROM t"),
-        ("10.00".to_owned(), "keep order:false".to_owned())
+        ("10.00".to_owned(), expected.to_owned())
     );
     assert_eq!(
         top_est_rows(&mut session, "EXPLAIN SELECT * FROM t"),
@@ -191,6 +205,12 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
 /// range into a partition-local Batch Point Get.
 #[test]
 fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("SET @@tidb_partition_prune_mode = 'static'")
@@ -371,6 +391,12 @@ fn analyze_persists_effective_column_list_and_reuses_raw_options() {
 
 #[test]
 fn static_partition_analyze_inherits_and_updates_only_named_partition_options() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("SET @@tidb_partition_prune_mode = 'static'")
@@ -458,6 +484,12 @@ fn static_partition_analyze_inherits_and_updates_only_named_partition_options() 
 /// refusing the table or sampling the stored placeholder for a virtual one.
 #[test]
 fn analyze_publishes_stored_but_not_virtual_generated_column_histograms() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run(
@@ -545,6 +577,12 @@ fn analyze_predicate_columns_without_collected_usage_warns() {
 
 #[test]
 fn analyze_default_predicate_columns_follow_usage_and_mandatory_index_columns() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t (a INT, b INT, c INT, KEY ib(b))")
@@ -619,6 +657,12 @@ fn analyze_default_predicate_columns_follow_usage_and_mandatory_index_columns() 
 
 #[test]
 fn analyze_empty_predicate_usage_keeps_only_go_mandatory_columns() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session.run("CREATE TABLE plain (a INT, b INT)").unwrap();
     session
@@ -974,6 +1018,12 @@ fn outdated_statistics_are_judged_on_the_determinate_copy() {
 /// count; carrying that bit onto the copy marked the determinate plan pseudo.
 #[test]
 fn determinate_mode_plans_an_emptied_table_from_its_analyze_count() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE d (a INT, b INT, KEY ia(a))")
@@ -1190,6 +1240,12 @@ fn ordinary_index_target_collects_all_statistics() {
 /// existing table row count, and it cannot be scoped to one partition.
 #[test]
 fn special_global_index_uses_the_independent_analyze_task() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run(
@@ -1694,6 +1750,12 @@ fn a_case_insensitive_column_estimates_off_the_collation_sort_key() {
 
 #[test]
 fn analyze_expression_index_samples_keep_physical_column_positions() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     for analyze in [
         "ANALYZE TABLE expr_samples ALL COLUMNS",
         "ANALYZE TABLE expr_samples COLUMNS a",
@@ -1775,6 +1837,12 @@ fn partial_analyze_replaces_unanalyzed_table_metadata() {
 /// Go globalstats retains exact local-unique NDVs but no global FM sketch.
 #[test]
 fn stats_ndv_batch_unique_partition_lifecycle() {
+    // Reads or replaces the in-process catalog's statistics objects; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE exact_ndv (a INT, UNIQUE INDEX i(a)) PARTITION BY HASH(a) PARTITIONS 2")

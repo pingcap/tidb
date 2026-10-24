@@ -2533,6 +2533,10 @@ fn show_stats_topn_matches_the_pinned_go_rows() {
         .run("INSERT INTO t VALUES (1,1),(1,2),(2,3)")
         .unwrap();
     session.run("ANALYZE TABLE t").unwrap();
+    // Go evicts a freshly analyzed table's histograms (lite init) and sync
+    // loads a column when a query needs it; the SHOW reads the cache (asked
+    // of the Go server: empty right after ANALYZE, filled after a query).
+    session.run("SELECT * FROM t WHERE a = 1").unwrap();
 
     assert_eq!(
         row_text(session.run("SHOW STATS_TOPN WHERE table_name = 't'")),
@@ -2552,6 +2556,10 @@ fn show_stats_buckets_matches_the_pinned_go_row() {
     session.run("CREATE TABLE t(a INT)").unwrap();
     session.run("INSERT INTO t VALUES (1111)").unwrap();
     session.run("ANALYZE TABLE t WITH 0 TOPN").unwrap();
+    // Go evicts a freshly analyzed table's histograms (lite init) and sync
+    // loads a column when a query needs it; the SHOW reads the cache (asked
+    // of the Go server: empty right after ANALYZE, filled after a query).
+    session.run("SELECT * FROM t WHERE a = 1111").unwrap();
 
     assert_eq!(
         row_text(session.run("SHOW STATS_BUCKETS WHERE table_name = 't' AND is_index = 0")),
@@ -2574,6 +2582,10 @@ fn show_stats_histograms_matches_the_pinned_go_rows() {
         .run("INSERT INTO t VALUES (1, NULL),(2, 2)")
         .unwrap();
     session.run("ANALYZE TABLE t WITH 0 TOPN").unwrap();
+    // Go evicts a freshly analyzed table's histograms (lite init) and sync
+    // loads a column when a query needs it; the SHOW reads the cache (asked
+    // of the Go server: empty right after ANALYZE, filled after a query).
+    session.run("SELECT * FROM t WHERE a = 1").unwrap();
 
     let rows = row_text(
         session
