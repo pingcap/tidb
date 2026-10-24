@@ -81,6 +81,12 @@ type PipelinedWindowExec struct {
 	isRangeFrame             bool
 	emptyFrame               bool
 	initializedSlidingWindow bool
+
+	// wholePartition is not nil when the frame covers the whole partition and
+	// all window functions are streamable aggregate functions. In that case
+	// the executor runs in the mode implemented in pipelined_window_spill.go
+	// and the fields above about rows and frames are unused.
+	wholePartition *wholePartitionAggState
 }
 
 // OrderedWindowExec executes windows whose input already satisfies the required
@@ -97,6 +103,9 @@ func (e *PipelinedWindowExec) Close() error {
 	e.dataMemUsage = 0
 	e.rowsMemUsage = 0
 	e.groupChecker.Reset()
+	if e.wholePartition != nil {
+		e.closeWholePartition()
+	}
 	e.memTracker.close()
 	return errors.Trace(e.BaseExecutor.Close())
 }
@@ -119,6 +128,9 @@ func (e *PipelinedWindowExec) OpenSelf() error {
 	e.rowsMemUsage, e.dataMemUsage = 0, 0
 	e.childResult = nil
 	e.groupChecker.Reset()
+	if e.wholePartition != nil {
+		e.openWholePartition()
+	}
 	return nil
 }
 
@@ -133,6 +145,9 @@ func (e *PipelinedWindowExec) firstResultChunkNotReady() bool {
 // Next implements the Executor Next interface.
 func (e *PipelinedWindowExec) Next(ctx context.Context, chk *chunk.Chunk) (err error) {
 	chk.Reset()
+	if e.wholePartition != nil {
+		return e.nextWholePartition(ctx, chk)
+	}
 
 	for e.firstResultChunkNotReady() {
 		// we firstly gathering enough rows and consume them, until we are able to produce.
