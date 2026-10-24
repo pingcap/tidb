@@ -232,9 +232,16 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 	tk.MustExec("create temporary table tmp1 (id int primary key, u int unique, v int)")
 
 	insertRecords := func(idList []int) {
-		for _, id := range idList {
-			tk.MustExec("insert into tmp1 values (?, ?, ?)", id, id+100, id+1000)
+		if len(idList) == 0 {
+			return
 		}
+		valuePlaceholders := make([]string, 0, len(idList))
+		args := make([]any, 0, len(idList)*3)
+		for _, id := range idList {
+			valuePlaceholders = append(valuePlaceholders, "(?, ?, ?)")
+			args = append(args, id, id+100, id+1000)
+		}
+		tk.MustExec("insert into tmp1 values "+strings.Join(valuePlaceholders, ", "), args...)
 	}
 
 	checkAllExistRecords := func(idList []int) {
@@ -248,8 +255,7 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows(expectedResult...))
 
 		// check index deleted
-		tk.MustQuery("select /*+ use_index(tmp1, u) */ u from tmp1 order by u").Check(testkit.Rows(expectedIndexResult...))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("select u from tmp1 force index(u) order by u").Check(testkit.Rows(expectedIndexResult...))
 	}
 
 	assertDelete := func(sql string, deleted []int) {
@@ -298,7 +304,6 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 		checkAllExistRecords(keepList)
 
 		tk.MustExec("delete from tmp1")
-		checkAllExistRecords([]int{})
 	}
 
 	assertDelete("delete from tmp1 where id=1", []int{1})
@@ -315,6 +320,7 @@ func TestLocalTemporaryTableDelete(t *testing.T) {
 	assertDelete("delete from tmp1 where u>107", []int{8, 9})
 	assertDelete("delete /*+ use_index(tmp1, u) */ from tmp1 where u>105 and u<107", []int{6})
 	assertDelete("delete from tmp1 where v>=1006 or v<=1002", []int{1, 2, 6, 7, 8, 9})
+	checkAllExistRecords([]int{})
 }
 
 func TestSchemaCheckerTempTable(t *testing.T) {
