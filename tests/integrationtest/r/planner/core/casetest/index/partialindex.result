@@ -75,7 +75,7 @@ IndexJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core_
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	12487.50	root		
   ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.b))
-  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:idx2(b)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.b, planner__core__casetest__index__partialindex.tt.a)], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	12487.50	cop[tikv]	table:t2, index:idx2(b)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.b, planner__core__casetest__index__partialindex.tt.a)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='brief' select /*+ inl_join(t2) */ * from t t1, t t2 where t1.b=t2.a;
 id	estRows	task	access object	operator info
@@ -94,7 +94,7 @@ IndexJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core_
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	12487.50	root		
   ├─Selection(Build)	12487.50	cop[tikv]		not(isnull(planner__core__casetest__index__partialindex.tt.a))
-  │ └─IndexRangeScan	12500.00	cop[tikv]	table:t2, index:idx1(a)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.a, planner__core__casetest__index__partialindex.tt.b)], keep order:false, stats:pseudo
+  │ └─IndexRangeScan	12487.50	cop[tikv]	table:t2, index:idx1(a)	range: decided by [eq(planner__core__casetest__index__partialindex.tt.a, planner__core__casetest__index__partialindex.tt.b)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='brief' select /*+ use_index_merge(t, idx1, idx2) */ * from t where (a > 10) or (b > 10);
 id	estRows	task	access object	operator info
