@@ -206,6 +206,14 @@ func checkIsNullRejected(sctx planctx.PlanContext, targetCol *expression.Column,
 			return false
 		}
 	}
+	if filter.FuncName.L == ast.UnaryNot {
+		inner, ok := filter.GetArgs()[0].(*expression.ScalarFunction)
+		if !ok || inner.FuncName.L != ast.IsNull {
+			return false
+		}
+		col, ok := inner.GetArgs()[0].(*expression.Column)
+		return ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol)
+	}
 	if _, ok := expression.CompareOpMap[filter.FuncName.L]; ok {
 		if filter.FuncName.L == ast.NullEQ {
 			return false
