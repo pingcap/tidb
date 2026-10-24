@@ -1409,34 +1409,61 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		//
 		// To keep semantics equivalent to IN, we project the RHS comparison expression first,
 		// then distinct on that projected key.
-		if lLen == 1 {
-			if eqCond, ok := checkCondition.(*expression.ScalarFunction); ok && eqCond.FuncName.L == ast.EQ {
-				rhs := eqCond.GetArgs()[1]
-				if expression.ExprFromSchema(rhs, np.Schema()) {
-					if _, isCol := rhs.(*expression.Column); !isCol {
-						// rhs is computed from inner columns (typically with an implicit cast generated
-						// by type coercion rules). Materialize it as an inner projection column so both
-						// DISTINCT and JOIN use exactly this coerced key.
-						proj := logicalop.LogicalProjection{Exprs: []expression.Expression{rhs}}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
-						projCol := &expression.Column{
-							UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
-							RetType:  rhs.GetType(er.sctx.GetEvalCtx()).Clone(),
-						}
-						proj.SetChildren(np)
-						proj.SetSchema(expression.NewSchema(projCol))
-						proj.SetOutputNames([]*types.FieldName{types.EmptyName})
-						distinctChild = proj
-						distinctLen = 1
-						// Rebuild join condition against the projected key; this preserves
-						// the same coercion behavior while preventing duplicate matches.
-						joinCondition, err = er.constructBinaryOpFunction(lexpr, projCol, ast.EQ)
-						if err != nil {
-							er.err = err
-							return true
-						}
-					}
+		// The same holds for every column of a multi-column IN.
+		lArgs := []expression.Expression{lexpr}
+		rArgs := []expression.Expression{rexpr}
+		if lLen > 1 {
+			lArgs = lexpr.(*expression.ScalarFunction).GetArgs()
+			rArgs = rexpr.(*expression.ScalarFunction).GetArgs()
+		}
+		rhsKeys := make([]expression.Expression, lLen)
+		needProj := false
+		for i := range lLen {
+			rhsKeys[i] = np.Schema().Columns[i]
+			eqCond, err := er.constructBinaryOpFunction(lArgs[i], rArgs[i], ast.EQ)
+			if err != nil {
+				er.err = err
+				return true
+			}
+			if sf, ok := eqCond.(*expression.ScalarFunction); ok && sf.FuncName.L == ast.EQ {
+				rhs := sf.GetArgs()[1]
+				if _, isCol := rhs.(*expression.Column); !isCol && expression.ExprFromSchema(rhs, np.Schema()) {
+					// rhs is computed from inner columns (typically with an implicit cast generated
+					// by type coercion rules). Materialize it as an inner projection column so both
+					// DISTINCT and JOIN use exactly this coerced key.
+					rhsKeys[i] = rhs
+					needProj = true
 				}
 			}
+		}
+		if needProj {
+			proj := logicalop.LogicalProjection{Exprs: rhsKeys}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+			projCols := make([]*expression.Column, 0, lLen)
+			conds := make([]expression.Expression, 0, lLen)
+			for i, key := range rhsKeys {
+				projCol := &expression.Column{
+					UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
+					RetType:  key.GetType(er.sctx.GetEvalCtx()).Clone(),
+				}
+				projCols = append(projCols, projCol)
+				// Rebuild join condition against the projected key; this preserves
+				// the same coercion behavior while preventing duplicate matches.
+				cond, err := er.constructBinaryOpFunction(lArgs[i], projCol, ast.EQ)
+				if err != nil {
+					er.err = err
+					return true
+				}
+				conds = append(conds, cond)
+			}
+			proj.SetChildren(np)
+			proj.SetSchema(expression.NewSchema(projCols...))
+			proj.SetOutputNames(make([]*types.FieldName, lLen))
+			for i := range lLen {
+				proj.OutputNames()[i] = types.EmptyName
+			}
+			distinctChild = proj
+			distinctLen = lLen
+			joinCondition = expression.ComposeCNFCondition(er.sctx, conds...)
 		}
 		// Build distinct for the inner query.
 		agg, err := planCtx.builder.buildDistinct(distinctChild, distinctLen)
