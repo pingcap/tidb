@@ -222,18 +222,22 @@ func (rc *SnapClient) closeConn() {
 	}
 }
 
-// Close a client.
-func (rc *SnapClient) Close() {
+// Close closes the client. The returned error is the failure to close the
+// file restorer, which includes the failure to commit the SSTs ingested by
+// this restore to the running log backup.
+func (rc *SnapClient) Close() error {
 	// close the connection, and it must be succeed when in SQL mode.
 	rc.closeConn()
 
+	var err error
 	if rc.restorer != nil {
-		if err := rc.restorer.Close(); err != nil {
-			log.Warn("failed to close file restorer")
+		if err = rc.restorer.Close(); err != nil {
+			log.Warn("failed to close file restorer", zap.Error(err))
 		}
 	}
 
 	log.Info("Restore client closed")
+	return errors.Trace(err)
 }
 
 func (rc *SnapClient) SetRateLimit(rateLimit uint64) {

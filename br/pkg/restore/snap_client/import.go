@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/errgroup"
@@ -287,13 +288,15 @@ func (importer *SnapFileImporter) releaseToken(tokenCh chan struct{}) {
 
 func (importer *SnapFileImporter) Close() error {
 	if importer != nil && importer.importClient != nil {
+		var callbackErr error
 		for _, f := range importer.closeCallbacks {
 			err := f(importer)
 			if err != nil {
 				log.Warn("failed on close snap importer", zap.Error(err))
+				callbackErr = multierr.Append(callbackErr, err)
 			}
 		}
-		return importer.importClient.CloseGrpcClient()
+		return multierr.Append(callbackErr, importer.importClient.CloseGrpcClient())
 	}
 	return nil
 }
