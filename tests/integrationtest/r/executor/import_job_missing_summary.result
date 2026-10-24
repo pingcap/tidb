@@ -1,0 +1,30 @@
+set time_zone = '+00:00';
+delete from mysql.tidb_import_jobs where id in (7078801, 7078802);
+insert into mysql.tidb_import_jobs
+(id, create_time, start_time, update_time, end_time, table_schema, table_name,
+table_id, created_by, parameters, source_file_size, status, step, summary)
+values
+(7078801, '2026-01-01 00:00:00', '2026-01-01 00:00:01', '2026-01-01 00:00:02',
+'2026-01-01 00:00:02', 'test', 'import_job_missing_summary', 42, 'root@%',
+'{"file-location":"s3://bucket/data.csv","format":"csv"}', 100, 'finished', '', NULL),
+(7078802, '2026-01-01 00:00:00', '2026-01-01 00:00:01', '2026-01-01 00:00:02',
+'2026-01-01 00:00:02', 'test', 'import_job_with_summary', 43, 'root@%',
+'{"file-location":"s3://bucket/data.csv","format":"csv"}', 100, 'finished', '',
+'{"row-count":12,"conflict-row-count":3,"too-many-conflicts":true}');
+show import job 7078801;
+Job_ID	Group_Key	Data_Source	Target_Table	Table_ID	Phase	Status	Source_File_Size	Imported_Rows	Result_Message	Create_Time	Start_Time	End_Time	Created_By	Last_Update_Time	Cur_Step	Cur_Step_Processed_Size	Cur_Step_Total_Size	Cur_Step_Progress_Pct	Cur_Step_Speed	Cur_Step_ETA
+7078801	NULL	s3://bucket/data.csv	`test`.`import_job_missing_summary`	42		finished	100B	NULL		2026-01-01 08:00:00.000000	2026-01-01 08:00:01.000000	2026-01-01 08:00:02.000000	root@%	2026-01-01 08:00:02.000000	NULL	NULL	NULL	NULL	NULL	NULL
+show import jobs where Job_ID in (7078801, 7078802);
+Job_ID	Group_Key	Data_Source	Target_Table	Table_ID	Phase	Status	Source_File_Size	Imported_Rows	Result_Message	Create_Time	Start_Time	End_Time	Created_By	Last_Update_Time	Cur_Step	Cur_Step_Processed_Size	Cur_Step_Total_Size	Cur_Step_Progress_Pct	Cur_Step_Speed	Cur_Step_ETA
+7078801	NULL	s3://bucket/data.csv	`test`.`import_job_missing_summary`	42		finished	100B	NULL		2026-01-01 08:00:00.000000	2026-01-01 08:00:01.000000	2026-01-01 08:00:02.000000	root@%	2026-01-01 08:00:02.000000	NULL	NULL	NULL	NULL	NULL	NULL
+7078802	NULL	s3://bucket/data.csv	`test`.`import_job_with_summary`	43		finished	100B	12	3 conflicted rows. Too many conflicted rows, checksum skipped.	2026-01-01 08:00:00.000000	2026-01-01 08:00:01.000000	2026-01-01 08:00:02.000000	root@%	2026-01-01 08:00:02.000000	NULL	NULL	NULL	NULL	NULL	NULL
+update mysql.tidb_import_jobs set summary = '{}' where id = 7078801;
+show import job 7078801;
+Job_ID	Group_Key	Data_Source	Target_Table	Table_ID	Phase	Status	Source_File_Size	Imported_Rows	Result_Message	Create_Time	Start_Time	End_Time	Created_By	Last_Update_Time	Cur_Step	Cur_Step_Processed_Size	Cur_Step_Total_Size	Cur_Step_Progress_Pct	Cur_Step_Speed	Cur_Step_ETA
+7078801	NULL	s3://bucket/data.csv	`test`.`import_job_missing_summary`	42		finished	100B	0		2026-01-01 08:00:00.000000	2026-01-01 08:00:01.000000	2026-01-01 08:00:02.000000	root@%	2026-01-01 08:00:02.000000	NULL	NULL	NULL	NULL	NULL	NULL
+update mysql.tidb_import_jobs set status = 'failed', summary = NULL,
+error_message = 'import failed' where id = 7078801;
+show import job 7078801;
+Job_ID	Group_Key	Data_Source	Target_Table	Table_ID	Phase	Status	Source_File_Size	Imported_Rows	Result_Message	Create_Time	Start_Time	End_Time	Created_By	Last_Update_Time	Cur_Step	Cur_Step_Processed_Size	Cur_Step_Total_Size	Cur_Step_Progress_Pct	Cur_Step_Speed	Cur_Step_ETA
+7078801	NULL	s3://bucket/data.csv	`test`.`import_job_missing_summary`	42		failed	100B	NULL	import failed	2026-01-01 08:00:00.000000	2026-01-01 08:00:01.000000	2026-01-01 08:00:02.000000	root@%	2026-01-01 08:00:02.000000	NULL	NULL	NULL	NULL	NULL	NULL
+delete from mysql.tidb_import_jobs where id in (7078801, 7078802);
