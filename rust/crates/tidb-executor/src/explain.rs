@@ -2135,7 +2135,7 @@ fn physical_explain_operator(
             // `rootStats.String() + ", " + copStats.String()`.
             let groups = statement_context
                 .executor_runtime_stats_source()
-                .and_then(|source| source.root_group_runtime_info(i64::from(plan.id())));
+                .and_then(|source| source.root_runtime_info(i64::from(plan.id())));
             let info = match groups {
                 Some(groups) if !cop.info.is_empty() => format!("{groups}, {}", cop.info),
                 Some(groups) => groups,
@@ -2160,12 +2160,6 @@ fn physical_explain_operator(
             {
                 Some(groups) => format!("{info}, {groups}"),
                 None => info,
-            };
-            let info = if let PhysicalPlan::Shuffle(shuffle) = plan {
-                // ShuffleExec.Close registers RuntimeStatsWithConcurrencyInfo.
-                format!("{info}, ShuffleConcurrency:{}", shuffle.concurrency)
-            } else {
-                info
             };
             operator = operator.with_execution_info(info);
         }

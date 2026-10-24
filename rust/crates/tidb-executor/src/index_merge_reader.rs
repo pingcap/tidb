@@ -1268,6 +1268,8 @@ pub struct IndexMergeReaderExec {
     union_process: Option<UnionProcess>,
     /// Go resultCurr: completed rows retained until replacement or Close.
     current: Option<MergeTableTask>,
+    /// Go `IndexMergeReaderExecutor.stats`, when collected.
+    merge_stats: Option<crate::index_lookup_stats::IndexMergeStatsHandle>,
 }
 
 impl IndexMergeReaderExec {
@@ -1298,6 +1300,7 @@ impl IndexMergeReaderExec {
             table_task_builder: None,
             table_plan_is_scan: true,
             table_statement: None,
+            merge_stats: None,
             batch_size: 20_000,
             started: false,
             tasks: VecDeque::new(),
@@ -1317,6 +1320,16 @@ impl IndexMergeReaderExec {
 
     /// Go `pushedLimit`.
     #[must_use]
+    /// Go `e.RuntimeStats() != nil`: record the merge's runtime stats.
+    #[must_use]
+    pub(crate) fn with_runtime_stats(
+        mut self,
+        handle: Option<crate::index_lookup_stats::IndexMergeStatsHandle>,
+    ) -> Self {
+        self.merge_stats = handle;
+        self
+    }
+
     pub fn with_pushed_limit(mut self, limit: PushedDownLimit) -> Self {
         self.pushed_limit = Some(limit);
         self
@@ -1443,7 +1456,19 @@ impl IndexMergeReaderExec {
             let Some(partial) = self.partials.get_mut(process.partial) else {
                 return Ok(None);
             };
+            let fetch_started = std::time::Instant::now();
             let batch = partial.next_batch_with_max_handles(process.remaining)?;
+            // Go partial workers' `FetchIdxTime` and their readers' basic
+            // stats.
+            if let Some(stats) = &self.merge_stats {
+                let rows = batch.as_ref().map_or(0, |batch| batch.handles.len());
+                stats.record_partial_batch(process.partial, fetch_started.elapsed(), rows);
+                // Go's `extractTaskHandles` stops a short batch at the empty
+                // chunk that ended the partial's stream.
+                if rows > 0 && rows < process.remaining {
+                    stats.record_partial_batch(process.partial, std::time::Duration::ZERO, 0);
+                }
+            }
             memory.check()?;
             let Some(batch) = batch.filter(|batch| !batch.handles.is_empty()) else {
                 process.partial += 1;
@@ -1458,11 +1483,16 @@ impl IndexMergeReaderExec {
                 .saturating_mul(8);
             process.memory.consume(bytes)?;
             process.remaining = process.remaining.saturating_sub(batch.handles.len());
+            // Go `fetchLoopUnion`'s `IndexMergeProcess`: the dedup of a batch.
+            let process_started = std::time::Instant::now();
             let mut fresh = Vec::with_capacity(batch.handles.len());
             for handle in batch.handles {
                 if process.seen.insert(&handle)? {
                     fresh.push(handle);
                 }
+            }
+            if let Some(stats) = &self.merge_stats {
+                stats.stats.add_index_merge_process(process_started.elapsed());
             }
             if fresh.is_empty() {
                 continue;
@@ -1792,12 +1822,19 @@ impl Executor for IndexMergeReaderExec {
                         return Ok(());
                     }
                 }
+                let wait_started = std::time::Instant::now();
                 let Some(handles) = self.next_table_task()? else {
                     return Ok(());
                 };
+                let wait = wait_started.elapsed();
+                let task_started = std::time::Instant::now();
                 // Keep the exhausted previous task until the replacement is
                 // complete, as Go getResultTask does while waiting on doneCh.
-                self.current = Some(self.execute_table_task(handles)?);
+                let task = self.execute_table_task(handles)?;
+                if let Some(stats) = &self.merge_stats {
+                    stats.record_table_task(wait, task_started, task.rows.len());
+                }
+                self.current = Some(task);
             }
         })();
         if result.is_err() {
@@ -1809,6 +1846,11 @@ impl Executor for IndexMergeReaderExec {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        if self.started {
+            if let Some(stats) = self.merge_stats.as_mut() {
+                stats.register_and_reset();
+            }
+        }
         self.current = None;
         self.tasks.clear();
         self.union_process = None;

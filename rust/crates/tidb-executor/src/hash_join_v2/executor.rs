@@ -87,9 +87,29 @@ pub struct HashJoinV2Executor<C> {
     probe: Option<ProbeStage>,
     children_open: bool,
     finished: bool,
+    /// Go `StmtCtx.RuntimeStatsColl` and `IsGA`: where Close registers
+    /// [`super::stats::HashJoinRuntimeStatsV2`].
+    runtime_stats_source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+    is_ga: bool,
+    /// Go `HashJoinV2Exec.stats`.
+    stats: Option<super::stats::SharedHashJoinRuntimeStatsV2>,
 }
 
 impl<C> HashJoinV2Executor<C> {
+    /// Go `e.RuntimeStats() != nil`: collect and register
+    /// `hashJoinRuntimeStatsV2`, in its GA form when `is_ga`
+    /// (`IsGAForHashJoinV2`).
+    #[must_use]
+    pub fn with_runtime_stats(
+        mut self,
+        source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+        is_ga: bool,
+    ) -> Self {
+        self.runtime_stats_source = source;
+        self.is_ga = is_ga;
+        self
+    }
+
     pub fn new(
         meta: ExecutorMeta,
         plan: HashJoinV2Plan,
@@ -108,11 +128,22 @@ impl<C> HashJoinV2Executor<C> {
             probe: None,
             children_open: false,
             finished: false,
+            runtime_stats_source: None,
+            is_ga: false,
+            stats: None,
         }
     }
 
     fn close_owned(&mut self) -> Result<(), ExecError> {
         self.finished = true;
+        // Go `HashJoinV2Exec.Close`'s deferred `RegisterStats(e.ID(), e.stats)`.
+        if let (Some(source), Some(stats)) = (&self.runtime_stats_source, self.stats.take()) {
+            let stats = stats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            source.register_stats(self.meta.id(), Box::new(stats));
+        }
         let probe_index = usize::from(!self.plan.right_as_build_side);
         let mut first_error = None;
         if let Some(mut stage) = self.probe.take() {
@@ -229,6 +260,17 @@ impl<C> HashJoinV2Executor<C> {
         ctx.has_build_filter = !plan.build_filter.is_empty();
         ctx.has_other_condition = !plan.other_condition.is_empty();
         ctx.need_scan_row_table_after_probe_done = need_scan;
+        if self.runtime_stats_source.is_some() {
+            // Go `OpenSelf`: `stats` with `concurrent`, then `reset` with
+            // `spill.partitionNum` and `isHashJoinGA`.
+            let stats = super::stats::HashJoinRuntimeStatsV2::shared(
+                plan.concurrency,
+                ctx.partition_number,
+                self.is_ga,
+            );
+            ctx.stats = Some(Arc::clone(&stats));
+            self.stats = Some(stats);
+        }
         let mut build = HashJoinV2Exec::new(ctx, &plan.build_key_indices, &not_null);
         if self.memory.tmp_storage_on_oom() && build.ctx.partition_number > 1 {
             build.init_max_spill_round();
@@ -496,6 +538,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
             }
             close_result?;
         }
+        // Go `HashJoinV2Exec.reset` after every round.
+        if let Some(stats) = &self.stats {
+            stats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .reset_current_round();
+        }
         let runtime = Arc::get_mut(self.runtime.as_mut().expect("opened V2 runtime"))
             .expect("round workers joined before restore");
         let build_state = runtime
@@ -511,6 +560,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> HashJoinV2Executor<C> {
             return Ok(false);
         };
         runtime.round = partition.round;
+        if let Some(stats) = &self.stats {
+            stats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .set_spill_round(partition.round);
+        }
         runtime.restored = partition.files.into_iter().map(Mutex::new).collect();
         Ok(true)
     }

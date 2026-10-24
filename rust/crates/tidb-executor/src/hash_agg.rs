@@ -74,6 +74,7 @@ mod group_key;
 mod input;
 mod parallel;
 mod spill;
+pub(crate) mod stats;
 mod window_extremum;
 mod window_numeric;
 
@@ -3348,6 +3349,11 @@ pub struct HashAggExec<C: HashAggContext> {
     /// Resolved worker counts for the current Open.
     pipeline_partial_concurrency: usize,
     pipeline_final_concurrency: usize,
+    /// Go `StmtCtx.RuntimeStatsColl` and the plan Close registers
+    /// `HashAggRuntimeStats` on.
+    runtime_stats: Option<(Arc<dyn crate::executor::ExecutorRuntimeStatsSource>, i64)>,
+    /// Go `HashAggExec.stats`, created by `initForParallelExec`.
+    pub(super) hash_agg_stats: Option<Arc<stats::HashAggRuntimeStats>>,
     /// Test/diagnostic override standing in for SET concurrency variables.
     #[cfg(test)]
     pipeline_concurrency_override: Option<(usize, usize)>,
@@ -3429,11 +3435,23 @@ impl<C: HashAggContext> HashAggExec<C> {
             pipeline_mode: false,
             pipeline_partial_concurrency: 1,
             pipeline_final_concurrency: 1,
+            runtime_stats: None,
+            hash_agg_stats: None,
             #[cfg(test)]
             pipeline_concurrency_override: None,
             #[cfg(test)]
             pipeline_stats: None,
         }
+    }
+
+    /// Go `e.RuntimeStats() != nil`: a parallel aggregation collects and
+    /// registers `HashAggRuntimeStats` on `plan_id`.
+    pub fn set_runtime_stats(
+        &mut self,
+        source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+        plan_id: i64,
+    ) {
+        self.runtime_stats = source.map(|source| (source, plan_id));
     }
 
     /// Go's inner loop of `execute`: fold `chunk`'s rows into their groups,
@@ -3593,6 +3611,13 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
                 self.pipeline_mode = true;
                 self.pipeline_partial_concurrency = partial_concurrency;
                 self.pipeline_final_concurrency = final_concurrency;
+                // Go `initRuntimeStats`.
+                self.hash_agg_stats = self.runtime_stats.as_ref().map(|_| {
+                    Arc::new(stats::HashAggRuntimeStats::new(
+                        partial_concurrency,
+                        final_concurrency,
+                    ))
+                });
                 if self.parallel_spill_enabled() {
                     let (action, requested) = ParallelAggSpillDiskAction::new(&self.tracker);
                     self.parallel_spill_requested = requested;
@@ -3674,6 +3699,12 @@ impl<C: HashAggContext> Executor for HashAggExec<C> {
     fn close(&mut self) -> Result<(), ExecError> {
         if let Some(mut output) = self.parallel_output.take() {
             output.close(&mut self.truncated);
+        }
+        // Go `HashAggExec.Close`'s deferred `RegisterStats(e.ID(), e.stats)`.
+        if let (Some((source, plan_id)), Some(stats)) =
+            (&self.runtime_stats, self.hash_agg_stats.take())
+        {
+            source.register_stats(*plan_id, Box::new(stats.snapshot()));
         }
         self.groups.clear();
         self.group_key_values.clear();

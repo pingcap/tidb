@@ -45,6 +45,9 @@
 
 pub mod base_join_probe;
 pub mod concurrent_entry_map;
+pub mod execdetails;
+pub mod join_stats;
+pub mod index_lookup_stats;
 pub mod pd_helper;
 pub mod hash_join_v2;
 pub mod hash_join_version;

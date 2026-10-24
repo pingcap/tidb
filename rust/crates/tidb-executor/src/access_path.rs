@@ -1447,6 +1447,9 @@ fn project_index_identity(
 /// order.
 /// One lookup window moving through the bounded-concurrency fetch pipeline.
 struct LookupBatchJob {
+    /// When the window was handed to its table task (Go `executeTask`'s
+    /// start), for the lookup's runtime stats.
+    started: std::time::Instant,
     /// One record keyspace per handle for a partitioned lookup. Global index
     /// windows may interleave partitions, so this belongs to the task.
     physical_ids: Vec<i64>,
@@ -1526,6 +1529,8 @@ fn note_found_rows<T>(table: &KvTable, rows: &[Option<T>]) -> Result<(), ExecErr
 }
 
 pub struct IndexRangeSourceExec {
+    /// Go `IndexLookUpExecutor`'s runtime stats, when collected.
+    lookup_stats: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
     meta: ExecutorMeta,
     table: KvTable,
     /// The cursor's partition ordinals resolve against this stable scan list.
@@ -1957,6 +1962,7 @@ impl IndexRangeSourceExec {
             .collect();
         let record_physical_ids = table.record_physical_ids();
         IndexRangeSourceExec {
+            lookup_stats: None,
             meta,
             table,
             record_physical_ids,
@@ -2086,6 +2092,15 @@ impl IndexRangeSourceExec {
     }
 
     /// Installs Go `SessionVars.IndexLookupConcurrency()` for this executor.
+    /// Go `IndexLookUpExecutor.initRuntimeStats`: record the lookup's
+    /// stats, the index plan root's basic stats and each table task's.
+    pub(crate) fn set_lookup_runtime_stats(
+        &mut self,
+        handle: Option<crate::index_lookup_stats::IndexLookUpStatsHandle>,
+    ) {
+        self.lookup_stats = handle;
+    }
+
     pub(crate) fn set_lookup_concurrency(&mut self, width: usize) {
         self.lookup_concurrency = width.max(1);
     }
@@ -2698,6 +2713,8 @@ impl IndexRangeSourceExec {
                 if demand_allowance == 0 && inflight > 0 && !needs_table_filter_read_ahead {
                     break;
                 }
+                let collect_started = std::time::Instant::now();
+                let mut ended_inside = false;
                 let mut handles = Vec::with_capacity(target);
                 let partitioned = self.table.partition().is_some();
                 let mut physical_ids = if partitioned {
@@ -2721,17 +2738,55 @@ impl IndexRangeSourceExec {
                             }
                             handles.push(handle);
                         }
-                        Ok(None) => break,
+                        Ok(None) => {
+                            ended_inside = true;
+                            break;
+                        }
                         Err(error) => return Err(error),
                     };
                 }
                 if handles.is_empty() {
+                    // Go `extractTaskHandles` records the empty chunk that
+                    // ends the index stream.
+                    if let Some(stats) = self.lookup_stats.as_mut() {
+                        if let Some(basic) =
+                            stats.index_scan_basic.as_ref().filter(|_| !stats.index_end_recorded)
+                        {
+                            basic.record_next(collect_started.elapsed(), 0);
+                        }
+                        stats.index_end_recorded = true;
+                    }
                     stream_exhausted = true;
                     break;
                 }
+                let collected = collect_started.elapsed();
+                let handle_count = handles.len();
+                let build_started = std::time::Instant::now();
                 // A short window means the index stream ended inside it; with
                 // no earlier window in flight there is nothing to overlap.
-                let job = self.build_lookup_job(handles, physical_ids)?;
+                let mut job = self.build_lookup_job(handles, physical_ids)?;
+                // The table task starts with its build: a small window runs
+                // it inline.
+                job.started = build_started;
+                // Go `indexWorker.fetchHandles`: the task's handle fetch, its
+                // total through dispatch, and the index plan root's basic
+                // stats for the handles it read.
+                if let Some(stats) = &self.lookup_stats {
+                    stats
+                        .stats
+                        .record_index_task(collected, collected, std::time::Duration::ZERO);
+                    stats.stats.record_next_wait(
+                        collected,
+                        std::time::Duration::ZERO,
+                        std::time::Duration::ZERO,
+                    );
+                    if let Some(basic) = &stats.index_scan_basic {
+                        basic.record_next(collected, i64::try_from(handle_count).unwrap_or(i64::MAX));
+                        if ended_inside {
+                            basic.record_next(std::time::Duration::ZERO, 0);
+                        }
+                    }
+                }
                 let pipeline = self.lookup_pipeline.get_or_insert_with(|| LookupPipeline {
                     inflight: VecDeque::new(),
                     // A directly-consumed source never opened itself;
@@ -2772,6 +2827,24 @@ impl IndexRangeSourceExec {
                 job.ready
                     .expect("a job without a receiver carries its payload")
             };
+            // Go `tableWorker.executeTask` and `Next`'s wait for the table
+            // lookup response.
+            if let Some(stats) = &self.lookup_stats {
+                // Go `NextWaitTableLookUpResp`: from the task's dispatch to
+                // its response.
+                stats.stats.record_next_wait(
+                    std::time::Duration::ZERO,
+                    std::time::Duration::ZERO,
+                    job.started.elapsed(),
+                );
+                let rows = match &payload {
+                    Ok(LookupFetch::Remote(rows, ..)) => rows.len(),
+                    Ok(LookupFetch::RemoteChunk(chunk)) => chunk.request_indices.len(),
+                    Ok(LookupFetch::LocalFallback(handles)) => handles.len(),
+                    Err(_) => 0,
+                };
+                stats.record_table_task(job.started, rows);
+            }
             // Go's tableWorker hands its error to the reader unchanged, so a
             // SQL error (8274 from `tidb_max_keys_read`, say) keeps its code.
             let payload = payload?;
@@ -2868,6 +2941,7 @@ impl IndexRangeSourceExec {
             // A partial aggregate owns the answer end to end; the plain
             // lookup never ran for this shape.
             return Ok(LookupBatchJob {
+                started: std::time::Instant::now(),
                 physical_ids,
                 handle_count,
                 receiver: None,
@@ -2907,6 +2981,7 @@ impl IndexRangeSourceExec {
                 .map_err(ExecError::from)?;
             let Some(staged) = staged else {
                 return Ok(LookupBatchJob {
+                    started: std::time::Instant::now(),
                     physical_ids,
                     handle_count,
                     receiver: None,
@@ -2931,6 +3006,7 @@ impl IndexRangeSourceExec {
                 Err(error) => Err(ExecError::from(error)),
             };
             return Ok(LookupBatchJob {
+                started: std::time::Instant::now(),
                 physical_ids,
                 handle_count,
                 receiver: None,
@@ -3006,6 +3082,7 @@ impl IndexRangeSourceExec {
             })
             .map_err(|_| ExecError::internal("index lookup worker pool stopped"))?;
         Ok(LookupBatchJob {
+            started: std::time::Instant::now(),
             physical_ids,
             handle_count,
             receiver: Some(result_rx),
@@ -4248,6 +4325,9 @@ impl Executor for IndexRangeSourceExec {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        if let Some(stats) = self.lookup_stats.as_mut() {
+            stats.register_and_reset();
+        }
         self.cursor = None;
         self.native_covering = false;
         self.covering_row = None;

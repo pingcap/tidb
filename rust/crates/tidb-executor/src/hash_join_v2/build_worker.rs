@@ -154,6 +154,7 @@ impl HashJoinV2Exec {
             .memory_tracker
             .attach_to(memory.stmt_tracker());
         self.begin_build(context.meta.null_map_length);
+        let build_started = std::time::Instant::now();
         let result = recover_worker_panic(|| {
             self.split_build_chunks(source, context, memory, spill.as_deref_mut(), build_filter)?;
             memory.check()?;
@@ -168,6 +169,14 @@ impl HashJoinV2Exec {
             self.link_build_tasks(count, memory)?;
             Ok(count)
         });
+        // Go `fetchAndBuildHashTableImpl`'s deferred
+        // `stats.fetchAndBuildHashTable += time.Since(start)`.
+        if let Some(stats) = &self.ctx.stats {
+            stats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .add_fetch_and_build_hash_table(build_started.elapsed());
+        }
         if result.is_err() {
             if let Some(spill) = spill {
                 spill.action.set_can_spill(false);
@@ -253,8 +262,12 @@ impl HashJoinV2Exec {
                     let owned_context = owned_context.clone();
                     let memory = memory.clone();
                     let state = Arc::clone(state);
+                    let stats = self.ctx.stats.clone();
                     lane_pool
                         .submit(move || {
+                            // Go `splitPartitionAndAppendToRowTable`'s cost,
+                            // reported by `updatePartitionData` on exit.
+                            let mut cost = std::time::Duration::ZERO;
                             let result = recover_worker_panic(|| {
                                 let mut build_context = owned_context.borrowed();
                                 loop {
@@ -272,6 +285,7 @@ impl HashJoinV2Exec {
                                             .lock()
                                             .unwrap_or_else(|poisoned| poisoned.into_inner());
                                         let (worker, row_tables) = &mut *state;
+                                        let started = std::time::Instant::now();
                                         worker
                                             .process_one_chunk(
                                                 &chunk,
@@ -279,6 +293,7 @@ impl HashJoinV2Exec {
                                                 row_tables,
                                             )
                                             .map_err(build_error)?;
+                                        cost += started.elapsed();
                                     }
                                     memory.check()?;
                                     chunk.reset();
@@ -291,6 +306,12 @@ impl HashJoinV2Exec {
                                     }
                                 }
                             });
+                            if let Some(stats) = &stats {
+                                stats
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .update_partition_data(cost);
+                            }
                             if let Err(error) = &result {
                                 let _ = errors.send(error.clone());
                             }
@@ -470,7 +491,9 @@ impl HashJoinV2Exec {
                     close_rx.clone(),
                     killed.clone(),
                 );
+                let stats = self.ctx.stats.clone();
                 handles.push(scope.spawn(move || {
+                    let mut cost = std::time::Duration::ZERO;
                     let result = recover_worker_panic(|| {
                         let mut build_context = BuildContext::new(context.meta, context.partition, context.key_serializer);
                         build_context.build_filter = context.build_filter;
@@ -496,11 +519,13 @@ impl HashJoinV2Exec {
                             {
                                 let mut state = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                                 let (worker, row_tables) = &mut *state;
+                                let started = std::time::Instant::now();
                                 if restored {
                                     worker.process_one_restored_chunk(build_chunk, &mut build_context, row_tables)
                                 } else {
                                     worker.process_one_chunk(build_chunk, &mut build_context, row_tables)
                                 }.map_err(build_error)?;
+                                cost += started.elapsed();
                             }
                             memory.check()?;
                             chunk.reset();
@@ -511,6 +536,12 @@ impl HashJoinV2Exec {
                             }
                         }
                     });
+                    if let Some(stats) = &stats {
+                        stats
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .update_partition_data(cost);
+                    }
                     if let Err(error) = &result { let _ = errors.send(error.clone()); }
                     result
                 }));
@@ -705,8 +736,10 @@ impl HashJoinV2Exec {
             };
             let stopped = std::sync::Arc::clone(&stopped);
             let memory = memory.clone();
+            let stats = self.ctx.stats.clone();
             move || {
                 use std::sync::atomic::Ordering;
+                let started = std::time::Instant::now();
                 let result = recover_worker_panic(|| {
                     if stopped.load(Ordering::Acquire) {
                         return Ok(());
@@ -719,6 +752,14 @@ impl HashJoinV2Exec {
                     );
                     memory.check()
                 });
+                // Go `BuildWorkerV2.buildHashTable`'s deferred update; a
+                // task here is one segment range, Go's worker drains several.
+                if let Some(stats) = &stats {
+                    stats
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .update_build_hash_table(started.elapsed());
+                }
                 if result.is_err() {
                     stopped.store(true, Ordering::Release);
                 }

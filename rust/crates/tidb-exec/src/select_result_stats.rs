@@ -105,7 +105,11 @@ impl SelectResultRuntimeStats {
         clippy::cast_possible_wrap,
         reason = "Go int64(time.Duration) conversion"
     )]
-    pub fn merge_cop_runtime_stats(&mut self, cop_stats: &CopResponseSample, resp_time: StdDuration) {
+    pub fn merge_cop_runtime_stats(
+        &mut self,
+        cop_stats: &CopResponseSample,
+        resp_time: StdDuration,
+    ) {
         self.cop_resp_time
             .add(Duration(resp_time.as_nanos() as i64));
         self.proc_keys.add(Int64(cop_stats.processed_keys));
@@ -126,10 +130,7 @@ impl SelectResultRuntimeStats {
     }
 
     /// Go `selectResultRuntimeStats.calcCacheHit`.
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "Go float64(int64) division"
-    )]
+    #[expect(clippy::cast_precision_loss, reason = "Go float64(int64) division")]
     fn calc_cache_hit(&self) -> f64 {
         let hit = self.copr_cache_hit_num;
         let mut total = self.cop_resp_time.size();
@@ -311,7 +312,10 @@ mod tests {
 
     fn sample(keys: i64, process_us: u64, wait_us: u64) -> CopResponseSample {
         let req_stats = tikv_client::RegionRequestRuntimeStats::new();
-        req_stats.record_rpc(tikv_client::CommandType::Coprocessor, StdDuration::from_micros(700));
+        req_stats.record_rpc(
+            tikv_client::CommandType::Coprocessor,
+            StdDuration::from_micros(700),
+        );
         CopResponseSample {
             processed_keys: keys,
             process_time: StdDuration::from_micros(process_us),
@@ -339,7 +343,8 @@ mod tests {
         one.wait_time = StdDuration::from_micros(69);
         stats.merge_cop_runtime_stats(&one, StdDuration::from_nanos(749_100));
         let text = stats.string();
-        let expected_head = "cop_task: {num: 1, max: 749.1µs, proc_keys: 12, tot_proc: 41.3µs, tot_wait: 69µs, ";
+        let expected_head =
+            "cop_task: {num: 1, max: 749.1µs, proc_keys: 12, tot_proc: 41.3µs, tot_wait: 69µs, ";
         assert!(text.starts_with(expected_head), "{text}");
         assert!(
             text.ends_with(
@@ -370,7 +375,10 @@ mod tests {
             ),
             "{text}"
         );
-        assert!(text.ends_with("rpc_info:{Cop:{num_rpc:2, total_time:1.4ms}}"), "{text}");
+        assert!(
+            text.ends_with("rpc_info:{Cop:{num_rpc:2, total_time:1.4ms}}"),
+            "{text}"
+        );
     }
 
     /// Go `Merge` adds counts and keeps the larger concurrency.
@@ -390,6 +398,9 @@ mod tests {
         left.merge(&right);
         let text = left.string();
         assert!(text.contains("cop_task: {num: 2, max: 20µs"), "{text}");
-        assert!(text.contains("max_distsql_concurrency: 4, max_extra_concurrency: 2}"), "{text}");
+        assert!(
+            text.contains("max_distsql_concurrency: 4, max_extra_concurrency: 2}"),
+            "{text}"
+        );
     }
 }

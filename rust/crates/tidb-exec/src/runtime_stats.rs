@@ -66,48 +66,20 @@ use crate::exec_details::{
 };
 use crate::tiflash_stats::{TiFlashNetworkTrafficSummary, TiflashStats};
 
-/// Go `TpBasicRuntimeStats`: the tp for `BasicRuntimeStats`.
-pub const TP_BASIC_RUNTIME_STATS: i32 = 0;
-/// Go `TpRuntimeStatsWithCommit`: the tp for `RuntimeStatsWithCommit`.
-pub const TP_RUNTIME_STATS_WITH_COMMIT: i32 = 1;
-/// Go `TpRuntimeStatsWithConcurrencyInfo`: the tp for
-/// `RuntimeStatsWithConcurrencyInfo`.
-pub const TP_RUNTIME_STATS_WITH_CONCURRENCY_INFO: i32 = 2;
-/// Go `TpSnapshotRuntimeStats`: the tp for `SnapshotRuntimeStats`.
-pub const TP_SNAPSHOT_RUNTIME_STATS: i32 = 3;
-/// Go `TpHashJoinRuntimeStats`: the tp for `HashJoinRuntimeStats`.
-pub const TP_HASH_JOIN_RUNTIME_STATS: i32 = 4;
-/// Go `TpHashJoinRuntimeStatsV2`: the tp for `hashJoinRuntimeStatsV2`.
-pub const TP_HASH_JOIN_RUNTIME_STATS_V2: i32 = 5;
-/// Go `TpIndexLookUpJoinRuntimeStats`: the tp for
-/// `IndexLookUpJoinRuntimeStats`.
-pub const TP_INDEX_LOOK_UP_JOIN_RUNTIME_STATS: i32 = 6;
-/// Go `TpRuntimeStatsWithSnapshot`: the tp for `RuntimeStatsWithSnapshot`.
-pub const TP_RUNTIME_STATS_WITH_SNAPSHOT: i32 = 7;
-/// Go `TpJoinRuntimeStats`: the tp for `JoinRuntimeStats`.
-pub const TP_JOIN_RUNTIME_STATS: i32 = 8;
-/// Go `TpSelectResultRuntimeStats`: the tp for `SelectResultRuntimeStats`.
-pub const TP_SELECT_RESULT_RUNTIME_STATS: i32 = 9;
-/// Go `TpInsertRuntimeStat`: the tp for `InsertRuntimeStat`.
-pub const TP_INSERT_RUNTIME_STAT: i32 = 10;
-/// Go `TpIndexLookUpRunTimeStats`: the tp for `IndexLookUpRunTimeStats`.
-pub const TP_INDEX_LOOK_UP_RUN_TIME_STATS: i32 = 11;
-/// Go `TpSlowQueryRuntimeStat`: the tp for `SlowQueryRuntimeStat`.
-pub const TP_SLOW_QUERY_RUNTIME_STAT: i32 = 12;
-/// Go `TpHashAggRuntimeStat`: the tp for `HashAggRuntimeStat`.
-pub const TP_HASH_AGG_RUNTIME_STAT: i32 = 13;
-/// Go `TpIndexMergeRunTimeStats`: the tp for `IndexMergeRunTimeStats`.
-pub const TP_INDEX_MERGE_RUN_TIME_STATS: i32 = 14;
-/// Go `TpBasicCopRunTimeStats`: the tp for `BasicCopRunTimeStats`.
-pub const TP_BASIC_COP_RUN_TIME_STATS: i32 = 15;
-/// Go `TpUpdateRuntimeStats`: the tp for `UpdateRuntimeStats`.
-pub const TP_UPDATE_RUNTIME_STATS: i32 = 16;
-/// Go `TpFKCheckRuntimeStats`: the tp for `FKCheckRuntimeStats`.
-pub const TP_FK_CHECK_RUNTIME_STATS: i32 = 17;
-/// Go `TpFKCascadeRuntimeStats`: the tp for `FKCascadeRuntimeStats`.
-pub const TP_FK_CASCADE_RUNTIME_STATS: i32 = 18;
-/// Go `TpRURuntimeStats`: the tp for `RURuntimeStats`.
-pub const TP_RU_RUNTIME_STATS: i32 = 19;
+// Go `RuntimeStats`, its kind constants, `FormatDuration` and the
+// concurrency-info stats live with the executors that register them.
+pub use tidb_executor::execdetails::{
+    format_duration, ConcurrencyInfo, RuntimeStats, RuntimeStatsWithConcurrencyInfo,
+    TP_BASIC_COP_RUN_TIME_STATS, TP_BASIC_RUNTIME_STATS, TP_FK_CASCADE_RUNTIME_STATS,
+    TP_FK_CHECK_RUNTIME_STATS, TP_HASH_AGG_RUNTIME_STAT, TP_HASH_JOIN_RUNTIME_STATS,
+    TP_HASH_JOIN_RUNTIME_STATS_V2, TP_INDEX_LOOK_UP_JOIN_RUNTIME_STATS,
+    TP_INDEX_LOOK_UP_RUN_TIME_STATS, TP_INDEX_MERGE_RUN_TIME_STATS, TP_INSERT_RUNTIME_STAT,
+    TP_JOIN_RUNTIME_STATS, TP_RUNTIME_STATS_WITH_COMMIT,
+    TP_RUNTIME_STATS_WITH_CONCURRENCY_INFO, TP_RUNTIME_STATS_WITH_SNAPSHOT, TP_RU_RUNTIME_STATS,
+    TP_SELECT_RESULT_RUNTIME_STATS, TP_SLOW_QUERY_RUNTIME_STAT, TP_SNAPSHOT_RUNTIME_STATS,
+    TP_UPDATE_RUNTIME_STATS,
+};
+
 
 /// Go `execdetails.MaxDetailsNumsForOneQuery` (`execdetails.go`): the max
 /// number of details kept exactly before [`Percentile`] switches to the
@@ -516,71 +488,12 @@ impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
     }
 }
 
-/// Go `execdetails.FormatDuration` (`util.go`): formats a duration for
-/// explain output, pruning precision for human readability — under 1µs the
-/// plain Go spelling; otherwise 2 decimals below 10 units and 1 decimal
-/// from 10 units up.
-#[must_use]
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "Go time.Duration uses signed int64 nanoseconds"
-)]
-pub fn format_duration(d: StdDuration) -> String {
-    let ns = d.as_nanos() as i64;
-    if ns <= 1_000 {
-        return format_go_duration(d);
-    }
-    tidb_model::go_duration::format_explain_duration(ns)
-}
 
 /// Compatibility name for the one client-go `util.ScanDetail` type.
 pub type CopScanDetail = ScanDetail;
 
 /// Compatibility name for the one client-go `util.TimeDetail` type.
 pub type CopTimeDetail = TimeDetail;
-
-/// Go `RuntimeStats`: the executor runtime information interface.
-pub trait RuntimeStats: Any + Send {
-    /// Go `String`.
-    fn string(&self) -> String;
-    /// Go `Merge`.
-    fn merge(&mut self, other: &dyn RuntimeStats);
-    /// Go `Clone`.
-    fn clone_box(&self) -> Box<dyn RuntimeStats>;
-    /// Go `Tp`.
-    fn tp(&self) -> i32;
-    /// The Go type switch's `rs.(*ConcreteType)` seam.
-    fn as_any(&self) -> &dyn Any;
-}
-
-/// Go `RURuntimeStats`'s `RuntimeStats` methods; the type and its formatting
-/// live with the RU v2 metrics in [`tidb_util::ruv2_metrics`].
-impl RuntimeStats for tidb_util::ruv2_metrics::RuRuntimeStats {
-    fn string(&self) -> String {
-        tidb_util::ruv2_metrics::RuRuntimeStats::string(self)
-    }
-
-    fn merge(&mut self, other: &dyn RuntimeStats) {
-        if let Some(tmp) = other
-            .as_any()
-            .downcast_ref::<tidb_util::ruv2_metrics::RuRuntimeStats>()
-        {
-            tidb_util::ruv2_metrics::RuRuntimeStats::merge(self, tmp);
-        }
-    }
-
-    fn clone_box(&self) -> Box<dyn RuntimeStats> {
-        Box::new(self.clone_stats())
-    }
-
-    fn tp(&self) -> i32 {
-        TP_RU_RUNTIME_STATS
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
 
 /// Go `basicCopRuntimeStats` (package-private): the per-executor cop task
 /// accumulator.
@@ -1349,6 +1262,19 @@ impl tidb_executor::executor::ExecutorRuntimeStatsSource for RuntimeStatsColl {
             .map(|stats| stats as Arc<dyn tidb_executor::executor::ExecutorRuntimeStats>)
     }
 
+    fn register_stats(&self, plan_id: i64, stats: Box<dyn RuntimeStats>) {
+        RuntimeStatsColl::register_stats(self, plan_id, stats);
+    }
+
+    fn root_runtime_info(&self, plan_id: i64) -> Option<String> {
+        let stats = {
+            let inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+            inner.root_stats.get(&plan_id)?.clone()
+        };
+        let text = stats.lock().expect("RootRuntimeStats mutex poisoned").string();
+        (!text.is_empty()).then_some(text)
+    }
+
     fn root_group_runtime_info(&self, plan_id: i64) -> Option<String> {
         let stats = {
             let inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
@@ -1385,86 +1311,6 @@ fn get_plan_id_from_execution_summary(summary: &ExecutorExecutionSummary) -> Opt
         .split('_')
         .next_back()
         .and_then(|last| last.parse::<i64>().ok())
-}
-
-/// Go `ConcurrencyInfo`: the concurrency information of one executor
-/// operator.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ConcurrencyInfo {
-    /// Go `ConcurrencyInfo.concurrencyName`.
-    concurrency_name: String,
-    /// Go `ConcurrencyInfo.concurrencyNum`.
-    concurrency_num: i64,
-}
-
-impl ConcurrencyInfo {
-    /// Go `NewConcurrencyInfo`.
-    #[must_use]
-    pub fn new(name: &str, num: i64) -> ConcurrencyInfo {
-        ConcurrencyInfo {
-            concurrency_name: name.to_owned(),
-            concurrency_num: num,
-        }
-    }
-}
-
-/// Go `RuntimeStatsWithConcurrencyInfo`: concurrency info attached to the
-/// runtime stats.
-#[derive(Debug, Default)]
-pub struct RuntimeStatsWithConcurrencyInfo {
-    /// Go `RuntimeStatsWithConcurrencyInfo.concurrency`.
-    concurrency: Mutex<Vec<ConcurrencyInfo>>,
-}
-
-impl RuntimeStatsWithConcurrencyInfo {
-    /// Go `SetConcurrencyInfo`: replaces the concurrency information.
-    /// `num <= 0` means the operator is not executed in parallel.
-    pub fn set_concurrency_info(&self, infos: Vec<ConcurrencyInfo>) {
-        *self.concurrency.lock().unwrap() = infos;
-    }
-}
-
-impl Clone for RuntimeStatsWithConcurrencyInfo {
-    fn clone(&self) -> Self {
-        Self {
-            concurrency: Mutex::new(self.concurrency.lock().unwrap().clone()),
-        }
-    }
-}
-
-impl RuntimeStats for RuntimeStatsWithConcurrencyInfo {
-    fn string(&self) -> String {
-        let mut buf = String::with_capacity(8);
-        let concurrency = self.concurrency.lock().unwrap();
-        for (i, concurrency) in concurrency.iter().enumerate() {
-            if i > 0 {
-                buf.push_str(", ");
-            }
-            if concurrency.concurrency_num > 0 {
-                buf.push_str(&concurrency.concurrency_name);
-                buf.push(':');
-                buf.push_str(&concurrency.concurrency_num.to_string());
-            } else {
-                buf.push_str(&concurrency.concurrency_name);
-                buf.push_str(":OFF");
-            }
-        }
-        buf
-    }
-
-    fn merge(&mut self, _other: &dyn RuntimeStats) {}
-
-    fn clone_box(&self) -> Box<dyn RuntimeStats> {
-        Box::new(self.clone())
-    }
-
-    fn tp(&self) -> i32 {
-        TP_RUNTIME_STATS_WITH_CONCURRENCY_INFO
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
 }
 
 /// Go `RuntimeStatsWithCommit`: the runtime stats with commit and lock-keys

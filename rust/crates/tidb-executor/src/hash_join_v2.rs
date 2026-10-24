@@ -32,6 +32,7 @@ pub mod probe_stage;
 pub mod probe_worker;
 mod semi_probe;
 pub mod spill;
+pub mod stats;
 pub use semi_probe::{
     AntiLeftOuterSemiJoinProbe, AntiSemiJoinProbe, LeftOuterSemiJoinProbe, SemiJoinProbe,
 };
@@ -400,6 +401,8 @@ pub struct HashJoinCtxV2 {
     pub need_scan_row_table_after_probe_done: bool,
     /// Go `maxSpillRound`.
     pub max_spill_round: usize,
+    /// Go `HashJoinCtxV2.stats`, present while runtime stats are collected.
+    pub stats: Option<stats::SharedHashJoinRuntimeStatsV2>,
 }
 
 impl HashJoinCtxV2 {
@@ -421,6 +424,7 @@ impl HashJoinCtxV2 {
             // Go `OpenSelf` sets `maxSpillRound = 1` unconditionally and only
             // raises it when temporary storage is enabled.
             max_spill_round: 1,
+            stats: None,
         };
         ctx.setup_partition_info();
         ctx

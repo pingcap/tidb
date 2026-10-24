@@ -2915,6 +2915,70 @@ fn explain_analyze_select() {
     assert!(rows[0][5].contains("loops:1"), "{rows:?}");
 }
 
+/// The executors' own runtime stats Go registers from `Close`, rendered after
+/// their basic stats: a projection's `Concurrency:OFF`
+/// (`RuntimeStatsWithConcurrencyInfo`), a hash join v2's
+/// `build_hash_table:{concurrency:5, time:.., fetch:.., max_partition:..,
+/// total_partition:.., max_build:.., total_build:..}, probe:{concurrency:5,
+/// time:.., fetch_and_wait:.., max_worker_time:.., total_worker_time:..,
+/// max_probe:.., total_probe:..}`, an index join's `inner:{total:..,
+/// concurrency:5, task:1, construct:.., fetch:.., build:..}, probe:..` and a
+/// parallel hash aggregation's `partial_worker:{wall_time:.., concurrency:5,
+/// task_num:.., ...}, final_worker:{...}` (the Go oracle's `EXPLAIN ANALYZE`
+/// of the same statements).
+#[test]
+fn explain_analyze_registers_executor_runtime_stats() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t1 (a INT PRIMARY KEY, b INT, c INT, KEY ib(b))")
+        .unwrap();
+    session
+        .run("CREATE TABLE t2 (a INT PRIMARY KEY, b INT, c INT, KEY ib(b))")
+        .unwrap();
+    for table in ["t1", "t2"] {
+        session
+            .run(&format!(
+                "INSERT INTO {table} VALUES (1,1,1),(2,2,2),(3,3,1),(4,4,2),(5,5,1)"
+            ))
+            .unwrap();
+    }
+    let find = |rows: &[Vec<String>], prefix: &str| -> String {
+        rows.iter()
+            .find(|row| row[0].trim_start_matches(['└', '├', '─', '│', ' ']).starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix} row in {rows:?}"))[5]
+            .clone()
+    };
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE SELECT /*+ hash_join(t1, t2) */ t1.a, t2.b + 1 FROM t1, t2 WHERE t1.a = t2.a",
+    ));
+    let join = find(&rows, "HashJoin_");
+    assert!(join.contains(", build_hash_table:{concurrency:5, time:"), "{join}");
+    assert!(join.contains(", total_build:"), "{join}");
+    assert!(join.contains("}, probe:{concurrency:5, time:"), "{join}");
+    assert!(join.contains(", max_worker_time:"), "{join}");
+    // Without statistics the estimate is a full chunk, so Go runs the
+    // projection workers (`Concurrency:5`; `Concurrency:OFF` below a chunk).
+    let projection = find(&rows, "Projection_");
+    assert!(projection.ends_with(", Concurrency:5"), "{projection}");
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE SELECT /*+ inl_join(t1) */ * FROM t1, t2 WHERE t1.b = t2.b",
+    ));
+    let join = find(&rows, "IndexJoin_");
+    assert!(join.contains(", inner:{total:"), "{join}");
+    assert!(join.contains(", concurrency:5, task:1, construct:"), "{join}");
+    assert!(join.contains("}, probe:"), "{join}");
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE SELECT /*+ hash_agg() */ c, COUNT(*) FROM t1 GROUP BY c",
+    ));
+    let agg = find(&rows, "HashAgg_");
+    assert!(agg.contains(", partial_worker:{wall_time:"), "{agg}");
+    assert!(agg.contains(", concurrency:5, task_num:"), "{agg}");
+    assert!(agg.contains("}, final_worker:{wall_time:"), "{agg}");
+}
+
 /// `EXPLAIN ANALYZE <insert>` really inserts -- captured: real TiDB's
 /// `EXPLAIN ANALYZE INSERT` leaves the row in the table afterward, the
 /// inverse of `EXPLAIN INSERT`, which inserts nothing (see the

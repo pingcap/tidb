@@ -98,6 +98,8 @@ pub struct ProbeStage {
     limit_fetch_size: bool,
     memory: StatementMemory,
     collisions: u64,
+    /// Go `HashJoinCtxV2.stats` and `fetchAndProbeHashTable`'s `start`.
+    stats: Option<(super::stats::SharedHashJoinRuntimeStatsV2, std::time::Instant)>,
 }
 
 impl ProbeStage {
@@ -171,6 +173,11 @@ impl ProbeStage {
             limit_fetch_size,
             memory,
             collisions: 0,
+            stats: build
+                .ctx
+                .stats
+                .clone()
+                .map(|stats| (stats, std::time::Instant::now())),
         };
         let run = Arc::new(run);
         for id in 0..concurrency {
@@ -181,6 +188,7 @@ impl ProbeStage {
                 close.clone(),
                 scan.clone(),
             );
+            let worker = worker.with_stats(stage.stats.clone());
             stage.inputs.push(ports.input);
             stage.recycles.push(ports.recycle);
             if !restored && !skip_probe {
@@ -415,6 +423,13 @@ impl ProbeStage {
                     self.done[worker_id] = true;
                     self.collisions += collisions;
                     if self.done.iter().all(|&done| done) {
+                        // Go `waitJoinWorkers`.
+                        if let Some((stats, start)) = self.stats.take() {
+                            stats
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .finish_probe(start, self.collisions);
+                        }
                         self.close()?;
                         return Ok(());
                     }

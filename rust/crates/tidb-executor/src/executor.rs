@@ -229,6 +229,23 @@ pub trait ExecutorRuntimeStatsSource: Send + Sync {
     fn root_group_runtime_info(&self, _plan_id: i64) -> Option<String> {
         None
     }
+
+    /// Go `RootRuntimeStats.String()` of `plan_id`: its basic stats, then
+    /// its group stats. `None` when nothing is registered on it.
+    fn root_runtime_info(&self, _plan_id: i64) -> Option<String> {
+        None
+    }
+
+    /// Go `RuntimeStatsColl.RegisterStats`: an executor's own stats (a
+    /// join's, a reader's, ...), merged into the group of the same kind.
+    fn register_stats(&self, _plan_id: i64, _stats: Box<dyn crate::execdetails::RuntimeStats>) {}
+
+    /// Go `RuntimeStatsColl.GetBasicRuntimeStats(planID, true)` for a plan
+    /// whose basic stats another executor records (an index lookup's
+    /// pushed index plan, `indexScanBasicStats`).
+    fn basic_runtime_stats(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>> {
+        self.for_executor(plan_id)
+    }
 }
 
 /// Go `CopRuntimeStats.GetActRows` and `String()` of one plan.

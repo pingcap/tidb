@@ -1526,10 +1526,22 @@ struct PartialWorker<C: Columns + Send + Sync + Clone + 'static> {
     maps: Vec<PipelineMap>,
     keys: PipelineKeyBuffer,
     error: Option<ExecError>,
+    /// Go `HashAggPartialWorker.stats` with the worker's start and the
+    /// instant it last went idle.
+    agg_stat: Option<(Arc<super::stats::AggWorkerStat>, std::time::Instant, std::time::Instant)>,
     #[cfg(test)]
     stats: Arc<PipelineStats>,
     #[cfg(test)]
     started: bool,
+}
+
+impl<C: Columns + Send + Sync + Clone + 'static> Drop for PartialWorker<C> {
+    fn drop(&mut self) {
+        // Go `updateWorkerTime(w.stats, start)` when the worker exits.
+        if let Some((stat, started, _)) = &self.agg_stat {
+            stat.add_worker_time(*started);
+        }
+    }
 }
 
 impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
@@ -1556,6 +1568,12 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
                 return;
             }
         };
+        // Go `updateWaitTime`: the worker waited for this chunk since it
+        // last finished one.
+        if let Some((stat, _, idle)) = &self.agg_stat {
+            stat.add_wait(*idle);
+        }
+        let exec_started = std::time::Instant::now();
         self.current.swap_columns(&mut input);
         // Go returns its previous work buffer before folding the new
         // chunk. Exactly one resource per lane exists, so this bounded
@@ -1585,6 +1603,12 @@ impl<C: Columns + Send + Sync + Clone + 'static> PartialWorker<C> {
                 self.error = Some(fold_error);
                 self.abort.raise();
             }
+        }
+        // Go `TaskNum++` and `updateExecTime`.
+        if let Some((stat, _, idle)) = &mut self.agg_stat {
+            stat.add_task();
+            stat.add_exec(exec_started);
+            *idle = std::time::Instant::now();
         }
     }
 }
@@ -1740,6 +1764,7 @@ impl<C: Columns + Send + Sync + Clone + 'static> PipelineWorkers<C> {
         #[cfg(test)] stats: &Arc<PipelineStats>,
         memory: &StatementMemory,
         tracker: &Arc<Tracker>,
+        agg_stats: Option<&Arc<super::stats::HashAggRuntimeStats>>,
     ) -> Self {
         let (resources_tx, resources_rx) = sync_channel(partial_concurrency);
         let mut workers = Self {
@@ -1776,6 +1801,10 @@ impl<C: Columns + Send + Sync + Clone + 'static> PipelineWorkers<C> {
                 memory: memory.clone(),
                 keys: PipelineKeyBuffer::new(Arc::clone(tracker)),
                 error: None,
+                agg_stat: agg_stats.map(|stats| {
+                    let now = std::time::Instant::now();
+                    (stats.partial_worker(), now, now)
+                }),
                 #[cfg(test)]
                 stats: Arc::clone(stats),
                 #[cfg(test)]
@@ -1963,6 +1992,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             .map(|_| ParallelSpillPartitions::new(&self.memory, &self.disk_tracker));
         let mut in_memory_maps = None;
         let child_drained;
+        let partial_start = std::time::Instant::now();
         let mut workers = PipelineWorkers::new(
             self.child.as_ref(),
             &plan,
@@ -1972,6 +2002,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             &stats,
             &self.memory,
             &self.tracker,
+            self.hash_agg_stats.as_ref(),
         );
 
         loop {
@@ -2004,6 +2035,10 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             break;
         }
         drop(workers);
+        // Go adds the partial wall time when every partial worker exited.
+        if let Some(agg_stats) = &self.hash_agg_stats {
+            agg_stats.add_partial_wall_time(partial_start);
+        }
 
         // Go keeps the parallel spill files on disk until `Close` removes
         // them (`HashAggExec.dataInDisk`); dropping the helper here would
@@ -2065,6 +2100,7 @@ impl<C: Columns + Send + Sync + Clone + 'static + HashAggContext> HashAggExec<C>
             self.pipeline_partial_concurrency,
             truncated,
             self.memory.clone(),
+            self.hash_agg_stats.clone(),
             #[cfg(test)]
             stats,
         ));
@@ -2152,6 +2188,8 @@ pub(super) struct FinalOutput {
     offset: usize,
     abort: PipelineAbort,
     truncated: Arc<Vec<AtomicBool>>,
+    /// Go `finalWallTimePtr` and `finalStart`, until the workers are joined.
+    agg_stats: Option<(Arc<super::stats::HashAggRuntimeStats>, std::time::Instant)>,
 }
 
 impl FinalOutput {
@@ -2164,6 +2202,7 @@ impl FinalOutput {
         partial_concurrency: usize,
         truncated: Arc<Vec<AtomicBool>>,
         memory: StatementMemory,
+        agg_stats: Option<Arc<super::stats::HashAggRuntimeStats>>,
         #[cfg(test)] stats: Arc<PipelineStats>,
     ) -> Self {
         let (tx, rx) = sync_channel(partial_concurrency + sources.len() + 1);
@@ -2174,6 +2213,9 @@ impl FinalOutput {
             offset: 0,
             abort: PipelineAbort::default(),
             truncated,
+            agg_stats: agg_stats
+                .as_ref()
+                .map(|stats| (Arc::clone(stats), std::time::Instant::now())),
         };
         for source in sources {
             let (done, handle) = sync_channel(1);
@@ -2188,8 +2230,12 @@ impl FinalOutput {
                 truncated: Arc::clone(&output.truncated),
                 #[cfg(test)]
                 stats: Arc::clone(&stats),
+                agg_stat: agg_stats.as_ref().map(|stats| stats.final_worker()),
                 _completion: FinalWorkerCompletion {
                     done,
+                    agg_stat: agg_stats
+                        .as_ref()
+                        .map(|_| std::time::Instant::now()),
                     #[cfg(test)]
                     stats: Arc::clone(&stats),
                 },
@@ -2267,6 +2313,9 @@ impl FinalOutput {
         for handle in self.handles.drain(..) {
             let _ = handle.recv();
         }
+        if let Some((stats, final_start)) = self.agg_stats.take() {
+            stats.add_final_wall_time(final_start);
+        }
     }
 
     pub(super) fn close(&mut self, truncated: &mut [bool]) {
@@ -2292,6 +2341,8 @@ struct FinalWorker<C: Columns + Send + Sync + Clone + 'static> {
     memory: StatementMemory,
     abort: PipelineAbort,
     truncated: Arc<Vec<AtomicBool>>,
+    /// Go `HashAggFinalWorker.stats`.
+    agg_stat: Option<Arc<super::stats::AggWorkerStat>>,
     #[cfg(test)]
     stats: Arc<PipelineStats>,
     // Last field: release maps, input ownership and senders before Close's
@@ -2301,8 +2352,19 @@ struct FinalWorker<C: Columns + Send + Sync + Clone + 'static> {
 
 struct FinalWorkerCompletion {
     done: std::sync::mpsc::SyncSender<()>,
+    /// The worker's start, for Go's `updateWorkerTime`.
+    agg_stat: Option<std::time::Instant>,
     #[cfg(test)]
     stats: Arc<PipelineStats>,
+}
+
+impl<C: Columns + Send + Sync + Clone + 'static> Drop for FinalWorker<C> {
+    fn drop(&mut self) {
+        // Go `updateWorkerTime(w.stats, start)` when the worker exits.
+        if let (Some(stat), Some(started)) = (&self.agg_stat, self._completion.agg_stat) {
+            stat.add_worker_time(started);
+        }
+    }
 }
 
 impl Drop for FinalWorkerCompletion {
@@ -2345,6 +2407,16 @@ impl<C: Columns + Send + Sync + Clone + 'static> FinalWorker<C> {
     }
 
     fn fill(&mut self, current: &mut Chunk) -> Result<bool, ExecError> {
+        // Go `updateExecTime` for the final worker's merge and output.
+        let exec_started = std::time::Instant::now();
+        let result = self.fill_inner(current);
+        if let Some(stat) = &self.agg_stat {
+            stat.add_exec(exec_started);
+        }
+        result
+    }
+
+    fn fill_inner(&mut self, current: &mut Chunk) -> Result<bool, ExecError> {
         self.memory.check()?;
         while !self.abort.raised() {
             let group = self.groups.as_mut().and_then(Iterator::next);
@@ -2384,6 +2456,10 @@ impl<C: Columns + Send + Sync + Clone + 'static> FinalWorker<C> {
                 else {
                     return Ok(false);
                 };
+                // Go `TaskNum++` for each intermediate input consumed.
+                if let Some(stat) = &self.agg_stat {
+                    stat.add_task();
+                }
                 self.groups = Some(map.into_values());
             }
         }

@@ -836,6 +836,7 @@ fn index_task_shared_for_test(join: &JoinExec<NoColumns>) -> IndexTaskShared<NoC
         max_chunk_size: CHUNK,
         tracker: Arc::clone(&join.tracker),
         memory: join.memory.clone(),
+        stats: None,
     }
 }
 

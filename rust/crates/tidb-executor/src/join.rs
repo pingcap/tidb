@@ -921,6 +921,8 @@ struct IndexTaskShared<C: Columns> {
     max_chunk_size: usize,
     tracker: Arc<Tracker>,
     memory: StatementMemory,
+    /// Go `innerWorker.stats`.
+    stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
 }
 
 /// What the pool worker of one index task hands back.
@@ -997,6 +999,7 @@ fn open_index_task<C: Columns>(
     shared: &IndexTaskShared<C>,
     outer: &OuterBatch,
 ) -> Result<Result<crate::access_path::IndexJoinLookupExec, Vec<IndexTaskProbe>>, ExecError> {
+    let construct_started = std::time::Instant::now();
     let probes = index_task_probes(
         &shared.ctx,
         &shared.keys,
@@ -1005,6 +1008,9 @@ fn open_index_task<C: Columns>(
         &shared.outer_types,
         shared.outer_is_left,
     )?;
+    if let Some(stats) = &shared.stats {
+        stats.record_construct(construct_started.elapsed());
+    }
     let Some(template) = shared.template.as_ref() else {
         return Ok(Err(probes));
     };
@@ -1229,6 +1235,7 @@ fn fetch_index_inner<C: Columns>(
     max_rows: Option<usize>,
     reuse: Option<PreparedIndexInner>,
 ) -> Result<(PreparedIndexInner, u64, bool), ExecError> {
+    let fetch_started = std::time::Instant::now();
     let fetched = (|| {
         let mut inner = match reuse {
             Some(mut inner) => {
@@ -1254,13 +1261,21 @@ fn fetch_index_inner<C: Columns>(
                 break false;
             }
         };
+        // Go `fetchInnerResults` and `buildLookUpMap` are timed apart.
+        if let Some(stats) = &shared.stats {
+            stats.record_fetch(fetch_started.elapsed());
+        }
         if shared.hash_output.is_none() {
+            let build_started = std::time::Instant::now();
             inner.matched = build_index_lookup_map(
                 &inner.rows,
                 &shared.keys,
                 &shared.inner_types,
                 shared.outer_is_left,
             )?;
+            if let Some(stats) = &shared.stats {
+                stats.record_build(build_started.elapsed());
+            }
         }
         Ok((inner, rows, done))
     })();
@@ -1359,6 +1374,11 @@ pub struct JoinExec<C: Columns> {
     index_lookup_concurrency: usize,
     /// Go `SessionVars.IndexJoinBatchSize`, resolved at statement construction.
     index_join_batch_size: usize,
+    /// Go `StmtCtx.RuntimeStatsColl` and the plan an index join registers
+    /// its `indexLookUpJoinRuntimeStats` on at Close.
+    index_join_runtime_stats: Option<(Arc<dyn crate::executor::ExecutorRuntimeStatsSource>, i64)>,
+    /// Go `IndexLookUpJoin.stats`, created with the first task.
+    index_join_stats: Option<Arc<crate::join_stats::IndexLookUpJoinRuntimeStats>>,
     outer_filter: Vec<Expression>,
     filter_is_left: bool,
     /// The complete logical `ON` clause. The nested-loop reference path must
@@ -1542,6 +1562,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             concurrency: 1,
             index_lookup_concurrency: INDEX_LOOKUP_JOIN_CONCURRENCY,
             index_join_batch_size: INDEX_JOIN_BATCH_SIZE,
+            index_join_runtime_stats: None,
+            index_join_stats: None,
             outer_filter: Vec::new(),
             filter_is_left: true,
             conditions,
@@ -1616,6 +1638,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// executor has been built. The session layer resolves the deprecated
     /// variable's unset value to `tidb_executor_concurrency` before this
     /// setter is called.
+    /// Go `e.RuntimeStats() != nil` for an index join: collect and register
+    /// `indexLookUpJoinRuntimeStats` on `plan_id`.
+    pub(crate) fn set_index_join_runtime_stats(
+        &mut self,
+        source: Option<Arc<dyn crate::executor::ExecutorRuntimeStatsSource>>,
+        plan_id: i64,
+    ) {
+        self.index_join_runtime_stats = source.map(|source| (source, plan_id));
+    }
+
     pub(crate) fn set_index_lookup_concurrency(&mut self, concurrency: usize) {
         self.index_lookup_concurrency = concurrency.max(1);
     }
@@ -2261,6 +2293,13 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 max_chunk_size: self.meta.max_chunk_size(),
                 tracker: Arc::clone(&self.tracker),
                 memory: self.memory.clone(),
+                stats: self.index_join_runtime_stats.as_ref().map(|_| {
+                    Arc::clone(self.index_join_stats.get_or_insert_with(|| {
+                        Arc::new(crate::join_stats::IndexLookUpJoinRuntimeStats::new(
+                            self.index_lookup_concurrency,
+                        ))
+                    }))
+                }),
             }));
             if let Some(state) = self.index_state.as_mut() {
                 state.prefetch_disabled = prefetch_disabled;
@@ -2541,14 +2580,19 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
                 continue;
             }
             let source = if state.prefetch_disabled {
-                Some(PendingIndexLookupSource::Synchronous(index_task_probes(
+                let construct_started = std::time::Instant::now();
+                let probes = index_task_probes(
                     ctx,
                     keys,
                     &shared.probe_plan,
                     &outer,
                     outer_types.as_slice(),
                     outer_is_left,
-                )?))
+                )?;
+                if let Some(stats) = &shared.stats {
+                    stats.record_construct(construct_started.elapsed());
+                }
+                Some(PendingIndexLookupSource::Synchronous(probes))
             } else {
                 // Go's inner worker prepares the lookup and map. Output
                 // remains on the consumer, so LIMIT never materializes a
@@ -2628,6 +2672,16 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
     /// Emits the loaded batch's outer rows, in the order the child produced
     /// them, until `req` is full or the batch runs out.
     fn drain_index_batch(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        // Go `IndexLookUpJoin.Next`'s `probe` time.
+        let probe_started = std::time::Instant::now();
+        let result = self.drain_index_batch_inner(req);
+        if let Some(stats) = &self.index_join_stats {
+            stats.record_probe(probe_started.elapsed());
+        }
+        result
+    }
+
+    fn drain_index_batch_inner(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         // Keep mutable cursor ownership separate from the join's immutable
         // expression/output context, restoring it on both success and error.
         let mut state = self
@@ -5997,6 +6051,12 @@ impl<C: Columns + Clone + Send + Sync + 'static> Executor for JoinExec<C> {
     /// spill file), then take the spill action back off the session tracker
     /// so the next statement is not left with a dangling one.
     fn close(&mut self) -> Result<(), ExecError> {
+        // Go `IndexLookUpJoin.Close`'s deferred `RegisterStats(e.ID(), e.stats)`.
+        if let (Some((source, plan_id)), Some(stats)) =
+            (&self.index_join_runtime_stats, self.index_join_stats.take())
+        {
+            source.register_stats(*plan_id, Box::new(stats.snapshot()));
+        }
         // Go closes the hash row container here (deletes any spill file and
         // releases its tracker charge). The state itself stays in place: the
         // execution-path receipts it carries (probe-window counts) remain

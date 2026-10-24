@@ -67,6 +67,10 @@ pub struct ProbeWorkerV2 {
     events: Sender<ProbeWorkerEvent>,
     close: Receiver<()>,
     scan_ready: Receiver<()>,
+    /// Go `HashJoinCtx.stats` and `startProbeJoinWorkers`' `start`.
+    stats: Option<(super::stats::SharedHashJoinRuntimeStatsV2, std::time::Instant)>,
+    /// Go `runJoinWorker`'s `probeTime`.
+    probe_time: std::cell::Cell<std::time::Duration>,
 }
 
 enum Stop {
@@ -122,6 +126,8 @@ impl ProbeWorkerV2 {
                 events,
                 close,
                 scan_ready,
+                stats: None,
+                probe_time: std::cell::Cell::new(std::time::Duration::ZERO),
             },
             ProbeWorkerPorts {
                 input: input_tx,
@@ -133,6 +139,17 @@ impl ProbeWorkerV2 {
     /// Runs inside the executor's worker task. The probe borrows the immutable
     /// built table for the task's lifetime; no self-reference or leaked Arc is
     /// needed. The coordinator retains that table until all workers exit.
+    /// Reports to Go's `HashJoinCtx.stats` (`updateProbeStatistic`) with
+    /// the probe stage's start.
+    #[must_use]
+    pub fn with_stats(
+        mut self,
+        stats: Option<(super::stats::SharedHashJoinRuntimeStatsV2, std::time::Instant)>,
+    ) -> Self {
+        self.stats = stats;
+        self
+    }
+
     pub fn run(self, probe: &mut dyn ProbeV2, memory: &StatementMemory) {
         self.run_mode(probe, memory, None);
     }
@@ -160,6 +177,13 @@ impl ProbeWorkerV2 {
                 Err(Stop::Error(error)) => Err(error),
             }
         });
+        // Go `runJoinWorker`'s deferred `updateProbeStatistic`.
+        if let Some((stats, start)) = &self.stats {
+            stats
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .update_probe_statistic(*start, self.probe_time.get());
+        }
         if let Err(error) = result {
             // A kill must still be delivered as an error. Only executor Close
             // or a dropped consumer can suppress this terminal publication.
@@ -285,6 +309,10 @@ impl ProbeWorkerV2 {
                     };
                     chunk
                 };
+                // Go `processOneProbeChunk`: its time less the time spent
+                // waiting to hand a full result over.
+                let chunk_started = std::time::Instant::now();
+                let mut wait = std::time::Duration::ZERO;
                 if disk.is_some() {
                     probe.set_restored_chunk_for_probe(chunk)?;
                 } else {
@@ -294,10 +322,15 @@ impl ProbeWorkerV2 {
                     self.checkpoint(memory)?;
                     probe.probe(&mut output, memory.sql_killer())?;
                     if output.is_full() {
+                        let wait_started = std::time::Instant::now();
                         self.publish(output, memory, killed)?;
                         output = self.new_result(memory, killed)?;
+                        wait += wait_started.elapsed();
                     }
                 }
+                self.probe_time.set(
+                    self.probe_time.get() + chunk_started.elapsed().saturating_sub(wait),
+                );
                 let mut chunk = probe
                     .take_probe_chunk()
                     .expect("successful probe retains input");

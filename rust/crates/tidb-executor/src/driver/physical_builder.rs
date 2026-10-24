@@ -316,6 +316,20 @@ fn cop_plan_chain(root: &PhysicalPlan) -> Vec<CopPlanId> {
     chain
 }
 
+/// Go `RuntimeStatsColl.RegisterStats(id, &RuntimeStatsWithConcurrencyInfo{..})`
+/// with one `name:num` (`name:OFF` for `num == 0`).
+fn register_concurrency_info(ctx: &crate::StmtContext, plan: &PhysicalPlan, name: &str, num: usize) {
+    let Some(source) = ctx.executor_runtime_stats_source() else {
+        return;
+    };
+    let stats = crate::execdetails::RuntimeStatsWithConcurrencyInfo::default();
+    stats.set_concurrency_info(vec![crate::execdetails::ConcurrencyInfo::new(
+        name,
+        i64::try_from(num).unwrap_or(i64::MAX),
+    )]);
+    source.register_stats(i64::from(plan.id()), Box::new(stats));
+}
+
 pub(crate) fn runtime_plan_key(plan: &PhysicalPlan) -> usize {
     std::ptr::from_ref(plan).addr()
 }
@@ -383,7 +397,8 @@ impl BuildState {
         // and no `exec.Next` region; neither has a union scan's mem reader.
         let next_region = next_region.filter(|_| !self.in_reader && !self.untraced);
         let plan_id = i64::from(plan.base().base.id());
-        let runtime_stats = (plan_id > 0 && !self.untraced)
+        // A pushed node runs in TiKV for Go: it reports cop stats only.
+        let runtime_stats = (plan_id > 0 && !self.untraced && !self.in_reader)
             .then(|| {
                 self.executor_runtime_stats_source
                     .as_ref()
@@ -1719,7 +1734,8 @@ fn build_aggregation(
     state: &mut BuildState,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let child = build_with_state(only_child(plan)?, catalog, ctx, state)?;
-    build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx)
+    let register = !state.in_reader && !state.untraced;
+    build_aggregation_over_child(plan, descriptors, group_by, stream, child, ctx, register)
 }
 
 fn build_aggregation_over_child(
@@ -1729,6 +1745,7 @@ fn build_aggregation_over_child(
     stream: bool,
     mut child: Box<dyn Executor>,
     ctx: &crate::StmtContext,
+    register_runtime_stats: bool,
 ) -> Result<Box<dyn Executor>, DriverError> {
     let child_schema = child.schema().clone();
     let group_by = resolve_expressions(group_by, &child_schema)?;
@@ -1789,14 +1806,21 @@ fn build_aggregation_over_child(
             )))
         }
     } else {
-        Ok(Box::new(HashAggExec::new(
+        let mut executor = HashAggExec::new(
             executor_meta,
             group_by,
             functions,
             child,
             ctx.clone(),
             ctx.statement_memory(),
-        )))
+        );
+        executor.set_runtime_stats(
+            ctx.executor_runtime_stats_source()
+                .filter(|_| register_runtime_stats)
+                .cloned(),
+            i64::from(plan.id()),
+        );
+        Ok(Box::new(executor))
     }
 }
 
@@ -2623,6 +2647,26 @@ fn build_index_reader(
     source.read_table_columns(keep);
     source.set_lookup_concurrency(ctx.index_lookup_concurrency());
     source.set_lookup_size(ctx.index_lookup_size());
+    // Go `IndexLookUpExecutor.initRuntimeStats` and `indexScanBasicStats`.
+    if let (Some(table_plan), Some(runtime_source), false) =
+        (table_plan, ctx.executor_runtime_stats_source(), covering)
+    {
+        let index_root = i64::from(index_plan.id());
+        source.set_lookup_runtime_stats(Some(
+            crate::index_lookup_stats::IndexLookUpStatsHandle {
+                stats: Arc::new(crate::index_lookup_stats::IndexLookUpRunTimeStats::new(
+                    ctx.index_lookup_concurrency(),
+                )),
+                index_scan_basic: (index_root != i64::from(plan.id()))
+                    .then(|| runtime_source.basic_runtime_stats(index_root))
+                    .flatten(),
+                source: Arc::clone(runtime_source),
+                table_root_plan_id: i64::from(table_plan.id()),
+                plan_id: i64::from(plan.id()),
+                index_end_recorded: false,
+            },
+        ));
+    }
     if lookup_pushdown {
         source.enable_lookup_pushdown();
     }
@@ -3397,6 +3441,7 @@ fn build_index_inner_subtree(
                 stream,
                 Box::new(leaf),
                 ctx,
+                !state.in_reader && !state.untraced,
             );
         }
         return Ok(Box::new(build_index_inner_reader(
@@ -3483,6 +3528,7 @@ fn build_index_inner_subtree(
                 false,
                 child,
                 ctx,
+                !state.in_reader && !state.untraced,
             )
         }
         PhysicalPlan::StreamAgg(aggregation) => {
@@ -3502,6 +3548,7 @@ fn build_index_inner_subtree(
                 true,
                 child,
                 ctx,
+                !state.in_reader && !state.untraced,
             )
         }
         PhysicalPlan::HashJoin(hash_join) => {
@@ -3766,6 +3813,12 @@ fn build_index_join(
         lookup,
     );
     executor.set_index_lookup_concurrency(ctx.index_lookup_join_concurrency());
+    executor.set_index_join_runtime_stats(
+        ctx.executor_runtime_stats_source()
+            .filter(|_| !state.untraced)
+            .cloned(),
+        i64::from(plan.id()),
+    );
     executor.set_index_join_batch_size(ctx.index_join_batch_size());
     executor.set_vectorized_expression(ctx.enable_vectorized_expression());
     if join.kind == tidb_planner::plan_cost_ver2::IndexJoinKind::IndexHashJoin {
@@ -3949,6 +4002,21 @@ fn can_use_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bool
         ) || crate::hash_join_version::use_hash_join_v2_for_non_ga_join())
 }
 
+/// Go `physicalop.IsGAForHashJoinV2`.
+fn is_ga_for_hash_join_v2(join: &tidb_planner::physical::PhysicalHashJoin) -> bool {
+    join.na_equal_conditions.is_empty()
+        && !join.left_join_keys.is_empty()
+        && !join.is_null_eq.iter().any(|&null_eq| null_eq)
+        && matches!(
+            join.join_type,
+            LogicalJoinType::Inner
+                | LogicalJoinType::LeftOuter
+                | LogicalJoinType::RightOuter
+                | LogicalJoinType::Semi
+                | LogicalJoinType::AntiSemi
+        )
+}
+
 /// Go `buildHashJoinV2FromChildExecs`: preserve build/probe filters and compare
 /// keys using the equality expression's collation and the logical key flags.
 fn build_hash_join_v2(
@@ -4112,6 +4180,12 @@ fn build_hash_join_v2(
         right,
         ctx.clone(),
         ctx.statement_memory(),
+    )
+    .with_runtime_stats(
+        ctx.executor_runtime_stats_source()
+            .filter(|_| !state.untraced)
+            .cloned(),
+        is_ga_for_hash_join_v2(join),
     ));
     if output_order
         .iter()
@@ -5470,6 +5544,10 @@ fn build_index_merge_reader(
     // then let the index-partial sources overtake the table ones while
     // keeping their relative order inside each wave.
     let mut built: Vec<(bool, Box<dyn PartialHandleSource>)> = Vec::new();
+    // The partial plan root of each built source whose basic stats the
+    // reader records, in `built` order: an executor-built partial records
+    // its own through the operator wrapper.
+    let mut built_ids: Vec<Option<i64>> = Vec::new();
     for partial in &reader.partial_plans_raw {
         let partial_schema = plan_schema(partial)?;
         let selected = index_merge_partition_indexes(partial, &table)?;
@@ -5510,6 +5588,7 @@ fn build_index_merge_reader(
                 if let Some(counters) = state.runtime_counters.as_mut() {
                     counters.insert(runtime_plan_key(partial), source.produced_rows().into());
                 }
+                built_ids.push(Some(i64::from(partial.id())));
                 built.push((
                     reader.by_items.is_empty(),
                     Box::new(IndexPartialHandleSource {
@@ -5625,8 +5704,22 @@ fn build_index_merge_reader(
         if let Some(counters) = state.runtime_counters.as_mut() {
             counters.insert(runtime_plan_key(partial), source.produced_rows().into());
         }
+        built_ids.push(None);
         built.push((false, Box::new(source)));
     }
+    // The drain order: index partials first, as below.
+    let partial_plan_ids: Vec<Option<i64>> = built
+        .iter()
+        .zip(&built_ids)
+        .filter(|((index_first, _), _)| *index_first)
+        .chain(
+            built
+                .iter()
+                .zip(&built_ids)
+                .filter(|((index_first, _), _)| !*index_first),
+        )
+        .map(|(_, id)| *id)
+        .collect();
     let (index_first, rest): (Vec<_>, Vec<_>) =
         built.into_iter().partition(|(index_first, _)| *index_first);
     let mut partials: Vec<Box<dyn PartialHandleSource>> =
@@ -5689,6 +5782,24 @@ fn build_index_merge_reader(
         table_task_builder,
         matches!(table_plan, PhysicalPlan::TableScan(_)),
     );
+    // Go `IndexMergeReaderExecutor`'s `stats` (`Concurrency:
+    // IndexLookupConcurrency`) and its partial and table readers' basic stats.
+    if let Some(runtime_source) = ctx.executor_runtime_stats_source().filter(|_| !state.untraced) {
+        executor = executor.with_runtime_stats(Some(
+            crate::index_lookup_stats::IndexMergeStatsHandle {
+                stats: Arc::new(crate::index_lookup_stats::IndexMergeRuntimeStat::new(
+                    ctx.index_lookup_concurrency(),
+                )),
+                partial_basic: partial_plan_ids
+                    .iter()
+                    .map(|id| id.and_then(|id| runtime_source.basic_runtime_stats(id)))
+                    .collect(),
+                source: Arc::clone(runtime_source),
+                table_root_plan_id: i64::from(table_plan.id()),
+                plan_id: i64::from(plan.id()),
+            },
+        ));
+    }
     if let Some(limit) = reader.pushed_limit {
         executor = executor.with_pushed_limit(ExecutorPushedDownLimit {
             offset: limit.offset,
@@ -6506,7 +6617,18 @@ fn build_with_state(
         return Ok(state.meter(plan, receiver, ctx.statement_memory()));
     }
     let executor: Box<dyn Executor> = match plan {
-        PhysicalPlan::Shuffle(shuffle) => build_shuffle(plan, shuffle, catalog, ctx, state),
+        PhysicalPlan::Shuffle(shuffle) => {
+            // Go `ShuffleExec.Open` registers its concurrency.
+            if !state.untraced {
+                register_concurrency_info(
+                    ctx,
+                    plan,
+                    "ShuffleConcurrency",
+                    usize::try_from(shuffle.concurrency).unwrap_or(0),
+                );
+            }
+            build_shuffle(plan, shuffle, catalog, ctx, state)
+        }
         PhysicalPlan::ShuffleReceiver(_) => Err(DriverError::unsupported(
             "shuffle receiver has no owning worker",
         )),
@@ -6629,6 +6751,11 @@ fn build_with_state(
             } else {
                 0
             };
+            // Go `ProjectionExec.Close` registers its concurrency
+            // (`Concurrency:OFF` for the serial path).
+            if !state.in_reader && !state.untraced {
+                register_concurrency_info(ctx, plan, "Concurrency", workers);
+            }
             let executor: Box<dyn Executor> = Box::new(
                 ProjectionExec::new(meta, expressions, child, ctx.clone())
                     .with_workers(workers)
