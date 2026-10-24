@@ -1622,9 +1622,10 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 }
 
 func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLockInfo) (*logicalop.LogicalLock, error) {
-	var tblID2PhysTblIDCol map[int64]*expression.Column
+	tblID2Handle := b.handleHelper.tailMap()
+	var tblID2PhysTblIDCol map[int64][]*expression.Column
 	if len(b.partitionedTable) > 0 {
-		tblID2PhysTblIDCol = make(map[int64]*expression.Column)
+		tblID2PhysTblIDCol = make(map[int64][]*expression.Column)
 		// If a chunk row is read from a partitioned table, which partition the row
 		// comes from is unknown. With the existence of Join, the situation could be
 		// even worse: SelectLock have to know the `pid` to construct the lock key.
@@ -1633,27 +1634,40 @@ func (b *PlanBuilder) buildSelectLock(src base.LogicalPlan, lock *ast.SelectLock
 		// For dynamic prune mode, it is filled in from the tableID in the key by storage.
 		// For static prune mode it is also filled in from the tableID in the key by storage.
 		// since it would otherwise be lost in the PartitionUnion executor.
-		setExtraPhysTblIDColsOnDataSource(src, tblID2PhysTblIDCol)
+		setExtraPhysTblIDColsOnDataSource(src, tblID2Handle, tblID2PhysTblIDCol)
 	}
 	selectLock := logicalop.LogicalLock{
 		Lock:               lock,
-		TblID2Handle:       b.handleHelper.tailMap(),
+		TblID2Handle:       tblID2Handle,
 		TblID2PhysTblIDCol: tblID2PhysTblIDCol,
 	}.Init(b.ctx)
 	selectLock.SetChildren(src)
 	return selectLock, nil
 }
 
-func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2PhysTblIDCol map[int64]*expression.Column) {
+// setExtraPhysTblIDColsOnDataSource adds the extra physical table ID column to each partitioned
+// DataSource whose rows are locked. A table can be read through several aliases, so the column of
+// tblID2Handle[tblID][i] is stored at tblID2PhysTblIDCol[tblID][i].
+func setExtraPhysTblIDColsOnDataSource(p base.LogicalPlan, tblID2Handle map[int64][]util.HandleCols, tblID2PhysTblIDCol map[int64][]*expression.Column) {
 	switch ds := p.(type) {
 	case *logicalop.DataSource:
-		if ds.TableInfo.GetPartitionInfo() == nil {
+		if ds.TableInfo.GetPartitionInfo() == nil || ds.HandleCols == nil {
 			return
 		}
-		tblID2PhysTblIDCol[ds.TableInfo.ID] = addExtraPhysTblIDColumn4DS(ds)
+		handles := tblID2Handle[ds.TableInfo.ID]
+		for i, handle := range handles {
+			// Each DataSource allocates its own columns, so the handle identifies the alias.
+			if handle.GetCol(0).UniqueID != ds.HandleCols.GetCol(0).UniqueID {
+				continue
+			}
+			if tblID2PhysTblIDCol[ds.TableInfo.ID] == nil {
+				tblID2PhysTblIDCol[ds.TableInfo.ID] = make([]*expression.Column, len(handles))
+			}
+			tblID2PhysTblIDCol[ds.TableInfo.ID][i] = addExtraPhysTblIDColumn4DS(ds)
+		}
 	default:
 		for _, child := range p.Children() {
-			setExtraPhysTblIDColsOnDataSource(child, tblID2PhysTblIDCol)
+			setExtraPhysTblIDColsOnDataSource(child, tblID2Handle, tblID2PhysTblIDCol)
 		}
 	}
 }
