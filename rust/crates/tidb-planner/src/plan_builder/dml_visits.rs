@@ -15,15 +15,83 @@
 //! 8121), and `DeletePriv` for each table a DELETE removes rows from (with the
 //! `ErrTableaccessDenied` `authErr`).
 
-use tidb_ast::{DeleteKind, DeleteStmt, UpdateStmt};
+use tidb_ast::{DeleteKind, DeleteStmt, Expr, UpdateKind, UpdateStmt};
 use tidb_expr::Columns;
 
 use super::catalog::TableSource;
+use super::dml_source::{dml_source_select, single_table_join};
 use super::visit_info::{VisitAuthError, VisitInfo};
 use super::PlanBuilder;
 use crate::plan_base::PlanError;
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
+    /// Everything Go's `buildUpdate` appends to `b.visitInfo`: what building
+    /// the read and the SET expressions visits (`SelectPriv` of each source,
+    /// the subqueries' tables), then `UpdatePriv` of each written table.
+    ///
+    /// A read that cannot be built contributes the visits it made before it
+    /// failed: the statement's own planning raises that error, while the write
+    /// targets still resolve (or fail) here.
+    pub fn update_visits(&mut self, update: &UpdateStmt) -> Result<Vec<VisitInfo>, PlanError> {
+        let from = match &update.kind {
+            UpdateKind::Single(table) => single_table_join(table),
+            UpdateKind::Multi { from, .. } => (**from).clone(),
+        };
+        let select = dml_source_select(
+            update.with.as_ref(),
+            &update.hints,
+            from,
+            update.where_clause.as_ref(),
+            &update.order_by,
+            update.limit.as_ref(),
+        );
+        let _built = match &update.kind {
+            UpdateKind::Multi { .. } => self
+                .build_multi_update_dml_source(&select, update, true)
+                .map(|_| ()),
+            UpdateKind::Single(_) => {
+                self.resolve_single_update_assignments(update, true)
+                    .and_then(|assignments| {
+                        let values: Vec<Option<Expr>> = assignments
+                            .iter()
+                            .map(|assignment| assignment.value.clone())
+                            .collect();
+                        self.build_update_dml_source(&select, &values, false)
+                            .map(|_| ())
+                    })
+            }
+        };
+        let mut visits = std::mem::take(&mut self.visit_info);
+        visits.extend(self.update_write_visits(update)?);
+        Ok(visits)
+    }
+
+    /// Everything Go's `buildDelete` appends to `b.visitInfo`: the read's
+    /// visits (the last, `SelectPriv` of the source, popped for a
+    /// non-qualified delete: "it does not require Select Priv"), then
+    /// `DeletePriv` of each table removed from.
+    pub fn delete_visits(&mut self, delete: &DeleteStmt) -> Result<Vec<VisitInfo>, PlanError> {
+        let from = match &delete.kind {
+            DeleteKind::Single(table) => single_table_join(table),
+            DeleteKind::Multi { from, .. } => (**from).clone(),
+        };
+        let select = dml_source_select(
+            delete.with.as_ref(),
+            &delete.hints,
+            from,
+            delete.where_clause.as_ref(),
+            &delete.order_by,
+            delete.limit.as_ref(),
+        );
+        let _built = self.build_dml_source(&select, false);
+        let mut visits = std::mem::take(&mut self.visit_info);
+        if delete.where_clause.is_none() && delete.order_by.is_empty() {
+            visits.pop();
+        }
+        visits.extend(self.delete_write_visits(delete)?);
+        Ok(visits)
+    }
+
     /// Go `buildUpdateLists`'s `appendVisitInfo(UpdatePriv, dbName,
     /// name.OrigTblName.L, ...)` per assignment, each distinct table once
     /// (a repeat of the same lowered pair checks nothing new).

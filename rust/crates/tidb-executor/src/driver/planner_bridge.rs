@@ -926,12 +926,15 @@ pub(super) fn logical_from_plan(
     builder.build_join(join)
 }
 
-/// Go's write-privilege `visitInfo` of an UPDATE or a DELETE, as `buildUpdate`
-/// / `buildDelete` append it after the read: `UpdatePriv` for each table an
-/// assignment writes, `DeletePriv` for each table removed from. A source alias
-/// is only a lookup name: authorization always uses the resolved base table
-/// identity. This builds metadata without installing a subquery evaluator or
-/// reading rows.
+/// Go's `visitInfo` of an UPDATE or a DELETE, in the order `buildUpdate` /
+/// `buildDelete` append it: what building the read and the SET expressions
+/// visits, then `UpdatePriv` for each table an assignment writes or
+/// `DeletePriv` for each table removed from. A source alias is only a lookup
+/// name: authorization always uses the resolved base table identity.
+///
+/// The plan is discarded, so an uncorrelated subquery is not RUN (see
+/// [`query_visit_info`]); a read that cannot be built contributes the visits it
+/// made, and the statement's own planning raises the error.
 pub fn write_visit_info(
     statement: &tidb_ast::DmlStmt,
     catalog: &Catalog,
@@ -944,12 +947,34 @@ pub fn write_visit_info(
         .with_dirty_tables(ctx)
         .with_privilege_verifier(ctx)
         .with_related_tables_for_mdl(ctx);
+    let session_zone = ctx.session_zone();
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
-    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    let evaluator = |inner: &LogicalPlan,
+                     _kind: tidb_planner::plan_builder::SubqueryKind,
+                     _opt_flag: u64| {
+        let width = inner.schema().map_or(0, |schema| schema.len());
+        Ok(tidb_planner::plan_builder::EvaluatedSubquery {
+            column_ids: (0..width).map(|_| column_ids.alloc()).collect(),
+            row: vec![tidb_datatype::Datum::Null; width],
+            has_row: false,
+        })
+    };
+    let defaults = default_evaluator(catalog, ctx);
+    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone)
+        .with_subquery_evaluator(&evaluator)
+        .with_default_evaluator(&defaults);
+    builder.only_full_group_by = ctx.only_full_group_by();
+    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
+    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
+    builder.in_explain_stmt = ctx.in_explain_stmt();
+    builder.parser_config = ctx.parser_config();
+    builder.add_opt_flag(flags::PRUNE_COLUMNS);
     match statement {
-        tidb_ast::DmlStmt::Update(update) => builder.update_write_visits(update),
-        tidb_ast::DmlStmt::Delete(delete) => builder.delete_write_visits(delete),
+        tidb_ast::DmlStmt::Update(update) => builder.update_visits(update),
+        tidb_ast::DmlStmt::Delete(delete) => builder.delete_visits(delete),
         _ => {
             return Err(super::DriverError::unsupported(
                 "write target resolution requires UPDATE or DELETE",
@@ -2412,19 +2437,7 @@ pub fn dml_visit_info(
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Vec<tidb_planner::plan_builder::visit_info::VisitInfo> {
-    use tidb_ast::{DeleteKind, DmlStmt, JoinNode, UpdateKind};
-    fn one_table_join(table: &tidb_ast::TableRef) -> tidb_ast::Join {
-        tidb_ast::Join {
-            left: JoinNode::Table(table.clone()),
-            right: None,
-            tp: tidb_ast::JoinType::Cross,
-            straight: false,
-            on: None,
-            using: Vec::new(),
-            natural: false,
-            explicit_parens: false,
-        }
-    }
+    use tidb_ast::DmlStmt;
     let plan = |query: &tidb_ast::QueryStmt| {
         query_visit_info(query, catalog, current_database, ctx).unwrap_or_default()
     };
@@ -2448,46 +2461,6 @@ pub fn dml_visit_info(
                     .flatten()
                     .chain(insert.on_duplicate.iter().map(|assignment| &assignment.value)),
             ));
-            visits
-        }
-        DmlStmt::Update(update) => {
-            let from = match &update.kind {
-                UpdateKind::Single(table) => one_table_join(table),
-                UpdateKind::Multi { from, .. } => (**from).clone(),
-            };
-            let source = super::multi_dml::multi_dml_select(
-                update.with.as_ref(),
-                &update.hints,
-                &from,
-                update.where_clause.as_ref(),
-                &update.order_by,
-                update.limit.as_ref(),
-            );
-            let mut visits = plan(&source);
-            visits.extend(subqueries(
-                &mut update.assignments.iter().map(|assignment| &assignment.value),
-            ));
-            visits
-        }
-        DmlStmt::Delete(delete) => {
-            let from = match &delete.kind {
-                DeleteKind::Single(table) => one_table_join(table),
-                DeleteKind::Multi { from, .. } => (**from).clone(),
-            };
-            let source = super::multi_dml::multi_dml_select(
-                delete.with.as_ref(),
-                &delete.hints,
-                &from,
-                delete.where_clause.as_ref(),
-                &delete.order_by,
-                delete.limit.as_ref(),
-            );
-            let mut visits = plan(&source);
-            // Go `buildDelete`: "If the delete is non-qualified it does not
-            // require Select Priv" -- the last source visit is popped.
-            if delete.where_clause.is_none() && delete.order_by.is_empty() {
-                visits.pop();
-            }
             visits
         }
         _ => Vec::new(),

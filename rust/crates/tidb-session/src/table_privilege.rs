@@ -329,9 +329,6 @@ pub(crate) fn required_table_privileges(
             // with no `authErr`, which is why a denied `UPDATE` reports 8121
             // rather than 1142.
             DmlStmt::Update(_) => {
-                for visit in resolve_dml_read(dml) {
-                    requests.push(request_of_visit(&visit));
-                }
                 for visit in resolve_write(dml)? {
                     requests.push(request_of_visit(&visit));
                 }
@@ -341,11 +338,8 @@ pub(crate) fn required_table_privileges(
             // `DeletePriv` on each named target, this time WITH the 1142
             // `authErr`.
             DmlStmt::Delete(_) => {
-                // The source visits already drop the last one for a
+                // The visits already drop the source's last one for a
                 // non-qualified delete, as Go's `popVisitInfo` does.
-                for visit in resolve_dml_read(dml) {
-                    requests.push(request_of_visit(&visit));
-                }
                 for visit in resolve_write(dml)? {
                     requests.push(request_of_visit(&visit));
                 }
