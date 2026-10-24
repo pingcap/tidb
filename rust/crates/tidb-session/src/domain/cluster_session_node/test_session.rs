@@ -146,6 +146,17 @@ impl ClusterServerSession {
                 return Err(driver_error(error));
             }
         };
+        self.run_parsed_statement_output(sql, parsed)
+    }
+
+    /// [`Self::run_statement_output`] over a statement the caller already
+    /// parsed and bound (a parameterized statement's markers replaced by its
+    /// values), which re-parsing `sql` would lose.
+    pub(crate) fn run_parsed_statement_output(
+        &mut self,
+        sql: &str,
+        parsed: Option<Stmt>,
+    ) -> Result<StmtOutput, tidb_executor::DriverError> {
         let control = match &parsed {
             Some(stmt) => self.control_transaction_parsed(sql, stmt),
             None => self.control_transaction(sql),

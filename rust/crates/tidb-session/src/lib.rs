@@ -2562,8 +2562,10 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
-        if self.node.is_some() {
-            return self.run_on_node(sql);
+        if let Some(mut node) = self.node.take() {
+            let result = node.run_parsed(self, sql, stmt);
+            self.node = Some(node);
+            return result;
         }
         self.run_with_columns_using(sql, false, move |session| {
             session.execute_statement_owned(stmt, sql)

@@ -260,6 +260,21 @@ impl MockStoreConnection {
         result
     }
 
+    /// Runs an already-parsed `stmt` through the node connection with
+    /// `session` inside it; see
+    /// [`ClusterServerSession::run_parsed_statement_output`].
+    pub(crate) fn run_parsed(
+        &mut self,
+        session: &mut Session,
+        sql: &str,
+        stmt: tidb_ast::Stmt,
+    ) -> Result<StmtOutput, tidb_executor::DriverError> {
+        std::mem::swap(session, self.connection.driver_session_mut());
+        let result = self.connection.run_parsed_statement_output(sql, Some(stmt));
+        std::mem::swap(session, self.connection.driver_session_mut());
+        result
+    }
+
     /// Runs `body` over `session` inside the connection with a committed
     /// snapshot bound; see [`ClusterServerSession::with_read_snapshot`].
     pub(crate) fn with_read_snapshot<R>(

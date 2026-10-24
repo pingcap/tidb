@@ -1401,6 +1401,44 @@ pub fn lower_ddl_with_context(
             if charset.is_none() && collate.is_none() {
                 return Ok(None);
             }
+            // Go `AlterSchema` walks the options in order: a second CHARACTER
+            // SET, or a COLLATE of another character set than the one chosen
+            // so far, is `ErrConflictingDeclarations` (1302).
+            let mut chosen: Option<String> = None;
+            let conflict = |current: &str, other: &str| {
+                DdlAdmissionError::with_proto(
+                    &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS,
+                    format!(
+                        "Conflicting declarations: 'CHARACTER SET {current}' and 'CHARACTER SET {other}'"
+                    ),
+                )
+            };
+            for option in options {
+                match option {
+                    DatabaseOption::CharacterSet(value) => match &chosen {
+                        None => chosen = Some(value.clone()),
+                        Some(current) if current != value => return Err(conflict(current, value)),
+                        Some(_) => {}
+                    },
+                    DatabaseOption::Collate(value) => {
+                        let (collation_charset, _) =
+                            crate::table_info_build::resolve_charset_collation(
+                                None,
+                                Some(value.as_str()),
+                                CATALOG_CHARSET,
+                                CATALOG_COLLATION,
+                            )?;
+                        match &chosen {
+                            None => chosen = Some(collation_charset),
+                            Some(current) if *current != collation_charset => {
+                                return Err(conflict(current, &collation_charset))
+                            }
+                            Some(_) => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
             let (charset, collate) = crate::table_info_build::resolve_charset_collation(
                 charset,
                 collate,
