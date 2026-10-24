@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -156,25 +155,6 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		mutableRow.SetDatums(row...)
 
-		sctx := us.Ctx()
-		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
-			if err != nil {
-				return err
-			}
-			// Because the expression might return different type from
-			// the generated column, we should wrap a CAST on the result.
-			castDatum, err := table.CastValue(us.Ctx(), datum, us.columns[idx], false, true)
-			if err != nil {
-				return err
-			}
-			// Handle the bad null error.
-			if (mysql.HasNotNullFlag(us.columns[idx].GetFlag()) || mysql.HasPreventNullInsertFlag(us.columns[idx].GetFlag())) && castDatum.IsNull() {
-				castDatum = table.GetZeroValue(us.columns[idx])
-			}
-			mutableRow.SetDatum(idx, castDatum)
-		}
-
 		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
@@ -216,6 +196,12 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	} else if snapshotRow == nil {
 		row = addedRow
 	} else {
+		if err := us.fillVirtualColumns(snapshotRow); err != nil {
+			return nil, err
+		}
+		if err := us.fillVirtualColumns(addedRow); err != nil {
+			return nil, err
+		}
 		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
 		if err != nil {
 			return nil, err
@@ -229,6 +215,9 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	}
 	if row == nil {
 		return nil, nil
+	}
+	if err := us.fillVirtualColumns(row); err != nil {
+		return nil, err
 	}
 
 	if isSnapshotRow {
@@ -289,6 +278,28 @@ func (us *UnionScanExec) getAddedRow() ([]types.Datum, error) {
 		}
 	}
 	return us.cursor4AddRows, nil
+}
+
+func (us *UnionScanExec) fillVirtualColumns(row []types.Datum) error {
+	if len(us.virtualColumnIndex) == 0 {
+		return nil
+	}
+
+	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
+	mutableRow.SetDatums(row...)
+	for _, idx := range us.virtualColumnIndex {
+		datum, err := us.Schema().Columns[idx].EvalVirtualColumn(us.Ctx().GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
+		if err != nil {
+			return err
+		}
+		castDatum, err := table.CastGeneratedColumnValue(us.Ctx().GetExprCtx(), datum, us.columns[idx], true)
+		if err != nil {
+			return err
+		}
+		row[idx] = castDatum
+		mutableRow.SetDatum(idx, castDatum)
+	}
+	return nil
 }
 
 type compareExec struct {
