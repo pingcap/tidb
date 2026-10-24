@@ -123,13 +123,8 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.142
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-<<<<<<< HEAD
-	github.com/tikv/client-go/v2 v2.0.8-0.20261009093537-9394b3ccb5c0
+	github.com/tikv/client-go/v2 v2.0.8-0.20261024073110-73addb61da64
 	github.com/tikv/pd/client v0.0.0-20260716095117-1636e69a936b
-=======
-	github.com/tikv/client-go/v2 v2.0.8-0.20261023145611-a0d0bf6b591f
-	github.com/tikv/pd/client v0.0.0-20260805103528-afa43111d149
->>>>>>> 0073665a657 (txn: update client-go to fix repeated lock resolution (#72232))
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
