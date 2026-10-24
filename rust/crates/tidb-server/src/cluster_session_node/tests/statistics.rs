@@ -180,7 +180,7 @@ fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transactio
         .execute_write("LOCK STATS t")
         .expect("cluster lockstats route");
     assert_eq!(stats_lock.calls.load(Ordering::Acquire), 1);
-    assert!(session.session.in_transaction());
+    assert!(session.store.session.in_transaction());
     assert_eq!(
         rows(&mut session, "SHOW WARNINGS"),
         vec![vec![
@@ -377,7 +377,7 @@ fn analyze_temporary_table_uses_the_session_storage_overlay() {
     session
         .execute_write("CREATE TEMPORARY TABLE temp_stats (a INT)")
         .unwrap();
-    let driver_in_transaction = session.session.in_transaction();
+    let driver_in_transaction = session.store.session.in_transaction();
     assert!(
         driver_in_transaction,
         "Go returns from LOCAL CREATE before opening a DDL transaction, so it must not commit"

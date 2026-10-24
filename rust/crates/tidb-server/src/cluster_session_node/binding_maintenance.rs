@@ -44,7 +44,7 @@ impl BindingSessions {
         let mut session = factory
             .open_storage_session(self.next_id.fetch_add(2, Ordering::Relaxed))
             .map_err(|e| e.message)?;
-        session.session.enable_privilege_bypass();
+        session.store.session.enable_privilege_bypass();
         Ok(BindingRunner { session })
     }
 }

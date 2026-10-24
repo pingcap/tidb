@@ -214,9 +214,10 @@ impl ClusterServerSession {
         analyze_snapshot: Option<bool>,
         partition_prune_mode: &str,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let _process_statement = self.session.retain_process_statement(sql);
+        let _process_statement = self.store.session.retain_process_statement(sql);
         self.rebuild_catalog_if_stale();
         let parsed = self
+            .store
             .session
             .parse_statement(sql)
             .map_err(super::map_error)?;
@@ -242,7 +243,7 @@ impl ClusterServerSession {
     /// [`StatsStatementService`]: tidb_session::stats_statement_service::StatsStatementService
     fn stats_statement_service(&self) -> ClusterStatsStatementService {
         ClusterStatsStatementService {
-            resource_group: self.session.current_resource_group().to_owned(),
+            resource_group: self.store.session.current_resource_group().to_owned(),
             stats_usage: Arc::clone(&self.stats_usage),
             transactions: Arc::clone(&self.transactions),
             catalog: Arc::clone(&self.catalog),
@@ -256,7 +257,8 @@ impl ClusterServerSession {
 
     pub(super) fn run_load_stats(&mut self, data: &[u8]) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.session
+        self.store
+            .session
             .run_load_stats(data, &service)
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
@@ -267,7 +269,8 @@ impl ClusterServerSession {
         targets: &FlushStatsDeltaTargets,
     ) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.session
+        self.store
+            .session
             .run_flush_stats_delta(targets, &service)
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
@@ -278,7 +281,8 @@ impl ClusterServerSession {
         physical_ids: &[i64],
     ) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.session
+        self.store
+            .session
             .run_drop_stats(physical_ids, &service)
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
@@ -289,7 +293,8 @@ impl ClusterServerSession {
         statement: &ClusterStatsLockStatement,
     ) -> Result<WriteOutcome, SqlQueryError> {
         let service = self.stats_statement_service();
-        self.session
+        self.store
+            .session
             .run_stats_lock(statement, &service)
             .map_err(super::map_error)?;
         Ok(NO_ROWS)
@@ -309,15 +314,15 @@ impl ClusterServerSession {
         &mut self,
         tables: &[AnalyzeStatement],
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let statement_memory = self.session.routed_statement_memory();
-        if self.txn.explicit.is_some() || self.session.in_transaction() {
+        let statement_memory = self.store.session.routed_statement_memory();
+        if self.store.txn.explicit.is_some() || self.store.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
         self.record_new_txn_in_stmt();
         let service = ClusterAnalyzeService {
             statement_memory,
-            resource_group: self.session.active_resource_group().to_owned(),
-            instance: self.session.analyze_job_instance(),
+            resource_group: self.store.session.active_resource_group().to_owned(),
+            instance: self.store.session.analyze_job_instance(),
             connection_id: self.connection_id,
             stats_usage: Arc::clone(&self.stats_usage),
             transactions: Arc::clone(&self.transactions),
@@ -329,7 +334,8 @@ impl ClusterServerSession {
             historical_stats_worker: Arc::clone(&self.historical_stats_worker),
             row_ids: Arc::clone(&self.auto_ids),
         };
-        self.session
+        self.store
+            .session
             .run_analyze_statements(tables, &service)
             .map_err(super::map_error)?;
         // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.

@@ -725,7 +725,7 @@ fn the_statement_shape_predicate_matches_the_guard_it_ports() {
     use tidb_executor::access_path::{statement_read_shape, StatementReadShape};
 
     let (session, _node) = open_session();
-    let catalog = session.session.shared_catalog();
+    let catalog = session.store.session.shared_catalog();
     let shape = |sql: &str| {
         let catalog = catalog.lock().expect("catalog");
         let stmt = tidb_parser::parse(sql).expect("parse");

@@ -52,7 +52,7 @@ fn pessimistic_statement_retries_obey_config_and_preserve_prior_writes() {
                 .expect_err("configured budget is exhausted");
             assert_query_error_packet(&error, 1105, "pessimistic lock retry limit reached");
             assert_eq!(cluster.lock_waits.lock().unwrap().len(), limit + 1);
-            assert!(session.session.in_transaction());
+            assert!(session.store.session.in_transaction());
             assert_eq!(
                 rows(&mut session, "SELECT id, v FROM t ORDER BY id"),
                 vec![
@@ -191,9 +191,9 @@ fn txn_write_throughput_sli_matches_source() {
     }
 
     fn finish(session: &mut ClusterServerSession, affected_rows: u64) {
-        let in_txn = session.session.in_transaction();
+        let in_txn = session.store.session.in_transaction();
         session
-            .session
+            .store.session
             .txn_write_throughput_sli()
             .finish_execute_stmt(1_000_000_000, affected_rows, in_txn);
     }
@@ -215,11 +215,11 @@ fn txn_write_throughput_sli_matches_source() {
     }
 
     fn reset(session: &mut ClusterServerSession) {
-        session.session.txn_write_throughput_sli().reset();
+        session.store.session.txn_write_throughput_sli().reset();
     }
 
     fn state(session: &mut ClusterServerSession) -> String {
-        session.session.txn_write_throughput_sli().to_string()
+        session.store.session.txn_write_throughput_sli().to_string()
     }
 
     fail::cfg(FAILPOINT, "return").expect("enable failpoint");
@@ -227,8 +227,8 @@ fn txn_write_throughput_sli_matches_source() {
     let (mut session, _) = open_session();
 
     write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
-    assert!(!session.session.txn_write_throughput_sli().is_invalid());
-    assert!(session.session.txn_write_throughput_sli().is_small_txn());
+    assert!(!session.store.session.txn_write_throughput_sli().is_invalid());
+    assert!(session.store.session.txn_write_throughput_sli().is_small_txn());
     assert_eq!(
         state(&mut session),
         "invalid: false, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s"
@@ -236,8 +236,8 @@ fn txn_write_throughput_sli_matches_source() {
     reset(&mut session);
 
     write(&mut session, "INSERT INTO t SELECT v, id FROM t");
-    assert!(session.session.txn_write_throughput_sli().is_invalid());
-    assert!(session.session.txn_write_throughput_sli().is_small_txn());
+    assert!(session.store.session.txn_write_throughput_sli().is_invalid());
+    assert!(session.store.session.txn_write_throughput_sli().is_small_txn());
     assert_eq!(
         state(&mut session),
         "invalid: true, affectRow: 2, writeSize: 58, readKeys: 2, writeKeys: 2, writeTime: 1s"
@@ -257,16 +257,16 @@ fn txn_write_throughput_sli_matches_source() {
             &mut session,
             &format!("INSERT INTO t (id, v) VALUES ({value}, {value})"),
         );
-        assert!(session.session.txn_write_throughput_sli().is_small_txn());
+        assert!(session.store.session.txn_write_throughput_sli().is_small_txn());
     }
     let _ = rows(&mut session, "SELECT COUNT(*) FROM t");
     finish(&mut session, 0);
     let _ = rows(&mut session, "SELECT * FROM t");
     finish(&mut session, 0);
     write(&mut session, "INSERT INTO t (id, v) VALUES (20, 20)");
-    assert!(!session.session.txn_write_throughput_sli().is_small_txn());
+    assert!(!session.store.session.txn_write_throughput_sli().is_small_txn());
     control(&mut session, "COMMIT");
-    assert!(!session.session.txn_write_throughput_sli().is_invalid());
+    assert!(!session.store.session.txn_write_throughput_sli().is_invalid());
     assert_eq!(
         state(&mut session),
         "invalid: false, affectRow: 21, writeSize: 609, readKeys: 0, writeKeys: 21, writeTime: 22s"
@@ -279,7 +279,7 @@ fn txn_write_throughput_sli_matches_source() {
     write(&mut session, "INSERT INTO t (id, v) VALUES (1, 3), (2, 4)");
     write(&mut session, "REPLACE INTO t SELECT v, id FROM t");
     control(&mut session, "COMMIT");
-    assert!(session.session.txn_write_throughput_sli().is_invalid());
+    assert!(session.store.session.txn_write_throughput_sli().is_invalid());
     assert_eq!(
         state(&mut session),
         "invalid: true, affectRow: 4, writeSize: 116, readKeys: 0, writeKeys: 4, writeTime: 3s"
@@ -1082,7 +1082,7 @@ fn ending_the_transaction_clears_the_cluster_savepoint_stack() {
         session.control_transaction("BEGIN").expect("begin");
         session.control_transaction("SAVEPOINT s1").expect("s1");
         session.control_transaction(ending).expect("ending");
-        assert!(session.txn.savepoints_is_empty(), "{ending} kept a savepoint");
+        assert!(session.store.txn.savepoints_is_empty(), "{ending} kept a savepoint");
         session.control_transaction("BEGIN").expect("begin");
         assert!(
             session.control_transaction("ROLLBACK TO s1").is_err(),
@@ -1215,7 +1215,7 @@ fn completion_types_end_both_halves_like_a_plain_commit() {
         session.control_transaction("COMMIT AND CHAIN").unwrap(),
         Some(false)
     );
-    assert!(!session.session.in_transaction());
+    assert!(!session.store.session.in_transaction());
     assert_eq!(cluster.rows(), 1);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
 
@@ -1227,7 +1227,7 @@ fn completion_types_end_both_halves_like_a_plain_commit() {
         session.control_transaction("ROLLBACK RELEASE").unwrap(),
         Some(false)
     );
-    assert!(!session.session.in_transaction());
+    assert!(!session.store.session.in_transaction());
     assert_eq!(cluster.rows(), 1);
     assert_eq!(cluster.publications.load(Ordering::Acquire), 1);
 }
@@ -1246,7 +1246,7 @@ fn missing_historical_storage_opens_no_half_transaction() {
         format!("{error:?}").contains("historical snapshots are unavailable"),
         "got {error:?}"
     );
-    assert!(!session.session.in_transaction());
+    assert!(!session.store.session.in_transaction());
     assert_eq!(cluster.opened.load(Ordering::Acquire), opened_before);
 
     // The session still works as an autocommit one: the write publishes.

@@ -126,6 +126,7 @@ fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {
 
     assert_eq!(
         first
+            .store
             .session
             .run("SELECT GET_LOCK('cluster-lock', 0)")
             .unwrap(),
@@ -133,6 +134,7 @@ fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {
     );
     assert_eq!(
         second
+            .store
             .session
             .run("SELECT IS_USED_LOCK('CLUSTER-LOCK'), GET_LOCK('cluster-lock', 0)")
             .unwrap(),
@@ -142,6 +144,7 @@ fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {
     drop(first);
     assert_eq!(
         second
+            .store
             .session
             .run("SELECT GET_LOCK('cluster-lock', 0)")
             .unwrap(),

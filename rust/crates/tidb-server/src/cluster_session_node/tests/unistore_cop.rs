@@ -2256,7 +2256,7 @@ fn check_constraint_runs_through_the_owner_job_queue() {
     );
     assert!(
         session
-            .session
+            .store.session
             .ddl_statement_context()
             .enable_check_constraint(),
         "the query-shaped DDL context must read the enabled global variable"
@@ -3384,9 +3384,9 @@ fn session_activation_checks_existence_for_pessimistic_locks() {
             // then stages them. Both absent and existing records must survive
             // the native client's assertion check from the lock metadata.
             super::super::transactions::stage_pessimistic_statement(
-                session.txn.explicit.as_deref().unwrap(),
+                session.store.txn.explicit.as_deref().unwrap(),
                 &session.buffer,
-                session.session.lock_wait_timeout(),
+                session.store.session.lock_wait_timeout(),
                 |_, _| {
                     let mutation = if existing {
                         BufferMutation::put_existing(key.clone(), b"updated".to_vec())
@@ -3575,7 +3575,7 @@ fn ddl_after_loaded_statistics_matches_go() {
     // and after the DDL below replaces the connection's schema catalog.
     let check_reload = |session: &mut ClusterServerSession| {
         let peer = stack.factory.open_session(session_context(76)).unwrap();
-        let peer_catalog = peer.session.shared_catalog();
+        let peer_catalog = peer.store.session.shared_catalog();
         assert!(!peer_catalog
             .lock()
             .unwrap()
@@ -3654,7 +3654,7 @@ fn ddl_after_loaded_statistics_matches_go() {
                     .table_statistics(table_id)
                     .unwrap(),
                 &session
-                    .session
+                    .store.session
                     .shared_catalog()
                     .lock()
                     .unwrap()
@@ -4633,7 +4633,7 @@ fn add_column_ddl_initializes_statistics_like_go() {
     };
     session.rebuild_catalog_if_stale();
     {
-        let catalog = session.session.shared_catalog();
+        let catalog = session.store.session.shared_catalog();
         let catalog = catalog.lock().expect("session catalog is available");
         let tidb_executor::driver::TableEntry::Kv(table) = catalog
             .table_in("test", "stats_add_column")
@@ -12216,7 +12216,7 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
     assert!(session
         .execute(&format!("SET tidb_snapshot='{future}'"))
         .is_err());
-    assert_eq!(session.session.vars().snapshot_ts(), ts);
+    assert_eq!(session.store.session.vars().snapshot_ts(), ts);
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
@@ -12237,7 +12237,7 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         vec![vec!["1", "10"]]
     );
     assert!(
-        session.session.historical_read_ts().is_none(),
+        session.store.session.historical_read_ts().is_none(),
         "SnapshotTS is a statement pin"
     );
     rows(&mut session, "SET autocommit=1");
@@ -12262,13 +12262,13 @@ fn historical_read_batch_schema_data_and_timestamp_lifetime() {
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    let held = session.session.historical_read_ts().unwrap();
+    let held = session.store.session.historical_read_ts().unwrap();
     assert!(tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
     session.control_transaction("ROLLBACK").unwrap();
     assert!(!tidb_txnkv::ACTIVE_START_TS.snapshot().contains(&held));
     rows(&mut session, "UPDATE t SET v=20 WHERE id=1");
     assert!(
-        session.session.historical_read_ts().is_none(),
+        session.store.session.historical_read_ts().is_none(),
         "a write starts an ordinary transaction"
     );
     session.control_transaction("ROLLBACK").unwrap();
@@ -12334,7 +12334,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.store.session.vars().txn_read_ts(), 0);
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t")),
         vec![vec!["1", "20", "7"]]
@@ -12354,7 +12354,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
     assert!(session
         .execute(&format!("SELECT * FROM t AS OF TIMESTAMP {ts}"))
         .is_err());
-    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.store.session.vars().txn_read_ts(), 0);
     rows(&mut session, &set);
     assert!(session
         .control_transaction(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
@@ -12366,7 +12366,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
     );
     assert!(session.execute(&set).is_err());
     session.control_transaction("ROLLBACK").unwrap();
-    assert_eq!(session.session.vars().txn_read_ts(), 0);
+    assert_eq!(session.store.session.vars().txn_read_ts(), 0);
     assert!(!tidb_txnkv::ACTIVE_START_TS
         .snapshot()
         .contains(&((ts >> 18) << 18)));
@@ -12427,7 +12427,7 @@ fn timestamp_entrypoints_batch_one_shot_and_external_share_history() {
         displayed(rows(&mut peer, "SELECT * FROM t")),
         vec![vec!["1", "10"]]
     );
-    peer.session.set_restricted_sql(true);
+    peer.store.session.set_restricted_sql(true);
     assert_eq!(
         displayed(rows(&mut peer, "SELECT * FROM t")),
         vec![vec!["1", "20", "7"]]
@@ -12450,7 +12450,7 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
     );
     session.control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM t");
-    let historical_ts = session.session.current_tso().value() as u64;
+    let historical_ts = session.store.session.current_tso().value() as u64;
     session.control_transaction("COMMIT").unwrap();
     rows(&mut session, "ALTER TABLE t ADD COLUMN extra INT DEFAULT 7");
     for mode in ["OPTIMISTIC", "PESSIMISTIC"] {
@@ -12459,7 +12459,7 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
             .unwrap();
         rows(&mut session, "UPDATE t SET v=30 WHERE id=1");
         rows(&mut session, "INSERT INTO t VALUES (2,40,8)");
-        let ordinary_ts = session.session.current_tso().value();
+        let ordinary_ts = session.store.session.current_tso().value();
         rows(&mut session, &format!("SET tidb_snapshot={historical_ts}"));
         assert_eq!(
             displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
@@ -12480,8 +12480,8 @@ fn snapshot_provider_batch_real_storage_switches_without_exposing_buffered_write
         rows(&mut session, "DEALLOCATE PREPARE snapshot_query");
         assert!(session.execute("SELECT extra FROM t").is_err());
         assert!(session.execute_write("UPDATE t SET v=99").is_err());
-        assert!(session.session.in_transaction());
-        assert_eq!(session.session.current_tso().value(), ordinary_ts);
+        assert!(session.store.session.in_transaction());
+        assert_eq!(session.store.session.current_tso().value(), ordinary_ts);
         assert!(
             !tidb_txnkv::ACTIVE_START_TS
                 .snapshot()
@@ -12576,7 +12576,7 @@ fn deferred_uniqueness_batch_savepoint_follows_transaction_mode() {
         .unwrap_err();
     assert_eq!(error.code, 1105);
     assert_eq!(error.message, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled");
-    assert!(session.session.in_transaction());
+    assert!(session.store.session.in_transaction());
     session.control_transaction("ROLLBACK").unwrap();
 }
 
@@ -12600,8 +12600,8 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
     assert!(error.message.starts_with(
         "transaction aborted because lazy uniqueness check is enabled and an error occurred:"
     ));
-    assert!(!session.session.in_transaction());
-    assert!(session.txn.explicit.is_none());
+    assert!(!session.store.session.in_transaction());
+    assert!(session.store.txn.explicit.is_none());
     assert!(session.buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
     rows(&mut session, "INSERT INTO t VALUES (2)");
@@ -12629,10 +12629,10 @@ fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
     session.control_transaction("BEGIN OPTIMISTIC").unwrap();
     session.control_transaction("ROLLBACK").unwrap();
     session.control_transaction("BEGIN PESSIMISTIC").unwrap();
-    session.session.set_restricted_sql(true);
-    session.session.set_restricted_sql(false);
-    session.session.set_connection_id(0);
-    session.session.set_connection_id(943);
+    session.store.session.set_restricted_sql(true);
+    session.store.session.set_restricted_sql(false);
+    session.store.session.set_connection_id(0);
+    session.store.session.set_connection_id(943);
     rows(&mut session, "DELETE FROM t WHERE id=1");
     rows(&mut session, "INSERT INTO t VALUES (1,10)");
     assert!(
@@ -12643,7 +12643,7 @@ fn deferred_uniqueness_batch_scope_tombstones_and_successful_commit() {
     rows(&mut session, "UPDATE t SET u=31 WHERE id=3");
     rows(&mut session, "INSERT IGNORE INTO t VALUES (5,20)");
     rows(&mut session, "UPDATE IGNORE t SET u=20 WHERE id=3");
-    assert!(session.session.in_transaction());
+    assert!(session.store.session.in_transaction());
     rows(
         &mut session,
         "SET tidb_constraint_check_in_place_pessimistic=ON",
@@ -12689,7 +12689,7 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         .unwrap();
     assert!(session.execute("SELECT missing FROM t").is_err());
     assert!(
-        session.session.in_transaction(),
+        session.store.session.in_transaction(),
         "ordinary query errors do not invoke DML abort policy"
     );
     let error = match session.execute_general(&insert, &[PreparedValue::SignedLongLong(1)]) {
@@ -12697,8 +12697,8 @@ fn deferred_uniqueness_batch_binary_prepared_dml_shares_abort_policy() {
         Ok(_) => panic!("a local duplicate must fail"),
     };
     assert_eq!(error.code, 8147, "{error:?}");
-    assert!(!session.session.in_transaction());
-    assert!(session.txn.explicit.is_none());
+    assert!(!session.store.session.in_transaction());
+    assert!(session.store.txn.explicit.is_none());
     assert!(session.buffer.is_empty());
     assert!(rows(&mut session, "SELECT * FROM t").is_empty());
 }
@@ -19616,7 +19616,7 @@ fn a_failed_commit_publishes_nothing_later() {
     {
         // A republish of the connection's catalog lands while the
         // transaction is open, as a schema or statistics reload does.
-        let shared = session.session.shared_catalog();
+        let shared = session.store.session.shared_catalog();
         let mut catalog = shared.lock().unwrap();
         let charset = catalog.database_charset("failed_commit").unwrap();
         assert!(catalog.set_database_charset("failed_commit", charset));
@@ -19967,7 +19967,7 @@ fn prepare_shows_only_the_plan_cache_note() {
         .unwrap();
     assert_eq!(
         session
-            .session
+            .store.session
             .warnings()
             .iter()
             .map(|warning| warning.code)
@@ -23499,7 +23499,7 @@ fn trace_records_go_executor_and_transaction_regions() {
         "              └─regionRequest.SendReqCtx",
     ]);
     assert_eq!(trace_tree(&mut session, "COMMIT"), expected);
-    assert!(!session.session.in_transaction());
+    assert!(!session.store.session.in_transaction());
 
     session.control_transaction("BEGIN").unwrap();
     rows(&mut session, "SELECT * FROM test.tr WHERE id = 1");
@@ -23507,7 +23507,7 @@ fn trace_records_go_executor_and_transaction_regions() {
     expected.extend(simple);
     expected.push("      └─session.CommitTxn");
     assert_eq!(trace_tree(&mut session, "ROLLBACK"), expected);
-    assert!(!session.session.in_transaction());
+    assert!(!session.store.session.in_transaction());
 }
 
 /// [`trace_tree`] without the client's spans (`regionRequest.SendReqCtx`,

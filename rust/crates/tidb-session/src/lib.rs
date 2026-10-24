@@ -1392,6 +1392,7 @@ mod table_privilege;
 pub mod cluster_transactions;
 pub mod lazy_transaction;
 pub mod statement_lifecycle;
+pub mod store_session;
 pub mod txn_manager;
 mod savepoints;
 pub use savepoints::SavepointStack;
