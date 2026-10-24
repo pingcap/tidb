@@ -732,6 +732,54 @@ func TestStatusEndpointClaim(t *testing.T) {
 	})
 }
 
+func TestServerInfoSyncLoopRetriesFailedRestartRegistration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+
+	syncer := NewSyncer("restart-registration", func() uint64 { return 1 }, client, nil, WithoutStatusEndpointClaim())
+	require.NoError(t, syncer.NewSessionAndStoreServerInfo(ctx))
+	oldLease := syncer.session.Lease()
+
+	faultKV := &restartRegistrationFaultKV{
+		KV:                client.KV,
+		failKey:           syncer.serverInfoPath,
+		failuresRemaining: KeyOpDefaultRetryCnt,
+	}
+	client.KV = faultKV
+
+	exitCh := make(chan struct{})
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		syncer.ServerInfoSyncLoop(nil, exitCh)
+	}()
+	defer func() {
+		close(exitCh)
+		<-loopDone
+		orphanSyncerSession(syncer)
+	}()
+
+	syncer.session.Orphan()
+	_, err := client.Revoke(ctx, oldLease)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		resp, getErr := client.Get(ctx, syncer.serverInfoPath)
+		if getErr != nil || len(resp.Kvs) != 1 {
+			return false
+		}
+		return clientv3.LeaseID(resp.Kvs[0].Lease) != oldLease
+	}, 10*time.Second, 20*time.Millisecond)
+	require.Greater(t, faultKV.putCallCount(), KeyOpDefaultRetryCnt)
+}
+
 type claimRecorder struct {
 	results []statusEndpointClaimResult
 }
@@ -867,6 +915,39 @@ type claimFaultKV struct {
 	putErr       error
 	started      chan struct{}
 	startOnce    sync.Once
+}
+
+type restartRegistrationFaultKV struct {
+	clientv3.KV
+
+	mu                sync.Mutex
+	failKey           string
+	failuresRemaining int
+	putCalls          int
+}
+
+func (kv *restartRegistrationFaultKV) Put(
+	ctx context.Context,
+	key, value string,
+	opts ...clientv3.OpOption,
+) (*clientv3.PutResponse, error) {
+	kv.mu.Lock()
+	if key == kv.failKey {
+		kv.putCalls++
+		if kv.failuresRemaining > 0 {
+			kv.failuresRemaining--
+			kv.mu.Unlock()
+			return nil, errors.New("injected restart registration failure")
+		}
+	}
+	kv.mu.Unlock()
+	return kv.KV.Put(ctx, key, value, opts...)
+}
+
+func (kv *restartRegistrationFaultKV) putCallCount() int {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	return kv.putCalls
 }
 
 func (kv *claimFaultKV) Put(
