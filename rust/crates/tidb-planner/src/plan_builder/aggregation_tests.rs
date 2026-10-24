@@ -1331,3 +1331,42 @@ fn update_lowers_every_assignment_over_the_read_not_only_those_with_subqueries()
     assert!(expressions[1].is_none());
     assert!(expressions[2].is_some());
 }
+
+#[test]
+fn fast_point_update_ordered_list_rewrites_over_the_point_schema() {
+    // Go `buildOrderedList`: each SET value is rewritten over the point plan's
+    // own schema (the table's columns in order) and cast to its target column;
+    // a generated column's own DEFAULT has no expression.
+    let harness = Harness::new();
+    let select = parse_select("SELECT * FROM t");
+    let table_ref = match &select.from.as_ref().expect("a FROM").left {
+        tidb_ast::JoinNode::Table(table_ref) => table_ref.clone(),
+        other => panic!("unexpected source {other:?}"),
+    };
+    let mut reader = harness.builder();
+    let (plan, _) = reader.build_select(&select).unwrap();
+    let schema = plan.schema().unwrap().clone();
+    let value = |sql: &str| {
+        let select = parse_select(&format!("SELECT {sql}"));
+        match select.fields.iter().next() {
+            Some(tidb_ast::SelectField::Expr { expr, .. }) => expr.clone(),
+            other => panic!("unexpected field {other:?}"),
+        }
+    };
+    let builder = harness.builder();
+    let list = builder
+        .build_point_ordered_list(
+            &table_ref,
+            &schema,
+            &[
+                (vec!["b".to_owned()], Some(value("c + 1"))),
+                (vec!["B".to_owned()], None),
+            ],
+        )
+        .unwrap_or_else(|error| panic!("should build: {}", error.message()));
+    assert_eq!(list.len(), 2);
+    let columns = tidb_expr::simple_expr::extract_columns(list[0].as_ref().unwrap());
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].unique_id, schema.columns[2].unique_id);
+    assert!(list[1].is_none());
+}

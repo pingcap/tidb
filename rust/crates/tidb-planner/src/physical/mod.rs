@@ -2943,6 +2943,10 @@ pub struct PhysicalDmlRoot {
     /// Go `Delete.TblColPosInfos` of a multi-table DELETE, one per table
     /// named in the statement's target list.
     pub delete_tables: Vec<DeleteTablePos>,
+    /// Go `tryUpdatePointPlan`: `update_expressions` is the fast point plan's
+    /// ordered list, already cast to the target columns by
+    /// `buildOrderedList`.
+    pub fast_update_list: bool,
 }
 
 /// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
@@ -4959,6 +4963,7 @@ impl PhysicalPlan {
                 fk_triggers: op.fk_triggers.clone(),
                 delete_col_pos: op.delete_col_pos.clone(),
                 delete_tables: op.delete_tables.clone(),
+                fast_update_list: op.fast_update_list,
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

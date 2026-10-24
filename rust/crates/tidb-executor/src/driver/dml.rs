@@ -23,7 +23,6 @@ use super::*;
 use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 use tidb_hack::GoCaseCompare;
 
-mod correlated;
 mod defaults;
 pub(crate) mod delete_record;
 pub(crate) mod exchange_partition;
@@ -33,7 +32,6 @@ use delete_record::DeleteRecords;
 use tidb_planner::physical::FkTriggerNode;
 use update_record::UpdateRecords;
 
-use correlated::UpdateExpression;
 
 pub(crate) use defaults::{
     column_default, column_metadata, materialize_column_default, prepare_named_defaults,
@@ -321,6 +319,7 @@ fn physical_dml_plan_with_cache_mode(
     let mut update_expressions = Vec::new();
     let mut delete_col_pos = None;
     let mut delete_tables = Vec::new();
+    let mut fast_update_list = false;
 
     // Go `buildInsert` builds the target's schema first
     // (`TableInfo2SchemaAndNames`), which draws a plan column id for every
@@ -392,6 +391,18 @@ fn physical_dml_plan_with_cache_mode(
                     let _point_update_filler = plan_ids.alloc();
                 }
                 root_base = Some(BasePhysicalPlan::new(&plan_ids, operator, 0));
+                if let Some(update) = update {
+                    update_expressions = fast_update_ordered_list(
+                        update,
+                        &fast,
+                        catalog,
+                        current_db,
+                        ctx,
+                        &plan_ids,
+                        &column_ids,
+                    )?;
+                    fast_update_list = true;
+                }
                 Some(fast)
             } else {
                 let update_assignment_values = update
@@ -467,6 +478,7 @@ fn physical_dml_plan_with_cache_mode(
         fk_triggers,
         delete_col_pos,
         delete_tables,
+        fast_update_list,
     });
     super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
     Ok(plan)
@@ -2830,7 +2842,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
-    let (physical_source, update_expressions, fk_triggers) = match physical_plan {
+    let (physical_source, update_expressions, fast_update_list, fk_triggers) = match physical_plan {
         Some(plan) => {
             let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
                 return Err(DriverError::unsupported(
@@ -2846,10 +2858,11 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
             (
                 root.select_plan.as_deref_mut(),
                 Some(root.update_expressions.as_slice()),
+                root.fast_update_list,
                 root.fk_triggers.as_slice(),
             )
         }
-        None => (None, None, &[][..]),
+        None => (None, None, false, &[][..]),
     };
     run_update_with_physical(
         update,
@@ -2858,6 +2871,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         ctx,
         physical_source,
         update_expressions,
+        fast_update_list,
         fk_triggers,
         runtime,
     )
@@ -2889,6 +2903,43 @@ pub(crate) fn update_allows_fast_plan(update: &tidb_ast::UpdateStmt) -> bool {
         .assignments
         .iter()
         .any(|assignment| super::subquery::expr_has_subquery(&assignment.value))
+}
+
+/// Go `tryUpdatePointPlan`'s `buildOrderedList`: the assignments of a point
+/// UPDATE as expressions over the point plan's row.
+fn fast_update_ordered_list(
+    update: &tidb_ast::UpdateStmt,
+    fast: &tidb_planner::physical::PhysicalPlan,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &tidb_planner::plan_base::PlanIdAllocator,
+    column_ids: &tidb_planner::expression_rewriter::ColumnIdAllocator,
+) -> Result<Vec<Option<Expression>>, DriverError> {
+    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
+        return Ok(Vec::new());
+    };
+    let schema = fast
+        .schema()
+        .ok_or_else(|| DriverError::unsupported("a fast UPDATE's point plan has no schema"))?;
+    let values = update_assignment_values_for_plan(update, catalog, current_db)?;
+    let assignments: Vec<(Vec<String>, Option<tidb_ast::Expr>)> = update
+        .assignments
+        .iter()
+        .map(|assignment| assignment.col.clone())
+        .zip(values)
+        .collect();
+    super::planner_bridge::point_update_ordered_list(
+        table_ref,
+        schema,
+        &assignments,
+        catalog,
+        current_db,
+        ctx,
+        plan_ids,
+        column_ids,
+    )
+    .map_err(super::planner_error_to_driver)
 }
 
 fn update_assignment_values_for_plan(
@@ -3515,48 +3566,6 @@ fn promote_cached_dml_point_source(plan: &mut tidb_planner::physical::PhysicalPl
     }
 }
 
-/// Go `buildOrderedList`: a point UPDATE wraps its assignment in
-/// `BuildCastFunction` to the target column's type (so `SET v = 'abc'` into
-/// an INT column truncates as an INTEGER cast, where the general UPDATE's
-/// `table.CastValue` reports a DOUBLE one), except for an unsigned numeric
-/// target: `CAST(-1 AS UNSIGNED)` would wrap where the assignment's
-/// `table.CastValue` must decide under the statement's sql_mode. An ENUM or
-/// SET target of an integer value casts by member index
-/// (`EnumSetAsIntFlag`). The cast folds as Go's `BuildCastFunctionWithCheck`
-/// does (not for a JSON target), so a constant assignment converts, and
-/// warns, once for the statement.
-fn point_update_assignment(
-    expression: Expression,
-    target: &FieldType,
-    ctx: &crate::StmtContext,
-) -> Result<Expression, DriverError> {
-    let mut cast_to = target.clone();
-    let unsigned_numeric = cast_to.has_flag(tidb_datatype::FieldTypeFlags::UNSIGNED)
-        && matches!(
-            cast_to.eval_type(),
-            tidb_datatype::EvalType::Int
-                | tidb_datatype::EvalType::Decimal
-                | tidb_datatype::EvalType::Real
-        );
-    if unsigned_numeric {
-        return Ok(expression);
-    }
-    if matches!(cast_to.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
-        && expression
-            .static_type()
-            .is_some_and(|source| source.eval_type() == tidb_datatype::EvalType::Int)
-    {
-        cast_to.add_flags(tidb_datatype::FieldTypeFlags::ENUM_SET_AS_INT);
-    }
-    let json = cast_to.eval_type() == tidb_datatype::EvalType::Json;
-    let mut cast = tidb_expr::simple_expr::build_cast_function(expression, cast_to, false)
-        .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
-    if !json {
-        tidb_expr::fold_constant_in_mode(&mut cast, ctx, tidb_expr::ConstantFoldMode::Normal);
-    }
-    Ok(cast)
-}
-
 fn physical_plan_contains_point_get(plan: &tidb_planner::physical::PhysicalPlan) -> bool {
     use tidb_planner::physical::PhysicalPlan;
 
@@ -3647,6 +3656,7 @@ fn run_update_with_physical(
     ctx: &crate::StmtContext,
     physical_source: Option<&mut tidb_planner::physical::PhysicalPlan>,
     planned_update_expressions: Option<&[Option<Expression>]>,
+    fast_update_list: bool,
     fk_triggers: &[FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
@@ -3755,80 +3765,15 @@ fn run_update_with_physical(
         }
         assignments.push((assignment_index, offset, assignment.value.clone()));
     }
-    let default_row = {
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
-        chunk.set_num_virtual_rows(1);
-        chunk
-    };
+    // Go builds every ordered-list expression in the planner
+    // (`buildUpdateLists`, or the fast plan's `buildOrderedList`).
     let mut set_exprs = Vec::with_capacity(assignments.len());
-    for (assignment_index, offset, value) in &assignments {
+    for (assignment_index, offset, _) in &assignments {
         let planned = planned_update_expressions
             .and_then(|expressions| expressions.get(*assignment_index))
-            .and_then(Option::as_ref);
-        let expression = if let Some(planned) = planned {
-            UpdateExpression::physical(planned.clone())
-        } else {
-            match value {
-                // Go fills a bare update DEFAULT with the target column name and
-                // resolves it through GetColDefaultValue while building the
-                // assignment. Do the same once here, before row iteration, so a
-                // computed default and any warning are statement-scoped.
-                tidb_ast::Expr::Default(None) => {
-                    let value = materialize_column_default(
-                        column_meta.get(*offset).ok_or_else(|| {
-                            DriverError::UnknownColumnInClause {
-                                column: column_list[*offset].0.clone(),
-                                clause: "field_list".to_owned(),
-                            }
-                        })?,
-                        DefaultUse::Expression,
-                        ctx,
-                        default_row.get_row(0),
-                    )?;
-                    UpdateExpression::scalar(Expression::Constant(
-                        tidb_expr::constant::Constant::new(value, column_list[*offset].1.clone()),
-                    ))
-                }
-                _ => {
-                    let defaults = prepare_named_defaults(
-                        value,
-                        ctx,
-                        default_row.get_row(0),
-                        DefaultUse::Expression,
-                        |path| {
-                            let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
-                                DriverError::UnknownColumnInClause {
-                                    column: path.last().cloned().unwrap_or_default(),
-                                    clause: "field list".to_owned(),
-                                }
-                            })?;
-                            Ok(ResolvedDefaultColumn {
-                                identity: DefaultColumnIdentity { table: 0, column },
-                                meta: column_meta.get(column).cloned().ok_or_else(|| {
-                                    DriverError::UnknownColumnInClause {
-                                        column: column_list[column].0.clone(),
-                                        clause: "field_list".to_owned(),
-                                    }
-                                })?,
-                            })
-                        },
-                    )?;
-                    // Go builds every ordered-list expression in the planner
-                    // (`buildUpdateLists`, or the fast plan's
-                    // `buildOrderedList`); only the latter reaches here, and
-                    // it declines a SET expression with a subquery.
-                    if expr_has_subquery(value) {
-                        return Err(DriverError::unsupported(
-                            "an UPDATE assignment with a subquery was not planned",
-                        ));
-                    }
-                    UpdateExpression::scalar(rewrite_with_prepared_defaults(
-                        value, &resolver, &defaults,
-                    )?)
-                }
-            }
-        };
-        set_exprs.push((*offset, expression));
+            .and_then(Option::as_ref)
+            .ok_or_else(|| DriverError::unsupported("an UPDATE assignment was not planned"))?;
+        set_exprs.push((*offset, planned.clone()));
     }
     let on_update_now =
         PreparedOnUpdateNow::new(&column_meta, set_exprs.iter().map(|(offset, _)| *offset))?;
@@ -3886,7 +3831,8 @@ fn run_update_with_physical(
     let mut physical_source = fast_point_source.as_mut().or(physical_source);
     // Go's fast plan (`tryUpdatePointPlan`) reads through a bare point plan,
     // and its `buildOrderedList` casts every assignment to the target column.
-    if update_allows_fast_plan(update)
+    if !fast_update_list
+        && update_allows_fast_plan(update)
         && physical_source.as_deref().is_some_and(|plan| {
             matches!(
                 plan,
@@ -3896,10 +3842,12 @@ fn run_update_with_physical(
         })
     {
         for (offset, expression) in &mut set_exprs {
-            if let UpdateExpression::Scalar(scalar) = expression {
-                let assigned = scalar.clone();
-                *scalar = point_update_assignment(assigned, &column_list[*offset].1, ctx)?;
-            }
+            *expression = tidb_planner::plan_builder::ordered_list::cast_point_update_assignment(
+                expression.clone(),
+                &column_list[*offset].1,
+                ctx,
+            )
+            .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
         }
     }
     let partition_ids = match catalog.get_in(&database, &name) {
@@ -4070,7 +4018,7 @@ fn run_update_with_physical(
 struct UpdateRowEvaluator<'a> {
     field_types: &'a [FieldType],
     column_names: &'a [String],
-    set_exprs: &'a [(usize, UpdateExpression)],
+    set_exprs: &'a [(usize, Expression)],
     ctx: &'a crate::StmtContext,
     on_update_now: &'a PreparedOnUpdateNow,
     /// Whether `field_types` ends in Go's extra handle column, so the row
@@ -4113,7 +4061,16 @@ impl UpdateRowEvaluator<'_> {
         // is, rather than a rule the loop has to re-establish per assignment.
         let mut new_row = row.to_vec();
         for (offset, expr) in self.set_exprs {
-            let value = expr.eval(chunk.get_row(0), physical_row, self.ctx)?;
+            let value = expr
+                .eval(
+                    self.ctx,
+                    physical_row.ok_or_else(|| {
+                        DriverError::unsupported(
+                            "a planned UPDATE expression has no physical input row",
+                        )
+                    })?,
+                )
+                .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
             // ExtraHandleID has no column metadata in Go composeNewRow:
             // evaluate it, but neither cast it nor put it in the writable row.
             if self.extra_handle && *offset == visible {

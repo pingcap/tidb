@@ -2915,6 +2915,39 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     ))
 }
 
+/// Go `buildOrderedList` for the fast point UPDATE (`tryUpdatePointPlan`): the
+/// assignments rewritten over the point plan's schema and cast to their
+/// target columns, resolved to that schema's row.
+pub(crate) fn point_update_ordered_list(
+    table_ref: &tidb_ast::TableRef,
+    schema: &tidb_expr::schema::Schema,
+    assignments: &[(Vec<String>, Option<tidb_ast::Expr>)],
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+) -> Result<Vec<Option<Expression>>, tidb_planner::plan_base::PlanError> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx)
+        .with_related_tables_for_mdl(ctx);
+    let defaults = default_evaluator(catalog, ctx);
+    let builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, ctx.session_zone())
+        .with_default_evaluator(&defaults);
+    let mut list = builder.build_point_ordered_list(table_ref, schema, assignments)?;
+    for expression in list.iter_mut().flatten() {
+        tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(|_| {
+            tidb_planner::plan_base::PlanError::internal(
+                "a fast UPDATE assignment does not resolve in its point plan",
+            )
+        })?;
+    }
+    Ok(list)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn optimize_built_logical(
     plan: LogicalPlan,

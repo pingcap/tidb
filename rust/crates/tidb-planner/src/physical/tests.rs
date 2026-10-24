@@ -401,6 +401,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
         fk_triggers: Vec::new(),
         delete_col_pos: None,
         delete_tables: Vec::new(),
+        fast_update_list: false,
         base: BasePhysicalPlan::with_id(14, "Update", 0),
         go_operator: "Update".to_owned(),
         select_plan: Some(Box::new(index_merge)),
