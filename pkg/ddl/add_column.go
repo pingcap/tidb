@@ -1028,7 +1028,8 @@ func setDefaultValueWithBinaryPadding(col *table.Column, value any) error {
 	}
 	// https://dev.mysql.com/doc/refman/8.0/en/binary-varbinary.html
 	// Set the default value for binary type should append the paddings.
-	if value != nil {
+	// Expression defaults store SQL text; only their evaluated values need padding.
+	if value != nil && !col.DefaultIsExpr {
 		if col.GetType() == mysql.TypeString && types.IsBinaryStr(&col.FieldType) && len(value.(string)) < col.GetFlen() {
 			padding := make([]byte, col.GetFlen()-len(value.(string)))
 			col.DefaultValue = string(append([]byte(col.DefaultValue.(string)), padding...))
