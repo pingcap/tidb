@@ -5161,7 +5161,7 @@ impl ClusterServerSession {
 
     fn control_transaction_parsed_inner(
         &mut self,
-        _sql: &str,
+        sql: &str,
         stmt: &Stmt,
     ) -> Result<Option<bool>, SqlQueryError> {
         let control = match stmt {
@@ -5174,6 +5174,12 @@ impl ClusterServerSession {
             _ => classify_transaction_control_stmt(stmt),
         };
         if control.is_some() {
+            // Go `TiDBContext.checkSandBoxMode` gates every statement of a
+            // session admitted with an expired password, BEGIN included.
+            self.store
+                .session
+                .check_sandbox_mode(sql)
+                .map_err(map_error)?;
             self.store.session.restore_statement_variables();
         }
         // Go `ExecStmt.handleNoDelayExecutor` -> `SimpleExec.Next`: the

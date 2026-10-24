@@ -66,7 +66,9 @@ impl Session {
         let mut pending = service.begin()?;
         pending.set_write_hints(self.account_write_hints(sql));
         let live = self.swap_privileges(pending.registry());
+        self.account_statement_privilege_cache = live.clone();
         let applied = self.run_with_delegated_account_storage(sql);
+        self.account_statement_privilege_cache = None;
         // Restoring the live table is unconditional: a statement that failed
         // must not leave the connection reading the scratch copy.
         if let Some(live) = live {

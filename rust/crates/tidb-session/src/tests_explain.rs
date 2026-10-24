@@ -1283,6 +1283,45 @@ fn determinate_objective_uses_analyzed_row_count_after_inserts() {
     );
 }
 
+/// `(partition, modify_count, row_count)` per `mysql.stats_meta` row of
+/// `table` and its partitions: the counts FLUSH STATS_DELTA persists, read
+/// from the store as Go's tests do once the handle has dumped them.
+fn stats_meta_counts(session: &mut Session, table: &str) -> Vec<(String, i64, i64)> {
+    // The in-process tier keeps flushed deltas in its own statistics cache,
+    // which only SHOW STATS_META reads.
+    if crate::tests_support::in_process_tier() {
+        return row_text(session.run(&format!("SHOW STATS_META WHERE table_name = '{table}'")))
+            .into_iter()
+            .map(|row| {
+                (
+                    row[2].clone(),
+                    row[4].parse().unwrap(),
+                    row[5].parse().unwrap(),
+                )
+            })
+            .collect();
+    }
+    let mut rows = row_text(session.run(&format!(
+        "SELECT '', m.modify_count, m.count FROM mysql.stats_meta m \
+         JOIN information_schema.tables t ON m.table_id = t.tidb_table_id \
+         WHERE t.table_schema = 'test' AND t.table_name = '{table}'"
+    )));
+    rows.extend(row_text(session.run(&format!(
+        "SELECT p.partition_name, m.modify_count, m.count FROM mysql.stats_meta m \
+         JOIN information_schema.partitions p ON m.table_id = p.tidb_partition_id \
+         WHERE p.table_schema = 'test' AND p.table_name = '{table}' ORDER BY p.partition_name"
+    ))));
+    rows.into_iter()
+        .map(|row| {
+            (
+                row[0].clone(),
+                row[1].parse().unwrap(),
+                row[2].parse().unwrap(),
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn flush_stats_delta_honors_table_and_database_scope() {
     let mut session = Session::new();
@@ -1294,28 +1333,15 @@ fn flush_stats_delta_honors_table_and_database_scope() {
         .unwrap();
 
     session.run("FLUSH STATS_DELTA test.flush_scope_a").unwrap();
-    let shared = session.shared_catalog();
-    {
-        let catalog = shared.lock().unwrap();
-        let a = match catalog.table_in("test", "flush_scope_a").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table.table_id,
-            _ => panic!("flush_scope_a is not a KV table"),
-        };
-        let b = match catalog.table_in("test", "flush_scope_b").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table.table_id,
-            _ => panic!("flush_scope_b is not a KV table"),
-        };
-        assert_eq!(catalog.table_statistics(a).unwrap().row_count, 1);
-        assert!(catalog.table_statistics(b).is_none());
-    }
+    assert_eq!(stats_meta_counts(&mut session, "flush_scope_a")[0].2, 1);
+    // The unflushed table publishes nothing yet: no row, or Go's CREATE
+    // TABLE row at zero.
+    assert!(stats_meta_counts(&mut session, "flush_scope_b")
+        .iter()
+        .all(|(_, _, count)| *count == 0));
 
     session.run("FLUSH STATS_DELTA test.*").unwrap();
-    let catalog = shared.lock().unwrap();
-    let b = match catalog.table_in("test", "flush_scope_b").unwrap() {
-        tidb_executor::TableEntry::Kv(table) => table.table_id,
-        _ => panic!("flush_scope_b is not a KV table"),
-    };
-    assert_eq!(catalog.table_statistics(b).unwrap().row_count, 2);
+    assert_eq!(stats_meta_counts(&mut session, "flush_scope_b")[0].2, 2);
 }
 
 #[test]
@@ -1335,18 +1361,8 @@ fn flush_stats_delta_counts_changed_updates_and_deletes() {
     session
         .run("FLUSH STATS_DELTA test.flush_dml_delta")
         .unwrap();
-    let shared = session.shared_catalog();
-    let table_id = {
-        let catalog = shared.lock().unwrap();
-        let table_id = match catalog.table_in("test", "flush_dml_delta").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table.table_id,
-            _ => panic!("flush_dml_delta is not a KV table"),
-        };
-        let statistics = catalog.table_statistics(table_id).unwrap();
-        assert_eq!(statistics.row_count, 2);
-        assert_eq!(statistics.modify_count, 1);
-        table_id
-    };
+    let (_, modify, count) = stats_meta_counts(&mut session, "flush_dml_delta")[0].clone();
+    assert_eq!((count, modify), (2, 1));
 
     session
         .run("DELETE FROM flush_dml_delta WHERE a = 2")
@@ -1354,10 +1370,8 @@ fn flush_stats_delta_counts_changed_updates_and_deletes() {
     session
         .run("FLUSH STATS_DELTA test.flush_dml_delta")
         .unwrap();
-    let catalog = shared.lock().unwrap();
-    let statistics = catalog.table_statistics(table_id).unwrap();
-    assert_eq!(statistics.row_count, 1);
-    assert_eq!(statistics.modify_count, 2);
+    let (_, modify, count) = stats_meta_counts(&mut session, "flush_dml_delta")[0].clone();
+    assert_eq!((count, modify), (1, 2));
 }
 
 #[test]
@@ -1379,32 +1393,15 @@ fn flush_stats_delta_tracks_partition_physical_ids() {
         .run("FLUSH STATS_DELTA test.flush_partition_delta")
         .unwrap();
 
-    let shared = session.shared_catalog();
-    let catalog = shared.lock().unwrap();
-    let table = match catalog.table_in("test", "flush_partition_delta").unwrap() {
-        tidb_executor::TableEntry::Kv(table) => table,
-        _ => panic!("flush_partition_delta is not a KV table"),
-    };
-    let partition_ids = table
-        .partition()
-        .unwrap()
-        .definitions
-        .iter()
-        .map(|partition| partition.id)
-        .collect::<Vec<_>>();
-    let statistics = partition_ids
-        .iter()
-        .map(|id| catalog.table_statistics(*id).unwrap())
-        .collect::<Vec<_>>();
+    // The deltas land on the physical partitions, not the logical table.
+    let partitions: Vec<_> = stats_meta_counts(&mut session, "flush_partition_delta")
+        .into_iter()
+        .filter(|(partition, _, _)| partition.starts_with('p'))
+        .collect();
+    assert_eq!(partitions.len(), 2, "{partitions:?}");
+    assert_eq!(partitions.iter().map(|(_, _, count)| count).sum::<i64>(), 4);
     assert_eq!(
-        statistics.iter().map(|stats| stats.row_count).sum::<i64>(),
-        4
-    );
-    assert_eq!(
-        statistics
-            .iter()
-            .map(|stats| stats.modify_count)
-            .sum::<i64>(),
+        partitions.iter().map(|(_, modify, _)| modify).sum::<i64>(),
         4
     );
 }
@@ -1439,15 +1436,8 @@ fn flush_stats_delta_restores_statement_and_savepoint_deltas() {
         .run("FLUSH STATS_DELTA test.flush_rollback_delta")
         .unwrap();
 
-    let shared = session.shared_catalog();
-    let catalog = shared.lock().unwrap();
-    let table_id = match catalog.table_in("test", "flush_rollback_delta").unwrap() {
-        tidb_executor::TableEntry::Kv(table) => table.table_id,
-        _ => panic!("flush_rollback_delta is not a KV table"),
-    };
-    let statistics = catalog.table_statistics(table_id).unwrap();
-    assert_eq!(statistics.row_count, 2);
-    assert_eq!(statistics.modify_count, 1);
+    let (_, modify, count) = stats_meta_counts(&mut session, "flush_rollback_delta")[0].clone();
+    assert_eq!((count, modify), (2, 1));
 }
 
 /// Go `TestIssue64137`: a high-count TopN is removed from the index histogram;

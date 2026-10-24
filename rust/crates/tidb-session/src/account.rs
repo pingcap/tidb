@@ -1297,7 +1297,14 @@ impl Session {
             .iter()
             .map(|spec| {
                 let role = role_identity(spec);
-                if registry.has_role(account, &role) {
+                // Go `checker.FindEdge` reads the privilege cache: a role edge
+                // written into `mysql.role_edges` directly counts only after
+                // FLUSH PRIVILEGES (asked of the Go server: 3530 before it).
+                let cache = self
+                    .account_statement_privilege_cache
+                    .as_ref()
+                    .unwrap_or(registry);
+                if cache.has_role(account, &role) {
                     Ok(role)
                 } else {
                     Err(DriverError::RoleNotGranted {

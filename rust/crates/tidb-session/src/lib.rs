@@ -477,6 +477,10 @@ pub struct Session {
     global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     catalog: SharedCatalog,
     account_storage_delegated: bool,
+    /// The live privilege cache while an account statement runs against a
+    /// scratch registry read from `mysql.*`: Go's privilege manager, which
+    /// `FindEdge` consults, is the cache, not the tables.
+    account_statement_privilege_cache: Option<privilege::PrivilegeRegistry>,
     /// Go `Domain.NotifyUpdateAllUsersPrivilege`'s announcement half: tells
     /// every node of the cluster to reload privileges after FLUSH
     /// PRIVILEGES. `None` for a session with no peers to tell.
@@ -1042,6 +1046,7 @@ impl Session {
         Session {
             catalog,
             account_storage_delegated: false,
+            account_statement_privilege_cache: None,
             privilege_change_notifier: None,
             context_values: HashMap::new(),
             executor_first_run_breakpoint: Arc::new(std::sync::atomic::AtomicBool::new(false)),

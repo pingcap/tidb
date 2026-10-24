@@ -528,6 +528,12 @@ fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
 
 #[test]
 fn password_history_protects_union_of_recent_count_and_reuse_time() {
+    // Drives the registry's own clock, which only the in-process tier reads;
+    // on the store the check reads `mysql.password_history` against real time
+    // (`password_history_checks_the_stored_rows` backdates those rows).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = session_with_privileges();
     let registry = session.privileges.clone().unwrap();
     session.run("CREATE USER history_window IDENTIFIED BY 'first' PASSWORD HISTORY 1 PASSWORD REUSE INTERVAL 2 DAY").unwrap();
@@ -574,6 +580,12 @@ fn password_history_protects_union_of_recent_count_and_reuse_time() {
 
 #[test]
 fn password_history_cutoff_follows_go_local_text_and_session_timestamp_conversion() {
+    // Drives the registry's own clock, which only the in-process tier reads;
+    // on the store the check reads `mysql.password_history` against real time
+    // (`password_history_checks_the_stored_rows` backdates those rows).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = session_with_privileges();
     let registry = session.privileges.clone().unwrap();
     session.run("SET time_zone = '+08:00'").unwrap();
