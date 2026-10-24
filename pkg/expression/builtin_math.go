@@ -1168,7 +1168,7 @@ func (c *randFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	}
 	bt := bf
 	if len(args) == 0 {
-		sig = &builtinRandSig{bt, ctx.Rng()}
+		sig = &builtinRandSig{baseBuiltinFunc: bt, mysqlRng: ctx.Rng()}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else if _, isConstant := args[0].(*Constant); isConstant {
 		// According to MySQL manual:
@@ -1184,7 +1184,7 @@ func (c *randFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 			// The behavior same as MySQL.
 			seed = 0
 		}
-		sig = &builtinRandSig{bt, mathutil.NewWithSeed(seed)}
+		sig = &builtinRandSig{baseBuiltinFunc: bt, seed: seed, seededRng: &builtinFuncCache[*mathutil.MysqlRng]{}}
 		sig.setPbCode(tipb.ScalarFuncSig_Rand)
 	} else {
 		sig = &builtinRandWithSeedFirstGenSig{bt}
@@ -1196,19 +1196,40 @@ func (c *randFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 type builtinRandSig struct {
 	baseBuiltinFunc
 	mysqlRng *mathutil.MysqlRng
+	// seededRng is used instead of mysqlRng when the seed is a constant. It starts a new generator from the seed
+	// for each evaluation context, so that the retry of a statement generates the same values again.
+	seed      int64
+	seededRng *builtinFuncCache[*mathutil.MysqlRng]
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{mysqlRng: b.mysqlRng}
+	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, seed: b.seed}
+	if b.seededRng != nil {
+		// The clones can be evaluated in different contexts, a shared cache would start the generator again
+		// whenever the context changes.
+		newSig.seededRng = &builtinFuncCache[*mathutil.MysqlRng]{}
+	}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
+}
+
+func (b *builtinRandSig) getRng(ctx EvalContext) (*mathutil.MysqlRng, error) {
+	if b.seededRng == nil {
+		return b.mysqlRng, nil
+	}
+	return b.seededRng.getOrInitCache(ctx, func() (*mathutil.MysqlRng, error) {
+		return mathutil.NewWithSeed(b.seed), nil
+	})
 }
 
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
 func (b *builtinRandSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	res := b.mysqlRng.Gen()
-	return res, false, nil
+	rng, err := b.getRng(ctx)
+	if err != nil {
+		return 0, true, err
+	}
+	return rng.Gen(), false, nil
 }
 
 type builtinRandWithSeedFirstGenSig struct {

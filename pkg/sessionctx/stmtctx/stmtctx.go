@@ -1273,6 +1273,8 @@ func (sc *StatementContext) resetMuForRetry() {
 
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
+	// A new context ID makes the expressions drop the state they cached for the previous attempt.
+	sc.ctxID = contextutil.GenContextID()
 	sc.resetMuForRetry()
 	sc.ReservedRowIDAlloc.Reset(0, 0)
 	sc.TableIDs = sc.TableIDs[:0]
