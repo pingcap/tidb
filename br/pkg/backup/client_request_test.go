@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
 
 type fixedCheckpointTimer struct{}
@@ -65,20 +66,59 @@ func TestBuildProgressRangeTreeLoadsCheckpointDataFromMetadataStorage(t *testing
 	require.NoError(t, metaWriter.FinishWriteMetas(ctx, metautil.AppendDataFile))
 }
 
-func TestCheckCheckpointRejectsAnotherCluster(t *testing.T) {
-	cfgHash := []byte("hash")
-	bc := &Client{clusterID: 1}
-	require.NoError(t, bc.CheckCheckpoint(cfgHash))
+type checkpointTestMgr struct {
+	ClientMgr
+}
 
-	bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{ConfigHash: cfgHash, BackupTS: 2, ClusterID: 1}
-	require.NoError(t, bc.CheckCheckpoint(cfgHash))
+func (checkpointTestMgr) GetPDClient() pd.Client {
+	return checkpointTestPDClient{}
+}
+
+type checkpointTestPDClient struct {
+	pd.Client
+}
+
+func (checkpointTestPDClient) GetTS(context.Context) (int64, int64, error) {
+	return 1, 1, nil
+}
+
+func TestCheckCheckpointRejectsAnotherCluster(t *testing.T) {
+	ctx := context.Background()
+	storage := objstore.NewMemStorage()
+	cfgHash := []byte("hash")
+	newClient := func(clusterID uint64) *Client {
+		return &Client{
+			mgr:         checkpointTestMgr{},
+			clusterID:   clusterID,
+			storage:     storage,
+			metaStorage: storage,
+			cipher:      &backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT},
+		}
+	}
+
+	first := newClient(1)
+	require.NoError(t, first.CheckCheckpoint(cfgHash))
+	require.NoError(t, first.StartCheckpointRunner(ctx, cfgHash, 2, 0, "gc-service", func(ProgressUnit) {}))
+	first.WaitForFinishCheckpoint(ctx, true)
+
+	other := newClient(3)
+	require.NoError(t, other.LoadCheckpointMetadataFromStorage(ctx, storage))
+	err := other.CheckCheckpoint(cfgHash)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "created by the cluster 1 instead of the current cluster 3")
+
+	same := newClient(1)
+	require.NoError(t, same.LoadCheckpointMetadataFromStorage(ctx, storage))
+	require.NoError(t, same.CheckCheckpoint(cfgHash))
+	backupTS, err := same.GetTS(ctx, 0, 0)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), backupTS)
+	require.NoError(t, same.StartCheckpointRunner(ctx, cfgHash, backupTS, 0, "gc-service", func(ProgressUnit) {}))
+	same.WaitForFinishCheckpoint(ctx, true)
 
 	// legacy checkpoint metadata without the cluster id
-	bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{ConfigHash: cfgHash, BackupTS: 2}
-	require.NoError(t, bc.CheckCheckpoint(cfgHash))
-
-	bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{ConfigHash: cfgHash, BackupTS: 2, ClusterID: 3}
-	err := bc.CheckCheckpoint(cfgHash)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "created by the cluster 3 instead of the current cluster 1")
+	require.NoError(t, checkpoint.SaveCheckpointMetadata(ctx, storage, &checkpoint.CheckpointMetadataForBackup{ConfigHash: cfgHash, BackupTS: 2}))
+	legacy := newClient(3)
+	require.NoError(t, legacy.LoadCheckpointMetadataFromStorage(ctx, storage))
+	require.NoError(t, legacy.CheckCheckpoint(cfgHash))
 }
