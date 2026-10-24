@@ -11,7 +11,7 @@ go_test(
         "testutil_test.go",
     ],
     flaky = True,
-    shard_count = 50,
+    shard_count = 45,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
