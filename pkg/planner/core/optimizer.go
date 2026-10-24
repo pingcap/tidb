@@ -382,10 +382,12 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
+	warnStart := len(sctx.GetSessionVars().StmtCtx.GetWarnings())
 	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	logic, physical, cost = tryLateMaterialization(logic, physical, cost, warnStart)
 	finalPlan := postOptimize(ctx, sctx, physical)
 	return logic, finalPlan, cost, nil
 }

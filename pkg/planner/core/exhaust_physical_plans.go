@@ -2300,6 +2300,11 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 		// naaj refuse merge join and index join.
 		stats0, stats1, _, _ := getJoinChildStatsAndSchema(ge, p)
 		mergeJoins := physicalop.GetMergeJoin(p, prop, p.Schema(), p.StatsInfo(), stats0, stats1)
+		if allowed := p.SCtx().GetSessionVars().StmtCtx.LateMaterializationMergeJoins; allowed != nil && p.PreferJoinType&h.PreferMergeJoin == 0 {
+			if _, ok := allowed[p.ID()]; !ok {
+				mergeJoins = nil
+			}
+		}
 		if (p.PreferJoinType&h.PreferMergeJoin) > 0 && len(mergeJoins) > 0 {
 			return mergeJoins, true, nil
 		}
