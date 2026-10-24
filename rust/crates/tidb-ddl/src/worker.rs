@@ -265,6 +265,9 @@ where
     notifier: Option<Arc<EtcdClient>>,
     schema_version_syncer: Option<Arc<dyn tidb_schemaver::Syncer>>,
     owner_id: String,
+    /// The node's allocator registry (the scheduler's own), so the reload
+    /// after a rebase drops the ranges reserved before it.
+    row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
 }
 
 struct SchedulerWorker {
@@ -716,6 +719,7 @@ where
                 }
             })
             .map_err(|error| error.to_string())?;
+        let row_ids = Arc::new(std::sync::OnceLock::new());
         let schema_sync = Arc::new(ClusterSchemaSync {
             opener: Arc::clone(&opener),
             catalog: Arc::clone(&catalog),
@@ -724,6 +728,7 @@ where
             notifier: notifier.clone(),
             schema_version_syncer,
             owner_id: owner_id.clone(),
+            row_ids: Arc::clone(&row_ids),
         });
         let scheduler = Arc::new(PersistedDdlScheduler {
             opener: Arc::clone(&opener),
@@ -736,7 +741,7 @@ where
             min_job_id_refresher: Arc::clone(&min_job_id_refresher),
             owner: Mutex::new(None),
             worker: Mutex::new(None),
-            row_ids: Arc::new(std::sync::OnceLock::new()),
+            row_ids,
             del_range: Arc::new(std::sync::OnceLock::new()),
             ddl_job_done_ch_map: Arc::default(),
         });
@@ -2425,10 +2430,14 @@ where
     fn reload_catalog(&self) -> Result<(), String> {
         let _reload = self.catalog.lock_reload();
         let current = self.catalog.load();
-        let at = reload_catalog_from_cluster(&self.opener, self.timeout, &current)
-            .map_err(|error| error.to_string())?;
-        match tidb_exec::real_tikv_catalog::note_reload(&self.schema_validator, current.schema_version, at)
-        {
+        let at =
+            reload_catalog_from_cluster(&self.opener, self.timeout, &current, self.row_ids.get())
+                .map_err(|error| error.to_string())?;
+        match tidb_exec::real_tikv_catalog::note_reload(
+            &self.schema_validator,
+            current.schema_version,
+            at,
+        ) {
             CatalogReloadPass::Unchanged => {}
             CatalogReloadPass::Diffs(catalog) | CatalogReloadPass::Full(catalog) => {
                 self.catalog.store(catalog);

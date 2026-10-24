@@ -171,7 +171,9 @@ pub(super) fn build(
                 "modifying a stored column".to_owned(),
             ));
         }
-        if indexed && (!same_expression || old.field_type != *field_type) {
+        // Go `checkIndexOrStored`: `FieldType.Equal`, which ignores the key
+        // flags an indexed column carries.
+        if indexed && (!same_expression || !old.field_type.equal(field_type)) {
             return Err(DriverError::DdlCoded {
                 proto: &tidb_util::dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN,
                 message: "Unsupported modification for generated columns covered by an index"

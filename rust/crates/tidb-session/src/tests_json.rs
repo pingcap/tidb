@@ -1399,12 +1399,11 @@ fn json_schema_valid_is_evaluated_at_both_expression_index_doors() {
         .run("CREATE INDEX i ON t ((json_schema_valid('{\"type\":\"object\"}', j)))")
         .unwrap();
     // A name Go does not allow still reports the distinct allowlist error.
-    let error = session
-        .run("CREATE INDEX i2 ON t ((json_depth(j) + length(cast(j as char))))")
-        .unwrap_err();
-    assert!(
-        format!("{error:?}").contains("UnsafeFunctionInExpressionIndex"),
-        "got {error:?}"
+    crate::tests_support::assert_err(
+        session.run("CREATE INDEX i2 ON t ((json_depth(j) + length(cast(j as char))))"),
+        8200,
+        "Unsupported creating expression index containing unsafe functions without \
+         allow-expression-index in config",
     );
 }
 

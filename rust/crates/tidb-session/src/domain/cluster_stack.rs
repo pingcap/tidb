@@ -214,11 +214,14 @@ pub fn cluster_session_stack(
     // Its persisted boot image was installed synchronously above, before this
     // reloader and, crucially, before bind. This is independent of
     // privilege-cache policy.
+    // Filled once the node's allocator registry exists below.
+    let reload_row_ids = Arc::new(std::sync::OnceLock::new());
     let (catalog, reloader, schema_validator) = spawn_catalog_reloader(
         startup,
         startup_lease_grant_ts,
         authority.transaction_opener(),
         config.schema_lease,
+        Arc::clone(&reload_row_ids),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     // Statistics always resolve targets from this published catalog, so the
@@ -470,6 +473,7 @@ pub fn cluster_session_stack(
         )
         .with_service(auto_id_service.clone()),
     );
+    let _ = reload_row_ids.set(Arc::clone(&node_auto_ids));
     let cluster_ddl = Arc::new(
         RealClusterDdl::new_with_min_job_id_refresher(
             authority.transaction_opener(),

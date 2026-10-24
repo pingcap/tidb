@@ -4960,9 +4960,11 @@ pub(super) fn prepare_add_column(
                     &def.name,
                     ctx,
                 )?);
-                // Go `removeOnUpdateNowFlag`: only a TIMESTAMP definition's
-                // explicit DEFAULT clears a preceding ON UPDATE option.
-                if field_type.code() == FieldTypeCode::Timestamp {
+                // Go `removeOnUpdateNowFlag`: an explicit DEFAULT clears a
+                // preceding ON UPDATE only on a column carrying
+                // `TimestampFlag`, which `explicit_defaults_for_timestamp =
+                // OFF` gives (asked of the Go server: the ON default keeps it).
+                if field_type.has_flag(tidb_datatype::FieldTypeFlags::TIMESTAMP) {
                     field_type.del_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
                 }
             }
@@ -4972,7 +4974,7 @@ pub(super) fn prepare_add_column(
             tidb_ast::ColumnOption::NotNull => not_null = true,
             tidb_ast::ColumnOption::Null => {
                 not_null = false;
-                if field_type.code() == FieldTypeCode::Timestamp {
+                if field_type.has_flag(tidb_datatype::FieldTypeFlags::TIMESTAMP) {
                     field_type.del_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
                 }
             }

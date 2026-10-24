@@ -457,10 +457,10 @@ fn force_auto_increment_resets_the_next_allocation() {
     session
         .run("ALTER TABLE heap_force FORCE AUTO_INCREMENT = 1")
         .unwrap();
-    let collision = session.run("INSERT INTO heap_force VALUES (2)");
-    assert!(
-        matches!(collision, Err(DriverError::DuplicateEntry { .. })),
-        "expected hidden-handle duplicate, got {collision:?}"
+    crate::tests_support::assert_err(
+        session.run("INSERT INTO heap_force VALUES (2)"),
+        1062,
+        "Duplicate entry '1' for key 'heap_force.PRIMARY'",
     );
 }
 

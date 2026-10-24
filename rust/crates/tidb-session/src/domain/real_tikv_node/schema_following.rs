@@ -334,6 +334,7 @@ pub fn spawn_catalog_reloader<S>(
     startup_lease_grant_ts: u64,
     transaction_opener: RealOptimisticTransactionOpener<S>,
     schema_lease: Duration,
+    row_ids: Arc<std::sync::OnceLock<Arc<dyn tidb_exec::table_from_meta::TableAutoIds>>>,
 ) -> Result<(Arc<SharedCatalog>, CatalogReloader, Arc<SchemaValidator>), CatalogReloadError>
 where
     S: StoreClient,
@@ -363,6 +364,7 @@ where
                 &transaction_opener,
                 PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 current,
+                row_ids.get(),
             ) {
                 Ok(at) => Ok(note_reload(&pass_validator, current.schema_version, at)),
                 Err(error) => Err(error.to_string()),

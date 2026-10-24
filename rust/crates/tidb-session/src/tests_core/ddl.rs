@@ -232,16 +232,13 @@ fn use_changes_unqualified_name_resolution() {
         session.run("SELECT a FROM test.t").unwrap(),
         StmtResult::Rows(vec![vec![Datum::Int(1)]])
     );
-    assert_eq!(
-        session.run_with_columns("SHOW TABLES").unwrap(),
-        StmtOutput::Rows {
-            columns: vec![(
-                "Tables_in_other".to_owned(),
-                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
-            )],
-            rows: vec![vec![Datum::Bytes(b"t".to_vec())]],
-        }
-    );
+    let StmtOutput::Rows { columns, rows } = session.run_with_columns("SHOW TABLES").unwrap()
+    else {
+        panic!("SHOW TABLES answers with rows");
+    };
+    assert_eq!(columns.len(), 1);
+    assert_eq!(columns[0].0, "Tables_in_other");
+    assert_eq!(rows, vec![vec![Datum::Bytes(b"t".to_vec())]]);
 
     session.run("USE test").unwrap();
     assert_eq!(

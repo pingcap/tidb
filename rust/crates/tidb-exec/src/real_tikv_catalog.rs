@@ -350,13 +350,17 @@ pub fn reload_catalog_from_cluster<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
     current: &ClusterCatalog,
+    row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<ReloadedCatalogAt, ClusterCatalogError> {
     let mut transaction = opener
         .begin_read_only()
         .map_err(coordinator_catalog_error)?;
     let lease_grant_ts = transaction.start_ts();
     let reloaded = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        // The node's allocator registry, so an applied rebase diff drops the
+        // ranges reserved before it (see `catalog_reload`).
+        let mut snapshot =
+            TransactionMetaSnapshot::new(&mut transaction, timeout).with_row_ids_opt(row_ids);
         reload_cluster_catalog(&mut snapshot, current)?
     };
     transaction

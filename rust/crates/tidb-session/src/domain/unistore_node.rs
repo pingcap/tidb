@@ -532,20 +532,25 @@ pub fn unistore_cluster_session_stack_from(
     // production boot's own order.
     crate::domain::real_tikv_node::load_cluster_startup_variables(&users, &opener)?;
 
-    let (catalog, reloader, schema_validator) = crate::domain::real_tikv_node::spawn_catalog_reloader(
-        startup,
-        startup_lease_grant_ts,
-        opener.clone(),
-        config.schema_lease,
-    )
-    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    let (stats, stats_reloader, async_stats_loader) = crate::domain::real_tikv_node::spawn_node_stats(
-        Arc::clone(&catalog),
-        opener.clone(),
-        config.stats_lease,
-        IN_PROCESS_TIMEOUT,
-    )
-    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+    // Filled once the node's allocator registry exists below.
+    let reload_row_ids = Arc::new(std::sync::OnceLock::new());
+    let (catalog, reloader, schema_validator) =
+        crate::domain::real_tikv_node::spawn_catalog_reloader(
+            startup,
+            startup_lease_grant_ts,
+            opener.clone(),
+            config.schema_lease,
+            Arc::clone(&reload_row_ids),
+        )
+        .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+    let (stats, stats_reloader, async_stats_loader) =
+        crate::domain::real_tikv_node::spawn_node_stats(
+            Arc::clone(&catalog),
+            opener.clone(),
+            config.stats_lease,
+            IN_PROCESS_TIMEOUT,
+        )
+        .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
 
     let sysvar_publication_fence = crate::domain::cluster_sysvar_seam::SysvarPublicationFence::default();
     let sysvar_reloader = crate::domain::cluster_sysvar_seam::SysvarReloader::spawn(
@@ -597,6 +602,7 @@ pub fn unistore_cluster_session_stack_from(
     let node_auto_ids: Arc<dyn tidb_exec::table_from_meta::TableAutoIds> = Arc::new(
         crate::domain::cluster_auto_id_seam::ClusterTableAutoIds::new(opener.clone(), IN_PROCESS_TIMEOUT),
     );
+    let _ = reload_row_ids.set(Arc::clone(&node_auto_ids));
     let cluster_ddl = Arc::new(
         RealClusterDdl::new(
             opener.clone(),
@@ -902,13 +908,15 @@ mod startup_schema_lease_tests {
         assert!(lease_grant_ts > 0, "the load read at a real timestamp");
         // A lease long enough that the reload thread never ticks during the
         // test: only the startup grant can make the check succeed.
-        let (_catalog, _reloader, validator) = crate::domain::real_tikv_node::spawn_catalog_reloader(
-            startup,
-            lease_grant_ts,
-            opener.clone(),
-            std::time::Duration::from_secs(45),
-        )
-        .expect("catalog reloader");
+        let (_catalog, _reloader, validator) =
+            crate::domain::real_tikv_node::spawn_catalog_reloader(
+                startup,
+                lease_grant_ts,
+                opener.clone(),
+                std::time::Duration::from_secs(45),
+                Arc::default(),
+            )
+            .expect("catalog reloader");
         let transaction = opener.begin_read_only().expect("commit-time timestamp");
         let commit_ts = transaction.start_ts();
         transaction.finish_without_writes().expect("finish");

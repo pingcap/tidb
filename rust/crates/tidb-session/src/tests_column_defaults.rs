@@ -323,9 +323,12 @@ fn alter_column_options_preserve_computed_default_and_on_update_semantics() {
         .lines()
         .find(|line| line.contains("`null_cleared`"))
         .unwrap();
-    assert!(!order_cleared.contains("ON UPDATE"), "{order_cleared}");
+    // Under the default `explicit_defaults_for_timestamp = ON` no column
+    // carries `TimestampFlag`, so neither a later DEFAULT nor NULL clears
+    // ON UPDATE (asked of the Go server).
+    assert!(order_cleared.contains("ON UPDATE"), "{order_cleared}");
     assert!(order_kept.contains("ON UPDATE"), "{order_kept}");
-    assert!(!null_cleared.contains("ON UPDATE"), "{null_cleared}");
+    assert!(null_cleared.contains("ON UPDATE"), "{null_cleared}");
 
     assert_eq!(
         code(
@@ -1421,6 +1424,12 @@ fn str_to_date_default_reaches_every_ddl_entry_point() {
 #[test]
 fn computed_default_whitelist_evaluates_the_allowed_function_shapes() {
     let mut session = Session::new();
+    // A session on the store checks privileges, so `bob` must exist and be
+    // granted what the statements below need, as in a Go testkit session.
+    if !crate::tests_support::in_process_tier() {
+        session.run("CREATE USER 'bob'@'%'").unwrap();
+        session.run("GRANT ALL ON *.* TO 'bob'@'%'").unwrap();
+    }
     session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
     session.run("SET time_zone = '+00:00'").unwrap();
     session.run("SET timestamp = 1700000000").unwrap();
