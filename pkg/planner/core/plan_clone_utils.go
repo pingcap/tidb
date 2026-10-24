@@ -140,13 +140,38 @@ func cloneDataSource(ds *logicalop.DataSource) *logicalop.DataSource {
 	// independent path objects. Stats derivation (fillIndexPath, etc.) mutates
 	// AccessPath fields in place; without deep cloning, costing one alternative
 	// can corrupt the other and destabilize CBO.
+	//
+	// Preserve the original invariant that entries of PossibleAccessPaths are
+	// the same *AccessPath objects as the corresponding entries in
+	// AllPossibleAccessPaths (see logical_plan_builder.go where allPaths is
+	// constructed by copy(allPaths, possiblePaths), and derivePathStatsAndTryHeuristics
+	// which stores paths from AllPossibleAccessPaths back into PossibleAccessPaths).
+	//
+	// If we clone the two slices independently, they end up containing
+	// different objects with the same content. DeriveStats then fills ranges
+	// through AllPossibleAccessPaths, while physical planning consumes the
+	// (unfilled) clones from PossibleAccessPaths — the empty ranges cause
+	// the DataSource to collapse into TableDual and silently drop rows
+	// (see the aggregate/IN-subquery case in the correlate alternative).
+	//
+	// Clone canonical paths once from AllPossibleAccessPaths and map each
+	// active path in PossibleAccessPaths to the corresponding canonical clone.
+	pathMap := make(map[*util.AccessPath]*util.AccessPath, len(ds.AllPossibleAccessPaths))
 	clone.AllPossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
 	for i, ap := range ds.AllPossibleAccessPaths {
-		clone.AllPossibleAccessPaths[i] = ap.Clone()
+		cloned := ap.Clone()
+		clone.AllPossibleAccessPaths[i] = cloned
+		pathMap[ap] = cloned
 	}
 	clone.PossibleAccessPaths = make([]*util.AccessPath, len(ds.PossibleAccessPaths))
 	for i, ap := range ds.PossibleAccessPaths {
-		clone.PossibleAccessPaths[i] = ap.Clone()
+		if mapped, ok := pathMap[ap]; ok {
+			clone.PossibleAccessPaths[i] = mapped
+		} else {
+			// Fallback: path only in PossibleAccessPaths (should not happen
+			// under the current invariant, but be defensive).
+			clone.PossibleAccessPaths[i] = ap.Clone()
+		}
 	}
 	// Preserve original stats so DeriveStats returns early for DataSources
 	// that don't receive correlated conditions. Without this, DeriveStats
