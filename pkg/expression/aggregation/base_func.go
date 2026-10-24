@@ -166,6 +166,11 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 	default:
 		return errors.Errorf("unsupported agg function: %s", a.Name)
 	}
+	if (a.Name == ast.AggFuncSum || a.Name == ast.AggFuncAvg) && expression.IsBinaryLiteral(a.Args[0]) {
+		// Preserve numeric literal semantics before pushdown encodes binary
+		// literals as strings. Other aggregates may need the original bytes.
+		a.Args[0] = expression.WrapWithCastAsReal(ctx, a.Args[0])
+	}
 	return nil
 }
 
