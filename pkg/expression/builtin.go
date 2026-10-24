@@ -502,6 +502,9 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 		if err != nil {
 			return baseBuiltinFunc{}, err
 		}
+		if tp.GetCharset() == charset.CharsetBin {
+			bf.SetCharsetAndCollation(charset.CharsetBin, charset.CollationBin)
+		}
 	}
 	return bf, nil
 }
