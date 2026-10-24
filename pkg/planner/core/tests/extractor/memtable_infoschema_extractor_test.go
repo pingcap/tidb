@@ -424,6 +424,22 @@ func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
 }
 
 func TestMemtableInfoschemaExtractorPart1(t *testing.T) {
+	t.Run("name equality collation", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		for _, predicate := range []string{
+			"table_name='tables'",
+			"table_name='TABLES_PRIV'",
+			"table_name='tables' and table_name<>'tables'",
+			"table_name in ('tables','TABLES_PRIV')",
+			"table_name='tables' collate utf8mb4_bin",
+		} {
+			tk.MustQuery("select count(*) from information_schema.tables where " + predicate).Check(testkit.Rows("0"))
+		}
+		tk.MustQuery("select count(*) from information_schema.tables where table_name='TABLES'").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from information_schema.tables where table_name between 'TABLES' and 'TABLES'").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from information_schema.tables where lower(table_name)='tables'").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from information_schema.tables where table_name='tables' collate utf8mb4_general_ci").Check(testkit.Rows("1"))
+	})
 	tcs := []testCase{
 		{
 			memTableName: infoschema.TableTiDBIndexes,
