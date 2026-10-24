@@ -702,6 +702,7 @@ fn cascade_at_depth(
                             crate::driver::GeneratedWrite::Update {
                                 row_index: rewritten.len(),
                             },
+                            None,
                         )?;
                         let level = crate::bad_null::NullLevel::from_is_error(
                             ctx.strict() && !ctx.ignore_err(),

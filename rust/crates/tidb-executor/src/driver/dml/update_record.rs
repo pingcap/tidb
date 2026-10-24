@@ -113,7 +113,7 @@ impl<'a> UpdateRecords<'a> {
             return Ok(UpdateOutcome::Unchanged);
         }
         if let TableEntry::Kv(kv) = entry {
-            materialize_generated_for_write(kv, new, ctx, generation)?;
+            materialize_generated_for_write(kv, new, ctx, generation, None)?;
         }
         let fk_target = if crate::foreign_key::has_triggers(self.triggers, database, name) {
             let index = self

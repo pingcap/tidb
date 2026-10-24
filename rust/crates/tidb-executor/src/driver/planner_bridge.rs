@@ -2452,6 +2452,7 @@ pub(crate) fn plan_insert_expressions(
     (
         tidb_planner::plan_builder::insert_values::InsertValues,
         Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
+        Vec<Option<Expression>>,
     ),
     tidb_planner::plan_base::PlanError,
 > {
@@ -2499,7 +2500,9 @@ pub(crate) fn plan_insert_expressions(
         builder.check_insert_select(&target, output.actual_col_len.unwrap_or(schema.len()))?;
     }
     let on_duplicate = builder.build_on_duplicate(insert, &target, select)?;
-    Ok((values, on_duplicate))
+    // Go `resolveGeneratedColumns`, after the assignments.
+    let generated = builder.resolve_generated_columns(&target)?;
+    Ok((values, on_duplicate, generated))
 }
 
 /// Go `buildSelectPlanOfInsert`'s extension of the source for the ON
@@ -2570,6 +2573,26 @@ pub(crate) fn single_update_assignments(
     let column_ids = ColumnIdAllocator::new();
     PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
         .resolve_single_update_assignments(update, ctx.allow_write_row_id())
+}
+
+/// Go `buildOnDuplicateUpdateColumns`: the columns an INSERT's resolved ON
+/// DUPLICATE assignments write.
+pub(crate) fn insert_on_duplicate_columns(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<String>, tidb_planner::plan_base::PlanError> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    let target = builder.resolve_insert_target(insert)?;
+    builder.on_duplicate_columns(insert, &target)
 }
 
 /// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.

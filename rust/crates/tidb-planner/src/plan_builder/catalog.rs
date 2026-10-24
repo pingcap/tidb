@@ -103,8 +103,9 @@ pub struct SourceColumn {
     /// column, which the storage layer cannot return and the planner must
     /// compute. Read by `FlagGcSubstitute`'s eligibility.
     pub is_virtual_generated: bool,
-    /// Go `ColumnInfo.GeneratedExpr`, retained for virtual-column expression
-    /// construction in the reading statement's own expression context.
+    /// Go `ColumnInfo.GeneratedExpr`, retained for every generated column: the
+    /// reading statement rewrites a virtual one in its own expression context,
+    /// and an INSERT rewrites each one over its target (`resolveGeneratedColumns`).
     pub generated_expr: Option<tidb_ast::Expr>,
 }
 

@@ -1763,3 +1763,66 @@ fn single_table_update_assignments_resolve_to_table_columns() {
         .resolve_single_update_assignments(&parse("UPDATE t SET _tidb_rowid = 1"), true)
         .is_ok());
 }
+
+#[test]
+fn insert_on_duplicate_columns_follow_the_resolved_assignments() {
+    // Go `buildOnDuplicateUpdateColumns` reads `Insert.OnDuplicate`, which
+    // `ResolveOnDuplicate` leaves without a generated column's own DEFAULT.
+    let parse = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the INSERT parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        let tidb_ast::DmlStmt::Insert(insert) = (*dml).clone() else {
+            panic!("not an INSERT");
+        };
+        insert
+    };
+    let mut generated = Harness::new();
+    generated.catalog.tables[0].columns[2].is_generated = true;
+    let insert = parse("INSERT INTO t VALUES (1, 2, DEFAULT) ON DUPLICATE KEY UPDATE C = DEFAULT, b = 1");
+    let builder = generated.builder();
+    let target = builder.resolve_insert_target(&insert).unwrap();
+    assert_eq!(
+        builder.on_duplicate_columns(&insert, &target).unwrap(),
+        vec!["b".to_owned()]
+    );
+}
+
+#[test]
+fn insert_generated_columns_are_expressions_over_the_whole_row() {
+    // Go `resolveGeneratedColumns`: each generated column's expression is
+    // rewritten over the table's own schema, so its columns index the stored
+    // row; a column that is not generated has none.
+    let mut generated = Harness::new();
+    let expression = {
+        let select = parse_select("SELECT a + b");
+        match select.fields.iter().next() {
+            Some(tidb_ast::SelectField::Expr { expr, .. }) => expr.clone(),
+            other => panic!("unexpected field {other:?}"),
+        }
+    };
+    generated.catalog.tables[0].columns[2].is_generated = true;
+    generated.catalog.tables[0].columns[2].generated_expr = Some(expression);
+    let statement = tidb_parser::parse("INSERT INTO t VALUES (1, 2, DEFAULT)").unwrap();
+    let Stmt::Dml(dml) = statement else {
+        panic!("not a DML statement");
+    };
+    let tidb_ast::DmlStmt::Insert(insert) = (*dml).clone() else {
+        panic!("not an INSERT");
+    };
+    let mut builder = generated.builder();
+    let target = builder.resolve_insert_target(&insert).unwrap();
+    let resolved = builder.resolve_generated_columns(&target).unwrap();
+    assert_eq!(resolved.len(), 3);
+    assert!(resolved[0].is_none() && resolved[1].is_none());
+    let columns = tidb_expr::simple_expr::extract_columns(resolved[2].as_ref().unwrap());
+    let mut indexes: Vec<i64> = columns.iter().map(|column| column.index).collect();
+    indexes.sort_unstable();
+    assert_eq!(indexes, vec![0, 1], "`a + b` reads the stored row's first two columns");
+
+    let plain = Harness::new();
+    let mut builder = plain.builder();
+    let target = builder.resolve_insert_target(&insert).unwrap();
+    assert!(builder.resolve_generated_columns(&target).unwrap().is_empty());
+}

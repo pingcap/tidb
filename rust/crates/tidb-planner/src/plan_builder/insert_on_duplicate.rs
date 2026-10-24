@@ -294,29 +294,11 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
         let mut assigns = Vec::with_capacity(insert.on_duplicate.len());
         for assignment in &insert.on_duplicate {
-            // The assigned column first, against the target's columns.
-            let offset = super::find_field_name(&names[..target_len], &assignment.col)
-                .ok_or_else(|| {
-                    PlanError::unknown_column_in_clause(assignment.col.join("."), "field list")
-                })?;
-            // Go: a generated column accepts only DEFAULT, or DEFAULT of the
-            // same column; either leaves it to its expression.
-            if target.generated[offset] {
-                let same = match &assignment.value {
-                    Expr::Default(None) => true,
-                    Expr::Default(Some(path)) => {
-                        super::find_field_name(&names[..target_len], path) == Some(offset)
-                    }
-                    _ => false,
-                };
-                if same {
-                    continue;
-                }
-                return Err(PlanError::bad_generated_column(
-                    target.columns[offset].0.clone(),
-                    target.table.clone(),
-                ));
-            }
+            let Some(offset) =
+                Self::resolve_on_duplicate_target(assignment, target, &names[..target_len])?
+            else {
+                continue;
+            };
             // A bare DEFAULT is the assigned column's own default.
             let value = match &assignment.value {
                 Expr::Default(None) => Expr::Default(Some(assignment.col.clone())),
@@ -343,6 +325,55 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             });
         }
         Ok(assigns)
+    }
+
+    /// The first half of Go `ResolveOnDuplicate` for one assignment: the
+    /// assigned column against the target's columns, and a generated column's
+    /// DEFAULT-only rule (`IsDefaultExprSameColumn`). `None` is an assignment
+    /// of DEFAULT to a generated column, which Go drops.
+    fn resolve_on_duplicate_target(
+        assignment: &tidb_ast::Assignment,
+        target: &InsertTarget,
+        target_names: &[FieldName],
+    ) -> Result<Option<usize>, PlanError> {
+        let offset = super::find_field_name(target_names, &assignment.col).ok_or_else(|| {
+            PlanError::unknown_column_in_clause(assignment.col.join("."), "field list")
+        })?;
+        if target.generated[offset] {
+            let same = match &assignment.value {
+                Expr::Default(None) => true,
+                Expr::Default(Some(path)) => {
+                    super::find_field_name(target_names, path) == Some(offset)
+                }
+                _ => false,
+            };
+            if same {
+                return Ok(None);
+            }
+            return Err(PlanError::bad_generated_column(
+                target.columns[offset].0.clone(),
+                target.table.clone(),
+            ));
+        }
+        Ok(Some(offset))
+    }
+
+    /// Go `Insert.buildOnDuplicateUpdateColumns`: the columns the resolved
+    /// ON DUPLICATE assignments write (a dropped generated DEFAULT is none),
+    /// which decide the foreign key triggers.
+    pub fn on_duplicate_columns(
+        &self,
+        insert: &InsertStmt,
+        target: &InsertTarget,
+    ) -> Result<Vec<String>, PlanError> {
+        let (_, names) = self.insert_mock_schema(target);
+        let mut columns = Vec::new();
+        for assignment in &insert.on_duplicate {
+            if let Some(offset) = Self::resolve_on_duplicate_target(assignment, target, &names)? {
+                columns.push(target.columns[offset].0.clone());
+            }
+        }
+        Ok(columns)
     }
 
     /// Go `rewriteInsertOnDuplicateUpdate`: the value over

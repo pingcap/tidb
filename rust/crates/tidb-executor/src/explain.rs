@@ -3984,7 +3984,7 @@ pub fn explain_insert_stmt(
     // Go `buildInsert` resolves the target columns and checks a VALUES list's
     // width before it builds an INSERT ... SELECT's source.
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, None)?;
-    let fk_spec = crate::driver::fk_spec_for_insert(insert, current_db)?;
+    let fk_spec = crate::driver::fk_spec_for_insert(insert, catalog, current_db, ctx)?;
     let _ = fk_spec;
     let physical = crate::driver::physical_insert_plan(insert, catalog, current_db, ctx)?;
     // The source's own width: Go appends ON DUPLICATE fields past it.

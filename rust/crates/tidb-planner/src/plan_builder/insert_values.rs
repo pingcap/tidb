@@ -136,6 +136,72 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         })
     }
 
+    /// Go `resolveGeneratedColumns`: each generated column's expression
+    /// (`GeneratedExpr.Clone()`) rewritten over `mockTablePlan`, whose schema
+    /// is the table's own, hidden and write-only columns included -- so a
+    /// `Column` indexes the table's complete stored row. The answer has one
+    /// entry per table column, `None` where the column is not generated.
+    pub fn resolve_generated_columns(
+        &mut self,
+        target: &InsertTarget,
+    ) -> Result<Vec<Option<Expression>>, PlanError> {
+        let table = self
+            .source
+            .find_table(&target.database, &target.table)
+            .ok_or_else(|| {
+                PlanError::unknown_table(format!("{}.{}", target.database, target.table))
+            })?
+            .clone();
+        if !table.columns.iter().any(|column| column.is_generated) {
+            return Ok(Vec::new());
+        }
+        let mut schema = Schema::default();
+        let mut names = Vec::with_capacity(table.columns.len());
+        for column in &table.columns {
+            let mut built = Column::new(self.column_ids.alloc(), column.ret_type.clone());
+            built.orig_name = format!("{}.{}.{}", table.db_name, table.table_name, column.name);
+            schema.columns.push(built);
+            names.push(FieldName::new(FieldNameMetadata {
+                original_table: IdentifierMetadata::new(table.table_name.as_str()),
+                original_column: IdentifierMetadata::new(column.name.as_str()),
+                database: IdentifierMetadata::new(table.db_name.as_str()),
+                table: IdentifierMetadata::new(table.table_name.as_str()),
+                column: IdentifierMetadata::new(column.name.as_str()),
+            }));
+        }
+        let saved_clause = self.cur_clause;
+        let saved_array = self.allow_build_cast_array.replace(true);
+        let mut resolved = Vec::with_capacity(table.columns.len());
+        let mut failure = None;
+        for column in &table.columns {
+            if !column.is_generated {
+                resolved.push(None);
+                continue;
+            }
+            let Some(expr) = &column.generated_expr else {
+                failure = Some(PlanError::internal(
+                    "a generated column has no expression to build",
+                ));
+                break;
+            };
+            let mut markers = BTreeMap::new();
+            markers.insert(MarkerKind::Column, schema.columns.clone());
+            match self.rewrite_scalar(&Self::clause_scratch(expr), &schema, &names, &markers) {
+                Ok(expression) => resolved.push(Some(expression)),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        self.allow_build_cast_array.set(saved_array);
+        self.cur_clause = saved_clause;
+        match failure {
+            Some(error) => Err(error),
+            None => Ok(resolved),
+        }
+    }
+
     /// Go `buildSelectPlanOfInsert`'s checks once the source is built: its
     /// width must equal the number of target columns, and only then is a
     /// generated target refused (`insert into t (b) select * from t` over a

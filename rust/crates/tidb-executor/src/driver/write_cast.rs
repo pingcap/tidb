@@ -65,10 +65,11 @@ pub(crate) fn materialize_generated_for_write(
     row: &mut Vec<Datum>,
     ctx: &crate::StmtContext,
     policy: GeneratedWrite,
+    planned: Option<&[Option<Expression>]>,
 ) -> Result<(), DriverError> {
     let columns = table.columns.as_slice();
     row.resize(row.len().max(columns.len()), Datum::Null);
-    let result = crate::generated_column::materialize_with(columns, row, false, ctx, |column, value| {
+    let convert = |column: &crate::kv_table::KvColumn, value| {
         let mut value = match policy {
             GeneratedWrite::Insert { row_index, .. } => cast_value_for_column(
                 value,
@@ -107,7 +108,16 @@ pub(crate) fn materialize_generated_for_write(
             )?;
         }
         Ok(value)
-    });
+    };
+    let result = match planned {
+        // Go `Insert.GenCols`: the planner's own expressions.
+        Some(planned) => {
+            crate::generated_column::materialize_planned(columns, planned, row, ctx, convert)
+        }
+        None => {
+            crate::generated_column::materialize_with(columns, row, false, ctx, convert)
+        }
+    };
     result.map_err(|failure| match failure {
         GeneratedWriteFailure::Driver(error) => error,
         GeneratedWriteFailure::Generation(error) => {

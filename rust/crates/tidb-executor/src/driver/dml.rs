@@ -195,7 +195,7 @@ pub(crate) fn physical_insert_plan(
         current_db,
         ctx,
         false,
-        std::slice::from_ref(&fk_spec_for_insert(insert, current_db)?),
+        std::slice::from_ref(&fk_spec_for_insert(insert, catalog, current_db, ctx)?),
         DmlKeep::Auto,
         actual_col_len,
     )
@@ -536,22 +536,32 @@ fn physical_dml_plan_with_cache_mode(
 }
 
 /// Go `tnW.DBInfo.Name.L` / `tableInfo.Name` for the INSERT target, plus the
-/// REPLACE / ON DUPLICATE facts `BuildOnInsertFKTriggers` branches on.
+/// REPLACE / ON DUPLICATE facts `BuildOnInsertFKTriggers` branches on: the
+/// columns the RESOLVED assignments write (`buildOnDuplicateUpdateColumns`).
 pub(crate) fn fk_spec_for_insert(
     insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
     current_db: &str,
+    ctx: &crate::StmtContext,
 ) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
     let (database, table) = super::catalog::split_table_path(&insert.table, current_db)?;
+    // An assignment the planner cannot resolve is raised by the statement's
+    // own planning; the trigger selection falls back to the names as written.
+    let on_duplicate_cols =
+        super::planner_bridge::insert_on_duplicate_columns(insert, catalog, current_db, ctx)
+            .unwrap_or_else(|_| {
+                insert
+                    .on_duplicate
+                    .iter()
+                    .filter_map(|assignment| assignment.col.last().cloned())
+                    .collect()
+            });
     Ok(fk_trigger_plan::FkPlanSpec {
         database: database.to_owned(),
         table: table.to_owned(),
         updated_cols: Vec::new(),
         replace: insert.replace,
-        on_duplicate_cols: insert
-            .on_duplicate
-            .iter()
-            .filter_map(|assignment| assignment.col.last().cloned())
-            .collect(),
+        on_duplicate_cols,
     })
 }
 
@@ -759,6 +769,9 @@ pub(crate) struct PlannedInsert {
     on_duplicate: Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
     /// Go `actualColLen`.
     actual_col_len: Option<usize>,
+    /// Go `Insert.GenCols`: each generated column's expression over the
+    /// table's complete stored row, per table column.
+    generated: Vec<Option<Expression>>,
 }
 
 /// Go `buildInsert`: the VALUES lists, then (for an `INSERT ... SELECT`) the
@@ -779,13 +792,14 @@ fn plan_insert(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<PlannedInsert, DriverError> {
-    let (values, on_duplicate) =
+    let (values, on_duplicate, generated) =
         super::planner_bridge::plan_insert_expressions(insert, select, catalog, current_db, ctx)
             .map_err(super::planner_error_to_driver)?;
     Ok(PlannedInsert {
         lists: values.lists,
         on_duplicate,
         actual_col_len: select.and_then(|(_, output)| output.actual_col_len),
+        generated,
     })
 }
 
@@ -897,13 +911,14 @@ fn run_insert_rows(
     }
 
     let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
-    let (planned_lists, planned_on_duplicate, actual_col_len) = match planned {
+    let (planned_lists, planned_on_duplicate, actual_col_len, planned_generated) = match planned {
         Some(planned) => (
             planned.lists.as_slice(),
             planned.on_duplicate.as_slice(),
             planned.actual_col_len,
+            Some(planned.generated.as_slice()).filter(|generated| !generated.is_empty()),
         ),
-        None => (&[][..], &[][..], None),
+        None => (&[][..], &[][..], None, None),
     };
     let eval_chunk = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
@@ -1386,6 +1401,7 @@ fn run_insert_rows(
                     row_index: new_rows.len(),
                     null_level: bad_null_level,
                 },
+                planned_generated,
             )?;
             if let Some(handle) = extra_handle {
                 row.push(handle);
@@ -2993,7 +3009,9 @@ fn cached_dml_physical_plan(
         _ => return None,
     };
     let fk_spec = match dml.as_ref() {
-        tidb_ast::DmlStmt::Insert(insert) => fk_spec_for_insert(insert, current_database),
+        tidb_ast::DmlStmt::Insert(insert) => {
+            fk_spec_for_insert(insert, catalog, current_database, ctx)
+        }
         tidb_ast::DmlStmt::Update(update) => fk_spec_for_update(update, current_database),
         tidb_ast::DmlStmt::Delete(delete) => fk_spec_for_delete(delete, current_database),
         _ => return None,

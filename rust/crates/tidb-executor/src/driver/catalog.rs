@@ -2341,9 +2341,10 @@ impl Catalog {
                                     .generated
                                     .as_ref()
                                     .is_some_and(|generated| !generated.stored),
-                                generated_expr: column.generated.as_ref().and_then(|generated| {
-                                    (!generated.stored).then(|| generated.source.clone())
-                                }),
+                                generated_expr: column
+                                    .generated
+                                    .as_ref()
+                                    .map(|generated| generated.source.clone()),
                             })
                             .collect::<Vec<_>>();
                         // Go keeps clustered PRIMARY in TableInfo.Indices even

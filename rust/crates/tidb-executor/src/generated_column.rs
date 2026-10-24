@@ -429,6 +429,44 @@ pub(crate) fn materialize_with<S: GeneratedColumnSlot, E: From<GenerationError>>
     Ok(())
 }
 
+/// [`materialize_with`] over expressions the planner already built
+/// (Go `Insert.GenCols`, `resolveGeneratedColumns`): each `Column` of a
+/// planned expression indexes the table's complete stored row, so the row is
+/// evaluated whole instead of gathered by dependency name.
+pub(crate) fn materialize_planned<S: GeneratedColumnSlot, E: From<GenerationError>>(
+    columns: &[S],
+    planned: &[Option<Expression>],
+    row: &mut [Datum],
+    ctx: &impl tidb_expr::Columns,
+    mut convert: impl FnMut(&S, Datum) -> Result<Datum, E>,
+) -> Result<(), E> {
+    let types: Vec<FieldType> = columns
+        .iter()
+        .map(|column| column.column_type().clone())
+        .collect();
+    for (offset, column) in columns.iter().enumerate() {
+        if column.generation().is_none() {
+            continue;
+        }
+        let Some(expr) = planned.get(offset).and_then(Option::as_ref) else {
+            return Err(GenerationError {
+                column: column.column_name().to_owned(),
+                detail: "the generated expression was not planned".to_owned(),
+                eval: None,
+            }
+            .into());
+        };
+        let value = eval_over_row(expr, &types, row, ctx).map_err(|error| GenerationError {
+            column: column.column_name().to_owned(),
+            detail: format!("{error:?}"),
+            eval: Some(error),
+        })?;
+        let value = convert(column, value)?;
+        row[offset] = value;
+    }
+    Ok(())
+}
+
 /// Evaluates an expression whose `Column` nodes index `dependencies` against
 /// a row of the TABLE, gathering the named columns' values into the
 /// expression's own namespace.
