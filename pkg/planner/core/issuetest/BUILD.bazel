@@ -4,13 +4,14 @@ go_test(
     name = "issuetest_test",
     timeout = "moderate",
     srcs = [
+        "decorrelate_concat_ws_test.go",
         "main_test.go",
         "panicrisk_tier2_test.go",
         "planner_issue_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//pkg/errno",
         "//pkg/parser",
