@@ -578,9 +578,10 @@ impl Session {
                 column,
                 position,
                 rename_from,
+                if_exists,
                 ..
             } => {
-                tidb_executor::ddl::check_modifiable_column(
+                match tidb_executor::ddl::check_modifiable_column(
                     &mut catalog,
                     schema,
                     table,
@@ -588,7 +589,14 @@ impl Session {
                     column,
                     position,
                     &ctx,
-                )?;
+                ) {
+                    // Go `ModifyColumn` / `ChangeColumn`: under IF EXISTS
+                    // `ErrColumnNotExists` becomes the job builder's note.
+                    Err(DriverError::UnknownColumnInTable { .. }) if *if_exists => {}
+                    other => {
+                        other?;
+                    }
+                }
             }
             // Each MODIFY / CHANGE of a multi-schema change is admitted
             // against the original table, as Go builds every sub-job from it.

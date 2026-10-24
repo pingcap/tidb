@@ -1166,7 +1166,9 @@ pub fn index_backfill_error(error: crate::kv_table::KvTableError) -> DriverError
         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
             DriverError::DuplicateEntry { value, key }
         }
-        other => DriverError::Parse(format!("index creation failed: {other:?}")),
+        // Every other row-write failure keeps the code a DML write gives it
+        // (a REORGANIZE row no new partition takes is Go's 1526).
+        other => crate::driver::kv_write_error(other),
     }
 }
 

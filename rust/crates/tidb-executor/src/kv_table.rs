@@ -4759,13 +4759,28 @@ impl KvTable {
     /// [`crate::storage::TableStorage`], so the whole key set is readable
     /// directly.
     pub fn stored_keys(&mut self) -> Result<Vec<Vec<u8>>, KvTableError> {
-        let mut iterator = self.store.iter(None, None).map_err(KvTableError::from)?;
+        // Every key of the table lies under one of its physical ids' `t{id}`
+        // prefixes: the logical id (records, global indexes) and each
+        // partition's. A store shared with other tables is read range by
+        // range, as Go iterates a table prefix.
+        let mut physical_ids = vec![self.table_id];
+        physical_ids.extend(self.record_physical_ids());
+        physical_ids.sort_unstable();
+        physical_ids.dedup();
         let mut keys = Vec::new();
-        while iterator.valid() {
-            keys.push(iterator.key().as_slice().to_vec());
-            iterator.next().map_err(KvTableError::from)?;
+        for id in physical_ids {
+            let start = Key::from_bytes(tidb_codec::table_key::gen_table_prefix(id));
+            let end = Key::from_bytes(tidb_codec::table_key::gen_table_prefix(id.saturating_add(1)));
+            let mut iterator = self
+                .store
+                .iter(Some(&start), Some(&end))
+                .map_err(KvTableError::from)?;
+            while iterator.valid() {
+                keys.push(iterator.key().as_slice().to_vec());
+                iterator.next().map_err(KvTableError::from)?;
+            }
+            iterator.close();
         }
-        iterator.close();
         keys.sort_unstable();
         Ok(keys)
     }

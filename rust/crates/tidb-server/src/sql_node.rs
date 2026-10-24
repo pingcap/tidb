@@ -45,16 +45,54 @@ use tidb_session::process::ProcessKillTarget;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+/// Wakes the accept loop out of its blocking `accept` by connecting to the
+/// listener once: Go closes its listener so `Accept` returns, and this is the
+/// same wake for a listener the loop keeps owning.
+#[derive(Clone, Debug, Default)]
+struct AcceptWaker {
+    address: Arc<std::sync::Mutex<Option<SocketAddr>>>,
+}
+
+impl AcceptWaker {
+    fn bind_to(&self, listener: &TcpListener) {
+        let Ok(mut address) = listener.local_addr() else {
+            return;
+        };
+        if address.ip().is_unspecified() {
+            address.set_ip(match address {
+                SocketAddr::V4(_) => std::net::Ipv4Addr::LOCALHOST.into(),
+                SocketAddr::V6(_) => std::net::Ipv6Addr::LOCALHOST.into(),
+            });
+        }
+        *self
+            .address
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(address);
+    }
+
+    fn wake(&self) {
+        let address = *self
+            .address
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(address) = address {
+            let _ = TcpStream::connect_timeout(&address, Duration::from_millis(500));
+        }
+    }
+}
+
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]
 pub struct ShutdownHandle {
     requested: Arc<AtomicBool>,
+    waker: AcceptWaker,
 }
 
 impl ShutdownHandle {
     /// Requests shutdown. Repeated requests are idempotent.
     pub fn shutdown(&self) {
         self.requested.store(true, Ordering::Release);
+        self.waker.wake();
     }
 
     /// Whether shutdown has been requested.
@@ -232,7 +270,7 @@ struct WorkerPool {
     available_sender: mpsc::SyncSender<usize>,
     /// A live clone so the accept loop can hand dedicated (per-connection)
     /// threads the same terminal guard the warm pool uses to report panics.
-    terminal_sender: mpsc::Sender<WorkerTerminal>,
+    terminal_sender: TerminalSender,
     terminal_workers: mpsc::Receiver<WorkerTerminal>,
 }
 
@@ -259,9 +297,38 @@ struct WorkerTerminal {
     kind: WorkerTerminalKind,
 }
 
+/// The terminal channel's sender: a PANICKED serving thread also wakes the
+/// accept loop, so admission stops at once rather than at the next client.
+/// A thread that merely returned needs no wake; the loop reaps it on its next
+/// pass.
+#[derive(Clone)]
+struct TerminalSender {
+    sender: mpsc::Sender<WorkerTerminal>,
+    waker: AcceptWaker,
+}
+
+impl TerminalSender {
+    fn send(&self, terminal: WorkerTerminal) -> Result<(), mpsc::SendError<WorkerTerminal>> {
+        let sent = self.sender.send(terminal);
+        if terminal.kind == WorkerTerminalKind::Panicked {
+            self.waker.wake();
+        }
+        sent
+    }
+}
+
+impl From<mpsc::Sender<WorkerTerminal>> for TerminalSender {
+    fn from(sender: mpsc::Sender<WorkerTerminal>) -> Self {
+        Self {
+            sender,
+            waker: AcceptWaker::default(),
+        }
+    }
+}
+
 struct WorkerTerminalGuard {
     index: usize,
-    terminal: mpsc::Sender<WorkerTerminal>,
+    terminal: TerminalSender,
 }
 
 impl Drop for WorkerTerminalGuard {
@@ -564,10 +631,9 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
     ) -> Result<Self, SqlNodeError> {
         let tls =
             MysqlTlsManager::new(config).map_err(|error| SqlNodeError::Tls(error.to_string()))?;
+        // Go's listener blocks in `Accept`; shutdown and a panicked serving
+        // thread wake it (`AcceptWaker`).
         let listener = TcpListener::bind((config.host, config.port)).map_err(SqlNodeError::Bind)?;
-        listener
-            .set_nonblocking(true)
-            .map_err(SqlNodeError::Listener)?;
         let tls_variables = tls.variables();
         if tls.current().is_some() {
             // Go `NewServer`, once a TLS config is in place.
@@ -593,6 +659,8 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             .as_ref()
             .map(|manager| ExpensiveQueryRunner::start(Arc::clone(manager)));
         let memory_usage_alarm = session_manager.map(MemoryUsageAlarmRunner::start);
+        let shutdown = ShutdownHandle::default();
+        shutdown.waker.bind_to(&listener);
         let tracker = Arc::new(ConnectionTracker::with_config(
             &config.global_config,
             factory.server_identity(),
@@ -607,7 +675,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             tls,
             _tls_rotation: tls_rotation,
             worker_count: config.max_connections,
-            shutdown: ShutdownHandle::default(),
+            shutdown,
             shutdown_grace: DEFAULT_SHUTDOWN_GRACE,
             connection_timeout: config.connection_timeout,
             _server_memory_limit: server_memory_limit,
@@ -704,6 +772,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                 max_allowed_packet: self.max_allowed_packet,
                 tls: Some(Arc::clone(&self.tls)),
             },
+            self.shutdown.waker.clone(),
         )?;
 
         let mut accepted = 0_usize;
@@ -758,12 +827,19 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             // a dead server, and 1040 is what tells it to back off.
             let (stream, peer_addr) = match self.listener.accept() {
                 Ok(connection) => connection,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(ACCEPT_POLL_INTERVAL);
-                    continue;
-                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(error) => break Err(SqlNodeError::Listener(error)),
             };
+            // A wake (shutdown, or a panicked serving thread) is a connection
+            // the loop drops unserved, as Go's closed listener ends `Accept`.
+            if self.shutdown.is_shutdown_requested() {
+                drop(stream);
+                break Ok(());
+            }
+            if let Err(error) = poll_terminal(&terminal_workers) {
+                drop(stream);
+                break Err(error);
+            }
             if self.tracker.identity_lost() {
                 drop(stream);
                 continue;
@@ -862,7 +938,7 @@ fn run_worker<S>(
     index: usize,
     work_receiver: mpsc::Receiver<ConnectionWork>,
     available: mpsc::SyncSender<usize>,
-    terminal: mpsc::Sender<WorkerTerminal>,
+    terminal: TerminalSender,
     mut serve: S,
 ) where
     S: FnMut(ConnectionWork),
@@ -966,7 +1042,7 @@ fn dedicated_connection_job<F: QuerySessionFactory>(
     users: Arc<ConfiguredUserStore>,
     tracker: Arc<ConnectionTracker>,
     connection: WorkerConnectionConfig,
-    terminal: mpsc::Sender<WorkerTerminal>,
+    terminal: TerminalSender,
 ) -> WorkerJob {
     Box::new(move || {
         let _terminal = WorkerTerminalGuard { index, terminal };
@@ -991,8 +1067,9 @@ fn spawn_workers<F: QuerySessionFactory>(
     users: &Arc<ConfiguredUserStore>,
     tracker: &Arc<ConnectionTracker>,
     connection: WorkerConnectionConfig,
+    waker: AcceptWaker,
 ) -> Result<WorkerPool, SqlNodeError> {
-    spawn_workers_with(count, factory, users, tracker, connection, |index, job| {
+    spawn_workers_with(count, factory, users, tracker, connection, waker, |index, job| {
         std::thread::Builder::new()
             .name(format!("tidb-sql-connection-{index}"))
             .stack_size(SQL_WORKER_STACK_BYTES)
@@ -1006,6 +1083,7 @@ fn spawn_workers_with<F, S>(
     users: &Arc<ConfiguredUserStore>,
     tracker: &Arc<ConnectionTracker>,
     connection: WorkerConnectionConfig,
+    waker: AcceptWaker,
     mut spawn: S,
 ) -> Result<WorkerPool, SqlNodeError>
 where
@@ -1015,7 +1093,11 @@ where
     let mut workers = Vec::with_capacity(count);
     let mut work_senders = Vec::with_capacity(count);
     let (available_sender, available_receiver) = mpsc::sync_channel(count);
-    let (terminal_sender, terminal_receiver) = mpsc::channel();
+    let (terminal_channel, terminal_receiver) = mpsc::channel();
+    let terminal_sender = TerminalSender {
+        sender: terminal_channel,
+        waker,
+    };
     for index in 0..count {
         let (work_sender, work_receiver) = mpsc::channel::<ConnectionWork>();
         let factory = Arc::clone(factory);
@@ -1494,6 +1576,7 @@ mod tests {
                 max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
                 tls: None,
             },
+            AcceptWaker::default(),
             move |index, job: WorkerJob| {
                 if index == 1 {
                     return Err(std::io::Error::other("injected second spawn failure"));
@@ -1545,7 +1628,7 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let _terminal = WorkerTerminalGuard {
                 index: 3,
-                terminal: terminal_tx,
+                terminal: terminal_tx.into(),
             };
             panic!("injected pre-availability worker panic");
         });
@@ -1605,7 +1688,7 @@ mod tests {
         let (available_tx, available_rx) = mpsc::sync_channel(1);
         let (terminal_tx, terminal_rx) = mpsc::channel();
         let worker = std::thread::spawn(move || {
-            run_worker(2, work_rx, available_tx, terminal_tx, |_work| {
+            run_worker(2, work_rx, available_tx, terminal_tx.into(), |_work| {
                 panic!("injected post-admission worker panic");
             });
         });

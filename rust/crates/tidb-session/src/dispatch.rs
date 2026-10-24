@@ -991,6 +991,7 @@ impl Session {
         statement: &Stmt,
         sql: &str,
     ) -> Result<Option<crate::OpenedStatement>, DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(sql)?;
         let result = (|| {
             self.set_statement_arbitration_key(sql);
@@ -1053,6 +1054,7 @@ impl Session {
         execution: &tidb_executor::PreparedSelectExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<StmtOutput, DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         self.execute_prepared_select(execution, prepared.sql(), prepared.privilege_requests())
     }
 
@@ -1086,6 +1088,7 @@ impl Session {
         execution: &tidb_executor::PreparedSelectExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::StatementExecution<'a>, DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         Ok(self
             .open_prepared_record_set_for(execution, prepared)?
             .attach(self))
@@ -1097,6 +1100,7 @@ impl Session {
         execution: &tidb_executor::PreparedSelectExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::OpenedStatement, DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(prepared.sql())?;
         self.observe_statement_node(prepared.statement(), true);
         let result = self.open_cached_prepared_select(execution, prepared)?;

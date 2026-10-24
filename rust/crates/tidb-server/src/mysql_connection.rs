@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::{BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use tidb_protocol::result_encoder::ResultEncoder;
@@ -26,7 +26,7 @@ use tidb_protocol::{
     decode_command, decode_prepared_statement_close, decode_prepared_statement_fetch,
     decode_prepared_statement_send_long_data, encode_prepared_statement_prepare_response,
     split_prepared_statement_execute, Command, CompressionAlgorithm, PacketError, PacketIoReader,
-    PacketIoWriter, PacketReader, PreparedParameterType, PreparedParameterTypes, PreparedValue,
+    PacketIoWriter, PacketReader, PreparedParameterType, PreparedParameterTypes,
     DEFAULT_MAX_ALLOWED_PACKET,
 };
 
@@ -1670,6 +1670,63 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     })
 }
 
+/// Go `BufferedReadConn.IsAlive` over the connection's raw socket: a
+/// non-blocking one-byte peek. Only an end of stream means the client is
+/// gone; a timeout, data or any other error answers alive, as Go treats its
+/// unknown states. Probes never overlap (Go's `mu.TryLock`): a probe that
+/// finds another running answers alive.
+struct ConnectionAliveProbe {
+    socket: TcpStream,
+    checking: Mutex<()>,
+}
+
+impl ConnectionAliveProbe {
+    fn is_alive(&self) -> bool {
+        let Ok(_checking) = self.checking.try_lock() else {
+            return true;
+        };
+        if self.socket.set_nonblocking(true).is_err() {
+            return true;
+        }
+        let mut byte = [0_u8; 1];
+        let peeked = self.socket.peek(&mut byte);
+        let _ = self.socket.set_nonblocking(false);
+        !matches!(peeked, Ok(0))
+    }
+}
+
+/// Clears the statement's liveness probe when the statement ends (Go's
+/// `clearConnectionAlive`).
+struct ConnectionAliveGuard {
+    killer: Arc<tidb_util::sqlkiller::SqlKiller>,
+    registration: Option<tidb_util::sqlkiller::ConnectionAliveRegistration>,
+}
+
+impl Drop for ConnectionAliveGuard {
+    fn drop(&mut self) {
+        if let Some(registration) = self.registration.take() {
+            self.killer.clear_is_connection_alive(registration);
+        }
+    }
+}
+
+/// Go `clientConn.setSQLKillerConnectionAlive`: installs the probe on the
+/// session's SQL killer, which checks it at its own execution checkpoints
+/// (`HandleSignal`, at most once a second) -- no background monitor, so a
+/// short statement pays nothing.
+fn set_sql_killer_connection_alive<S: QuerySession>(
+    engine: &S,
+    probe: &Arc<ConnectionAliveProbe>,
+) -> Option<ConnectionAliveGuard> {
+    let killer = engine.sql_killer()?;
+    let probe = Arc::clone(probe);
+    let registration = killer.set_is_connection_alive(Box::new(move || probe.is_alive()));
+    Some(ConnectionAliveGuard {
+        killer,
+        registration: Some(registration),
+    })
+}
+
 /// Go clientConn retains its session, statements and PacketIO until Run's
 /// recovery has attempted the error response. A raw socket cannot replace this
 /// writer: its codec, pending bytes and sequence belong to the same connection.
@@ -1903,6 +1960,10 @@ fn run_connection_commands<S: QuerySession>(
         conn_info,
     } = context;
     let protocol_41 = framing.protocol_41;
+    let connection_alive = Arc::new(ConnectionAliveProbe {
+        socket: stream_for_watch,
+        checking: Mutex::new(()),
+    });
     let mut queries = 0_u64;
     let mut last_metrics_sql_type = "general";
     // Go `clientConn.lastActive`: the moment the previous command finished;
@@ -2289,6 +2350,12 @@ fn run_connection_commands<S: QuerySession>(
                                 }
                             }
                         }
+                        // Go `handleStmt`: the statement runs with the connection's
+                        // liveness probe on its SQL killer, cleared when it ends.
+                        let _connection_alive = parsed
+                            .as_ref()
+                            .filter(|stmt| engine.should_install_connection_alive(stmt))
+                            .and_then(|_| set_sql_killer_connection_alive(engine, &connection_alive));
                         // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
                         // answer with an OK packet carrying the transaction status, not a
                         // result set; every other statement runs as an ordinary query.
@@ -2356,84 +2423,9 @@ fn run_connection_commands<S: QuerySession>(
                                 break;
                             }
                         }
-                        // go's server retires a running statement when the client
-                        // disappears: the driver's read timeout closes the socket,
-                        // go tears the connection down, and the in-flight query's
-                        // processlist row goes with it (oracle: `SELECT
-                        // sleep('2020-01-01')` times the client out at 120s and a
-                        // later `SHOW PROCESSLIST` lists nothing -- the row used to
-                        // leak here for the full sleep). This watcher gives the same
-                        // answer: while a statement runs, peek the client socket;
-                        // an EOF (or hard error) cancels the active query, whose
-                        // own killer unwinds it, and the connection loop's failing
-                        // write finishes the teardown.
-                        let watch_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-                        let watch_socket = stream_for_watch
-                            .try_clone()
-                            .map_err(MysqlConnectionError::Io)?;
-                        let watch_cancellation = cancellation.clone();
-                        let watch_flag = Arc::clone(&watch_stop);
-                        let watcher = std::thread::spawn(move || {
-                            let _ = watch_socket
-                                .set_read_timeout(Some(std::time::Duration::from_millis(50)));
-                            let mut byte = [0_u8; 1];
-                            while !watch_flag.load(std::sync::atomic::Ordering::Relaxed) {
-                                match watch_socket.peek(&mut byte) {
-                                    // The client is gone: go's teardown kills the
-                                    // in-flight query and retires its processlist
-                                    // row; the cancellation does both here.
-                                    Ok(0) => {
-                                        watch_cancellation.cancel();
-                                        return;
-                                    }
-                                    // A hard socket error: the client is gone.
-                                    Err(error) => {
-                                        let kind = error.kind();
-                                        if kind != std::io::ErrorKind::WouldBlock
-                                            && kind != std::io::ErrorKind::TimedOut
-                                        {
-                                            watch_cancellation.cancel();
-                                            return;
-                                        }
-                                    }
-                                    // The peek's own 50ms timeout -- the client is
-                                    // merely quiet.
-                                    Ok(_) => {}
-                                }
-                                std::thread::sleep(std::time::Duration::from_millis(50));
-                            }
-                        });
-                        // The watcher must ALSO cover the result-set write: a
-                        // `SELECT sleep(...)` evaluates during the row fetch, not
-                        // inside `execute_statement` (whose plan returns at once).
-                        struct WatcherStop<'a> {
-                            flag: &'a Arc<std::sync::atomic::AtomicBool>,
-                            watcher: Option<std::thread::JoinHandle<()>>,
-                            socket: &'a TcpStream,
-                        }
-                        // Go Run's deferred teardown also owns the panic path.
-                        // Do not leave this Rust watcher holding the socket on
-                        // unwind while the command permit and session retire.
-                        impl Drop for WatcherStop<'_> {
-                            fn drop(&mut self) {
-                                self.flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                                if let Some(watcher) = self.watcher.take() {
-                                    let _ = watcher.join();
-                                }
-                                // the peek timeout lives on the shared socket; clear
-                                // it so the command loop's own reads block as before.
-                                let _ = self.socket.set_read_timeout(None);
-                            }
-                        }
-                        let stop_watcher = WatcherStop {
-                            flag: &watch_stop,
-                            watcher: Some(watcher),
-                            socket: &stream_for_watch,
-                        };
                         let mut result = match execute_statement(engine, sql, parsed.as_ref()) {
                             Ok(result) => result,
                             Err(error) => {
-                                drop(stop_watcher);
                                 write_query_error_at(output, sequence, &error, protocol_41)?;
                                 aborted = true;
                                 break;
@@ -2457,9 +2449,6 @@ fn run_connection_commands<S: QuerySession>(
                             );
                             (written, sink.next_sequence())
                         };
-                        // the streaming write above is where a slow statement's
-                        // rows are produced -- the watcher must not stop before it.
-                        drop(stop_watcher);
                         sequence = next_sequence;
                         match write_result {
                             Ok(_) => {
@@ -2755,6 +2744,15 @@ fn run_connection_commands<S: QuerySession>(
                             record_client_warnings(&*output, &*engine);
                         }
                         PreparedStatement::General(general) => {
+                            // Go `executePreparedStmtAndWriteResult`: the execute runs
+                            // with the liveness probe when its prepared statement
+                            // would on the text protocol.
+                            let _connection_alive = general
+                                .template()
+                                .filter(|stmt| engine.should_install_connection_alive(stmt))
+                                .and_then(|_| {
+                                    set_sql_killer_connection_alive(engine, &connection_alive)
+                                });
                             // Go's read-only cursor: the execute materializes the
                             // rows, holds them on the statement, and answers with
                             // only the column definitions plus an EOF whose
@@ -3392,5 +3390,54 @@ mod dispatch_failure_log_tests {
             "a NOWAIT refusal is below info"
         );
         restore.restore();
+    }
+}
+
+#[cfg(test)]
+mod connection_alive_tests {
+    use super::{ConnectionAliveProbe, Mutex};
+    use std::net::{TcpListener, TcpStream};
+
+    /// Go `BufferedReadConn.IsAlive`: a quiet client is alive, and only the
+    /// client's end of stream makes the probe answer dead.
+    #[test]
+    fn the_probe_answers_dead_only_after_the_client_closes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let probe = ConnectionAliveProbe {
+            socket: server,
+            checking: Mutex::new(()),
+        };
+        assert!(probe.is_alive(), "a quiet client is alive");
+        drop(client);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while probe.is_alive() {
+            assert!(std::time::Instant::now() < deadline, "EOF never observed");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        // The probe restores blocking mode, so the command loop's next read
+        // blocks again.
+        let mut byte = [0_u8; 1];
+        assert_eq!(std::io::Read::read(&mut &probe.socket, &mut byte).unwrap(), 0);
+    }
+
+    /// The probe peeks rather than reads: a client byte stays for the
+    /// command loop.
+    #[test]
+    fn the_probe_leaves_client_bytes_unread() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        std::io::Write::write_all(&mut client, b"x").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let probe = ConnectionAliveProbe {
+            socket: server,
+            checking: Mutex::new(()),
+        };
+        assert!(probe.is_alive());
+        let mut byte = [0_u8; 1];
+        assert_eq!(std::io::Read::read(&mut &probe.socket, &mut byte).unwrap(), 1);
+        assert_eq!(&byte, b"x");
     }
 }

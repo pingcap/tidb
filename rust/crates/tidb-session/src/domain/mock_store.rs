@@ -259,6 +259,18 @@ impl MockStoreConnection {
         result
     }
 
+    /// Binds a committed snapshot for a statement opened directly on
+    /// `session`; see [`ClusterServerSession::bind_open_statement_snapshot`].
+    pub(crate) fn bind_open_statement_snapshot(
+        &mut self,
+        session: &mut Session,
+    ) -> Result<(), tidb_executor::DriverError> {
+        std::mem::swap(session, self.connection.driver_session_mut());
+        let result = self.connection.bind_open_statement_snapshot();
+        std::mem::swap(session, self.connection.driver_session_mut());
+        result
+    }
+
     /// Puts `session` back inside the connection, which then closes with it
     /// (Go `session.Close`: roll back, release table locks and pins).
     pub(crate) fn close(mut self, session: &mut Session) {

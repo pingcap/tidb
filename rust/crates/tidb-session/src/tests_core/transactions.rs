@@ -754,6 +754,11 @@ fn start_transaction_as_of_timestamp_pins_the_transaction() {
 #[test]
 fn historical_read_batch_snapshot_numeric_and_exclusive_settings_follow_go() {
     let mut session = Session::new();
+    // Go tests seed the GC safe point a historical read validates against
+    // (`safePointSQL`); a store with no GC worker has none.
+    session
+        .run("INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05.000 -0700', '')")
+        .unwrap();
     session
         .run("SET tidb_snapshot='469540215700324352'")
         .unwrap();

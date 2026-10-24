@@ -377,6 +377,16 @@ where
         // snapshot. See `load_active_persisted_ddl_jobs_cached`.
         let mut cached_job_table: Option<DdlJobTable> = None;
         while !stop.load(Ordering::Acquire) {
+            // The wake generation is read BEFORE the jobs are loaded: a job
+            // submitted while this pass runs bumps it, and the wait below then
+            // returns at once instead of sleeping a whole interval with the
+            // job queued (Go's buffered `ddlJobCh` keeps that notification).
+            let observed = {
+                let (generation, _) = &*wake;
+                *generation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            };
             match load_active_persisted_ddl_jobs_cached(
                 Arc::clone(&opener),
                 timeout,
@@ -447,7 +457,6 @@ where
             let guard = generation
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let observed = *guard;
             let (guard, _) = condvar
                 .wait_timeout_while(guard, DDL_SCHEDULER_INTERVAL, |generation| {
                     !stop.load(Ordering::Acquire) && *generation == observed

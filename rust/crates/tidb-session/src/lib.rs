@@ -1441,6 +1441,13 @@ pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};
 
 impl Session {
+    /// The session's SQL killer (Go `SessionVars.SQLKiller`), where the
+    /// connection installs its liveness probe.
+    #[must_use]
+    pub fn sql_killer(&self) -> Arc<tidb_util::sqlkiller::SqlKiller> {
+        Arc::clone(self.session_memory.sql_killer())
+    }
+
     /// Starts the cancellation lifetime for the next wire command.
     #[must_use]
     pub fn begin_query_cancellation(&self) -> tidb_executor::StatementCancellation {
@@ -2374,6 +2381,7 @@ impl Session {
         prepared: &PreparedAst,
         params: &[Datum],
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         self.restore_statement_variables();
         let statement = prepared.bind(params)?;
         let (effective_statement, binding_sql) =
@@ -2416,6 +2424,7 @@ impl Session {
         prepared: &PreparedAst,
         params: &[Datum],
     ) -> Result<(OpenedStatement, Option<ResultMaterializationAuthority>), DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         self.restore_statement_variables();
         let statement = prepared.bind(params)?;
         let (effective_statement, binding_sql) =
@@ -2717,6 +2726,17 @@ impl Session {
         }
         self.run_with_columns_internal(sql, false)
             .map(|(output, _)| output)
+    }
+
+    /// A statement opened directly on a node-backed session (rather than run
+    /// through its connection) reads a committed snapshot bound for it.
+    pub(crate) fn bind_node_snapshot_for_open_statement(&mut self) -> Result<(), DriverError> {
+        let Some(mut node) = self.node.take() else {
+            return Ok(());
+        };
+        let result = node.bind_open_statement_snapshot(self);
+        self.node = Some(node);
+        result
     }
 
     /// One statement through this session's node connection.

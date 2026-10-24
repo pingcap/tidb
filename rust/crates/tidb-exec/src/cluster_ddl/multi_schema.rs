@@ -136,6 +136,7 @@ fn single_statement(schema: &str, table: &str, action: &AlterColumnAction) -> Dd
             context,
             rename_from,
             modify_column_type,
+            if_exists: false,
         },
         AlterColumnAction::Rename { from, to } => DdlStatement::RenameColumn {
             schema,

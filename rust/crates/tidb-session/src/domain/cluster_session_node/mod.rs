@@ -6991,6 +6991,17 @@ impl QuerySession for ClusterServerSession {
         Some(Arc::new(self.store.session.begin_query_cancellation()))
     }
 
+    fn sql_killer(&self) -> Option<Arc<tidb_util::sqlkiller::SqlKiller>> {
+        Some(self.store.session.sql_killer())
+    }
+
+    fn should_install_connection_alive(&self, stmt: &Stmt) -> bool {
+        let session = &self.store.session;
+        crate::domain::session_api::should_install_connection_alive(stmt, |name| {
+            session.prepared_statement_node(name)
+        })
+    }
+
     fn wait_timeout(&self) -> std::time::Duration {
         self.store.session.wait_timeout()
     }

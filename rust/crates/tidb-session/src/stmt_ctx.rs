@@ -1538,6 +1538,10 @@ impl Session {
                     // takes this same context and Go's DDL checks DO read
                     // `SQLMode.HasStrictMode()`. See `StmtContext::with_strict`.
                     .with_strict(sql_mode.has_strict_mode())
+                    // Go's DDL reads `@@tidb_allow_remove_auto_inc` from the
+                    // session (`GetModifiableColumnJob`), whatever context
+                    // the statement takes.
+                    .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
                     .with_date_modes(date_modes)
                     .with_string_type_flags(string_type_flags)
                     .with_cte_max_recursion_depth(cte_depth)

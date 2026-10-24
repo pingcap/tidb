@@ -640,10 +640,14 @@ fn modify_column() {
         .run("CREATE TABLE u (a BIGINT, b VARCHAR(10), c BIGINT)")
         .unwrap();
     session.run("INSERT INTO u VALUES (1, '12', NULL)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE u MODIFY COLUMN c BIGINT NOT NULL"),
-        Err(DriverError::DataTruncatedAtRow { column, row: 1 }) if column == "c"
-    ));
+    let error = session
+        .run("ALTER TABLE u MODIFY COLUMN c BIGINT NOT NULL")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(
+        (error.code, error.message.as_str()),
+        (1265, "Data truncated for column 'c' at row 1")
+    );
     session.run("ALTER TABLE u MODIFY COLUMN b BIGINT").unwrap();
     assert_eq!(
         session.run("SELECT b FROM u").unwrap(),

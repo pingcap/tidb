@@ -992,6 +992,20 @@ pub trait QuerySession {
         None
     }
 
+    /// The session's SQL killer, where the connection installs its liveness
+    /// probe for a statement (Go `setSQLKillerConnectionAlive`). Sessions
+    /// without one take no probe.
+    fn sql_killer(&self) -> Option<Arc<tidb_util::sqlkiller::SqlKiller>> {
+        None
+    }
+
+    /// Go `shouldInstallConnectionAlive`: whether `stmt` runs with the
+    /// connection-liveness probe. Sessions without prepared statements answer
+    /// from the statement alone.
+    fn should_install_connection_alive(&self, stmt: &Stmt) -> bool {
+        should_install_connection_alive(stmt, |_| None)
+    }
+
     /// Maximum idle time while waiting for the next command packet.
     ///
     /// Go refreshes `PacketIO` from this session's `@@wait_timeout` before
@@ -1295,5 +1309,99 @@ pub fn new_connection_id_allocator(
         ))
     } else {
         Arc::new(SimpleAllocator::new())
+    }
+}
+
+/// Go `shouldInstallConnectionAlive` (`pkg/server/conn.go`): EXECUTE, TRACE
+/// and EXPLAIN ANALYZE are unwrapped to the statement they run (`prepared`
+/// resolves an EXECUTE's name), then the long-running kinds a client without
+/// keepalive must not lose -- DDL, ANALYZE, LOAD DATA, IMPORT INTO, BACKUP /
+/// RESTORE -- and the non-interruptible COMMIT / ROLLBACK run without the
+/// probe.
+pub fn should_install_connection_alive<'a>(
+    mut stmt: &'a Stmt,
+    prepared: impl Fn(&str) -> Option<&'a Stmt>,
+) -> bool {
+    use tidb_ast::{AdminStmt, BrieKind, DmlStmt, ExplainTarget, SessionStmt};
+    loop {
+        match stmt {
+            Stmt::Session(session) => match &**session {
+                SessionStmt::Execute { name, .. } => match prepared(name) {
+                    Some(inner) => stmt = inner,
+                    None => return false,
+                },
+                _ => break,
+            },
+            Stmt::Admin(admin) => match &**admin {
+                AdminStmt::Trace(trace) => stmt = &trace.statement,
+                AdminStmt::Explain(explain) => {
+                    if !explain.analyze {
+                        return true;
+                    }
+                    match &explain.target {
+                        ExplainTarget::Statement(inner) => stmt = inner,
+                        _ => break,
+                    }
+                }
+                _ => break,
+            },
+            _ => break,
+        }
+    }
+    match stmt {
+        Stmt::Ddl(_) => false,
+        Stmt::Admin(admin) => match &**admin {
+            AdminStmt::Brie(brie) => !matches!(brie.kind, BrieKind::Backup | BrieKind::Restore),
+            AdminStmt::AnalyzeTable(_) | AdminStmt::AnalyzeIncremental(_) => false,
+            _ => true,
+        },
+        Stmt::Dml(dml) => !matches!(&**dml, DmlStmt::LoadData(_) | DmlStmt::ImportInto(_)),
+        Stmt::Session(session) => !matches!(
+            &**session,
+            SessionStmt::Commit(_) | SessionStmt::Rollback { .. }
+        ),
+        Stmt::Query(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod connection_alive_tests {
+    use super::should_install_connection_alive;
+
+    fn installs(sql: &str) -> bool {
+        let stmt = tidb_parser::parse(sql).expect("parses");
+        should_install_connection_alive(&stmt, |_| None)
+    }
+
+    /// Go `shouldInstallConnectionAlive`'s cases (`pkg/server/conn.go`).
+    #[test]
+    fn the_probe_follows_gos_statement_list() {
+        for sql in [
+            "SELECT 1",
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "EXPLAIN SELECT 1",
+            "EXPLAIN ANALYZE SELECT 1",
+            "TRACE SELECT 1",
+            "BEGIN",
+            "SET @a = 1",
+        ] {
+            assert!(installs(sql), "{sql} runs with the probe");
+        }
+        for sql in [
+            "CREATE TABLE t (a INT)",
+            "ALTER TABLE t ADD COLUMN b INT",
+            "ANALYZE TABLE t",
+            "LOAD DATA LOCAL INFILE 'x' INTO TABLE t",
+            "COMMIT",
+            "ROLLBACK",
+            "EXPLAIN ANALYZE ALTER TABLE t ADD COLUMN b INT",
+            "TRACE CREATE TABLE t (a INT)",
+            // An EXECUTE whose prepared statement is unknown is not probed.
+            "EXECUTE s",
+        ] {
+            assert!(!installs(sql), "{sql} runs without the probe");
+        }
     }
 }

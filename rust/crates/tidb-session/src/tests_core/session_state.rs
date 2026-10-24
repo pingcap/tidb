@@ -1307,6 +1307,11 @@ fn session_migration_retains_affected_rows_through_statement_completion() {
 #[test]
 fn session_migration_restored_timestamp_uses_shared_historical_read_owner() {
     let mut source = Session::new();
+    // Go tests seed the GC safe point a historical read validates against
+    // (`safePointSQL`); a store with no GC worker has none.
+    source
+        .run("INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05.000 -0700', '')")
+        .unwrap();
     source.run("USE test").unwrap();
     source.run("CREATE TABLE migrated_snapshot(a INT)").unwrap();
     source

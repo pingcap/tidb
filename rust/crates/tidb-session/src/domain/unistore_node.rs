@@ -297,6 +297,22 @@ impl BootstrapImage {
             published.schema_version,
             None,
         )?;
+        // Go's image is a copy of a CLOSED store: `KVStore.Close` waits for
+        // the async-commit secondaries the bootstrap's commits left running,
+        // so no committed transaction's lock is in it. A lock carried into
+        // the image would park the first pessimistic lock on its key for the
+        // store's whole lock-wait timeout before the resolver ran.
+        let drained_by = std::time::Instant::now() + IN_PROCESS_TIMEOUT;
+        while stack
+            .handler
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .store
+            .has_locks()
+            && std::time::Instant::now() < drained_by
+        {
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
         let data = stack
             .handler
             .lock()

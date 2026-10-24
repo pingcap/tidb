@@ -341,6 +341,13 @@ impl SessionMemory {
         }
     }
 
+    /// The session's SQL killer (Go `SessionVars.SQLKiller`), shared by every
+    /// statement this session runs.
+    #[must_use]
+    pub fn sql_killer(&self) -> &Arc<SqlKiller> {
+        &self.session.killer
+    }
+
     /// Starts the cancellation lifetime for one wire command.
     #[must_use]
     pub fn begin_query_cancellation(&self) -> StatementCancellation {

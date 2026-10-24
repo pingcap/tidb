@@ -92,8 +92,37 @@ impl MockGlobalStateSelector {
     }
 }
 
+/// The campaign loop's stop: Go's `timeutil.Sleep(m.ctx, ...)` returns as
+/// soon as `Close` cancels the context, so a stop wakes the loop's sleep.
+#[derive(Default)]
+struct CampaignStop {
+    stopped: Mutex<bool>,
+    wake: std::sync::Condvar,
+}
+
+impl CampaignStop {
+    fn stop(&self) {
+        *lock(&self.stopped) = true;
+        self.wake.notify_all();
+    }
+
+    fn is_stopped(&self) -> bool {
+        *lock(&self.stopped)
+    }
+
+    /// Sleeps `duration` unless stopped first; whether it was stopped.
+    fn sleep(&self, duration: Duration) -> bool {
+        let stopped = lock(&self.stopped);
+        let (stopped, _) = self
+            .wake
+            .wait_timeout_while(stopped, duration, |stopped| !*stopped)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *stopped
+    }
+}
+
 struct MockCampaign {
-    stop: Arc<AtomicBool>,
+    stop: Arc<CampaignStop>,
     resign: Arc<AtomicBool>,
     worker: JoinHandle<()>,
 }
@@ -177,7 +206,7 @@ impl Manager for MockManager {
         if lock(&self.inner.campaign).is_some() {
             return Ok(());
         }
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(CampaignStop::default());
         let resign = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let worker_resign = Arc::clone(&resign);
@@ -185,10 +214,11 @@ impl Manager for MockManager {
         let worker = std::thread::Builder::new()
             .name("mock-owner".to_owned())
             .spawn(move || {
-                while !worker_stop.load(Ordering::Acquire) && !manager.inner.context.is_done() {
+                while !worker_stop.is_stopped() && !manager.inner.context.is_done() {
                     if worker_resign.swap(false, Ordering::AcqRel) {
                         manager.retire_owner();
-                        std::thread::sleep(Duration::from_secs(1));
+                        // Give a chance to the other owner managers to get owner.
+                        worker_stop.sleep(Duration::from_secs(1));
                         continue;
                     }
                     if manager.inner.selector.set_owner(&manager.inner.id) {
@@ -196,7 +226,7 @@ impl Manager for MockManager {
                             listener.on_become_owner();
                         }
                     }
-                    std::thread::sleep(Duration::from_secs(1));
+                    worker_stop.sleep(Duration::from_secs(1));
                 }
                 manager.retire_owner();
             })
@@ -212,7 +242,7 @@ impl Manager for MockManager {
     fn campaign_cancel(&self) {
         let campaign = lock(&self.inner.campaign).take();
         if let Some(campaign) = campaign {
-            campaign.stop.store(true, Ordering::Release);
+            campaign.stop.stop();
             let _ = campaign.worker.join();
         }
     }

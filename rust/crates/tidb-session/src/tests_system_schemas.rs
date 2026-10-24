@@ -282,6 +282,12 @@ fn enumerating_the_system_schema_lists_the_bootstrap_tables() {
 ///
 #[test]
 fn dropping_the_mysql_schema_is_refused() {
+    // Go refuses this only for next-gen's reserved schemas
+    // (`isReservedSchemaObjInNextGen` in `executor.DropSchema`); a classic
+    // kernel drops the system schema like any other.
+    if !tidb_config::kerneltype::is_next_gen() {
+        return;
+    }
     let mut session = Session::new();
     for statement in ["DROP DATABASE mysql", "DROP DATABASE IF EXISTS mysql"] {
         let error = session.run(statement).unwrap_err().to_mysql_error();

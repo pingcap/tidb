@@ -102,6 +102,25 @@ impl ClusterServerSession {
         Ok(result)
     }
 
+    /// Binds a fresh committed snapshot to the driver session's tables and
+    /// leaves it bound: a statement a caller opens directly on the session
+    /// (a prepared execution, a held record set) reads through it until it
+    /// closes, as a Go statement keeps the snapshot it started on. The next
+    /// statement's own binding replaces it.
+    pub(crate) fn bind_open_statement_snapshot(&mut self) -> Result<(), tidb_executor::DriverError> {
+        self.rebuild_catalog_if_stale();
+        let snapshot = self
+            .transactions
+            .open_snapshot("default")
+            .map_err(tidb_executor::DriverError::unsupported)?;
+        let _previous = crate::statement_lifecycle::bind_snapshot(
+            &self.store.slot,
+            &self.store.session,
+            snapshot,
+        );
+        Ok(())
+    }
+
     /// Go `clientConn.handleQuery` for one statement, read back as the rows a
     /// [`Session::run`] caller expects: parse once, then transaction
     /// control, then a write answered by an OK packet, and only then a
@@ -132,8 +151,25 @@ impl ClusterServerSession {
             crate::domain::session_api::record_text_write_failure(self, parsed.as_ref(), error);
         }
         if let Some(outcome) = written.map_err(driver_error)? {
+            // The outputs the session's own DDL arms give: CREATE TABLE
+            // reports whether it created the table (an IF NOT EXISTS that
+            // found it leaves the 1050 note), placement-policy DDL reports
+            // nothing created, and the rest report the affected rows.
             return Ok(match &parsed {
-                Some(Stmt::Ddl(_)) => StmtOutput::Done(true),
+                Some(Stmt::Ddl(ddl)) => match &**ddl {
+                    tidb_ast::DdlStmt::CreateTable(_) => StmtOutput::Done(
+                        !self
+                            .store
+                            .session
+                            .warnings()
+                            .iter()
+                            .any(|warning| warning.code == 1050),
+                    ),
+                    tidb_ast::DdlStmt::CreatePlacementPolicy(_)
+                    | tidb_ast::DdlStmt::AlterPlacementPolicy(_)
+                    | tidb_ast::DdlStmt::DropPlacementPolicy(_) => StmtOutput::Done(false),
+                    _ => StmtOutput::Affected(outcome.affected_rows),
+                },
                 _ => StmtOutput::Affected(outcome.affected_rows),
             });
         }

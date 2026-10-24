@@ -104,8 +104,24 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
             context,
             rename_from,
             modify_column_type: _,
+            if_exists,
         } => {
             let (schema_id, stored) = locate_table(&catalog, schema, table)?;
+            // Go `ModifyColumn` / `ChangeColumn`: `ErrColumnNotExists` under
+            // IF EXISTS becomes a note and the statement succeeds.
+            let source = rename_from.as_deref().unwrap_or(column.name.as_str());
+            if *if_exists
+                && tidb_model::column::find_column_info(&stored.columns, source).is_none()
+            {
+                return Ok(Some(AddIndexSubmission::AlreadySatisfied {
+                    detail: format!("column `{source}` does not exist on `{schema}`.`{table}`"),
+                    warnings: vec![(
+                        DdlWarningLevel::Note,
+                        1054,
+                        format!("Unknown column '{source}' in '{table}'"),
+                    )],
+                }));
+            }
             tidb_executor::ddl::check_column_qualifier(&column.qualifier, schema, table).map_err(
                 |error| {
                     let error = error.to_mysql_error();

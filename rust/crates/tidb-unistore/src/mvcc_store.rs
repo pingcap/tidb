@@ -410,6 +410,14 @@ impl MvccStore {
         }
     }
 
+    /// Whether any transaction still holds a lock in this store.
+    #[must_use]
+    pub fn has_locks(&self) -> bool {
+        let mut locks = self.lock_store.new_iterator();
+        locks.seek_to_first();
+        locks.valid()
+    }
+
     /// The store as a byte image, for a later store to start from (Go
     /// testkit's bootstrapped store image, which copies the store's
     /// directory): the committed versions badger holds, then the lock store

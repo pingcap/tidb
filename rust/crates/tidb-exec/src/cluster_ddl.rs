@@ -713,6 +713,9 @@ pub enum DdlStatement {
         /// computes it (`getModifyColumnType`); a failed VARCHAR -> CHAR
         /// precheck plans the statement again with `Reorg`.
         modify_column_type: Option<tidb_executor::ddl::modify_column_type::ModifyColumnType>,
+        /// Go `spec.IfExists`: a missing source column is a 1054 note, not
+        /// an error (`executor.ModifyColumn` / `ChangeColumn`).
+        if_exists: bool,
     },
     /// `ALTER TABLE ... ADD FOREIGN KEY` (Go `CreateForeignKey`).
     AddForeignKey {
@@ -1707,11 +1710,73 @@ fn placement_settings_from_options(
     Ok(settings)
 }
 
+/// Go `fillMultiSchemaInfo`'s default arm:
+/// `dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())`.
+fn go_unsupported_multi_schema_change(job: &str) -> DdlAdmissionError {
+    DdlAdmissionError::with_proto(
+        &tidb_util::dbterror::ERR_RUN_MULTI_SCHEMA_CHANGES,
+        format!("Unsupported multi schema change for {job}"),
+    )
+}
+
+/// The job type Go builds for a specification `fillMultiSchemaInfo` has no
+/// sub-job for (its `ActionType.String()`).
+fn go_multi_schema_job_without_sub_job(action: &tidb_ast::AlterTableAction) -> Option<&'static str> {
+    use tidb_ast::{AlterPartitionAction, AlterTableAction};
+    Some(match action {
+        AlterTableAction::AlterCheck(_) => "alter check constraint",
+        AlterTableAction::DropCheck(_) => "drop check constraint",
+        AlterTableAction::SetAttributes(_) => "alter table attributes",
+        AlterTableAction::Cache(_) => "alter table cache",
+        AlterTableAction::SetTiFlashReplica { .. } => "set tiflash replica",
+        AlterTableAction::Partition(partition) => match partition {
+            AlterPartitionAction::Add { .. } => "add partition",
+            AlterPartitionAction::Drop { .. } => "drop partition",
+            AlterPartitionAction::Truncate { .. } => "truncate partition",
+            AlterPartitionAction::Exchange { .. } => "exchange partition",
+            AlterPartitionAction::Reorganize { .. } | AlterPartitionAction::Coalesce { .. } => {
+                "alter table reorganize partition"
+            }
+            AlterPartitionAction::Repartition { .. } => "alter table partition by",
+            AlterPartitionAction::RemovePartitioning => "alter table remove partitioning",
+            AlterPartitionAction::SetAttributes { .. } => "alter table partition attributes",
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
 fn lower_alter_table_catalog(
     alter: &AlterTableStmt,
     default_schema: &str,
     context: &tidb_executor::StmtContext,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
+    // Go `ResolveAlterTableSpec` drops the ignorable LOCK / ALGORITHM
+    // specifications before counting: one remaining specification is an
+    // ordinary single-action ALTER, not a multi-schema change.
+    let valid_specs = alter
+        .actions
+        .iter()
+        .filter(|action| {
+            !matches!(
+                action,
+                tidb_ast::AlterTableAction::Lock(_) | tidb_ast::AlterTableAction::Algorithm(_)
+            )
+        })
+        .count();
+    if alter.actions.len() > 1
+        && valid_specs == 1
+        && !alter
+            .actions
+            .iter()
+            .any(|action| matches!(action, tidb_ast::AlterTableAction::Algorithm(_)))
+    {
+        let mut single = alter.clone();
+        single
+            .actions
+            .retain(|action| !matches!(action, tidb_ast::AlterTableAction::Lock(_)));
+        return lower_alter_table_catalog(&single, default_schema, context);
+    }
     let [action] = alter.actions.as_slice() else {
         // Go's one ActionMultiSchemaChange job: expressible here exactly when
         // every action has an admitted job the catalog transaction owns.
@@ -1756,6 +1821,10 @@ fn lower_alter_table_catalog(
                     let mut single = alter.clone();
                     single.actions = vec![action.clone()];
                     match lower_alter_table_catalog(&single, default_schema, context)? {
+                        // A multi-schema IF EXISTS sub-job is not planned here.
+                        Some(DdlStatement::ModifyColumn {
+                            if_exists: true, ..
+                        }) => return Ok(None),
                         Some(DdlStatement::ModifyColumn {
                             column,
                             position,
@@ -1969,13 +2038,19 @@ fn lower_alter_table_catalog(
                 // Go `AlterTable`'s `ConstraintCheck`: a warning while CHECK is
                 // off, else `CreateCheckConstraint`'s job.
                 tidb_ast::AlterTableAction::AddCheck(definition) => {
-                    if context.enable_check_constraint() {
+                    // With the switch off Go only warns and builds nothing.
+                    // On, it builds an `add check constraint` job, which
+                    // `fillMultiSchemaInfo` has no sub-job for beside another
+                    // real specification.
+                    if !context.enable_check_constraint() {
+                        context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                    } else if valid_specs > 1 {
+                        return Err(go_unsupported_multi_schema_change("add check constraint"));
+                    } else {
                         actions.push(AlterColumnAction::AddCheck {
                             definition: Box::new(definition.clone()),
                             context: DdlStatementContext(context.clone()),
                         });
-                    } else {
-                        context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
                     }
                 }
                 tidb_ast::AlterTableAction::AddForeignKey(definition) => {
@@ -2025,7 +2100,12 @@ fn lower_alter_table_catalog(
                         }
                     };
                 }
-                _ => {
+                other => {
+                    if let Some(job) = go_multi_schema_job_without_sub_job(other)
+                        .filter(|_| valid_specs > 1)
+                    {
+                        return Err(go_unsupported_multi_schema_change(job));
+                    }
                     actions.clear();
                     break;
                 }
@@ -2401,7 +2481,21 @@ fn lower_alter_table_catalog(
             let (value, force) = match option {
                 tidb_ast::TableOption::AutoRandomBase(value) => (value, false),
                 tidb_ast::TableOption::ForceAutoRandomBase(value) => (value, true),
-                _ => return Ok(None),
+                // Options Go's `AlterTable` switch runs that are planned
+                // elsewhere (charset/collate, TTL).
+                tidb_ast::TableOption::CharacterSet(_)
+                | tidb_ast::TableOption::Collate(_)
+                | tidb_ast::TableOption::Ttl { .. }
+                | tidb_ast::TableOption::TtlEnable(_)
+                | tidb_ast::TableOption::TtlJobInterval(_) => return Ok(None),
+                // Go `AlterTable`'s option switch default:
+                // `dbterror.ErrUnsupportedAlterTableOption`.
+                _ => {
+                    return Err(DdlAdmissionError::with_proto(
+                        &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_OPTION,
+                        "This type of ALTER TABLE is currently unsupported",
+                    ))
+                }
             };
             let next = value.parse::<u64>().map_err(|_| {
                 DdlAdmissionError::plain(
@@ -2421,9 +2515,6 @@ fn lower_alter_table_catalog(
             column,
             position,
         } => {
-            if *if_exists {
-                return Ok(None);
-            }
             // Go `GetModifiableColumnJob` handles an AUTO_RANDOM change too
             // (`checkAutoRandom`, then the owner's
             // `checkAndApplyAutoRandomBits`).
@@ -2436,6 +2527,7 @@ fn lower_alter_table_catalog(
                 context: DdlStatementContext(context.clone()),
                 rename_from: None,
                 modify_column_type: None,
+                if_exists: *if_exists,
             }))
         }
         tidb_ast::AlterTableAction::ChangeColumn {
@@ -2444,9 +2536,6 @@ fn lower_alter_table_catalog(
             column,
             position,
         } => {
-            if *if_exists {
-                return Ok(None);
-            }
             let [old] = old_name.as_slice() else {
                 return Err(DdlAdmissionError::plain(
                     "CHANGE COLUMN takes an unqualified source column name here",
@@ -2461,6 +2550,7 @@ fn lower_alter_table_catalog(
                 context: DdlStatementContext(context.clone()),
                 rename_from: Some(old.clone()),
                 modify_column_type: None,
+                if_exists: *if_exists,
             }));
         }
         tidb_ast::AlterTableAction::RenameColumn(rename) => {
@@ -3897,12 +3987,11 @@ pub(super) fn build_add_column(
 ) -> Result<Result<(tidb_model::ColumnInfo, usize), String>, DdlPlanError> {
     // Go `AddColumn`, then `checkAndCreateNewColumn`.
     check_add_column_too_many_columns(info.columns.len() + 1)?;
-    let wanted = column.name.go_to_lower();
-    if info
-        .columns
-        .iter_deref()
-        .any(|candidate| candidate.read().name.lowercase() == wanted)
-    {
+    // Go `table.FindCol`: `strings.EqualFold(col.Name.O, name)`, so `s`
+    // finds an existing `ſ` here although CREATE TABLE keys by `.L`.
+    if info.columns.iter_deref().any(|candidate| {
+        tidb_hack::GoCaseCompare::go_equal_fold(candidate.read().name.original(), &column.name)
+    }) {
         if if_not_exists {
             return Ok(Err(format!(
                 "column `{}` already exists on `{schema}`.`{table}`",
