@@ -282,6 +282,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 }
 
 func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, base.LogicalPlan, error) {
+	rewriter.isFilter = !asScalar
 	planCtx := rewriter.planCtx
 	// sourceTable is only used to build simple expression with one table
 	// when planCtx is present, sourceTable should be nil.
@@ -358,6 +359,9 @@ type expressionRewriter struct {
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
 	asScalar bool
+	// isFilter records whether the root expression is consumed as a filter.
+	// Unlike asScalar, it stays unchanged during AST traversal.
+	isFilter bool
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// sourceTable is only used to build simple expression without all columns from a single table
@@ -684,7 +688,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) bool {
 // canTreatInSubqueryAsExistsForFilter reports whether the IN subquery is in a WHERE/HAVING boolean chain
 // composed only of AND/OR and parentheses, so it can be treated like EXISTS for filter context.
 func (er *expressionRewriter) canTreatInSubqueryAsExistsForFilter(planCtx *exprRewriterPlanCtx) bool {
-	if planCtx == nil {
+	// curClause may still refer to a preceding WHERE when rewriting scalar roots,
+	// such as aggregate arguments, whose parents are absent from astNodeStack.
+	if !er.isFilter || planCtx == nil {
 		return false
 	}
 	if planCtx.curClause != whereClause && planCtx.curClause != havingClause {
