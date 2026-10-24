@@ -76,7 +76,7 @@ make failpoint-enable && (
 
 Build system note (Bazel):
 
-- If you add/remove/move Go files (including new `_test.go`) or change an existing Go file import section, run `make bazel_prepare` and include generated `*.bazel/*.bzl` changes.
+- For metadata-affecting changes, follow root `AGENTS.md` -> `Build Flow` -> `Bazel metadata consistency` and `docs/agents/metadata-generation-flow.md`. Go tests can run first; use applicable CI generation or canonical local preparation and include necessary generated changes.
 
 ## 4) Debugging and observability tips
 

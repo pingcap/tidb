@@ -1,22 +1,21 @@
 ---
 name: tidb-bazel-prepare-gate
-description: Use when deciding whether make bazel_prepare is required before build or test commands based on local file changes in TiDB.
+description: Assess TiDB Bazel metadata impact and choose no generation, CI generation, or local preparation without blocking ordinary Go tests.
 ---
 
-# TiDB Bazel Prepare Gate
+# TiDB Bazel Metadata Gate
 
-## Overview
+Policy source: `AGENTS.md` -> `Build Flow` -> `Bazel metadata consistency`.
+Read `docs/agents/metadata-generation-flow.md` before selecting or executing a generation route.
 
-Use this skill before build/test commands when you are unsure whether `make bazel_prepare` is required.
-Policy source: `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`.
-In normal coding loops, skip this skill unless one of the decision-rule triggers is likely present.
+## Inspect the intended PR
 
-## Inspect Local Changes
-
-Run from repository root:
+Identify the actual target branch and merge base. Inspect committed, staged, unstaged, and intended untracked changes. Exclude unrelated user probes.
 
 ```bash
 git status --short
+git diff --name-status <merge-base> HEAD
+git diff -U0 <merge-base> HEAD -- '*.go'
 git diff --name-status
 git diff --name-status --cached
 git ls-files --others --exclude-standard
@@ -24,30 +23,15 @@ git diff -U0 -- '*.go'
 git diff -U0 --cached -- '*.go'
 ```
 
-## Decision Rules
+Use the complete input list in root policy, not just Go diffs. Read affected declarations to assess imports, test counts, build constraints, embedded resources, and directives; regex matches alone are not a semantic classifier.
 
-Trigger conditions are defined in `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`.
-Compare the output from the commands above against those conditions.
+## Select a route
 
-For the top-level test-function trigger in existing `*_test.go` files, inspect added lines in
-`git diff -U0 -- '*.go'` and `git diff -U0 --cached -- '*.go'` output for patterns like:
+- No relevant input change: skip local preparation and run scoped Go validation.
+- Metadata-affecting changes with applicable CI generation: run Go validation first, publish with metadata pending, then incorporate verified current-head generated changes using the runbook.
+- No applicable CI generation: use target-branch canonical local preparation before delivery.
+- Dependency, rule, toolchain, or generator changes: arrange applicable Bazel validation in addition to generation.
 
-```diff
-+func TestXxx(t *testing.T) {
-```
+Do not distort test structure merely to avoid generation. Adding a top-level test is fine; select the appropriate route. A fresh worktree or branch switch alone is not a generation trigger. Diagnose Bazel errors separately from metadata drift.
 
-and treat that as requiring `make bazel_prepare`.
-
-For import-section changes in existing Go files, inspect `git diff -U0 -- '*.go'` and
-`git diff -U0 --cached -- '*.go'` for added/removed import lines, for example:
-
-```diff
-+import (
--import "fmt"
-+	"context"
-```
-
-and treat those changes as requiring `make bazel_prepare`.
-
-If any condition matches, run `make bazel_prepare`.
-If none of the rules match, continue without `make bazel_prepare` and report the evidence.
+Report the selected route, input evidence, and whether metadata verification is complete or pending.
