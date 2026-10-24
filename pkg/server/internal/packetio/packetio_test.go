@@ -490,7 +490,7 @@ func TestCompressedWriterThreshold(t *testing.T) {
 	}
 }
 
-func TestCompressedWritersShareThePool(t *testing.T) {
+func TestCompressedZlibWritersShareThePool(t *testing.T) {
 	var first, second bytes.Buffer
 	firstSeq, secondSeq := uint8(0), uint8(0)
 	firstWriter := newCompressedWriter(&first, mysql.CompressionZlib, &firstSeq)
