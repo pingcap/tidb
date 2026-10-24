@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -206,24 +205,24 @@ func TestLoadDataMissingColumn(t *testing.T) {
 	ctx := tk.Session().(sessionctx.Context)
 
 	deleteSQL := "delete from load_data_missing"
-	selectSQL := "select id, hour(t), minute(t) from load_data_missing;"
-
-	curTime := types.CurrentTime(mysql.TypeTimestamp)
-	timeHour := curTime.Hour()
-	timeMinute := curTime.Minute()
+	selectSQL := "select id, t from load_data_missing;"
 	tests := []testCase{
 		{[]byte(""), nil, "Records: 0  Deleted: 0  Skipped: 0  Warnings: 0"},
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("12\n"), []string{"12|0000-00-00 00:00:00"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
 	}
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 
 	tk.MustExec("alter table load_data_missing add column t2 timestamp null")
-	curTime = types.CurrentTime(mysql.TypeTimestamp)
-	timeHour = curTime.Hour()
-	timeMinute = curTime.Minute()
-	selectSQL = "select id, hour(t), minute(t), t2 from load_data_missing;"
+	selectSQL = "select id, t, t2 from load_data_missing;"
 	tests = []testCase{
-		{[]byte("12\n"), []string{fmt.Sprintf("12|%v|%v|<nil>", timeHour, timeMinute)}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
+		{[]byte("12\n"), []string{"12|0000-00-00 00:00:00|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 3"},
+	}
+	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+
+	tk.MustExec("alter table load_data_missing modify column t timestamp not null default current_timestamp")
+	selectSQL = "select id, t between current_timestamp - interval 1 minute and current_timestamp, t2 from load_data_missing"
+	tests = []testCase{
+		{[]byte("12\n"), []string{"12|1|<nil>"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 1"},
 	}
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 }
