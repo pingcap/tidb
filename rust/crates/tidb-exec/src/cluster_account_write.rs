@@ -849,6 +849,7 @@ fn reconcile<S: MetaSnapshot>(
     for (identity, values) in desired {
         match by_key.remove(identity) {
             Some(mut row) => {
+                let existing = row.values.clone();
                 let mut moved = false;
                 for (column, id, field_type) in &value_ids {
                     let wanted = values.get(column).cloned().unwrap_or_default();
@@ -873,7 +874,7 @@ fn reconcile<S: MetaSnapshot>(
                             .insert(*id, Datum::Bytes(grantor.clone().into_bytes()));
                     }
                     plan.mutations
-                        .push(update_row(table, &row.key, &row.values)?);
+                        .extend(update_row(table, &row.key, &existing, &row.values)?);
                     note_changed(changed, account_table, identity);
                 }
             }

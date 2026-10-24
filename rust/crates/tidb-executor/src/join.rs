@@ -1631,6 +1631,8 @@ impl<C: Columns + Clone + Send + Sync + 'static> JoinExec<C> {
             memory,
         );
         executor.index_lookup = Some(plan);
+        // Go `IndexLookUpJoin` has a memory tracker but no disk tracker.
+        executor.disk_tracker.detach();
         executor
     }
 

@@ -506,7 +506,8 @@ impl HashJoinSpill {
         self.action.set_finished();
         self.lanes.clear();
         self.stack.clear();
-        self.disk_tracker.detach();
+        // Go keeps `e.diskTracker` on the statement's disk tracker after
+        // Close: EXPLAIN ANALYZE reads it there.
     }
 }
 

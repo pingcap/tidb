@@ -213,7 +213,7 @@ pub enum TableHandle {
 
 impl TableHandle {
     /// The record-key component this handle contributes.
-    pub(crate) fn record_handle(&self) -> RecordHandle {
+    pub fn record_handle(&self) -> RecordHandle {
         match self {
             TableHandle::Int(value) => RecordHandle::Int(*value),
             TableHandle::Common(bytes) => RecordHandle::Common(bytes.clone()),

@@ -152,7 +152,7 @@ impl HashJoinV2Exec {
         self.release_build_memory();
         self.hash_table_context
             .memory_tracker
-            .attach_to(memory.stmt_tracker());
+            .attach_to(self.memory_tracker.as_ref().unwrap_or(memory.stmt_tracker()));
         self.begin_build(context.meta.null_map_length);
         let build_started = std::time::Instant::now();
         let result = recover_worker_panic(|| {

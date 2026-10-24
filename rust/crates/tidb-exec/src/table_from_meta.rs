@@ -23,7 +23,6 @@
 
 use std::sync::{Arc, Mutex};
 use tidb_datatype::FieldTypeFlags;
-use tidb_executor::cluster_storage::ClusterTableStorage;
 use tidb_executor::driver::SequenceDef;
 use tidb_executor::kv_table::{KvColumn, KvForeignKey, KvIndex, KvTable, TableAutoId};
 use tidb_executor::storage::TableStorage;
@@ -279,7 +278,7 @@ fn unavailable_counter() -> tidb_executor::kv_table::AutoIdStoreError {
 /// execution code.)
 pub fn cluster_table(
     table: &TableInfo,
-    storage: &ClusterTableStorage,
+    storage: &dyn TableStorage,
     auto: &AutoIdSource<'_>,
 ) -> Result<KvTable, String> {
     if table.is_view() {

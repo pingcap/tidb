@@ -2979,6 +2979,38 @@ fn explain_analyze_registers_executor_runtime_stats() {
     assert!(agg.contains("}, final_worker:{wall_time:"), "{agg}");
 }
 
+/// Go `getRuntimeInfoStr`'s memory and disk cells: the operator's own tracker
+/// (`StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())`) formatted by
+/// `FormatBytes`, `N/A` without one. Go's `EXPLAIN ANALYZE` of a sorted read
+/// prints `Sort_4 ... 3.67 KB 0 Bytes`, its projection a byte count and no
+/// disk, and the pushed scan `N/A N/A`.
+#[test]
+fn explain_analyze_reports_operator_memory_and_disk() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (id INT PRIMARY KEY, v INT, d VARCHAR(10))")
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1,'b'),(2,2,'a'),(3,3,'c')")
+        .unwrap();
+    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT v + 1 FROM t ORDER BY d"));
+    let row = |prefix: &str| {
+        rows.iter()
+            .find(|row| row[0].trim_start_matches(['└', '├', '─', '│', ' ']).starts_with(prefix))
+            .unwrap_or_else(|| panic!("no {prefix} row in {rows:?}"))
+            .clone()
+    };
+    let bytes = |cell: &str| cell.ends_with(" Bytes") || cell.ends_with(" KB");
+    let sort = row("Sort_");
+    assert!(bytes(&sort[7]), "{sort:?}");
+    assert_eq!(sort[8], "0 Bytes", "{sort:?}");
+    let projection = row("Projection_");
+    assert!(bytes(&projection[7]), "{projection:?}");
+    assert_eq!(projection[8], "N/A", "{projection:?}");
+    let scan = row("TableFullScan_");
+    assert_eq!((scan[7].as_str(), scan[8].as_str()), ("N/A", "N/A"), "{scan:?}");
+}
+
 /// `EXPLAIN ANALYZE <insert>` really inserts -- captured: real TiDB's
 /// `EXPLAIN ANALYZE INSERT` leaves the row in the table afterward, the
 /// inverse of `EXPLAIN INSERT`, which inserts nothing (see the

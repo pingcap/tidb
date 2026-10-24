@@ -699,6 +699,13 @@ impl StatementMemory {
         &self.lifetime.stmt
     }
 
+    /// The statement disk tracker an operator attaches its disk tracker to
+    /// (Go `StmtCtx.DiskTracker`).
+    #[must_use]
+    pub fn stmt_disk_tracker(&self) -> &Arc<Tracker> {
+        &self.lifetime.disk_stmt
+    }
+
     /// The session disk root, which Go exposes as `SessionVars.DiskTracker`.
     /// Long-lived cursor storage attaches directly here and retains this
     /// [`StatementMemory`] for the cursor's lifetime.
@@ -718,6 +725,19 @@ impl StatementMemory {
             .store(self.session.session_id.load(SeqCst), SeqCst);
         tracker.attach_to(&self.lifetime.stmt);
         tracker
+    }
+
+    /// Go's `e.memTracker` of an executor whose workers attach their own
+    /// trackers to it and detach them when they finish: the statement's
+    /// tracker labelled `label`, created on first use and kept on the
+    /// statement tracker for its lifetime.
+    #[must_use]
+    pub fn persistent_operator_tracker(&self, label: i64) -> Arc<Tracker> {
+        self.lifetime
+            .stmt
+            .search_tracker(label)
+            .filter(|tracker| tracker.label() == label && !Arc::ptr_eq(tracker, &self.lifetime.stmt))
+            .unwrap_or_else(|| self.operator_tracker(label))
     }
 
     /// A fresh operator disk tracker attached to the statement disk root.

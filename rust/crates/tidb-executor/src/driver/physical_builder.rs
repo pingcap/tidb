@@ -406,10 +406,26 @@ impl BuildState {
             })
             .flatten();
         let trace = next_region.and_then(|_| GoExecutorTrace::for_plan(plan));
+        // Go `ProjectionExec`, `StreamAggExec` and `IndexLookUpExecutor` own a
+        // memory tracker labelled with their plan; this tier's executors
+        // charge their chunks to the statement directly.
+        // Only EXPLAIN ANALYZE charges them, so an ordinary statement's
+        // quota behaviour is unchanged.
+        let chunk_memory = (self.runtime_counters.is_some()
+            && !self.in_reader
+            && !self.untraced
+            && matches!(
+                plan,
+                PhysicalPlan::Projection(_)
+                    | PhysicalPlan::StreamAgg(_)
+                    | PhysicalPlan::IndexLookUpReader(_)
+            ))
+        .then(|| (memory.operator_tracker(plan_id), 0));
         executor = Box::new(SqlKillerCheckExec {
             child: executor,
             memory,
             runtime_stats,
+            chunk_memory,
             next_region,
             trace,
         });
@@ -465,6 +481,11 @@ struct SqlKillerCheckExec {
     child: Box<dyn Executor>,
     memory: crate::StatementMemory,
     runtime_stats: Option<Arc<dyn crate::executor::ExecutorRuntimeStats>>,
+    /// Go's `memTracker` (`NewTracker(e.ID(), -1)`) of an executor whose
+    /// tracked memory is the chunk it holds (a projection's or stream
+    /// aggregation's `childResult`, an index lookup's result chunk): the
+    /// tracker and the bytes charged for the last chunk returned.
+    chunk_memory: Option<(Arc<tidb_util::memory::Tracker>, i64)>,
     /// Go `exec.Next`'s `tracing.StartRegionEx(ctx, <type>.Next)` for the
     /// executor Go builds for the node.
     next_region: Option<&'static str>,
@@ -597,6 +618,7 @@ fn checked_executor_with_stats(
         child,
         memory,
         runtime_stats,
+        chunk_memory: None,
         next_region: None,
         trace: None,
     })
@@ -654,6 +676,11 @@ impl Executor for SqlKillerCheckExec {
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_next(start.elapsed(), req.num_rows() as i64);
         }
+        if let Some((tracker, charged)) = self.chunk_memory.as_mut() {
+            let bytes = req.memory_usage();
+            tracker.consume(bytes - *charged);
+            *charged = bytes;
+        }
         result
     }
 
@@ -663,6 +690,10 @@ impl Executor for SqlKillerCheckExec {
         let result = crate::sort_util::recover_executor_panic(|| self.child.close());
         if let (Some(stats), Some(start)) = (&self.runtime_stats, start) {
             stats.record_close(start.elapsed());
+        }
+        if let Some((tracker, charged)) = self.chunk_memory.as_mut() {
+            tracker.consume(-*charged);
+            *charged = 0;
         }
         // Go `LimitExec.Close`: a close over a millisecond gets its own span
         // under the span its `Open` ran in, started when the close began.
@@ -7918,6 +7949,7 @@ mod tests {
                 }),
                 memory: crate::StatementMemory::default(),
                 runtime_stats: None,
+                chunk_memory: None,
                 next_region: Some("*executor.LimitExec.Next"),
                 trace: Some(Box::new(GoExecutorTrace {
                     limit_close: true,

@@ -73,21 +73,23 @@ fn a_common_handle_row_is_what_go_stores() {
         .iter()
         .map(|mutation| (hex(mutation.key()), hex(mutation.value())))
         .collect();
+    // Go `addRecord` writes the index entries (`addIndices`) before the
+    // record.
     assert_eq!(
         stored,
         [
-            (
-                "74800000000000007D5F72012500000000000000F8010054004500530054FF0000000000000000F7\
-                 016774750000000000FA010047005400410042FF0000000000000000F7"
-                    .to_owned(),
-                "800003000000020405040008000E007465737467746162726F6F744025".to_owned()
-            ),
             (
                 "74800000000000007D5F698000000000000002016774750000000000FA\
                  012500000000000000F8010054004500530054FF0000000000000000F7\
                  016774750000000000FA010047005400410042FF0000000000000000F7"
                     .to_owned(),
                 "007D018000020000000204040008007465737467746162".to_owned()
+            ),
+            (
+                "74800000000000007D5F72012500000000000000F8010054004500530054FF0000000000000000F7\
+                 016774750000000000FA010047005400410042FF0000000000000000F7"
+                    .to_owned(),
+                "800003000000020405040008000E007465737467746162726F6F744025".to_owned()
             ),
         ]
     );
@@ -101,7 +103,11 @@ fn a_common_handle_row_reads_back_whole() {
     let info = table();
     let wanted = row(&info);
     let mutations = store_clustered_row(&info, None, &wanted).expect("the row encodes");
-    let record = &mutations[0];
+    let record_prefix = tidb_codec::gen_table_record_prefix(info.id);
+    let record = mutations
+        .iter()
+        .find(|mutation| mutation.key().starts_with(&record_prefix))
+        .expect("the record is written");
     let read = decode_stored_row(&info, record.key(), record.value(), None).expect("it decodes");
     let text = |datum: &Datum| match datum {
         Datum::Bytes(bytes) => bytes.clone(),

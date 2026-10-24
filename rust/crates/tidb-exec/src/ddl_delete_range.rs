@@ -579,17 +579,17 @@ impl DelRangeTable {
     }
 
     /// Go `updateDeleteRangeSQL`: the row's start key moves on.
-    pub fn update_start_key_mutation(
+    pub fn update_start_key_mutations(
         &self,
         row: &StoredDelRange,
         start_key: &[u8],
-    ) -> Result<BufferMutation, String> {
+    ) -> Result<Vec<BufferMutation>, String> {
         let mut values = row.values.clone();
         values.insert(
             self.column_id("start_key")?,
             Datum::Bytes(hex_encode(start_key).into_bytes()),
         );
-        update_row(&self.table, &row.key, &values).map_err(text)
+        update_row(&self.table, &row.key, &row.values, &values).map_err(text)
     }
 
     /// Go `completeDeleteRangeSQL`.

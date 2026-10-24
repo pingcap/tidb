@@ -66,6 +66,11 @@ impl MetaStore {
     fn apply(&mut self, mutations: &[BufferMutation]) {
         for mutation in mutations {
             let present = self.pairs.contains_key(mutation.key());
+            // A lazily checked insert (`presume_not_exists`, Go
+            // `SetPresumeKeyNotExists`) is the same absence check, at prewrite.
+            if mutation.presume_not_exists() {
+                assert!(!present, "insert would overwrite an existing row");
+            }
             match mutation.assertion() {
                 tidb_txnkv::AssertionOp::AssertNotExist => {
                     assert!(!present, "insert would overwrite an existing row")

@@ -3194,6 +3194,8 @@ mod tests_admin_check;
 #[cfg(test)]
 mod tests_error_class;
 #[cfg(test)]
+mod tests_error_codes;
+#[cfg(test)]
 mod tests_affinity_storage_class;
 #[cfg(test)]
 mod tests_alter_column;

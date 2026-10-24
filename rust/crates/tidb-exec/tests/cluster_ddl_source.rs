@@ -3453,8 +3453,7 @@ fn create_table_stages_the_go_notifier_row_in_the_catalog_transaction() {
         .mutations
         .iter()
         .find(|mutation| {
-            mutation.assertion() == tidb_txnkv::AssertionOp::AssertNotExist
-                && mutation.key().starts_with(&record_prefix)
+            mutation.kind() == BufferMutationOp::Set && mutation.key().starts_with(&record_prefix)
         })
         .expect("the DDL transaction inserts one notifier record");
     let field_types = notifier
@@ -3585,8 +3584,7 @@ fn notifier_events(
         .mutations
         .iter()
         .filter(|mutation| {
-            mutation.assertion() == tidb_txnkv::AssertionOp::AssertNotExist
-                && mutation.key().starts_with(&record_prefix)
+            mutation.kind() == BufferMutationOp::Set && mutation.key().starts_with(&record_prefix)
         })
         .collect();
     records.sort_by_key(|mutation| mutation.key());

@@ -1100,8 +1100,12 @@ struct MergeProcessMemory {
 
 impl MergeProcessMemory {
     fn new(memory: &crate::StatementMemory, label: i64) -> Self {
+        // Go's worker tracker attaches to the reader's `e.memTracker`, which
+        // outlives the worker on the statement tracker.
+        let tracker = tidb_util::memory::Tracker::new(label, -1);
+        tracker.attach_to(&memory.persistent_operator_tracker(label));
         Self {
-            tracker: memory.operator_tracker(label),
+            tracker,
             memory: memory.clone(),
         }
     }

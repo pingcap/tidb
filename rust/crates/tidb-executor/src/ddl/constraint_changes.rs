@@ -385,6 +385,14 @@ fn prepare_add_foreign_key(
             "ALTER TABLE ... ADD FOREIGN KEY needs a storage-backed table",
         ));
     };
+    // Go `executor.CreateForeignKey`: a temporary child table is refused
+    // before its name or columns are looked at.
+    if table.temp_table_type() != tidb_model::TempTableType::NONE {
+        return Err(DriverError::DdlCoded {
+            proto: &tidb_error::catalog::infoschema::ERR_CANNOT_ADD_FOREIGN,
+            message: "Cannot add foreign key constraint".to_owned(),
+        });
+    }
     let fk_name = definition
         .name
         .clone()

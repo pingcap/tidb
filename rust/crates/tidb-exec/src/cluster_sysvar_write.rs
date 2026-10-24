@@ -174,12 +174,12 @@ pub fn plan_sysvar_write<S: MetaSnapshot>(
     for (name, value) in desired {
         let key = name.to_ascii_lowercase();
         match by_name.remove(&key) {
-            Some(mut row) => {
+            Some(row) => {
                 if stored_text(&row.values, value_id) != *value {
-                    row.values
-                        .insert(value_id, Datum::Bytes(value.clone().into_bytes()));
+                    let mut values = row.values.clone();
+                    values.insert(value_id, Datum::Bytes(value.clone().into_bytes()));
                     plan.mutations
-                        .push(update_row(table, &row.key, &row.values)?);
+                        .extend(update_row(table, &row.key, &row.values, &values)?);
                     plan.changed.push(key);
                 }
             }

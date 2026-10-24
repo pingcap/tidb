@@ -592,6 +592,7 @@ impl ResponseChannel<prost::bytes::Bytes> {
             total_fetch: Duration::ZERO,
             stream_id: SELECT_RESULT_STREAMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             close_reported: false,
+            memory_tracker: None,
             closed: false,
         }
     }
@@ -628,6 +629,9 @@ pub struct SelectResponseIter {
     stream_id: u64,
     /// Whether the sink has been told this select result ended.
     close_reported: bool,
+    /// Go `selectResult.memTracker` and the bytes of the response it holds
+    /// (`selectRespSize`).
+    memory_tracker: Option<(Arc<tidb_util::memory::Tracker>, i64)>,
     closed: bool,
 }
 
@@ -889,6 +893,7 @@ impl SelectResponseIter {
             total_fetch: Duration::ZERO,
             stream_id: SELECT_RESULT_STREAMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             close_reported: false,
+            memory_tracker: None,
             closed: false,
         }
     }
@@ -1132,6 +1137,11 @@ impl SelectResponseIter {
         self.channels.clear();
         self.source.close();
         self.report_select_result_close();
+        // Go `closeImpl`: `memConsume(-respSize)`.
+        if let Some((tracker, charged)) = self.memory_tracker.as_mut() {
+            tracker.consume(-*charged);
+            *charged = 0;
+        }
         self.closed = true;
     }
 
@@ -1272,9 +1282,23 @@ impl SelectResponseIter {
         bytes: prost::bytes::Bytes,
         runtime_stats: Option<&ResponseRuntimeStats>,
     ) -> Result<(), ResponseChannelError> {
+        // Go `fetchResp`: release the previous response, charge this one.
+        if let Some((tracker, charged)) = self.memory_tracker.as_mut() {
+            let size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+            tracker.consume(size - *charged);
+            *charged = size;
+        }
         let response = decode_select_response(bytes)
             .map_err(|error| ResponseChannelError::Decode(error.to_string()))?;
         self.install_response(response, runtime_stats)
+    }
+
+    /// Go `kvReq.MemTracker` of the reader: each response this select result
+    /// holds is charged to `tracker` until the next replaces it or Close.
+    #[must_use]
+    pub fn with_memory_tracker(mut self, tracker: Option<Arc<tidb_util::memory::Tracker>>) -> Self {
+        self.memory_tracker = tracker.map(|tracker| (tracker, 0));
+        self
     }
 
     fn install_response(

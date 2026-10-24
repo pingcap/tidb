@@ -27,6 +27,32 @@ fn code(session: &mut Session, sql: &str) -> (u16, String) {
     (error.code, error.message)
 }
 
+/// Go `buildUpdate` sets `inUpdateStmt` before building the join, so a
+/// NATURAL join keeps both sides' columns: `b.b` names the right side's
+/// column, and the same table updated through two aliases is refused by
+/// `CheckUpdateList` (planner/core/integration `TestNaturalJoinUpdateSameTable`).
+#[test]
+fn a_natural_join_update_names_both_sides_columns() {
+    let mut session = Session::new();
+    session.run("create table t1 (a int, b int)").unwrap();
+    session.run("insert into t1 values (1, 1), (2, 2)").unwrap();
+    session
+        .run("update t1 as a natural join t1 b set a.a = 2, b.b = 3")
+        .unwrap();
+    session.run("drop table t1").unwrap();
+    session
+        .run("create table t1 (a int primary key, b int)")
+        .unwrap();
+    session.run("insert into t1 values (1, 1), (2, 2)").unwrap();
+    assert_eq!(
+        code(&mut session, "update t1 as a natural join t1 b set a.a = 2, b.b = 3"),
+        (
+            1706,
+            "Primary key/partition key update is not allowed since the table is updated both as 'a' and 'b'.".to_owned()
+        )
+    );
+}
+
 /// Go `CheckUpdateList`: a table updated through two aliases may not have
 /// its primary key changed through either.
 #[test]

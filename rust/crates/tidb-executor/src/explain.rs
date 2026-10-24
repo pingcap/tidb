@@ -1988,6 +1988,8 @@ fn physical_explain_operator(
             cost_formula: None,
                     actual_rows: None,
                     execution_info: None,
+                    memory_info: None,
+                    disk_info: None,
                     task: ExplainTask::Root,
                     access_object: Some(AccessObject::Other(OtherAccessObject(
                         trigger.access.clone(),
@@ -2123,6 +2125,22 @@ fn physical_explain_operator(
     }
     if let Some(rows) = runtime_rows(plan, runtime) {
         operator = operator.with_actual_rows(rows);
+    }
+    // Go `getRuntimeInfo`: `StmtCtx.MemTracker.SearchTrackerWithoutLock(p.ID())`
+    // and the same on the disk tracker, formatted by `FormatBytes`.
+    // A pushed operator has no tracker in Go (a local fallback's is not
+    // Go's).
+    if runtime.is_some() && matches!(operator.task, ExplainTask::Root) {
+        let memory = statement_context.statement_memory();
+        let label = i64::from(plan.id());
+        operator.memory_info = memory
+            .stmt_tracker()
+            .search_tracker(label)
+            .map(|tracker| tidb_util::memory::format_bytes(tracker.max_consumed()));
+        operator.disk_info = memory
+            .stmt_disk_tracker()
+            .search_tracker(label)
+            .map(|tracker| tidb_util::memory::format_bytes(tracker.max_consumed()));
     }
     // Go `getRuntimeInfoStr`: a pushed operator reports what the cop tasks
     // returned in their execution summaries. A local fallback for a cop plan
@@ -3632,8 +3650,14 @@ fn explain_info_for_encode(operator: &ExplainOperator, analyze: bool) -> Explain
                 .execution_info
                 .clone()
                 .unwrap_or_else(|| "N/A".to_owned()),
-            "N/A".to_owned(),
-            "N/A".to_owned(),
+            operator
+                .memory_info
+                .clone()
+                .unwrap_or_else(|| "N/A".to_owned()),
+            operator
+                .disk_info
+                .clone()
+                .unwrap_or_else(|| "N/A".to_owned()),
         )
     } else {
         Default::default()

@@ -170,10 +170,8 @@ impl AdvisoryLockTable {
                 })?;
             let mut values = crate::system_row_write::RowValues::new();
             values.insert(column.read().id, Datum::new_string(lock_name));
-            let (key, _) =
-                crate::system_row_write::clustered_record_key(&self.info, &values)
-                    .map_err(encode_error)?;
-            return Ok(key);
+            return crate::system_row_write::clustered_record_key(&self.info, &values)
+                .map_err(encode_error);
         }
         let primary = &self.codec_info.indices[self.primary_position];
         let mut values = vec![Datum::new_string(lock_name)];

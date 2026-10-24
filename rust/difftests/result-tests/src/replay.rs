@@ -706,19 +706,32 @@ fn compare_output(
         (Err(error), true) => {
             if std::env::var_os("INTEGRATION_IGNORE_ERROR_CODES").is_none() {
                 let first = recorded.first().map(|line| display_line(line));
+                // The recorder writes `Error <code> (<sqlstate>): <message>`;
+                // both the code and the SQLSTATE reach the client.
                 let want = first.as_deref().and_then(|line| {
-                    line.strip_prefix("Error ")?
+                    let rest = line.strip_prefix("Error ")?;
+                    let code = rest
                         .split(|c: char| !c.is_ascii_digit())
                         .next()?
                         .parse::<u16>()
-                        .ok()
+                        .ok()?;
+                    let state = rest
+                        .split_once(" (")
+                        .filter(|(_, tail)| tail.get(5..7) == Some("):"))
+                        .and_then(|(_, tail)| tail.get(..5))
+                        .map(str::to_owned);
+                    Some((code, state))
                 });
                 let ours = error.to_mysql_error();
-                if want.is_some_and(|want| want != ours.code) {
+                let our_state = String::from_utf8_lossy(&ours.state).into_owned();
+                if want.as_ref().is_some_and(|(code, state)| {
+                    *code != ours.code || state.as_ref().is_some_and(|state| *state != our_state)
+                }) {
                     return Err(Some(format!(
-                        "  tidb: {}\n  rust: Error {}: {}",
+                        "  tidb: {}\n  rust: Error {} ({}): {}",
                         first.unwrap_or_default(),
                         ours.code,
+                        our_state,
                         ours.message
                     )));
                 }

@@ -93,6 +93,9 @@ pub struct HashJoinV2Executor<C> {
     is_ga: bool,
     /// Go `HashJoinV2Exec.stats`.
     stats: Option<super::stats::SharedHashJoinRuntimeStatsV2>,
+    /// Go `HashJoinV2Exec.memTracker`, created by the first Open and kept
+    /// on the statement tracker (later Opens reuse it, as Go's `Reset`).
+    operator_tracker: Option<Arc<tidb_util::memory::Tracker>>,
 }
 
 impl<C> HashJoinV2Executor<C> {
@@ -131,6 +134,7 @@ impl<C> HashJoinV2Executor<C> {
             runtime_stats_source: None,
             is_ga: false,
             stats: None,
+            operator_tracker: None,
         }
     }
 
@@ -271,14 +275,19 @@ impl<C> HashJoinV2Executor<C> {
             ctx.stats = Some(Arc::clone(&stats));
             self.stats = Some(stats);
         }
+        let operator_tracker = Arc::clone(
+            self.operator_tracker
+                .get_or_insert_with(|| self.memory.operator_tracker(self.meta.id())),
+        );
         let mut build = HashJoinV2Exec::new(ctx, &plan.build_key_indices, &not_null);
+        build.memory_tracker = Some(Arc::clone(&operator_tracker));
         if self.memory.tmp_storage_on_oom() && build.ctx.partition_number > 1 {
             build.init_max_spill_round();
         }
         build
             .hash_table_context
             .memory_tracker
-            .attach_to(self.memory.stmt_tracker());
+            .attach_to(&operator_tracker);
         let spill = HashJoinSpill::new(
             plan.concurrency,
             build.ctx.partition_number,

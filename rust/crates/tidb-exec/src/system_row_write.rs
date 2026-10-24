@@ -23,10 +23,15 @@
 //! 3. for a table with no clustered handle, the row-ID allocator key, so the
 //!    next writer does not hand out a handle this one already used.
 //!
-//! [`crate::mysql_bootstrap`] proved this encoding against a real TiDB (a Go
-//! server reads the rows it seeds); this module is that same encoding lifted
-//! out of the bootstrap's one-shot shape so the account path can also update
-//! and delete rows that already exist.
+//! None of it is encoded here. Every write goes through the one table-layer
+//! writer, `KvTable` (Go `tables.TableCommon`), opened over the stored
+//! `TableInfo` the way Go's `tables.TableFromMeta` opens it: `AddRecord`,
+//! `UpdateRecord` and `RemoveRecord` produce the record, the index entries
+//! and their assertions exactly as for a user table's `INSERT`, `UPDATE` and
+//! `DELETE`, and this module hands their writes to the caller's transaction
+//! as mutations. What stays here is what Go's executor does before the table
+//! layer: materialising declared defaults and casting the caller's values to
+//! their columns (`table.CastValue`).
 //!
 //! # Two handle shapes, because `mysql.*` has two — and which one is which
 //! depends on the cluster's version
@@ -47,32 +52,32 @@
 //!
 //! Which set a caller needs is therefore a question about the *cluster's*
 //! `TableInfo`, never about the table's name; [`crate::cluster_stats_write`]
-//! asks [`HandleLayout::of`] per table for exactly that reason.
+//! asks [`crate::mysql_system_tables::HandleLayout::of`] per table for exactly
+//! that reason.
 
-use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
-use tidb_codec::Encoder;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex, PoisonError};
+
+use tidb_codec::table_key::encode_row_key_with_handle;
 use tidb_datatype::{
-    is_bin_collation, new_collation_enabled, parse_enum, parse_set_name, Datum, FieldType,
-    FieldTypeCode, GoString, Time,
+    new_collation_enabled, parse_enum, parse_set_name, Datum, FieldType, FieldTypeCode, GoString,
+    SessionTimeZone, Time,
 };
+use tidb_executor::kv_table::{KvTable, TableHandle};
+use tidb_executor::storage::{MemTableStorage, StorageError, StorageIterator, TableStorage};
+use tidb_executor::StmtContext;
 use tidb_model::column::ColumnInfo;
 use tidb_model::table_info::TableInfo;
 use tidb_model::{GoAny, GoAnyView};
 use tidb_tablecodec::{
-    encode_table_row, generate_index_key, generate_index_value, truncate_index_value,
     IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo, TableColumn as CodecTableColumn,
     TableInfo as CodecTableInfo,
 };
-use tidb_txnkv::transaction::BufferMutation;
-use tidb_txnkv::{CommonHandle, Handle, IntHandle};
-
-use crate::mysql_system_tables::HandleLayout;
+use tidb_txnkv::transaction::{BufferMutation, BufferMutationOp, MutationSetError};
+use tidb_txnkv::{AssertionOp, Key};
 
 /// Go `ast.CurrentTimestamp`, as a column default stores it.
 pub(crate) const CURRENT_TIMESTAMP: &str = "CURRENT_TIMESTAMP";
-
-/// Go `types.UnspecifiedLength`: a key part that stores its whole column.
-const UNSPECIFIED_LENGTH: i64 = -1;
 
 /// Go's own `Y`/`N` privilege spelling.
 pub const YES: &str = "Y";
@@ -120,6 +125,293 @@ pub fn defaults_row(table: &TableInfo, now: Time) -> Result<RowValues, RowEncode
     Ok(values)
 }
 
+/// The one table-layer writer (`KvTable`, Go `tables.TableCommon`) opened
+/// over one stored `TableInfo` (Go `tables.TableFromMeta`), whose writes are
+/// captured as mutations for the caller's transaction instead of a session
+/// buffer.
+///
+/// A system-table row is written by the same `AddRecord`, `UpdateRecord` and
+/// `RemoveRecord` a user table's `INSERT`, `UPDATE` and `DELETE` use, so the
+/// record key, the row value, every index entry, the restored data of a
+/// common handle and the assertions are the table layer's, never a second
+/// encoding of them.
+struct TableWriter {
+    table: KvTable,
+    writes: CapturedWrites,
+    context: StmtContext,
+    name: String,
+}
+
+impl TableWriter {
+    fn open(info: &TableInfo, use_new_collation: bool) -> Result<Self, RowEncodeError> {
+        let writes = CapturedWrites::default();
+        let table = crate::table_from_meta::cluster_table(
+            info,
+            &writes,
+            &crate::table_from_meta::AutoIdSource::Unavailable,
+        )
+        .map_err(|reason| {
+            encode_error(format!("{} cannot be written: {reason}", table_name(info)))
+        })?
+        .with_new_collation_mode(use_new_collation);
+        // No time zone conversion: every `TIMESTAMP` that reaches this module
+        // is ALREADY the UTC wall clock (a fresh value comes from
+        // `mysql_bootstrap::utc_now_timestamp`, and an edited row's untouched
+        // columns came back from a decode that did not convert either).
+        let context = StmtContext::for_query().with_time_zone(SessionTimeZone::utc());
+        Ok(TableWriter {
+            table,
+            writes,
+            context,
+            name: table_name(info).to_owned(),
+        })
+    }
+
+    /// The row in the table's column order, each value cast to its column
+    /// the way Go's `INSERT` casts it before `AddRecord` (`table.CastValue`):
+    /// an `ENUM`/`SET` as its member(s), a string with the column's collation,
+    /// so a new-collation key holds its sort key. `whole` refuses a missing
+    /// column; otherwise it reads as NULL (a record key needs only its key
+    /// columns).
+    fn row(&self, values: &RowValues, whole: bool) -> Result<Vec<Datum>, RowEncodeError> {
+        self.table
+            .columns
+            .iter()
+            .map(|column| match values.get(&column.id) {
+                Some(value) => Ok(collated_value(
+                    typed_value(value, &column.field_type)?,
+                    &column.field_type,
+                )),
+                None if !whole => Ok(Datum::Null),
+                None => Err(encode_error(format!(
+                    "{}.{} has no value in the row being written",
+                    self.name, column.name
+                ))),
+            })
+            .collect()
+    }
+
+    /// The handle a clustered table's row lives under; a `_tidb_rowid` table
+    /// is refused rather than given some invented key.
+    fn clustered_handle(&mut self, row: &[Datum]) -> Result<TableHandle, RowEncodeError> {
+        self.table
+            .clustered_handle_of_row(row, &SessionTimeZone::utc())
+            .map_err(|error| encode_error(format!("{error:?}")))?
+            .ok_or_else(|| {
+                encode_error(format!(
+                    "{} has no clustered handle; its rows are written under an allocated \
+                     _tidb_rowid",
+                    self.name
+                ))
+            })
+    }
+
+    /// Go `AddRecord` under the duplicate-key mode Go gives a plain `INSERT`
+    /// in an optimistic transaction with `tidb_constraint_check_in_place` off
+    /// (`optimizeDupKeyCheckForNormalInsert`): `DupKeyCheckLazy`, so the
+    /// record and every unique entry are presumed absent and checked at
+    /// prewrite.
+    fn add(
+        mut self,
+        values: &RowValues,
+        record_id: Option<i64>,
+    ) -> Result<Vec<BufferMutation>, RowEncodeError> {
+        let row = self.row(values, true)?;
+        self.table
+            .add_record_with_record_id(&row, record_id, true, &self.context)
+            .map_err(|error| encode_error(format!("{error:?}")))?;
+        Ok(self.writes.take())
+    }
+
+    /// Go `UpdateRecord`: index entries move only where the indexed value
+    /// did; an entry whose key is unchanged is left alone. An optimistic
+    /// `UPDATE` checks a moved unique entry in place
+    /// (`optimizeDupKeyCheckForUpdate`), so it asserts the destination
+    /// absent.
+    fn update(
+        mut self,
+        handle: Option<TableHandle>,
+        existing: &RowValues,
+        values: &RowValues,
+    ) -> Result<Vec<BufferMutation>, RowEncodeError> {
+        let old = self.row(existing, true)?;
+        let new = self.row(values, true)?;
+        let handle = match handle {
+            Some(handle) => handle,
+            None => self.clustered_handle(&new)?,
+        };
+        self.table
+            .update_row_with_old_context(&handle, Some(&old), &new, &self.context)
+            .map_err(|error| encode_error(format!("{error:?}")))?;
+        Ok(self.writes.take())
+    }
+
+    /// Go `RemoveRecord`. `whole` is false only for a table with no index,
+    /// whose removal reads nothing past the record key.
+    fn remove(
+        mut self,
+        handle: Option<TableHandle>,
+        values: &RowValues,
+        whole: bool,
+    ) -> Result<Vec<BufferMutation>, RowEncodeError> {
+        let row = self.row(values, whole)?;
+        let handle = match handle {
+            Some(handle) => handle,
+            None => self.clustered_handle(&row)?,
+        };
+        self.table
+            .delete_row_with_old_context(&handle, &row, &self.context)
+            .map_err(|error| encode_error(format!("{error:?}")))?;
+        Ok(self.writes.take())
+    }
+}
+
+/// A [`TableStorage`] with nothing stored that keeps every write the table
+/// layer stages, with its assertion and lazy-check flags, as the mutation the
+/// caller's transaction applies.
+///
+/// Reads answer "absent": a system-table writer has already read the rows it
+/// rewrites at its own snapshot, so the table layer's duplicate checks are
+/// left to the commit's assertions, exactly as the mutations state them.
+#[derive(Clone, Debug, Default)]
+struct CapturedWrites {
+    writes: Arc<Mutex<Vec<BufferMutation>>>,
+    presumed: Arc<Mutex<BTreeSet<Vec<u8>>>>,
+}
+
+impl CapturedWrites {
+    fn take(&self) -> Vec<BufferMutation> {
+        std::mem::take(&mut *self.writes.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    fn push(&self, mutation: Result<BufferMutation, MutationSetError>) -> Result<(), StorageError> {
+        let mutation = mutation.map_err(|error| StorageError::Backend(error.to_string()))?;
+        self.writes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(mutation);
+        Ok(())
+    }
+
+    /// Go `kv.SetPresumeKeyNotExists`, marked before or after the value.
+    fn presumed(&self, key: &[u8]) -> bool {
+        self.presumed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(key)
+    }
+}
+
+impl TableStorage for CapturedWrites {
+    fn get(&mut self, _key: &Key) -> Result<Vec<u8>, StorageError> {
+        Err(StorageError::NotFound)
+    }
+
+    fn get_local(&mut self, _key: &Key) -> Result<Vec<u8>, StorageError> {
+        Err(StorageError::NotFound)
+    }
+
+    fn mark_presume_key_not_exists(&mut self, key: &Key) {
+        self.presumed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key.as_bytes().to_vec());
+        let mut writes = self.writes.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(position) = writes
+            .iter()
+            .rposition(|mutation| mutation.key() == key.as_bytes())
+        {
+            let (op, key, value, _, assertion) = writes[position].clone().into_parts();
+            if op == BufferMutationOp::Set {
+                if let Ok(marked) = BufferMutation::set_with_flags(key, value, true, assertion) {
+                    writes[position] = marked;
+                }
+            }
+        }
+    }
+
+    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, _value: &str, _index: &str) {
+        self.mark_presume_key_not_exists(key);
+    }
+
+    fn set(&mut self, key: Key, value: Vec<u8>) -> Result<(), StorageError> {
+        self.set_with_assertion(key, value, AssertionOp::AssertNone)
+    }
+
+    fn set_with_assertion(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        assertion: AssertionOp,
+    ) -> Result<(), StorageError> {
+        let presumed = self.presumed(key.as_bytes());
+        self.push(BufferMutation::set_with_flags(
+            key.as_bytes().to_vec(),
+            value,
+            presumed,
+            assertion,
+        ))
+    }
+
+    fn set_with_constraint_check(
+        &mut self,
+        key: Key,
+        value: Vec<u8>,
+        assertion: AssertionOp,
+        check_in_prewrite: bool,
+    ) -> Result<(), StorageError> {
+        if check_in_prewrite {
+            // Go's pessimistic `NeedConstraintCheckInPrewrite`; a system-table
+            // write never runs in a pessimistic statement.
+            return Err(StorageError::Backend(
+                "a system-table write has no pessimistic constraint check".to_owned(),
+            ));
+        }
+        self.set_with_assertion(key, value, assertion)
+    }
+
+    fn delete(&mut self, key: Key) -> Result<(), StorageError> {
+        self.delete_with_assertion(key, AssertionOp::AssertNone)
+    }
+
+    fn delete_with_assertion(
+        &mut self,
+        key: Key,
+        assertion: AssertionOp,
+    ) -> Result<(), StorageError> {
+        let key = key.as_bytes().to_vec();
+        self.push(match assertion {
+            AssertionOp::AssertExist => BufferMutation::delete_existing(key),
+            AssertionOp::AssertNone => BufferMutation::delete(key),
+            other => {
+                return Err(StorageError::Backend(format!(
+                    "a delete carries no {other:?} assertion"
+                )))
+            }
+        })
+    }
+
+    fn iter(
+        &mut self,
+        start: Option<&Key>,
+        upper_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        MemTableStorage::new().iter(start, upper_bound)
+    }
+
+    fn key_count(&self) -> usize {
+        0
+    }
+
+    fn clear(&mut self) {
+        self.take();
+    }
+
+    fn clone_box(&self) -> Box<dyn TableStorage> {
+        Box::new(self.clone())
+    }
+}
+
 /// The mutations that write one row that does not exist yet, at `row_id`.
 pub fn insert_row(
     table: &TableInfo,
@@ -132,46 +424,17 @@ pub fn insert_row(
 /// [`insert_row`] with the cluster's persisted collation mode already
 /// captured.
 ///
-/// Go fixes this mode in the table/index encoder. Accepting it once here keeps
-/// the entry key, restored-data decision, and entry value on one format even
-/// if the process-level source changes while the mutations are assembled.
+/// Go fixes this mode in the table/index encoder (`TableFromMetaWithCollate`).
+/// Accepting it once here keeps the entry key, restored-data decision, and
+/// entry value on one format even if the process-level source changes while
+/// the mutations are assembled.
 pub fn insert_row_with_collation(
     table: &TableInfo,
     row_id: i64,
     values: &RowValues,
     use_new_collation: bool,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(row_id));
-    let mut mutations = vec![crate::table_write_policy::insert_record(
-        key,
-        encode_row(table, values)?,
-        crate::table_write_policy::AbsenceCheck::Checked,
-        false,
-    )
-    .map_err(|error| encode_error(error.to_string()))?];
-    mutations.extend(index_entries(
-        table,
-        &Handle::Int(IntHandle::new(row_id)),
-        values,
-        IndexOp::Put,
-        use_new_collation,
-    )?);
-    Ok(mutations)
-}
-
-/// The mutation that rewrites one row already stored under `key`.
-///
-/// Index entries are deliberately *not* touched: this path is only for a
-/// change to columns no public index covers, which every caller checks before
-/// calling ([`indexed_columns`]). A rewrite that moved an indexed value would
-/// otherwise leave the old entry pointing at the new row.
-pub fn update_row(
-    table: &TableInfo,
-    key: &[u8],
-    values: &RowValues,
-) -> Result<BufferMutation, RowEncodeError> {
-    BufferMutation::put_existing(key.to_vec(), encode_row(table, values)?)
-        .map_err(|error| encode_error(error.to_string()))
+    TableWriter::open(table, use_new_collation)?.add(values, Some(row_id))
 }
 
 /// Whether `table`'s rows are keyed by their primary key (an integer primary
@@ -226,122 +489,54 @@ pub fn decode_stored_row(
     Ok(values)
 }
 
+/// The mutations that turn the row stored under `key` from `existing` into
+/// `values` (Go `UpdateRecord`), for either handle shape: the record is
+/// rewritten in place, and an index entry moves only where its indexed value
+/// did.
+pub fn update_row(
+    table: &TableInfo,
+    key: &[u8],
+    existing: &RowValues,
+    values: &RowValues,
+) -> Result<Vec<BufferMutation>, RowEncodeError> {
+    let handle = if is_clustered(table) {
+        None
+    } else {
+        Some(TableHandle::Int(row_id_of(key)?))
+    };
+    TableWriter::open(table, new_collation_enabled())?.update(handle, existing, values)
+}
+
 /// The mutations that remove one stored row and every index entry it owns.
 pub fn delete_row(
     table: &TableInfo,
     key: &[u8],
     values: &RowValues,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    delete_row_with_collation(table, key, values, new_collation_enabled())
+    let handle = TableHandle::Int(row_id_of(key)?);
+    TableWriter::open(table, new_collation_enabled())?.remove(Some(handle), values, true)
 }
 
-fn delete_row_with_collation(
-    table: &TableInfo,
-    key: &[u8],
-    values: &RowValues,
-    use_new_collation: bool,
-) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let row_id = row_id_of(key)?;
-    let mut mutations = vec![BufferMutation::delete_existing(key.to_vec())
-        .map_err(|error| encode_error(error.to_string()))?];
-    mutations.extend(index_entries(
-        table,
-        &Handle::Int(IntHandle::new(row_id)),
-        values,
-        IndexOp::Delete,
-        use_new_collation,
-    )?);
-    Ok(mutations)
-}
-
-/// The record key and handle one row of a CLUSTERED table lives under.
+/// The record key one row of a CLUSTERED table lives under.
 ///
 /// A clustered table's primary key *is* its handle: `mysql.stats_meta` keys
 /// on `table_id`, `mysql.stats_histograms` and `mysql.stats_buckets` on their
 /// whole `(table_id, is_index, hist_id[, bucket_id])` tuple. Nothing
 /// allocates a `_tidb_rowid` for them, and nothing needs to: a row's identity
 /// is its own values, so an `ANALYZE` that rewrites a table's statistics
-/// overwrites exactly the keys the previous one wrote.
-///
-/// A table with no clustered handle is refused rather than given some
-/// invented key: [`insert_row`] is that table's writer.
+/// overwrites exactly the keys the previous one wrote. Only the key columns
+/// need a value.
 pub fn clustered_record_key(
     table: &TableInfo,
     values: &RowValues,
-) -> Result<(Vec<u8>, Handle), RowEncodeError> {
-    clustered_record_key_with_collation(table, values, new_collation_enabled())
-}
-
-fn clustered_record_key_with_collation(
-    table: &TableInfo,
-    values: &RowValues,
-    use_new_collation: bool,
-) -> Result<(Vec<u8>, Handle), RowEncodeError> {
-    let layout = HandleLayout::of(table);
-    let named = |name: &str| -> Result<&Datum, RowEncodeError> {
-        let column = table
-            .cols()
-            .iter_deref()
-            .find(|column| column.read().name.lowercase() == name)
-            .ok_or_else(|| encode_error(format!("{} has no column `{name}`", table_name(table))))?;
-        let column_id = column.read().id;
-        values.get(&column_id).ok_or_else(|| {
-            encode_error(format!(
-                "{}.{name} has no value in the row being written",
-                table_name(table)
-            ))
-        })
-    };
-    match &layout {
-        HandleLayout::RowId => Err(encode_error(format!(
-            "{} has no clustered handle; its rows are written under an allocated _tidb_rowid",
-            table_name(table)
-        ))),
-        HandleLayout::Int(column) => {
-            let value = named(column)?;
-            let handle = match value {
-                Datum::Int(value) => *value,
-                Datum::UInt(value) => *value as i64,
-                other => {
-                    return Err(encode_error(format!(
-                        "{}.{column} is the record handle but holds {other:?}",
-                        table_name(table)
-                    )))
-                }
-            };
-            Ok((
-                encode_row_key_with_handle(table.id, &RecordHandle::Int(handle)),
-                Handle::Int(IntHandle::new(handle)),
-            ))
-        }
-        HandleLayout::Common(columns) => {
-            let mut datums = Vec::with_capacity(columns.len());
-            for column in columns {
-                // In new-collation mode the key holds the column's SORT KEY, and
-                // the key codec takes the collation from the datum: a plain
-                // `Bytes` value would encode as binary (see `collated_value`).
-                let field_type = table
-                    .find_public_column_by_name(column)
-                    .map(|stored| stored.read().field_type.clone());
-                let value = named(column)?.clone();
-                datums.push(match field_type {
-                    Some(field_type) => {
-                        collated_value(typed_value(&value, &field_type)?, &field_type)
-                    }
-                    None => value,
-                });
-            }
-            let encoded = Encoder::new(use_new_collation)
-                .encode_key(&datums)
-                .map_err(|error| encode_error(error.to_string()))?;
-            let handle = CommonHandle::new(encoded.clone())
-                .map_err(|error| encode_error(error.to_string()))?;
-            Ok((
-                encode_row_key_with_handle(table.id, &RecordHandle::Common(encoded)),
-                Handle::Common(handle),
-            ))
-        }
-    }
+) -> Result<Vec<u8>, RowEncodeError> {
+    let mut writer = TableWriter::open(table, new_collation_enabled())?;
+    let row = writer.row(values, false)?;
+    let handle = writer.clustered_handle(&row)?;
+    Ok(encode_row_key_with_handle(
+        table.id,
+        &handle.record_handle(),
+    ))
 }
 
 /// The mutations that store one row of a clustered table.
@@ -363,40 +558,15 @@ pub fn store_clustered_row(
     existing: Option<&RowValues>,
     values: &RowValues,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    store_clustered_row_with_collation(table, existing, values, new_collation_enabled())
-}
-
-fn store_clustered_row_with_collation(
-    table: &TableInfo,
-    existing: Option<&RowValues>,
-    values: &RowValues,
-    use_new_collation: bool,
-) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let (key, handle) = clustered_record_key_with_collation(table, values, use_new_collation)?;
+    let writer = TableWriter::open(table, new_collation_enabled())?;
     match existing {
-        Some(existing) => rewrite_row(table, &key, &handle, existing, values, use_new_collation),
-        None => {
-            let mut mutations = vec![crate::table_write_policy::insert_record(
-                key,
-                encode_row(table, values)?,
-                crate::table_write_policy::AbsenceCheck::Checked,
-                false,
-            )
-            .map_err(|error| encode_error(error.to_string()))?];
-            mutations.extend(index_entries(
-                table,
-                &handle,
-                values,
-                IndexOp::Put,
-                use_new_collation,
-            )?);
-            Ok(mutations)
-        }
+        Some(existing) => writer.update(None, existing, values),
+        None => writer.add(values, None),
     }
 }
 
 /// The mutations that rewrite one row of a `_tidb_rowid` table in place,
-/// keeping its handle.
+/// keeping its handle (Go `UpdateRecord`).
 ///
 /// Keeping the handle is the point. Deleting the row and inserting a
 /// replacement under a fresh handle would touch every index entry twice --
@@ -410,49 +580,8 @@ pub fn rewrite_rowid_row(
     existing: &RowValues,
     values: &RowValues,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    rewrite_rowid_row_with_collation(table, key, existing, values, new_collation_enabled())
-}
-
-fn rewrite_rowid_row_with_collation(
-    table: &TableInfo,
-    key: &[u8],
-    existing: &RowValues,
-    values: &RowValues,
-    use_new_collation: bool,
-) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let handle = Handle::Int(IntHandle::new(row_id_of(key)?));
-    rewrite_row(table, key, &handle, existing, values, use_new_collation)
-}
-
-/// The record put and the index moves that turn `existing` into `values`
-/// under one unchanged handle.
-fn rewrite_row(
-    table: &TableInfo,
-    key: &[u8],
-    handle: &Handle,
-    existing: &RowValues,
-    values: &RowValues,
-    use_new_collation: bool,
-) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let mut mutations =
-        vec![
-            BufferMutation::put_existing(key.to_vec(), encode_row(table, values)?)
-                .map_err(|error| encode_error(error.to_string()))?,
-        ];
-    // Retracting the old entry and writing the new one matters only when the
-    // indexed value moved. When it did not, both share a key -- and both a
-    // duplicate mutation on one key and a retraction of what the write just
-    // stored are wrong -- so the unchanged case emits neither.
-    let stale = index_entries(table, handle, existing, IndexOp::Delete, use_new_collation)?;
-    let fresh = index_entries(table, handle, values, IndexOp::Put, use_new_collation)?;
-    for (retract, store) in stale.into_iter().zip(fresh) {
-        if retract.key() == store.key() {
-            continue;
-        }
-        mutations.push(retract);
-        mutations.push(store);
-    }
-    Ok(mutations)
+    let handle = TableHandle::Int(row_id_of(key)?);
+    TableWriter::open(table, new_collation_enabled())?.update(Some(handle), existing, values)
 }
 
 /// The mutations that remove one row of a clustered table and every index
@@ -461,7 +590,7 @@ pub fn delete_clustered_row(
     table: &TableInfo,
     values: &RowValues,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    delete_clustered_row_with_collation(table, values, new_collation_enabled())
+    TableWriter::open(table, new_collation_enabled())?.remove(None, values, true)
 }
 
 /// Go SQL `REPLACE` for a clustered system table with no secondary indexes.
@@ -474,15 +603,8 @@ pub fn replace_unindexed_clustered_row(
     table: &TableInfo,
     values: &RowValues,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    if !table.indices.is_empty() {
-        return Err(encode_error(format!(
-            "{} is indexed and cannot be replaced without its previous row",
-            table_name(table)
-        )));
-    }
-    let (key, _) = clustered_record_key(table, values)?;
-    Ok(vec![BufferMutation::set(key, encode_row(table, values)?)
-        .map_err(|error| encode_error(error.to_string()))?])
+    refuse_indexed(table, "replaced")?;
+    unasserted(TableWriter::open(table, new_collation_enabled())?.add(values, None)?)
 }
 
 /// Go SQL `DELETE` for an unindexed clustered system-table row.
@@ -493,35 +615,33 @@ pub fn delete_unindexed_clustered_row(
     table: &TableInfo,
     values: &RowValues,
 ) -> Result<Vec<BufferMutation>, RowEncodeError> {
+    refuse_indexed(table, "deleted")?;
+    unasserted(TableWriter::open(table, new_collation_enabled())?.remove(None, values, false)?)
+}
+
+fn refuse_indexed(table: &TableInfo, verb: &str) -> Result<(), RowEncodeError> {
     if !table.indices.is_empty() {
         return Err(encode_error(format!(
-            "{} is indexed and cannot be deleted without its previous row",
+            "{} is indexed and cannot be {verb} without its previous row",
             table_name(table)
         )));
     }
-    let (key, _) = clustered_record_key(table, values)?;
-    Ok(vec![
-        BufferMutation::delete(key).map_err(|error| encode_error(error.to_string()))?
-    ])
+    Ok(())
 }
 
-fn delete_clustered_row_with_collation(
-    table: &TableInfo,
-    values: &RowValues,
-    use_new_collation: bool,
-) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let (key, handle) = clustered_record_key_with_collation(table, values, use_new_collation)?;
-    let mut mutations =
-        vec![BufferMutation::delete_existing(key)
-            .map_err(|error| encode_error(error.to_string()))?];
-    mutations.extend(index_entries(
-        table,
-        &handle,
-        values,
-        IndexOp::Delete,
-        use_new_collation,
-    )?);
-    Ok(mutations)
+/// The table layer's record write without its existence assertion.
+fn unasserted(mutations: Vec<BufferMutation>) -> Result<Vec<BufferMutation>, RowEncodeError> {
+    mutations
+        .into_iter()
+        .map(|mutation| {
+            let (op, key, value, _, _) = mutation.into_parts();
+            match op {
+                BufferMutationOp::Set => BufferMutation::set(key, value),
+                _ => BufferMutation::delete(key),
+            }
+            .map_err(|error| encode_error(error.to_string()))
+        })
+        .collect()
 }
 
 /// The stored `_tidb_rowid` a record key carries.
@@ -555,162 +675,6 @@ pub fn indexed_columns(table: &TableInfo) -> Vec<String> {
     names
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum IndexOp {
-    Put,
-    Delete,
-}
-
-fn encode_row(table: &TableInfo, values: &RowValues) -> Result<Vec<u8>, RowEncodeError> {
-    // A clustered handle's columns live in the record key and nowhere else
-    // -- the same rule the reader states in `SystemTableView::project` --
-    // except a common handle's string column whose sort key loses the
-    // original bytes (Go `tables.TryGetCommonPkColumnRestoredIds`): its
-    // original value is restored from the row value. A writer that put the
-    // others in the value too would store a second copy TiDB never wrote.
-    let handle = HandleLayout::of(table);
-    let key_columns = handle.columns();
-    let use_new_collation = new_collation_enabled();
-    let mut column_ids = Vec::with_capacity(table.columns.len());
-    let mut row = Vec::with_capacity(table.columns.len());
-    for column in table.cols().iter_deref() {
-        let column = column.read();
-        let restored = table.is_common_handle
-            && column
-                .field_type
-                .need_restored_data_with_collation(use_new_collation);
-        if key_columns.iter().any(|key| key == column.name.lowercase()) && !restored {
-            continue;
-        }
-        let value = values.get(&column.id).ok_or_else(|| {
-            encode_error(format!(
-                "{}.{} has no value in the row being written",
-                table_name(table),
-                column.name.original()
-            ))
-        })?;
-        column_ids.push(column.id);
-        row.push(typed_value(value, &column.field_type)?);
-    }
-    // No time zone, because every `TIMESTAMP` that reaches this module is
-    // ALREADY the UTC wall clock: a fresh value comes from
-    // `mysql_bootstrap::utc_now_timestamp`, and an edited row's untouched
-    // columns came back from a decode that likewise did not convert. The
-    // rowcodec's session->UTC step is for a value still in session time; adding
-    // it here would shift every stored timestamp by the session's offset.
-    encode_table_row(None, &row, &column_ids, true, None)
-        .map_err(|error| encode_error(error.to_string()))
-}
-
-fn index_entries(
-    table: &TableInfo,
-    handle: &Handle,
-    values: &RowValues,
-    op: IndexOp,
-    use_new_collation: bool,
-) -> Result<Vec<BufferMutation>, RowEncodeError> {
-    let handle = handle.clone();
-    let codec_table = codec_table_info(table);
-    let mut mutations = Vec::new();
-    for (position, index) in table.indices.iter_deref().enumerate() {
-        let index = index.read();
-        // Go `addIndices`, `rebuildUpdateRecordIndices` and
-        // `removeRowIndices` (`pkg/table/tables/tables.go`) skip a clustered
-        // table's primary index: its key is the record handle, so it owns no
-        // index entry. Writing one stores a key Go never writes, and deleting
-        // one asserts the existence of a key that is not there.
-        if index.primary && table.is_common_handle {
-            continue;
-        }
-        let codec_index = &codec_table.indices[position];
-        let mut indexed = Vec::with_capacity(index.columns.len());
-        for index_column in index.columns.iter_deref() {
-            let index_column = index_column.read();
-            let offset =
-                usize::try_from(index_column.offset).expect("a column offset is not negative");
-            if offset >= table.columns.len() {
-                return Err(encode_error(format!(
-                    "{}'s index `{}` names an offset the table does not have",
-                    table_name(table),
-                    index.name.original()
-                )));
-            }
-            let column = table
-                .columns
-                .get(offset)
-                .expect("nil *ColumnInfo in TableInfo.Columns");
-            let column = column.read();
-            let value = values.get(&column.id).ok_or_else(|| {
-                encode_error(format!(
-                    "{}.{} has no value for index `{}`",
-                    table_name(table),
-                    column.name.original(),
-                    index.name.original()
-                ))
-            })?;
-            indexed.push(collated_value(
-                typed_value(value, &column.field_type)?,
-                &column.field_type,
-            ));
-        }
-        let (index_key, distinct) = generate_index_key(
-            Encoder::new(use_new_collation),
-            None,
-            &codec_table,
-            codec_index,
-            table.id,
-            &mut indexed,
-            Some(&handle),
-        )
-        .map_err(|error| encode_error(error.to_string()))?;
-        let mutation = match op {
-            IndexOp::Delete => {
-                if index.state == tidb_model::SchemaState::PUBLIC {
-                    BufferMutation::delete_existing(index_key)
-                } else {
-                    BufferMutation::delete(index_key)
-                }
-            }
-            IndexOp::Put => {
-                let index_value = generate_index_value(
-                    use_new_collation,
-                    None,
-                    &codec_table,
-                    codec_index,
-                    // Go `tables.NeedRestoredData`, computed per index rather
-                    // than assumed absent: in new-collation mode the index KEY
-                    // is a sort key, so for an indexed VARCHAR (or any column
-                    // under a case-insensitive collation) this value is the
-                    // only place the original bytes survive. Legacy mode makes
-                    // the same predicate false and keeps the raw key instead.
-                    needs_restored_data(&codec_table, codec_index, use_new_collation),
-                    distinct,
-                    false,
-                    &indexed,
-                    &handle,
-                    0,
-                    &handle_restored_data(
-                        table,
-                        &codec_table,
-                        codec_index,
-                        values,
-                        use_new_collation,
-                    )?,
-                )
-                .map_err(|error| encode_error(error.to_string()))?;
-                crate::table_write_policy::insert_index(
-                    index_key,
-                    index_value,
-                    distinct,
-                    index.state == tidb_model::SchemaState::PUBLIC,
-                )
-            }
-        };
-        mutations.push(mutation.map_err(|error| encode_error(error.to_string()))?);
-    }
-    Ok(mutations)
-}
-
 /// A string value re-tagged with the collation of the column it belongs to.
 ///
 /// In new-collation mode an index KEY is a SORT KEY, and the key codec takes
@@ -736,121 +700,6 @@ fn collated_value(value: Datum, field_type: &FieldType) -> Datum {
         }
         other => other,
     }
-}
-
-/// The field type one index key part encodes under, Go
-/// `model.GetIdxChangingFieldType`: the column's own type, or the type an
-/// in-flight `MODIFY COLUMN` is moving it to.
-fn indexed_field_type<'a>(
-    codec_table: &'a CodecTableInfo,
-    index_column: &CodecIndexColumn,
-) -> Option<&'a FieldType> {
-    let column = codec_table.columns.get(index_column.offset)?;
-    if index_column.use_changing_type {
-        if let Some(changing) = column.changing_field_type.as_ref() {
-            return Some(changing);
-        }
-    }
-    Some(&column.field_type)
-}
-
-/// Go `tables.NeedRestoredData`: whether any of this index's key parts stores
-/// a column whose new-collation sort key loses the original bytes.
-fn needs_restored_data(
-    codec_table: &CodecTableInfo,
-    codec_index: &CodecIndexInfo,
-    use_new_collation: bool,
-) -> bool {
-    codec_index.columns.iter().any(|index_column| {
-        indexed_field_type(codec_table, index_column).is_some_and(|field_type| {
-            field_type.need_restored_data_with_collation(use_new_collation)
-        })
-    })
-}
-
-/// Go `tables.TryGetHandleRestoredDataWrapper`: the clustered PRIMARY KEY's
-/// own restored data, which a version-1 common-handle table repeats in EVERY
-/// secondary index entry so an index-only read can rebuild the handle columns
-/// as well as the indexed ones.
-fn handle_restored_data(
-    table: &TableInfo,
-    codec_table: &CodecTableInfo,
-    codec_index: &CodecIndexInfo,
-    values: &RowValues,
-    use_new_collation: bool,
-) -> Result<Vec<Datum>, RowEncodeError> {
-    if !codec_table.is_common_handle || codec_table.common_handle_version == 0 {
-        return Ok(Vec::new());
-    }
-    let Some(primary) = codec_table.indices.iter().find(|index| index.primary) else {
-        return Ok(Vec::new());
-    };
-    let mut restored = Vec::new();
-    for index_column in &primary.columns {
-        let column = codec_table
-            .columns
-            .get(index_column.offset)
-            .ok_or_else(|| {
-                encode_error(format!(
-                    "{}'s primary key names an offset the table does not have",
-                    table_name(table)
-                ))
-            })?;
-        if !column
-            .field_type
-            .need_restored_data_with_collation(use_new_collation)
-        {
-            continue;
-        }
-        let stored = values.get(&column.id).ok_or_else(|| {
-            encode_error(format!(
-                "{}'s primary key column {} has no value in the row being written",
-                table_name(table),
-                column.id
-            ))
-        })?;
-        let mut value =
-            collated_value(typed_value(stored, &column.field_type)?, &column.field_type);
-        // Go `TryTruncateRestoredData`: the restored copy is cut to whichever
-        // of the primary key's own prefix and the reading index's prefix keeps
-        // MORE of the column, so it always covers what either key lost.
-        let target = codec_index
-            .columns
-            .iter()
-            .find(|reading| reading.offset == index_column.offset)
-            .map_or(index_column, |reading| longer_prefix(index_column, reading));
-        truncate_index_value(&mut value, target, column)
-            .map_err(|error| encode_error(error.to_string()))?;
-        // Go `ConvertDatumToTailSpaceCount`: a bin collation's sort key
-        // differs from the data only by the trailing spaces it trimmed, so the
-        // COUNT restores it and the string would be a second copy of the key.
-        if is_bin_collation(column.field_type.collation_name()) {
-            value = Datum::Int(trailing_spaces(&value) as i64);
-        }
-        restored.push(value);
-    }
-    Ok(restored)
-}
-
-/// Go `tables.maxIndexLen`: the key part that stores MORE of its column, with
-/// "no declared prefix" winning outright because it stores the whole column.
-fn longer_prefix<'a>(a: &'a CodecIndexColumn, b: &'a CodecIndexColumn) -> &'a CodecIndexColumn {
-    if a.length == UNSPECIFIED_LENGTH || b.length == UNSPECIFIED_LENGTH {
-        return if a.length == UNSPECIFIED_LENGTH { a } else { b };
-    }
-    if a.length > b.length {
-        a
-    } else {
-        b
-    }
-}
-
-/// Go `stringutil.GetTailSpaceCount`.
-fn trailing_spaces(value: &Datum) -> usize {
-    value
-        .as_raw_bytes()
-        .map(|bytes| bytes.iter().rev().take_while(|byte| **byte == b' ').count())
-        .unwrap_or(0)
 }
 
 fn table_name(table: &TableInfo) -> &str {
@@ -1280,6 +1129,7 @@ mod tests {
         let column = ColumnInfo {
             id: 1,
             name: tidb_ast::CiString::new("v"),
+            state: tidb_model::SchemaState::PUBLIC,
             field_type: FieldType::new(FieldTypeCode::LongLong),
             ..Default::default()
         };
@@ -1300,6 +1150,7 @@ mod tests {
         (
             TableInfo {
                 id: 42,
+                state: tidb_model::SchemaState::PUBLIC,
                 columns: vec![column].into(),
                 indices: vec![index].into(),
                 ..Default::default()
@@ -1308,13 +1159,27 @@ mod tests {
         )
     }
 
+    /// The one index entry among a row's mutations (Go writes it before the
+    /// record).
+    fn index_write(mutations: &[BufferMutation]) -> &BufferMutation {
+        let prefix = tidb_codec::table_key::encode_table_index_prefix(42, 2);
+        let [entry] = mutations
+            .iter()
+            .filter(|mutation| mutation.key().starts_with(&prefix))
+            .collect::<Vec<_>>()[..]
+        else {
+            panic!("one index entry: {mutations:?}");
+        };
+        entry
+    }
+
     #[test]
     fn system_unique_index_insert_defers_duplicate_check_to_commit() {
         let (table, values) = indexed_fixture(true, false);
         let mutations = insert_row_with_collation(&table, 1, &values, true).unwrap();
-        assert!(mutations[1].presume_not_exists());
+        assert!(index_write(&mutations).presume_not_exists());
         assert_eq!(
-            mutations[1].assertion(),
+            index_write(&mutations).assertion(),
             tidb_txnkv::AssertionOp::AssertUnknown
         );
     }
@@ -1324,9 +1189,9 @@ mod tests {
         for (unique, nullable) in [(false, false), (true, true)] {
             let (table, values) = indexed_fixture(unique, nullable);
             let mutations = insert_row_with_collation(&table, 1, &values, true).unwrap();
-            assert!(!mutations[1].presume_not_exists());
+            assert!(!index_write(&mutations).presume_not_exists());
             assert_eq!(
-                mutations[1].assertion(),
+                index_write(&mutations).assertion(),
                 tidb_txnkv::AssertionOp::AssertUnknown
             );
         }
@@ -1338,7 +1203,7 @@ mod tests {
         let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(1));
         let mutations = delete_row(&table, &key, &values).unwrap();
         assert_eq!(
-            mutations[1].assertion(),
+            index_write(&mutations).assertion(),
             tidb_txnkv::AssertionOp::AssertExist
         );
     }
@@ -1352,9 +1217,21 @@ mod tests {
         let changed = [(1, Datum::Int(8))].into();
         let moved = rewrite_rowid_row(&table, &key, &values, &changed).unwrap();
         assert_eq!(moved.len(), 3);
-        assert_eq!(moved[1].assertion(), tidb_txnkv::AssertionOp::AssertExist);
-        assert!(moved[2].presume_not_exists());
-        assert_eq!(moved[2].assertion(), tidb_txnkv::AssertionOp::AssertUnknown);
+        // Go's optimistic `UPDATE` checks the moved entry in place
+        // (`optimizeDupKeyCheckForUpdate`): no lazy check, and the destination
+        // is asserted absent.
+        let prefix = tidb_codec::table_key::encode_table_index_prefix(42, 2);
+        let entry = |kind: BufferMutationOp| {
+            moved
+                .iter()
+                .find(|mutation| mutation.key().starts_with(&prefix) && mutation.kind() == kind)
+                .expect("an index write of that kind")
+        };
+        let retracted = entry(BufferMutationOp::Delete);
+        assert_eq!(retracted.assertion(), tidb_txnkv::AssertionOp::AssertExist);
+        let stored = entry(BufferMutationOp::Set);
+        assert!(!stored.presume_not_exists());
+        assert_eq!(stored.assertion(), tidb_txnkv::AssertionOp::AssertNotExist);
     }
 
     #[test]
@@ -1362,11 +1239,19 @@ mod tests {
         let (table, values) = indexed_fixture(true, false);
         table.indices.get(0).unwrap().write().state = tidb_model::SchemaState::WRITE_ONLY;
         let inserted = insert_row_with_collation(&table, 1, &values, true).unwrap();
-        assert!(inserted[1].presume_not_exists());
-        assert_eq!(inserted[1].assertion(), tidb_txnkv::AssertionOp::AssertNone);
+        // Go `index.create` for a non-public index: checked like a public
+        // unique entry, but asserting nothing about the key's existence.
+        assert!(index_write(&inserted).presume_not_exists());
+        assert_eq!(
+            index_write(&inserted).assertion(),
+            tidb_txnkv::AssertionOp::AssertUnknown
+        );
         let key = encode_row_key_with_handle(table.id, &RecordHandle::Int(1));
         let deleted = delete_row(&table, &key, &values).unwrap();
-        assert_eq!(deleted[1].assertion(), tidb_txnkv::AssertionOp::AssertNone);
+        assert_eq!(
+            index_write(&deleted).assertion(),
+            tidb_txnkv::AssertionOp::AssertNone
+        );
     }
 
     /// `mysql.column_stats_usage`'s shape: `PRIMARY KEY (table_id, column_id)
@@ -1407,6 +1292,7 @@ mod tests {
         (
             TableInfo {
                 id: 42,
+                state: tidb_model::SchemaState::PUBLIC,
                 is_common_handle: true,
                 common_handle_version: 1,
                 columns: vec![
@@ -1425,15 +1311,20 @@ mod tests {
     #[test]
     fn a_clustered_primary_index_owns_no_entry_on_store_or_delete() {
         let (table, values) = clustered_fixture();
-        let (record_key, _) = clustered_record_key_with_collation(&table, &values, true).unwrap();
+        let record_key = clustered_record_key(&table, &values).unwrap();
         for mutations in [
-            store_clustered_row_with_collation(&table, None, &values, true).unwrap(),
-            delete_clustered_row_with_collation(&table, &values, true).unwrap(),
+            store_clustered_row(&table, None, &values).unwrap(),
+            delete_clustered_row(&table, &values).unwrap(),
         ] {
             // The record itself and the secondary entry; nothing under the
             // primary index's id.
             assert_eq!(mutations.len(), 2, "{mutations:?}");
-            assert_eq!(mutations[0].key(), record_key.as_slice());
+            assert!(
+                mutations
+                    .iter()
+                    .any(|mutation| mutation.key() == record_key.as_slice()),
+                "{mutations:?}"
+            );
             let primary_prefix = tidb_codec::table_key::encode_table_index_prefix(42, 1);
             assert!(
                 mutations

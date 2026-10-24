@@ -178,10 +178,10 @@ where
                     && stored.task.element_id == task.element_id
                     && stored.task.start_key == old_start_key
             }) {
-                mutations.push(
+                mutations.extend(
                     tables
                         .ranges
-                        .update_start_key_mutation(stored, &next_start_key)
+                        .update_start_key_mutations(stored, &next_start_key)
                         .map_err(ClusterDdlError::Backfill)?,
                 );
             }

@@ -185,32 +185,10 @@ impl DdlReorgTable {
             self.column_id("physical_id")?,
             Datum::Int(handle.physical_id),
         );
-        if row.handle.element_id == handle.element_id
-            && row.handle.element_type == handle.element_type
-        {
-            // The unique key (job_id, ele_id, ele_type) is unchanged: only
-            // the record moves.
-            return Ok(vec![
-                update_row(&self.table, &row.key, &values).map_err(error)?
-            ]);
-        }
-        // A new element moves the row's unique-key entry: rewrite it whole
-        // under a fresh row id is not Go's shape, so keep the row id and
-        // replace the entries.
-        let row_id = crate::system_row_write::row_id_of(&row.key).map_err(error)?;
-        let mut mutations: Vec<BufferMutation> = delete_row(&self.table, &row.key, &row.values)
-            .map_err(error)?
-            .into_iter()
-            .filter(|mutation| mutation.key() != row.key.as_slice())
-            .collect();
-        mutations.push(update_row(&self.table, &row.key, &values).map_err(error)?);
-        let inserted = insert_row(&self.table, row_id, &values).map_err(error)?;
-        mutations.extend(
-            inserted
-                .into_iter()
-                .filter(|mutation| mutation.key() != row.key.as_slice()),
-        );
-        Ok(mutations)
+        // Go `UPDATE mysql.tidb_ddl_reorg`: the row keeps its row id, and
+        // the unique key (job_id, ele_id, ele_type) entry moves only when a
+        // new element changes it.
+        update_row(&self.table, &row.key, &row.values, &values).map_err(error)
     }
 
     /// Go `removeDDLReorgHandle`.

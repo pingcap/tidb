@@ -4800,7 +4800,7 @@ impl KvTable {
         shard: i64,
         ctx: &impl tidb_expr::Columns,
     ) -> Result<TableHandle, KvTableError> {
-        self.insert_row_in(row, row_id, shard, ctx, false, false, None)
+        self.insert_row_in(row, row_id, shard, ctx, false, false, None, true)
     }
 
     /// [`Self::insert_row_with_row_id`] for the INSERT executor, which names
@@ -4826,7 +4826,16 @@ impl KvTable {
         // siblings.
         let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
-            table.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, false, Some(ctx))
+            table.insert_row_in(
+                row,
+                row_id,
+                shard,
+                ctx,
+                lazy_dup_check,
+                false,
+                Some(ctx),
+                true,
+            )
         })
     }
 
@@ -4892,10 +4901,66 @@ impl KvTable {
     ) -> Result<TableHandle, KvTableError> {
         let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
         self.with_txn_staging(ctx, |table| {
-            table.insert_row_in(row, row_id, shard, ctx, lazy_dup_check, true, Some(ctx))
+            table.insert_row_in(
+                row,
+                row_id,
+                shard,
+                ctx,
+                lazy_dup_check,
+                true,
+                Some(ctx),
+                true,
+            )
         })
     }
 
+    /// Go `AddRecord` for a caller that already holds the row's record id
+    /// (Go passes it as the row's trailing datum, `hasRecordID`): the handle
+    /// is used as given, with no allocation and no rebase of the table's
+    /// counter, which belongs to the statement that wrote `_tidb_rowid`
+    /// (`adjustImplicitRowID`), not to the table. `None` derives a clustered
+    /// table's handle from its key columns. `lazy_dup_check` is the
+    /// statement's `DupKeyCheckLazy` option (Go
+    /// `optimizeDupKeyCheckForNormalInsert`). The system-table writers
+    /// (`tidb_exec::system_row_write`) write through this.
+    pub fn add_record_with_record_id(
+        &mut self,
+        row: &[Datum],
+        record_id: Option<i64>,
+        lazy_dup_check: bool,
+        ctx: &crate::StmtContext,
+    ) -> Result<TableHandle, KvTableError> {
+        let _add_record = tidb_util::tracing::start_thread_region("table.AddRecord");
+        self.with_txn_staging(ctx, |table| {
+            table.insert_row_in(
+                row,
+                record_id,
+                0,
+                ctx,
+                lazy_dup_check,
+                false,
+                Some(ctx),
+                false,
+            )
+        })
+    }
+
+    /// The record handle a clustered table derives from `row` (Go
+    /// `kv.BuildHandleFromDatumRow` over the primary key, or the integer
+    /// primary key itself); `None` for a table whose rows live under an
+    /// allocated `_tidb_rowid`.
+    pub fn clustered_handle_of_row(
+        &mut self,
+        row: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<Option<TableHandle>, KvTableError> {
+        if self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty() {
+            return Ok(None);
+        }
+        self.handle_of_row(row, zone, 0).map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn insert_row_in(
         &mut self,
         row: &[Datum],
@@ -4905,6 +4970,7 @@ impl KvTable {
         lazy_dup_check: bool,
         skip_primary_duplicate_check: bool,
         stats_ctx: Option<&crate::StmtContext>,
+        rebase_written_id: bool,
     ) -> Result<TableHandle, KvTableError> {
         let zone = ctx.time_zone();
         // Go `addRecord`: a temporary table refuses a row once what it holds
@@ -4944,11 +5010,13 @@ impl KvTable {
                 // Go's `adjustImplicitRowID` rebases with allocIDs=true, so an
                 // ascending run of explicit row ids crosses to the counter's
                 // home once per reserved window.
-                self.row_id_allocator()
-                    .rebase_allocating(value as u64)
-                    .map_err(|error| {
-                        KvTableError::from(crate::storage::StorageError::Backend(error.0))
-                    })?;
+                if rebase_written_id {
+                    self.row_id_allocator()
+                        .rebase_allocating(value as u64)
+                        .map_err(|error| {
+                            KvTableError::from(crate::storage::StorageError::Backend(error.0))
+                        })?;
+                }
                 Some(TableHandle::Int(value))
             }
             _ => None,
@@ -5203,23 +5271,29 @@ impl KvTable {
             Some((old, new)) => (Some(old.as_slice()), new.as_slice()),
             None => (old_row, row),
         };
-        // Go `updateRecord`: assigning to the AUTO_INCREMENT column REBASES the
-        // allocator, exactly as an explicit value on INSERT does, so later rows
-        // land past the value the UPDATE named. Without this an `UPDATE t SET
-        // id = 300` left the counter where it was and the next allocations
-        // walked back over ids the table had moved AHEAD of.
-        //
-        // Go guards this with "the column's value changed"; the guard is
-        // redundant because a rebase only ever moves the counter UP and the
-        // counter is already at or past every id the table stores (each one was
-        // either allocated from it or rebased it on the way in). Rebasing
-        // unconditionally therefore leaves no branch to get wrong -- and it is
-        // why `UPDATE ... SET id = 0` correctly changes nothing.
+        // Go `updateRecord` (`pkg/executor/write.go`): assigning a CHANGED value
+        // to the AUTO_INCREMENT column REBASES the allocator, exactly as an
+        // explicit value on INSERT does, so later rows land past the value the
+        // UPDATE named. Without this an `UPDATE t SET id = 300` left the
+        // counter where it was and the next allocations walked back over ids
+        // the table had moved AHEAD of. An unchanged value touches no
+        // allocator, as in Go: a writer that rewrites a row's other columns
+        // (a system-table update) holds no counter at all. With no old row to
+        // compare, the value is treated as changed; a rebase only moves the
+        // counter up.
         //
         // The value travels as its 64-bit PATTERN, since Go's
         // `getAutoRecordID` hands `Rebase` an `int64` that `rebase4Unsigned`
         // reads back as `uint64` for an unsigned column.
-        if let Some(offset) = self.auto_increment_offset {
+        let changed = |offset: usize| {
+            let record_id = |values: &[Datum]| {
+                values
+                    .get(offset)
+                    .map(|value| auto_increment::get_auto_record_id(value, false))
+            };
+            old_row.is_none_or(|old| record_id(old) != record_id(row))
+        };
+        if let Some(offset) = self.auto_increment_offset.filter(|offset| changed(*offset)) {
             let assigned = row
                 .get(offset)
                 .map_or(0, |value| auto_increment::get_auto_record_id(value, false));
@@ -5236,7 +5310,10 @@ impl KvTable {
                     KvTableError::from(crate::storage::StorageError::Backend(error.0))
                 })?;
         }
-        self.rebase_auto_random_from_row(row)?;
+        // Go rebases the AUTO_RANDOM allocator under the same "changed" rule.
+        if self.auto_random.is_none_or(|spec| changed(spec.offset)) {
+            self.rebase_auto_random_from_row(row)?;
+        }
         // A clustered primary key IS the row handle, and the record value omits
         // the handle columns entirely, so an UPDATE that assigns to the primary
         // key MOVES the row: it is stored under the handle its new values

@@ -211,6 +211,11 @@ pub struct ExplainOperator {
     pub actual_rows: Option<u64>,
     /// Collected runtime information; absent when this operator was not metered.
     pub execution_info: Option<String>,
+    /// Go `getRuntimeInfoStr`'s memory cell: the operator's memory tracker
+    /// `FormatBytes(MaxConsumed())`, absent (`N/A`) without a tracker.
+    pub memory_info: Option<String>,
+    /// The disk cell, from the operator's disk tracker.
+    pub disk_info: Option<String>,
     /// Task in which the operator executes.
     pub task: ExplainTask,
     /// Table, index, partition, or other accessed object.
@@ -241,6 +246,8 @@ impl ExplainOperator {
             cost_formula: None,
             actual_rows: None,
             execution_info: None,
+            memory_info: None,
+            disk_info: None,
             task: ExplainTask::Root,
             access_object: None,
             operator_info: String::new(),
@@ -530,8 +537,14 @@ fn render_operator(
                 .clone()
                 .unwrap_or_else(|| "N/A".to_owned()),
             operator.operator_info.clone(),
-            "N/A".to_owned(),
-            "N/A".to_owned(),
+            operator
+                .memory_info
+                .clone()
+                .unwrap_or_else(|| "N/A".to_owned()),
+            operator
+                .disk_info
+                .clone()
+                .unwrap_or_else(|| "N/A".to_owned()),
         ]);
     } else {
         row.extend([

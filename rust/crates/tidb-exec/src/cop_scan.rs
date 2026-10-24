@@ -704,6 +704,15 @@ where
         };
         scan_receipt::record_shape(receipt_shape);
         let (cop_plan_ids, root_plan_id) = cop_plan_ids_for(&dag, &request.statement);
+        // Go `TableReaderExecutor`/`IndexReaderExecutor`'s `memTracker`
+        // (`NewTracker(e.ID(), -1)` under `StmtCtx.MemTracker`), which the
+        // select result charges its responses to. An index lookup's sides
+        // and an index merge's partials report under a pushed root, which
+        // Go gives no tracker.
+        let memory_tracker = (root_plan_id > 0
+            && !request.statement.cop_plan_chain.is_empty()
+            && !cop_plan_ids.contains(&root_plan_id))
+        .then(|| request.statement.memory.operator_tracker(root_plan_id as i64));
         let plan = RemoteScanPlan {
             cancellation: request.statement.memory.coprocessor_request_cancellation(),
             kv_exec_counter: request.statement.kv_exec_counter.clone(),
@@ -742,6 +751,7 @@ where
             root_plan_id,
             keys_read: request.statement.keys_read.clone(),
             cop_response_sink: request.statement.cop_response_sink.clone(),
+            memory_tracker,
         };
         let iter = scan_result(|| open_scan(&self.factory, plan))
             .map_err(|error| PushdownScannerError::Backend(StorageError::Backend(error)))?;
@@ -849,6 +859,8 @@ struct RemoteScanPlan {
     /// Physical IDs aligned with TiPB executors for runtime summaries.
     cop_plan_ids: Vec<isize>,
     root_plan_id: isize,
+    /// The reader's memory tracker the select result charges.
+    memory_tracker: Option<Arc<tidb_util::memory::Tracker>>,
     /// The statement's `tidb_max_keys_read` budget and keys-examined counter.
     keys_read: tidb_executor::KeysReadBudget,
     /// The statement's consumer of per-response execution details.
@@ -914,6 +926,7 @@ where
     let mut transport = factory.open_session_transport()?;
     let cancellation = plan.cancellation;
     let cop_response_sink = plan.cop_response_sink.clone();
+    let memory_tracker = plan.memory_tracker.clone();
     // Go `SetFromSessionVars`, which EVERY read in `pkg/distsql` runs. The
     // zero-value builder this replaced sent `Concurrency: 0` and an EMPTY
     // `ResourceGroupName`, neither of which any TiDB sends: a stock session
@@ -997,7 +1010,8 @@ where
         .map_err(|error| error.to_string())?;
     Ok(result
         .into_select_iter(Vec::new())
-        .with_cop_response_sink(cop_response_sink))
+        .with_cop_response_sink(cop_response_sink)
+        .with_memory_tracker(memory_tracker))
 }
 
 /// Go `getPhysicalPlanIDs`: the plan ID of every executor of `dag`, in DAG

@@ -1332,6 +1332,9 @@ pub struct HashJoinV2Exec {
     pub build_workers: Vec<BuildWorkerV2>,
     /// Go `hashTableContext`.
     pub hash_table_context: HashTableContext,
+    /// Go `HashJoinV2Exec.memTracker` (`NewTracker(e.ID(), -1)`), the hash
+    /// table tracker's parent; `None` attaches it to the statement.
+    pub memory_tracker: Option<std::sync::Arc<tidb_util::memory::Tracker>>,
 }
 
 impl HashJoinV2Exec {
@@ -1360,6 +1363,7 @@ impl HashJoinV2Exec {
             ctx,
             build_workers,
             hash_table_context,
+            memory_tracker: None,
         }
     }
 

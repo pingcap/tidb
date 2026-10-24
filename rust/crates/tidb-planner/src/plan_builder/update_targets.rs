@@ -163,9 +163,15 @@ impl<S: TableSource, C: tidb_expr::Columns> PlanBuilder<'_, S, C> {
             UpdateKind::Multi { from, .. } => (**from).clone(),
         };
         let select = dml_source_select(update.with.as_ref(), &[], from.clone(), None, &[], None);
+        // Go `buildUpdate` sets `b.inUpdateStmt` before `buildResultSetNode`,
+        // so a NATURAL / USING join keeps both sides' columns (`b.b` stays
+        // nameable in SET) instead of the coalesced SELECT schema.
+        let in_update_or_delete_stmt = std::mem::replace(&mut self.in_update_or_delete_stmt, true);
         let plan = self.with_dml_ctes(&select, |builder| {
             builder.build_table_refs(select.from.as_ref())
-        })?;
+        });
+        self.in_update_or_delete_stmt = in_update_or_delete_stmt;
+        let plan = plan?;
         // Go's updatableTableListResolver visits only the outer table sources;
         // a derived query's base tables do not make that derived source writable.
         let mut tables = Vec::new();
