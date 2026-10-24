@@ -1203,7 +1203,12 @@ type builtinRandSig struct {
 }
 
 func (b *builtinRandSig) Clone() builtinFunc {
-	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, seed: b.seed, seededRng: b.seededRng}
+	newSig := &builtinRandSig{mysqlRng: b.mysqlRng, seed: b.seed}
+	if b.seededRng != nil {
+		// The clones can be evaluated in different contexts, a shared cache would start the generator again
+		// whenever the context changes.
+		newSig.seededRng = &builtinFuncCache[*mathutil.MysqlRng]{}
+	}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
