@@ -22,9 +22,21 @@
 //! the catalog current -- so that the server driving it hands in only what is
 //! genuinely its own: the catalog source and the commit hooks.
 
+use tidb_ast::Stmt;
+use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_executor::access_path::StatementReadShape;
+
 use crate::statement_lifecycle::{CatalogFollowing, SnapshotSlot, StatementLifecycle};
 use crate::txn_manager::{CommitHooks, TxnManager};
-use crate::Session;
+use crate::{Session, StmtResult};
+
+/// A driver error as the client sees it: Go's code, SQLSTATE and message, with
+/// the error's own identity carried across.
+#[must_use]
+pub fn sql_query_error(error: tidb_executor::DriverError) -> SqlQueryError {
+    let mapped = error.to_mysql_error();
+    SqlQueryError::new(mapped.code, mapped.state, mapped.message).with_identity(mapped.identity)
+}
 
 /// Builds what a commit reads off the server, for the schema version the
 /// statement planned against.
@@ -84,5 +96,158 @@ impl<F: CatalogFollowing> StoreSession<F> {
             hooks,
             activate_statement_txn: self.activate_statement_txn,
         }
+    }
+
+    /// Rebinds the session's tables to the latest catalog, unless a
+    /// transaction has pinned the one it started with.
+    pub fn rebuild_catalog_if_stale(&mut self) {
+        self.follower.rebuild_if_stale(&mut self.session, &self.txn);
+    }
+
+    /// Go `PrepareTxnCtx` for the statement about to run: follows the catalog,
+    /// then enters the `autocommit = 0` transaction (pending: it takes a
+    /// timestamp at the first statement that activates it).
+    pub fn prepare_statement_context(
+        &mut self,
+        resource_group: &str,
+        read_only: bool,
+    ) -> Result<(), SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        if read_only && self.txn.explicit.is_none() && !self.session.in_transaction() {
+            let vars = self.session.vars();
+            if vars.snapshot_ts() != 0
+                || vars
+                    .get_system("tidb_read_staleness")
+                    .is_ok_and(|v| v.parse::<i64>().is_ok_and(|v| v != 0))
+            {
+                return Ok(());
+            }
+        }
+        self.txn.enter_if_autocommit_off(
+            &self.session,
+            resource_group,
+            self.follower.schema_version(),
+        );
+        // Go `SetOptionsOnTxnActive` reads the session values when the
+        // transaction activates, so a pending one follows each statement's.
+        if let Some(transaction) = &self.txn.explicit {
+            transaction
+                .set_activation_options(TxnManager::statement_transaction_options(&self.session));
+        }
+        Ok(())
+    }
+
+    /// Runs one client statement after refreshing the catalog and opening any
+    /// implicit transaction. A pessimistic statement's locking point reads
+    /// lock inside execution with returned row values (Go
+    /// `PointGetExecutor.getAndLock`, `InitReturnValues` /
+    /// `SetPessimisticLockCache`), through `TableStorage::lock_keys_for_read`.
+    pub fn with_prelocked_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        resource_group: &str,
+        is_dml: bool,
+        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
+        self.prepare_statement_context(
+            resource_group,
+            shape != StatementReadShape::AutocommitWrite,
+        )?;
+        self.lifecycle()
+            .with_bound_statement(shape, resource_group, true, is_dml, run)
+    }
+
+    /// [`Self::with_prelocked_statement`] for work the CLIENT did not ask to
+    /// run: the PREPARE probe, which executes a query only to learn its result
+    /// columns.
+    ///
+    /// The one thing it must not do is open the transaction `autocommit = 0`
+    /// implies. Go's `PrepareStmt` calls `PrepareTxnCtx` too
+    /// (`pkg/session/session.go:3171`), but with a nil statement and through
+    /// `EnterNewTxnBeforeStmt`, which leaves the transaction *pending*: no
+    /// timestamp is spent and the first statement that really reads is what
+    /// takes one. Captured: `@@tidb_current_ts` is `0` after a PREPARE under
+    /// `autocommit = 0`, and a read issued after another session's commit sees
+    /// the NEW value. An already-open transaction is read through as usual.
+    pub fn probe_statement<T>(
+        &mut self,
+        shape: StatementReadShape,
+        resource_group: &str,
+        run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
+    ) -> Result<T, SqlQueryError> {
+        self.rebuild_catalog_if_stale();
+        self.lifecycle()
+            .with_bound_statement(shape, resource_group, false, false, run)
+    }
+
+    /// Whether Go's executor builder activates `stmt`'s transaction before
+    /// the statement runs: `buildInsert` (INSERT and REPLACE), `buildUpdate`
+    /// and `buildDelete` call `updateForUpdateTS`, whose
+    /// `GetStmtForUpdateTS` activates it. A text `EXECUTE` builds the
+    /// statement it names.
+    #[must_use]
+    pub fn activates_txn_at_build(&self, stmt: &Stmt) -> bool {
+        let stmt = match stmt {
+            Stmt::Session(session) => match session.as_ref() {
+                tidb_ast::SessionStmt::Execute { name, .. } => {
+                    match self.session.prepared_statement_node(name) {
+                        Some(prepared) => prepared,
+                        None => return false,
+                    }
+                }
+                _ => return false,
+            },
+            stmt => stmt,
+        };
+        matches!(
+            stmt,
+            Stmt::Dml(dml) if matches!(
+                dml.as_ref(),
+                tidb_ast::DmlStmt::Insert(_)
+                    | tidb_ast::DmlStmt::Update(_)
+                    | tidb_ast::DmlStmt::Delete(_)
+            )
+        )
+    }
+
+    /// Runs an ordinary write statement (INSERT, UPDATE, DELETE and the like)
+    /// through the statement lifecycle and answers its affected-row count and
+    /// last insert id.
+    pub fn run_ordinary_write(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<(u64, u64), SqlQueryError> {
+        let owned = sql.to_owned();
+        let resource_group = self.session.statement_resource_group(stmt).into_owned();
+        // A write declares nothing. Its read-before-write reaches the snapshot
+        // as the same `get` a point-get SELECT issues, which is exactly why the
+        // declaration is made from the statement rather than from the read.
+        //
+        // Go's pessimistic point write folds its row read INTO its lock inside
+        // execution (`PointGetExecutor.getAndLock`,
+        // `pkg/executor/point_get.go:612-624`): the executor locks the keys its
+        // plan names through `TableStorage::lock_keys_for_read`, so nothing is
+        // classified or locked here before the statement compiles.
+        self.activate_statement_txn = self.activates_txn_at_build(stmt);
+        let attempt = self.with_prelocked_statement(
+            StatementReadShape::Unknown,
+            &resource_group,
+            true,
+            move |session| match session
+                .run_parsed(stmt.clone(), &owned)
+                .map_err(sql_query_error)?
+            {
+                StmtResult::Affected(count) => Ok(count),
+                StmtResult::Done(_) => Ok(0),
+                StmtResult::Rows(_) => Err(SqlQueryError::unknown(
+                    "a write statement unexpectedly produced rows",
+                )),
+            },
+        );
+        self.activate_statement_txn = false;
+        let affected_rows = attempt?;
+        self.session.add_statement_read_keys(affected_rows);
+        Ok((affected_rows, self.session.statement_insert_id()))
     }
 }

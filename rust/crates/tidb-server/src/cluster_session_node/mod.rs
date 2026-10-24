@@ -206,7 +206,7 @@ use tidb_planner::transaction_control::{
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
 use tidb_session::{
-    GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
+    GlobalSysvars, Session, StmtKind, StmtOutput, StoredStateChange,
     TableStorageStatsProvider,
 };
 use tidb_txnkv::transaction::SchemaLeaseChecker;
@@ -323,12 +323,14 @@ use tidb_ddl::worker as ddl;
 mod ddl_job_history_store;
 mod ddl_notifier;
 pub(crate) mod gc_worker;
-use tidb_session::statement_lifecycle::{self, ReadStatement, StatementLifecycle};
+use tidb_session::statement_lifecycle::{ReadStatement, StatementLifecycle};
 use tidb_session::store_session::StoreSession;
 #[cfg(test)]
 use tidb_session::statement_lifecycle::{back_off_upper_ms, jitter_below, RETRY_BACK_OFF_CAP_MS};
 #[cfg(test)]
 use tidb_exec::cluster_table_storage::LockKeysOutcome;
+#[cfg(test)]
+use tidb_session::StmtResult;
 #[cfg(test)]
 const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
 use tidb_session::txn_manager::{CommitHooks, TxnManager};
@@ -5325,69 +5327,16 @@ impl ClusterServerSession {
         sql: &str,
         stmt: &Stmt,
     ) -> Result<WriteOutcome, SqlQueryError> {
-        let owned = sql.to_owned();
-        let resource_group = self.store.session.statement_resource_group(stmt).into_owned();
-        // A write declares nothing. Its read-before-write reaches the snapshot
-        // as the same `get` a point-get SELECT issues, which is exactly why the
-        // declaration is made from the statement rather than from the read.
-        //
-        // Go's pessimistic point write folds its row read INTO its lock inside
-        // execution (`PointGetExecutor.getAndLock`,
-        // `pkg/executor/point_get.go:612-624`): the executor locks the keys its
-        // plan names through `TableStorage::lock_keys_for_read`, so nothing is
-        // classified or locked here before the statement compiles.
-        self.store.activate_statement_txn = self.activates_txn_at_build(stmt);
-        let attempt = self.with_prelocked_statement(
-            StatementReadShape::Unknown,
-            &resource_group,
-            true,
-            move |session| match session
-                .run_parsed(stmt.clone(), &owned)
-                .map_err(map_error)?
-            {
-                StmtResult::Affected(count) => Ok(count),
-                StmtResult::Done(_) => Ok(0),
-                StmtResult::Rows(_) => Err(SqlQueryError::unknown(
-                    "a write statement unexpectedly produced rows",
-                )),
-            },
-        );
-        self.store.activate_statement_txn = false;
-        let affected_rows = attempt?;
-        self.store.session.add_statement_read_keys(affected_rows);
+        let (affected_rows, last_insert_id) = self.store.run_ordinary_write(sql, stmt)?;
         Ok(WriteOutcome {
             affected_rows,
-            last_insert_id: self.store.session.statement_insert_id(),
+            last_insert_id,
         })
     }
 
-    /// Whether Go's executor builder activates `stmt`'s transaction before
-    /// the statement runs: `buildInsert` (INSERT and REPLACE), `buildUpdate`
-    /// and `buildDelete` call `updateForUpdateTS`, whose
-    /// `GetStmtForUpdateTS` activates it. A text `EXECUTE` builds the
-    /// statement it names.
+    /// See [`StoreSession::activates_txn_at_build`].
     fn activates_txn_at_build(&self, stmt: &Stmt) -> bool {
-        let stmt = match stmt {
-            Stmt::Session(session) => match session.as_ref() {
-                tidb_ast::SessionStmt::Execute { name, .. } => {
-                    match self.store.session.prepared_statement_node(name) {
-                        Some(prepared) => prepared,
-                        None => return false,
-                    }
-                }
-                _ => return false,
-            },
-            stmt => stmt,
-        };
-        matches!(
-            stmt,
-            Stmt::Dml(dml) if matches!(
-                dml.as_ref(),
-                tidb_ast::DmlStmt::Insert(_)
-                    | tidb_ast::DmlStmt::Update(_)
-                    | tidb_ast::DmlStmt::Delete(_)
-            )
-        )
+        self.store.activates_txn_at_build(stmt)
     }
 
     fn observe_routed_write(
@@ -5493,10 +5442,7 @@ impl ClusterServerSession {
     }
 
     /// Runs one client statement after refreshing the catalog and opening any
-    /// implicit transaction. A pessimistic statement's locking point reads
-    /// lock inside execution with returned row values (Go
-    /// `PointGetExecutor.getAndLock`, `InitReturnValues` /
-    /// `SetPessimisticLockCache`), through `TableStorage::lock_keys_for_read`.
+    /// implicit transaction; see [`StoreSession::with_prelocked_statement`].
     fn with_prelocked_statement<T>(
         &mut self,
         shape: StatementReadShape,
@@ -5504,11 +5450,8 @@ impl ClusterServerSession {
         is_dml: bool,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        self.prepare_statement_context(
-            resource_group,
-            shape != StatementReadShape::AutocommitWrite,
-        )?;
-        self.with_bound_statement(shape, resource_group, true, is_dml, run)
+        self.store
+            .with_prelocked_statement(shape, resource_group, is_dml, run)
     }
 
     fn prepare_statement_context(
@@ -5516,55 +5459,18 @@ impl ClusterServerSession {
         resource_group: &str,
         read_only: bool,
     ) -> Result<(), SqlQueryError> {
-        self.rebuild_catalog_if_stale();
-        if read_only && self.store.txn.explicit.is_none() && !self.store.session.in_transaction() {
-            let vars = self.store.session.vars();
-            if vars.snapshot_ts() != 0
-                || vars
-                    .get_system("tidb_read_staleness")
-                    .is_ok_and(|v| v.parse::<i64>().is_ok_and(|v| v != 0))
-            {
-                return Ok(());
-            }
-        }
-        self.begin_if_autocommit_off(resource_group)?;
-        // Go `SetOptionsOnTxnActive` reads the session values when the
-        // transaction activates, so a pending one follows each statement's.
-        if let Some(transaction) = &self.store.txn.explicit {
-            transaction.set_activation_options(TxnManager::statement_transaction_options(
-                &self.store.session,
-            ));
-        }
-        Ok(())
+        self.store
+            .prepare_statement_context(resource_group, read_only)
     }
 
-    /// [`Self::with_statement`] for work the CLIENT did not ask to run: the
-    /// PREPARE probe, which executes a query only to learn its result columns.
-    ///
-    /// The one thing it must not do is open the transaction `autocommit = 0`
-    /// implies. Go's `PrepareStmt` calls `PrepareTxnCtx` too
-    /// (`pkg/session/session.go:3171`), but with a nil statement and through
-    /// `EnterNewTxnBeforeStmt`, which leaves the transaction *pending*: no
-    /// timestamp is spent and the first statement that really reads is what
-    /// takes one. Captured: `@@tidb_current_ts` is `0` after a PREPARE under
-    /// `autocommit = 0`, and a read issued after another session's commit sees
-    /// the NEW value. Opening it here would instead pin this connection's
-    /// `start_ts` at PREPARE time, so every later statement of the
-    /// transaction, and the conflict check of its commit, would live at a
-    /// timestamp the client never asked for.
-    ///
-    /// An already-open transaction is read through as usual -- a PREPARE
-    /// inside `BEGIN` costs no timestamp either way -- so this differs from
-    /// [`Self::with_prelocked_statement`] in exactly one thing: it never OPENS
-    /// one.
+    /// See [`StoreSession::probe_statement`].
     fn probe_statement<T>(
         &mut self,
         shape: StatementReadShape,
         resource_group: &str,
         run: impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
-        self.rebuild_catalog_if_stale();
-        self.with_bound_statement(shape, resource_group, false, false, run)
+        self.store.probe_statement(shape, resource_group, run)
     }
 
 
@@ -5650,20 +5556,8 @@ impl ClusterServerSession {
     }
 
 
-    /// Rebinds this connection's tables to the node's current catalog.
-    ///
-    /// A connection's tables are built once, so a table created after it
-    /// opened has no entry at all and one dropped still answers. Rebuilding
-    /// against the same [`ClusterTableStorage`] handles leaves the snapshot
-    /// slot and the staged writes exactly where they are -- the tables are new
-    /// objects over the same two shared halves.
-    ///
-    /// Not inside an explicit transaction: its statements read at one
-    /// timestamp, and a schema that moved under them would describe rows that
-    /// timestamp cannot see. Go holds the transaction's `InfoSchema` for the
-    /// same reason.
     fn rebuild_catalog_if_stale(&mut self) {
-        self.store.follower.rebuild_if_stale(&mut self.store.session, &self.store.txn);
+        self.store.rebuild_catalog_if_stale();
     }
 
     /// The unguarded rebuild: `BEGIN` calls this directly because the session
