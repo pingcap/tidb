@@ -36,24 +36,9 @@ use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
 use tidb_exec::cluster_table_storage::{LockKeysOutcome, SessionTransaction};
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_exec::session_commit_protocol::bootstrap_commit_protocol;
-use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 const TABLE_ID: i64 = 528_492;
-const ID_COLUMN: i64 = 1;
-const BALANCE_COLUMN: i64 = 2;
-
-fn configured_table() -> ConfiguredTable {
-    ConfiguredTable::new(
-        "campaign28",
-        "fair_locking",
-        TABLE_ID,
-        [
-            ConfiguredColumn::clustered_primary_key("id", ID_COLUMN),
-            ConfiguredColumn::stored_not_null("balance", BALANCE_COLUMN),
-        ],
-    )
-}
 
 fn pd_address() -> String {
     std::env::var("FAIR_LOCKING_PD_ADDR").expect("runner must provide FAIR_LOCKING_PD_ADDR")
@@ -67,7 +52,7 @@ fn row_key(handle: i64) -> Vec<u8> {
 #[ignore = "requires a live cluster: FAIR_LOCKING_PD_ADDR=127.0.0.1:2379"]
 fn a_promoted_session_transaction_locks_fairly_when_the_switch_is_on() {
     let authority =
-        ProductionReadProcessAuthority::connect([pd_address()], RPC_TIMEOUT, configured_table())
+        ProductionReadProcessAuthority::connect([pd_address()], RPC_TIMEOUT, |_| Ok(()))
             .expect("connect one real read/write authority");
     let opener = Arc::new(authority.transaction_opener());
 
@@ -98,7 +83,7 @@ fn a_promoted_session_transaction_locks_fairly_when_the_switch_is_on() {
 #[ignore = "requires a live cluster: FAIR_LOCKING_PD_ADDR=127.0.0.1:2379"]
 fn a_promoted_session_transaction_stays_in_normal_mode_when_the_switch_is_off() {
     let authority =
-        ProductionReadProcessAuthority::connect([pd_address()], RPC_TIMEOUT, configured_table())
+        ProductionReadProcessAuthority::connect([pd_address()], RPC_TIMEOUT, |_| Ok(()))
             .expect("connect one real read/write authority");
     let opener = Arc::new(authority.transaction_opener());
 

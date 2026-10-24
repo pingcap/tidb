@@ -29,7 +29,6 @@ use tidb_exec::ddl_systable::MinJobIdRefresher;
 use tidb_exec::real_tikv_catalog::load_catalog_from_cluster_at;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_executor::remote_scan::PushdownScanner;
-use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 
 use crate::domain::cluster_account_seam::RealClusterAccountWriter;
 use crate::domain::cluster_analyze_seam::RealClusterAnalyze;
@@ -59,11 +58,6 @@ use crate::domain::cluster_session_node::{
 /// five-second boot/catalog control-plane deadline. TPC-H partial aggregates
 /// legitimately spend more than five seconds in TiKV on a cold SF1 cache.
 const COPROCESSOR_QUERY_TIMEOUT: Duration = Duration::from_secs(300);
-/// \`ANALYZE\` reads whole tables -- one prefix scan over \`cast_info\` is
-/// minutes, not milliseconds -- so its reads carry the query budget rather
-/// than the five-second control-plane one whose expiry aborted every large
-/// table's statistics run mid-scan.
-const ANALYZE_READ_TIMEOUT: Duration = COPROCESSOR_QUERY_TIMEOUT;
 
 /// The cluster node's domain, built by [`cluster_session_stack`]: the session
 /// factory the listeners open sessions from, the store authority the process
@@ -197,18 +191,7 @@ pub fn cluster_session_stack(
                 load_catalog_from_cluster_at(opener, COPROCESSOR_QUERY_TIMEOUT)
                     .map_err(|error| error.to_string())?,
             );
-            // The authority insists on naming one bounded-read table because
-            // the single-relation coprocessor path is built around one
-            // relation. This node never opens a bounded read session -- every
-            // statement goes through the session driver -- so the table is
-            // inert, and naming a real one would only make startup depend on
-            // the cluster happening to hold a table of that shape.
-            Ok(ConfiguredTable::new(
-                "",
-                "",
-                1,
-                Vec::<ConfiguredColumn>::new(),
-            ))
+            Ok(())
         },
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;

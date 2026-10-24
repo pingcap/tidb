@@ -13,13 +13,7 @@ use std::sync::{Arc, Mutex};
 
 use sha1::{Digest, Sha1};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-use tidb_exec::real_tikv_dml::prepare_configured_write;
-use tidb_exec::real_tikv_read::prepare_configured_point_read;
 use tidb_executor::{OomAction, StatementMemory};
-use tidb_planner::prepared_dml::{ConfiguredPreparedWrite, PreparedBindValue};
-use tidb_planner::read_only_scan::{
-    configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredTable,
-};
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::{
     ColumnInfo, PacketReader, PacketWriter, COM_INIT_DB, COM_PING, COM_QUERY, COM_QUIT,
@@ -28,8 +22,8 @@ use tidb_protocol::{
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,
-    PreparedStatement, PreparedWrite, QueryResult, QuerySession, QuerySessionFactory,
+    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral,
+    QueryResult, QuerySession, QuerySessionFactory,
     ResultSetSource, SessionContext, SqlQueryError, WireStatus, WriteOutcome,
     SERVER_STATUS_IN_TRANS,
 };
@@ -417,19 +411,6 @@ fn load_stats_requires_client_local_files() {
     assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
 }
 
-fn prepared_catalog() -> ConfiguredCatalog {
-    ConfiguredCatalog::new([ConfiguredTable::new(
-        "campaign27",
-        "rows",
-        42,
-        [
-            ConfiguredColumn::clustered_primary_key("id", 1),
-            ConfiguredColumn::stored_not_null("balance", 2),
-        ],
-    )])
-    .unwrap()
-}
-
 fn prepared_balance_column() -> ColumnInfo {
     ColumnInfo {
         schema: "campaign27".to_owned(),
@@ -444,25 +425,6 @@ fn prepared_balance_column() -> ColumnInfo {
         type_code: TYPE_LONGLONG,
         default_value: None,
     }
-}
-
-#[test]
-fn prepared_point_range_keeps_its_two_marker_contract() {
-    let template = prepare_configured_point_read(
-        "SELECT balance FROM campaign27.rows WHERE id >= ? AND id <= ?",
-        &prepared_catalog(),
-    )
-    .unwrap();
-    let read = PreparedPointRead::new(
-        "SELECT balance FROM campaign27.rows WHERE id >= ? AND id <= ?".to_owned(),
-        template,
-        vec![prepared_balance_column()],
-        vec![FieldType::new(FieldTypeCode::LongLong)],
-    )
-    .unwrap();
-    assert_eq!(read.parameter_count(), 2);
-    assert_eq!(read.result_field_types()[0].code(), FieldTypeCode::LongLong);
-    assert_eq!(PreparedStatement::PointRead(read).parameter_count(), 2);
 }
 
 struct SnapshotLease {
@@ -527,84 +489,64 @@ impl QuerySession for PreparedSession {
         ))
     }
 
-    fn prepare_point_read(&mut self, sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
-        let template = prepare_configured_point_read(sql, &prepared_catalog())
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        PreparedPointRead::new(
-            sql.to_owned(),
-            template,
-            vec![prepared_balance_column()],
-            vec![FieldType::new(FieldTypeCode::LongLong)],
-        )
+    // Every prepared statement runs through the session's general path, the
+    // one Go has (`ExecutePreparedStmt`); this fake answers it without a
+    // planner so the test owns the wire contract rather than storage behavior.
+    fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        let markers = sql.matches('?').count();
+        let columns = if sql.trim_start().to_ascii_uppercase().starts_with("SELECT") {
+            vec![prepared_balance_column()]
+        } else {
+            Vec::new()
+        };
+        Ok(PreparedGeneral::new(sql.to_owned(), markers, columns))
     }
 
-    fn execute_prepared_point_read<'a>(
+    fn execute_general<'a>(
         &'a mut self,
-        statement: &PreparedPointRead,
-        parameters: &[i64],
-    ) -> Result<QueryResult<'a>, SqlQueryError> {
-        statement
-            .template()
-            .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let [value] = parameters else {
+        statement: &PreparedGeneral,
+        values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let mut integers = Vec::with_capacity(values.len());
+        for value in values {
+            let tidb_protocol::PreparedValue::SignedLongLong(value) = value else {
+                return Err(SqlQueryError::unknown("expected signed integer parameters"));
+            };
+            integers.push(*value);
+        }
+        self.executed_parameters
+            .lock()
+            .unwrap()
+            .extend(integers.iter().copied());
+        if statement.result_columns().is_empty() {
+            return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: 1,
+                last_insert_id: 0,
+            }));
+        }
+        let [value] = integers.as_slice() else {
             return Err(SqlQueryError::unknown("expected one prepared value"));
         };
-        self.executed_parameters.lock().unwrap().push(*value);
         let authority = ResultMaterializationAuthority::new(
             StatementMemory::new(-1, OomAction::Cancel, 1).with_tmp_storage_on_oom(false),
             8,
             8,
         );
-        Ok(QueryResult::new(Box::new(PreparedRows {
-            value: Some(*value + 100),
-            lifecycle: Arc::clone(&self.lifecycle),
-            _snapshot: SnapshotLease {
+        Ok(GeneralExecuteOutcome::Rows(
+            QueryResult::new(Box::new(PreparedRows {
+                value: Some(*value + 100),
                 lifecycle: Arc::clone(&self.lifecycle),
-            },
-        }))
-        .with_statement_status(0, self.wire_status())
-        .with_cursor_materialization(statement.result_field_types().to_vec(), authority))
+                _snapshot: SnapshotLease {
+                    lifecycle: Arc::clone(&self.lifecycle),
+                },
+            }))
+            .with_statement_status(0, self.wire_status())
+            .with_cursor_materialization(vec![FieldType::new(FieldTypeCode::LongLong)], authority),
+        ))
     }
 
     fn wire_status(&self) -> WireStatus {
         WireStatus::AUTOCOMMIT.with(SERVER_STATUS_IN_TRANS)
-    }
-
-    fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
-        let template = prepare_configured_write(sql, &prepared_catalog())
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedWrite::new(sql.to_owned(), template))
-    }
-
-    fn execute_prepared_write(
-        &mut self,
-        statement: &PreparedWrite,
-        parameters: &[PreparedBindValue],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        // Binding is the real planner path; only publication is stubbed, so
-        // this test owns the wire contract rather than storage behavior.
-        let bound = statement
-            .template()
-            .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        for parameter in parameters {
-            if let PreparedBindValue::Int(value) = parameter {
-                self.executed_parameters.lock().unwrap().push(*value);
-            }
-        }
-        let affected_rows = match bound {
-            ConfiguredPreparedWrite::InsertRows { rows, .. }
-            | ConfiguredPreparedWrite::InsertIgnoreRows { rows, .. }
-            | ConfiguredPreparedWrite::ReplaceRows { rows, .. }
-            | ConfiguredPreparedWrite::InsertOnDuplicateRows { rows, .. } => rows.len() as u64,
-            ConfiguredPreparedWrite::UpdatePoint { .. }
-            | ConfiguredPreparedWrite::DeletePoint { .. } => 1,
-        };
-        Ok(WriteOutcome {
-            affected_rows,
-            last_insert_id: 0,
-        })
     }
 }
 
@@ -2059,23 +2001,31 @@ fn begin_and_commit_dispatch_toggles_the_in_transaction_status_flag() {
 // COM_STMT_SEND_LONG_DATA (0x18): the silent command with a buffer.
 // ---------------------------------------------------------------------------
 
-fn long_data_catalog() -> ConfiguredCatalog {
-    ConfiguredCatalog::new([ConfiguredTable::new(
-        "campaign187",
-        "notes",
-        187,
-        [
-            ConfiguredColumn::clustered_primary_key("id", 1),
-            ConfiguredColumn::stored_char_not_null("note", 2, 64),
-        ],
-    )])
-    .unwrap()
+/// One bound parameter as the long-data tests compare it: a string or blob
+/// parameter's bytes, wherever they came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum BoundValue {
+    Int(i64),
+    Bytes(Vec<u8>),
+    Null,
+}
+
+impl BoundValue {
+    fn of(value: &tidb_protocol::PreparedValue) -> Self {
+        match value {
+            tidb_protocol::PreparedValue::SignedLongLong(value) => Self::Int(*value),
+            tidb_protocol::PreparedValue::String(bytes)
+            | tidb_protocol::PreparedValue::Bytes(bytes) => Self::Bytes(bytes.clone()),
+            tidb_protocol::PreparedValue::Null => Self::Null,
+            other => panic!("unexpected long-data test parameter {other:?}"),
+        }
+    }
 }
 
 /// Records the exact bind values every prepared write receives, which is where
 /// a long-data parameter must arrive as one concatenated byte string.
 struct LongDataSession {
-    bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+    bound: Arc<Mutex<Vec<Vec<BoundValue>>>>,
     long_data_quota: Option<i64>,
     long_data_consumed: Option<Arc<Mutex<i64>>>,
 }
@@ -2087,26 +2037,23 @@ impl QuerySession for LongDataSession {
         ))
     }
 
-    fn prepare_write(&mut self, sql: &str) -> Result<PreparedWrite, SqlQueryError> {
-        let template = prepare_configured_write(sql, &long_data_catalog())
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(PreparedWrite::new(sql.to_owned(), template))
+    fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        Ok(PreparedGeneral::new(sql.to_owned(), sql.matches('?').count(), Vec::new()))
     }
 
-    fn execute_prepared_write(
-        &mut self,
-        statement: &PreparedWrite,
-        parameters: &[PreparedBindValue],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        self.bound.lock().unwrap().push(parameters.to_vec());
-        statement
-            .template()
-            .bind(parameters)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        Ok(WriteOutcome {
+    fn execute_general<'a>(
+        &'a mut self,
+        _statement: &PreparedGeneral,
+        values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        self.bound
+            .lock()
+            .unwrap()
+            .push(values.iter().map(BoundValue::of).collect());
+        Ok(GeneralExecuteOutcome::Write(WriteOutcome {
             affected_rows: 1,
             last_insert_id: 0,
-        })
+        }))
     }
 
     fn try_consume_long_data(&mut self, bytes: i64) -> bool {
@@ -2134,7 +2081,7 @@ impl QuerySession for LongDataSession {
 }
 
 struct LongDataFactory {
-    bound: Arc<Mutex<Vec<Vec<PreparedBindValue>>>>,
+    bound: Arc<Mutex<Vec<Vec<BoundValue>>>>,
     long_data_quota: Option<i64>,
     long_data_consumed: Option<Arc<Mutex<i64>>>,
 }
@@ -2281,8 +2228,8 @@ fn send_long_data_writes_no_packet_and_lands_as_the_concatenated_parameter() {
     assert_eq!(
         *bound.lock().unwrap(),
         vec![vec![
-            PreparedBindValue::Int(7),
-            PreparedBindValue::Bytes(b"the first half, then the second".to_vec()),
+            BoundValue::Int(7),
+            BoundValue::Bytes(b"the first half, then the second".to_vec()),
         ]],
         "the two chunks land as one concatenated value, in chunk order"
     );
@@ -2481,8 +2428,8 @@ fn stmt_reset_drops_the_long_data_buffer_before_the_next_execute() {
     assert_eq!(
         *bound.lock().unwrap(),
         vec![vec![
-            PreparedBindValue::Int(9),
-            PreparedBindValue::Bytes(b"kept".to_vec()),
+            BoundValue::Int(9),
+            BoundValue::Bytes(b"kept".to_vec()),
         ]],
         "the reset dropped the long-data buffer; the payload value is used"
     );

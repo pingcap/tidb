@@ -344,7 +344,11 @@ pub fn row_format(
             Datum::Bytes(go_duration(span.end - span.start).into_bytes()),
         ]);
         let mut children = span.children.iter().collect::<Vec<_>>();
-        children.sort_by_key(|child| child.start);
+        // Go sorts siblings by their start (`dfsTree`); its nanosecond
+        // monotonic clock never ties, so equal starts keep the order the
+        // spans were opened in -- client spans timed from one recorded
+        // instant do tie here.
+        children.sort_by_key(|child| (child.start, child.opened));
         let last = children.len().saturating_sub(1);
         for (index, child) in children.into_iter().enumerate() {
             walk(child, &new_prefix, index == last, started, rows);
@@ -607,7 +611,7 @@ mod tests {
     /// The span tree as `name{ child child }`, children in start order.
     fn shape(span: &Span) -> String {
         let mut children = span.children.iter().collect::<Vec<_>>();
-        children.sort_by_key(|child| child.start);
+        children.sort_by_key(|child| (child.start, child.opened));
         if children.is_empty() {
             return span.name.clone();
         }

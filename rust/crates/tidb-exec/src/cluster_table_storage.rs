@@ -63,7 +63,6 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::multi_statement_transaction::transaction_end_call;
 use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, DuplicateKeyHint, MutationBuffer, SnapshotPairs,
 };
@@ -190,7 +189,7 @@ pub fn stage_mutations(
 /// every outcome into the session layer's next move.
 ///
 /// The internal retry is only for a RETRYABLE DEADLOCK, mirroring
-/// `multi_statement_transaction::lock_keys`; a write conflict or a
+/// `lock_keys`; a write conflict or a
 /// fair-locking grant-with-conflict is NOT retried here, because its remedy
 /// is re-executing the statement at the advanced `for_update_ts`, which only
 /// the session layer can do.
@@ -2633,4 +2632,42 @@ mod tests {
              every read of it must agree -- pushdown included"
         );
     }
+}
+
+/// The call for the commit, rollback and cleanup that end a transaction:
+/// cancellation only, with no wall-clock deadline, unrelated to any
+/// statement's remaining time.
+///
+/// This is client-go's rule. The 2PC runs on the committing `ctx`, and
+/// `twoPhaseCommitter.cleanup` builds its context from the store, not from the
+/// `ctx` the failing statement handed it:
+///
+/// ```text
+/// cleanupKeysCtx := context.WithValue(c.store.Ctx(), retry.TxnStartKey, ctx.Value(retry.TxnStartKey))
+/// ...
+/// err = c.cleanupMutations(retry.NewBackofferWithVars(cleanupKeysCtx, cleanupMaxBackoff, c.txn.vars), c.mutations)
+/// ```
+///
+/// and `doActionOnGroupMutations` takes the same decision for the secondary
+/// commits:
+///
+/// ```text
+/// secondaryBo := retry.NewBackofferWithVars(c.store.Ctx(), CommitSecondaryMaxBackoff, c.txn.vars)
+/// ```
+///
+/// Neither context carries a deadline. What bounds them is each backoffer's
+/// budget of SLEEP time (`PrewriteMaxBackoff`, `CommitMaxBackoff`,
+/// `cleanupMaxBackoff = 20000`, ported in client-rust's 2PC) and each RPC's
+/// own timeout -- not the wall-clock time the RPCs take. A 20-second deadline
+/// on the whole commit failed a 100,000-row INSERT's prewrite with `context
+/// deadline exceeded` whenever the machine was loaded (production replay,
+/// `executor/admin`). Ending a transaction is the store's work, not the last
+/// statement's, so a transaction a client held open for minutes must still be
+/// able to publish or roll back.
+///
+/// Every path that ends a transaction shares it, including the served
+/// `--cluster-session` one in this module.
+#[must_use]
+pub fn transaction_end_call() -> UnaryCallContext {
+    UnaryCallContext::with_optional_deadline(None, UnaryCancellation::new())
 }

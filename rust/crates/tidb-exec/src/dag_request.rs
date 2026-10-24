@@ -22,16 +22,9 @@
 
 use std::{error::Error, fmt};
 
-use tidb_ast::BinaryOp;
 use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
-use tidb_expr::{
-    expression::Expression,
-    pb_predicate::{bigint_column_field_type, int_comparison_to_pb, IntPbOperand},
-    pushdown_catalog::ColumnDescriptor,
-};
 use tidb_planner::{
-    physical::{PhysicalIndexScan, PhysicalSelection, PhysicalTableScan},
-    signed_bigint_ranger::{BigIntComparison, ComparisonOp, ComparisonOperand},
+    physical::{PhysicalIndexScan, PhysicalTableScan},
     tikv_scan_spec::{
         check_cover_index, ScanColumnInfo, TiKvIndexScanSpec, TiKvTableScanSpec,
         UnsupportedScanFeature,
@@ -112,27 +105,10 @@ pub enum DagRequestBuildError {
         /// Number of columns emitted by the scan.
         width: usize,
     },
-    /// A Selection condition refers outside the scan output.
-    ConditionInputOffsetOutOfRange {
-        /// Invalid resolved input offset.
-        offset: u32,
-        /// Number of columns emitted by the scan.
-        width: usize,
-    },
-    /// Catalog field flags cannot be represented by TiPB's unsigned field.
-    InvalidColumnFlags {
-        /// Resolved scan-input offset.
-        offset: u32,
-        /// Invalid signed scan metadata.
-        flags: i32,
-    },
     /// A metadata-only Selection cannot enter the executable TiKV DAG.
     EmptySelection,
     /// A metadata-only Aggregation cannot enter the executable TiKV DAG.
     EmptyAggregation,
-    /// The wired expression cannot be encoded by the shared TiKV expression
-    /// encoders.
-    UnsupportedSelectionExpression,
 }
 
 impl fmt::Display for DagRequestBuildError {
@@ -156,22 +132,11 @@ impl fmt::Display for DagRequestBuildError {
                     "TiKV output offset {offset} is outside scan width {width}"
                 )
             }
-            Self::ConditionInputOffsetOutOfRange { offset, width } => write!(
-                f,
-                "TiKV Selection input offset {offset} is outside scan width {width}"
-            ),
-            Self::InvalidColumnFlags { offset, flags } => write!(
-                f,
-                "TiKV Selection input offset {offset} has invalid column flags {flags}"
-            ),
             Self::EmptySelection => {
                 f.write_str("TiKV Selection requires at least one resolved condition")
             }
             Self::EmptyAggregation => {
                 f.write_str("TiKV Aggregation requires at least one resolved function")
-            }
-            Self::UnsupportedSelectionExpression => {
-                f.write_str("cannot lower physical Selection expression to TiKV")
             }
         }
     }
@@ -222,48 +187,18 @@ pub fn limit_to_pb(limit: u64) -> Executor {
     }
 }
 
-/// Ports Go's TiKV list DAG for one scan and an optional physical Selection.
-///
-/// `output_offsets` is the final reader projection, not the scan width. This
-/// lets a predicate-only scan input participate in Selection without leaking
-/// into the MySQL result row. Duplicate offsets remain valid, matching SQL
-/// projections such as `SELECT a, a`.
-pub fn construct_read_only_dag_req(
-    context: &DagRequestContext,
-    scan: TiKvScanPlan<'_>,
-    selection: Option<&PhysicalSelection>,
-    output_offsets: &[u32],
-) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(
-        context,
-        &[scan],
-        selection.map_or(SelectionSource::None, SelectionSource::Bounded),
-        Some(output_offsets),
-        None,
-        None,
-        false,
-        None,
-    )
-}
-
-/// Where a DAG's Selection conditions come from.
-///
-/// A wired [`PhysicalSelection`] is lowered through the shared expression
-/// pushdown catalog; a caller that already lowered a wider predicate (the wide
-/// SQL path, over the whole integer family plus `OR`, `NOT`, `IS NULL` and
-/// `IN`) hands the TiPB conditions in directly.
+/// Where a DAG's Selection conditions come from: the planner's pushed
+/// conditions, already converted to TiPB (Go `ExprToPB`).
 #[derive(Clone, Copy, Debug)]
 enum SelectionSource<'a> {
     /// No Selection executor at all.
     None,
-    /// The wired physical Selection used by the bounded read tier.
-    Bounded(&'a PhysicalSelection),
     /// Already-lowered conditions, in `WHERE` order.
     Conditions(&'a [Expr]),
 }
 
-/// [`construct_capped_read_only_dag_req`] over conditions the caller already
-/// lowered to TiPB. An empty `conditions` builds no Selection executor.
+/// Go's TiKV list DAG for one scan, the pushed conditions the caller already
+/// lowered to TiPB and an optional coprocessor row cap. An empty `conditions` builds no Selection executor.
 pub fn construct_capped_read_only_dag_req_with_conditions(
     context: &DagRequestContext,
     scan: TiKvScanPlan<'_>,
@@ -340,121 +275,6 @@ pub fn construct_grouped_aggregate_read_only_dag_req_with_conditions(
         streamed,
         None,
     )
-}
-
-/// [`construct_read_only_dag_req`] with a coprocessor-side row cap appended
-/// above the Selection, which is the executor list Go builds for a `LIMIT`
-/// pushed into a TiKV reader.
-pub fn construct_capped_read_only_dag_req(
-    context: &DagRequestContext,
-    scan: TiKvScanPlan<'_>,
-    selection: Option<&PhysicalSelection>,
-    limit: Option<u64>,
-    output_offsets: &[u32],
-) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_inner(
-        context,
-        &[scan],
-        selection.map_or(SelectionSource::None, SelectionSource::Bounded),
-        Some(output_offsets),
-        None,
-        None,
-        false,
-        limit,
-    )
-}
-
-/// [`construct_capped_read_only_dag_req_with_conditions`] with a partial
-/// aggregation above the Selection -- the executor list Go builds when a
-/// final/partial split pushes the partial stage into a TiKV reader
-/// (`PhysicalHashAgg.ToPB` in the list form). The DAG's output offsets
-/// enumerate the AGGREGATION's schema -- aggregate results first, then
-/// group keys -- not the scan's.
-pub fn construct_aggregated_read_only_dag_req_with_conditions(
-    context: &DagRequestContext,
-    scan: TiKvScanPlan<'_>,
-    conditions: &[Expr],
-    aggregation: Aggregation,
-    aggregation_width: usize,
-) -> Result<DagRequest, DagRequestBuildError> {
-    construct_dag_req_assembled(
-        context,
-        &[scan],
-        if conditions.is_empty() {
-            SelectionSource::None
-        } else {
-            SelectionSource::Conditions(conditions)
-        },
-        None,
-        None,
-        None,
-        false,
-        None,
-        Some((aggregation, aggregation_width)),
-    )
-}
-
-/// The covering-index half of the same shape: `[IndexScan, Aggregation]`,
-/// Go's `PhysicalIndexReader` carrying a partial aggregate. The caller
-/// hands the finished `IndexScan` executor body -- the ranges already
-/// travel as encoded index-key ranges on the request itself.
-pub fn construct_index_aggregated_dag_req(
-    context: &DagRequestContext,
-    index_scan: IndexScan,
-    conditions: Vec<Expr>,
-    aggregation: Aggregation,
-    aggregation_width: usize,
-) -> Result<DagRequest, DagRequestBuildError> {
-    let mut executors = vec![Executor {
-        tp: Some(ExecType::TypeIndexScan as i32),
-        tbl_scan: None,
-        idx_scan: Some(index_scan),
-        selection: None,
-        aggregation: None,
-        top_n: None,
-        limit: None,
-        executor_id: None,
-        parent_idx: None,
-        exchange_sender: None,
-        ..Default::default()
-    }];
-    if !conditions.is_empty() {
-        executors.push(selection_executor(conditions)?);
-    }
-    executors.push(aggregation_to_executor(aggregation));
-    let output_offsets = (0..aggregation_width)
-        .map(|offset| u32::try_from(offset).expect("aggregate width fits TiKV u32 offsets"))
-        .collect();
-    let (encode_type, chunk_memory_layout) = match context.encode_type {
-        DistSqlEncodeType::Default => (EncodeType::TypeDefault, None),
-        DistSqlEncodeType::Chunk => {
-            let endian = match system_endian() {
-                SystemEndian::Little => Endian::LittleEndian,
-                SystemEndian::Big => Endian::BigEndian,
-            };
-            (
-                EncodeType::TypeChunk,
-                Some(ChunkMemoryLayout {
-                    endian: Some(endian as i32),
-                }),
-            )
-        }
-    };
-    Ok(DagRequest {
-        executors,
-        time_zone_offset: Some(context.time_zone_offset),
-        flags: Some(context.push_down_flags),
-        output_offsets,
-        encode_type: Some(encode_type as i32),
-        time_zone_name: Some(context.time_zone_name.clone()),
-        collect_execution_summaries: context.collect_execution_summaries.then_some(true),
-        chunk_memory_layout,
-        div_precision_increment: (context.div_precision_increment
-            != DEFAULT_DIV_PRECISION_INCREMENT)
-            .then_some(context.div_precision_increment),
-        root_executor: None,
-        ..Default::default()
-    })
 }
 
 fn aggregation_to_executor(aggregation: Aggregation) -> Executor {
@@ -560,9 +380,6 @@ fn construct_dag_req_assembled(
     let mut executors = vec![scan_executor];
     match selection {
         SelectionSource::None => {}
-        SelectionSource::Bounded(plan) => {
-            executors.push(selection_to_pb(plan, scan_columns, context)?);
-        }
         SelectionSource::Conditions(conditions) => {
             executors.push(selection_executor(conditions.to_vec())?);
         }
@@ -619,143 +436,6 @@ fn validate_output_offsets(offsets: &[u32], width: usize) -> Result<(), DagReque
         }
     }
     Ok(())
-}
-
-fn selection_to_pb(
-    plan: &PhysicalSelection,
-    scan_columns: &[ScanColumnInfo],
-    context: &DagRequestContext,
-) -> Result<Executor, DagRequestBuildError> {
-    if plan.conditions.is_empty() {
-        return Err(DagRequestBuildError::EmptySelection);
-    }
-    let zone = match context.time_zone_name.as_str() {
-        "" => tidb_datatype::SessionTimeZone::Fixed {
-            name: String::new(),
-            offset_secs: i32::try_from(context.time_zone_offset)
-                .map_err(|_| DagRequestBuildError::UnsupportedSelectionExpression)?,
-        },
-        "System" => tidb_datatype::SessionTimeZone::Local,
-        name => tidb_datatype::SessionTimeZone::Named(
-            name.parse()
-                .map_err(|_| DagRequestBuildError::UnsupportedSelectionExpression)?,
-        ),
-    };
-    let conditions = plan
-        .conditions
-        .iter()
-        .map(|condition| {
-            validate_selection_columns(condition, scan_columns)?;
-            if let Some(encoded) = tidb_expr::pushdown_catalog::expression_to_pb_in(
-                condition,
-                &|offset| scan_column_descriptor(scan_columns, offset),
-                &zone,
-            ) {
-                return Ok(encoded);
-            }
-            let comparison = BigIntComparison::from_expression(condition)
-                .ok_or(DagRequestBuildError::UnsupportedSelectionExpression)?;
-            let left = comparison_operand_to_pb(comparison.lhs(), scan_columns)?;
-            let right = comparison_operand_to_pb(comparison.rhs(), scan_columns)?;
-            int_comparison_to_pb(comparison_op(comparison.op()), left, right)
-                .map_err(|_| DagRequestBuildError::UnsupportedSelectionExpression)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    selection_executor(conditions)
-}
-
-const fn comparison_op(operator: ComparisonOp) -> BinaryOp {
-    match operator {
-        ComparisonOp::Lt => BinaryOp::Lt,
-        ComparisonOp::Le => BinaryOp::Le,
-        ComparisonOp::Gt => BinaryOp::Gt,
-        ComparisonOp::Ge => BinaryOp::Ge,
-        ComparisonOp::Eq => BinaryOp::Eq,
-        ComparisonOp::Ne => BinaryOp::Ne,
-    }
-}
-
-fn comparison_operand_to_pb(
-    operand: ComparisonOperand,
-    scan_columns: &[ScanColumnInfo],
-) -> Result<IntPbOperand, DagRequestBuildError> {
-    match operand {
-        ComparisonOperand::Int(value) => Ok(IntPbOperand::Literal(value)),
-        ComparisonOperand::InputOffset(offset) => {
-            let column = scan_columns.get(offset as usize).ok_or(
-                DagRequestBuildError::ConditionInputOffsetOutOfRange {
-                    offset,
-                    width: scan_columns.len(),
-                },
-            )?;
-            let flags = u32::try_from(column.flag).map_err(|_| {
-                DagRequestBuildError::InvalidColumnFlags {
-                    offset,
-                    flags: column.flag,
-                }
-            })?;
-            Ok(IntPbOperand::Column {
-                offset: offset as usize,
-                field_type: bigint_column_field_type(flags),
-            })
-        }
-    }
-}
-
-fn validate_selection_columns(
-    expression: &Expression,
-    scan_columns: &[ScanColumnInfo],
-) -> Result<(), DagRequestBuildError> {
-    match expression {
-        Expression::Column(column) => {
-            let offset = u32::try_from(column.index).map_err(|_| {
-                DagRequestBuildError::ConditionInputOffsetOutOfRange {
-                    offset: u32::MAX,
-                    width: scan_columns.len(),
-                }
-            })?;
-            let scan_column = scan_columns.get(offset as usize).ok_or(
-                DagRequestBuildError::ConditionInputOffsetOutOfRange {
-                    offset,
-                    width: scan_columns.len(),
-                },
-            )?;
-            u32::try_from(scan_column.flag).map_err(|_| {
-                DagRequestBuildError::InvalidColumnFlags {
-                    offset,
-                    flags: scan_column.flag,
-                }
-            })?;
-            Ok(())
-        }
-        Expression::ScalarFunction(function) => {
-            for argument in &function.args {
-                validate_selection_columns(argument, scan_columns)?;
-            }
-            Ok(())
-        }
-        Expression::Constant(_) => Ok(()),
-        Expression::CorrelatedColumn(_) => {
-            Err(DagRequestBuildError::UnsupportedSelectionExpression)
-        }
-    }
-}
-
-fn scan_column_descriptor(columns: &[ScanColumnInfo], offset: u32) -> Option<ColumnDescriptor> {
-    let column = columns.get(offset as usize)?;
-    let collation = tidb_datatype::proto_to_collation(column.collation);
-    let charset = tidb_datatype::get_collation_by_name(&collation)
-        .map_or_else(|_| "binary".to_owned(), |row| row.charset_name);
-    Some(ColumnDescriptor {
-        tp: column.tp,
-        flag: u32::try_from(column.flag).ok()?,
-        flen: column.column_len,
-        decimal: column.decimal,
-        charset,
-        collation,
-        elems: column.elems.clone(),
-        array: column.array,
-    })
 }
 
 fn selection_executor(conditions: Vec<Expr>) -> Result<Executor, DagRequestBuildError> {

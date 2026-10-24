@@ -28,10 +28,7 @@ use tidb_ast::Stmt;
 use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
-use tidb_exec::real_tikv_dml::ConfiguredWriteError;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
-use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
-use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
@@ -323,14 +320,6 @@ pub fn cluster_stats_lock_error(error: ClusterStatsLockCommitError) -> SqlQueryE
     }
 }
 
-pub fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
-    match error {
-        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        ConfiguredWriteError::Commit(error) => lock_sql_error(error),
-        other => SqlQueryError::unknown(other.to_string()),
-    }
-}
-
 /// Returns the client error for a cluster state change that did not commit,
 /// preserving the ambiguous outcome instead of reporting a false failure.
 pub fn cluster_commit_error(
@@ -367,113 +356,6 @@ pub struct CursorMaterializationAuthority {
     pub init_chunk_size: usize,
     pub max_chunk_size: usize,
     pub memory: tidb_executor::StatementMemory,
-}
-
-/// One connection-owned, typed prepared point-read definition.
-///
-/// It contains no storage response, snapshot, or interpolated SQL. The
-/// immutable planner template is bound afresh for each execute, while result
-/// metadata is derived from that same plan during prepare without opening PD
-/// or TiKV.
-#[derive(Clone, Debug)]
-pub struct PreparedPointRead {
-    sql: String,
-    template: ConfiguredPreparedPointReadTemplate,
-    result_columns: Vec<ColumnInfo>,
-    result_field_types: Vec<tidb_datatype::FieldType>,
-}
-
-impl PreparedPointRead {
-    /// Creates a concrete prepared definition after parser/catalog admission.
-    pub fn new(
-        sql: String,
-        template: ConfiguredPreparedPointReadTemplate,
-        result_columns: Vec<ColumnInfo>,
-        result_field_types: Vec<tidb_datatype::FieldType>,
-    ) -> Result<Self, SqlQueryError> {
-        if result_columns.len() != result_field_types.len() {
-            return Err(SqlQueryError::unknown(format!(
-                "prepared point-read schema has {} wire columns but {} chunk field types",
-                result_columns.len(),
-                result_field_types.len()
-            )));
-        }
-        Ok(Self {
-            sql,
-            template,
-            result_columns,
-            result_field_types,
-        })
-    }
-
-    /// The statement text retained at prepare time.
-    #[must_use]
-    pub fn sql(&self) -> &str {
-        &self.sql
-    }
-
-    /// Returns the immutable typed template retained by this connection.
-    #[must_use]
-    pub const fn template(&self) -> &ConfiguredPreparedPointReadTemplate {
-        &self.template
-    }
-
-    /// Returns the exact signed-BIGINT result metadata sent at prepare time.
-    #[must_use]
-    pub fn result_columns(&self) -> &[ColumnInfo] {
-        &self.result_columns
-    }
-
-    /// Returns the exact storage/result types retained with the prepared
-    /// schema. Cursor materialization must not reconstruct these from MySQL
-    /// column packets, which omit collation, signedness, and temporal FSP
-    /// details needed by a [`tidb_chunk::chunk::Chunk`].
-    #[must_use]
-    pub fn result_field_types(&self) -> &[tidb_datatype::FieldType] {
-        &self.result_field_types
-    }
-
-    /// Positional markers the typed template binds at execute time.
-    #[must_use]
-    pub const fn parameter_count(&self) -> usize {
-        self.template.parameter_count()
-    }
-}
-
-/// One connection-owned, typed prepared write definition.
-///
-/// Like a prepared read it holds no storage state and no interpolated SQL: the
-/// immutable planner template is bound afresh for each execute.
-#[derive(Clone, Debug)]
-pub struct PreparedWrite {
-    sql: String,
-    template: ConfiguredPreparedWriteTemplate,
-}
-
-impl PreparedWrite {
-    /// Creates a concrete prepared write after parser/catalog admission.
-    #[must_use]
-    pub const fn new(sql: String, template: ConfiguredPreparedWriteTemplate) -> Self {
-        Self { sql, template }
-    }
-
-    /// The statement text retained at prepare time.
-    #[must_use]
-    pub fn sql(&self) -> &str {
-        &self.sql
-    }
-
-    /// Returns the immutable typed template retained by this connection.
-    #[must_use]
-    pub const fn template(&self) -> &ConfiguredPreparedWriteTemplate {
-        &self.template
-    }
-
-    /// Positional markers this statement's execute packet must supply.
-    #[must_use]
-    pub fn parameter_count(&self) -> usize {
-        self.template.parameter_count()
-    }
 }
 
 /// One connection-owned prepared statement of either admitted kind.
@@ -601,10 +483,6 @@ pub enum GeneralExecuteOutcome<'a> {
 /// different response shapes and must stay distinguishable at execute time.
 #[derive(Clone, Debug)]
 pub enum PreparedStatement {
-    /// A bounded configured point read returning binary rows.
-    PointRead(PreparedPointRead),
-    /// A bounded configured INSERT or point UPDATE returning affected rows.
-    Write(PreparedWrite),
     /// Any other statement, bound and run through the session.
     General(PreparedGeneral),
     /// `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` and friends, carried as written.
@@ -623,8 +501,6 @@ impl PreparedStatement {
     #[must_use]
     pub fn sql_text(&self) -> &str {
         match self {
-            Self::PointRead(read) => read.sql(),
-            Self::Write(write) => write.sql(),
             Self::General(general) => general.sql(),
             Self::TransactionControl(sql) => sql,
         }
@@ -634,8 +510,6 @@ impl PreparedStatement {
     #[must_use]
     pub fn parameter_count(&self) -> usize {
         match self {
-            Self::PointRead(read) => read.parameter_count(),
-            Self::Write(write) => write.parameter_count(),
             Self::General(general) => general.parameter_count(),
             // Transaction control has no markers to bind.
             Self::TransactionControl(_) => 0,
@@ -646,8 +520,6 @@ impl PreparedStatement {
     #[must_use]
     pub fn result_columns(&self) -> &[ColumnInfo] {
         match self {
-            Self::PointRead(read) => read.result_columns(),
-            Self::Write(_) => &[],
             Self::General(general) => general.result_columns(),
             Self::TransactionControl(_) => &[],
         }
@@ -1192,48 +1064,6 @@ pub trait QuerySession {
     ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
         Err(SqlQueryError::unknown(
             "this session does not support general prepared statements",
-        ))
-    }
-
-    /// Parses and types one bounded prepared point read without storage I/O.
-    /// Sessions that have no real configured catalog fail closed.
-    fn prepare_point_read(&mut self, _sql: &str) -> Result<PreparedPointRead, SqlQueryError> {
-        Err(SqlQueryError::unknown(
-            "prepared point reads require a configured real-TiKV session",
-        ))
-    }
-
-    /// Binds and starts one prepared point read through this session's
-    /// ordinary concrete executor. Sessions without that authority fail
-    /// closed and never synthesize rows.
-    fn execute_prepared_point_read<'a>(
-        &'a mut self,
-        _statement: &PreparedPointRead,
-        _parameters: &[i64],
-    ) -> Result<QueryResult<'a>, SqlQueryError> {
-        Err(SqlQueryError::unknown(
-            "prepared point reads require a configured real-TiKV session",
-        ))
-    }
-
-    /// Parses and types one bounded prepared write without storage I/O.
-    /// Sessions that have no real configured catalog fail closed.
-    fn prepare_write(&mut self, _sql: &str) -> Result<PreparedWrite, SqlQueryError> {
-        Err(SqlQueryError::unknown(
-            "prepared writes require a configured real-TiKV session",
-        ))
-    }
-
-    /// Binds and commits one prepared write through this session's shared
-    /// real transaction authority. Sessions without that authority fail closed
-    /// and never report affected rows they did not persist.
-    fn execute_prepared_write(
-        &mut self,
-        _statement: &PreparedWrite,
-        _parameters: &[PreparedBindValue],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        Err(SqlQueryError::unknown(
-            "prepared writes require a configured real-TiKV session",
         ))
     }
 

@@ -563,10 +563,19 @@ fn describe_condition(
             })
         }
         ("in", [tested, members @ ..]) if !members.is_empty() => {
-            let literals = members
+            let Ok(literals) = members
                 .iter()
                 .map(|member| literal(member, context))
-                .collect::<Result<Vec<_>, _>>()?;
+                .collect::<Result<Vec<_>, _>>()
+            else {
+                // A member that is not a literal (`a IN (b, 1)`): Go converts
+                // the whole `in` call, every argument cast to the comparison
+                // type, through the generic signature rows.
+                return match scalar(expression, context)? {
+                    call @ PbScalar::Call { .. } => Ok(ScanPredicate::Builtin(call)),
+                    _ => Err(unsupported()),
+                };
+            };
             if let Some((column_offset, column_type)) = column(tested) {
                 return Ok(ScanPredicate::In {
                     column_offset,
@@ -1532,17 +1541,7 @@ mod tests {
         // does not hold yet: their Selection is evaluated locally, whole (never
         // a subset), while EXPLAIN keeps Go's cop Selection. The list may only
         // shrink -- a new entry is a planner/converter disagreement.
-        const NOT_CONVERTED_YET: &[&str] = &[
-            "b * 2 = c",
-            "a - 1 = 0",
-            "ABS(a - b) = 1",
-            "COALESCE(b, 0) > 0",
-            "a IN (b, 1)",
-            "b IS TRUE",
-            "b IS NOT TRUE",
-            "LENGTH(s) > 2",
-            "a DIV 2 = 1",
-        ];
+        const NOT_CONVERTED_YET: &[&str] = &[];
         assert_eq!(
             refused, NOT_CONVERTED_YET,
             "the planner admits for TiKV what ExprToPB refuses"

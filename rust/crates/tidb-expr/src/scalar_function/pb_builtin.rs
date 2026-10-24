@@ -44,10 +44,18 @@ enum Kernel {
         unsigned: bool,
     },
     IsNull(EvalType),
+    /// `negate` is `UnaryNot`; `keep_null` separates Go's `*IsTrueWithNull`
+    /// (NULL stays NULL) from `*IsTrue` / `*IsFalse` (NULL is 0, Go
+    /// `builtinIntIsTrueSig{keepNull: false}`); `falsity` is `*IsFalse`.
     Truth {
         negate: bool,
         domain: EvalType,
+        keep_null: bool,
+        falsity: bool,
     },
+    /// Go `builtinCoalesce*Sig`: the first non-NULL argument, each read in
+    /// the result's evaluation type.
+    Coalesce(EvalType),
     Case(EvalType),
     If(EvalType),
     IfNull(EvalType),
@@ -171,18 +179,62 @@ impl PbBuiltin {
             UnaryNotInt => Kernel::Truth {
                 negate: true,
                 domain: EvalType::Int,
+                keep_null: true,
+                falsity: false,
             },
             IntIsTrueWithNull => Kernel::Truth {
                 negate: false,
                 domain: EvalType::Int,
+                keep_null: true,
+                falsity: false,
             },
             RealIsTrueWithNull => Kernel::Truth {
                 negate: false,
                 domain: EvalType::Real,
+                keep_null: true,
+                falsity: false,
             },
             DecimalIsTrueWithNull => Kernel::Truth {
                 negate: false,
                 domain: EvalType::Decimal,
+                keep_null: true,
+                falsity: false,
+            },
+            IntIsTrue => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Int,
+                keep_null: false,
+                falsity: false,
+            },
+            RealIsTrue => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Real,
+                keep_null: false,
+                falsity: false,
+            },
+            DecimalIsTrue => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Decimal,
+                keep_null: false,
+                falsity: false,
+            },
+            IntIsFalse => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Int,
+                keep_null: false,
+                falsity: true,
+            },
+            RealIsFalse => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Real,
+                keep_null: false,
+                falsity: true,
+            },
+            DecimalIsFalse => Kernel::Truth {
+                negate: false,
+                domain: EvalType::Decimal,
+                keep_null: false,
+                falsity: true,
             },
             CaseWhenString => Kernel::Case(EvalType::String),
             CaseWhenInt => Kernel::Case(EvalType::Int),
@@ -205,6 +257,19 @@ impl PbBuiltin {
             IfNullTime => Kernel::IfNull(EvalType::Datetime),
             IfNullDuration => Kernel::IfNull(EvalType::Duration),
             IfNullJson => Kernel::IfNull(EvalType::Json),
+            CoalesceInt => Kernel::Coalesce(EvalType::Int),
+            CoalesceReal => Kernel::Coalesce(EvalType::Real),
+            CoalesceDecimal => Kernel::Coalesce(EvalType::Decimal),
+            CoalesceString => Kernel::Coalesce(EvalType::String),
+            CoalesceTime => Kernel::Coalesce(EvalType::Datetime),
+            CoalesceDuration => Kernel::Coalesce(EvalType::Duration),
+            CoalesceJson => Kernel::Coalesce(EvalType::Json),
+            // Go `builtinLengthSig`: the argument's byte length, whatever its
+            // collation -- `CharLength`'s binary spelling.
+            Length => Kernel::String {
+                operation: StringOp::Length,
+                binary: true,
+            },
             CharLength => Kernel::String {
                 operation: StringOp::Length,
                 binary: true,
@@ -239,6 +304,9 @@ impl PbBuiltin {
             },
             ToBinary => Kernel::ConvertCharset { from_binary: false },
             FromBinary => Kernel::ConvertCharset { from_binary: true },
+            // Go `absFunctionClass`: one signature per argument evaluation
+            // type; the planner has already cast the argument to it.
+            AbsInt | AbsUInt | AbsReal | AbsDecimal => Kernel::Values(crate::math_fn::abs),
             Acos => Kernel::Values(crate::math_fn::acos),
             Asin => Kernel::Values(crate::math_fn::asin),
             Atan1Arg => Kernel::Values(crate::math_fn::atan),
@@ -411,10 +479,27 @@ impl PbBuiltin {
             Kernel::IsNull(domain) => {
                 Ok(Datum::Int(i64::from(typed_argument(0, domain)?.is_null())))
             }
-            Kernel::Truth { negate, domain } => {
+            Kernel::Truth {
+                negate,
+                domain,
+                keep_null,
+                falsity,
+            } => {
                 let value = typed_argument(0, domain)?;
-                Ok(crate::truthy_of(&value)?
-                    .map_or(Datum::Null, |value| Datum::Int(i64::from(value ^ negate))))
+                Ok(match crate::truthy_of(&value)? {
+                    None if keep_null => Datum::Null,
+                    None => Datum::Int(0),
+                    Some(value) => Datum::Int(i64::from(value ^ negate ^ falsity)),
+                })
+            }
+            Kernel::Coalesce(domain) => {
+                for index in 0..args.len() {
+                    let value = typed_argument(index, domain)?;
+                    if !value.is_null() {
+                        return Ok(value);
+                    }
+                }
+                Ok(Datum::Null)
             }
             Kernel::Logic(op) => {
                 let left = condition(0)?;

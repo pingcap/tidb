@@ -255,6 +255,9 @@ impl BuiltinSignature {
     /// built by `wrapWithIsTrue` (`args[i].GetType()`), and every value slot is the return type.
     #[must_use]
     pub fn arg_type_at(&self, index: usize, arity: usize, own: EvalType) -> Option<EvalType> {
+        if self.name == "in" {
+            return self.arg_types.first().copied();
+        }
         if !self.arg_types.is_empty() {
             return self.arg_types.get(index).copied();
         }
@@ -265,6 +268,7 @@ impl BuiltinSignature {
             "if" if arity == 3 && index == 0 => Some(own),
             "if" if arity == 3 => Some(self.ret),
             "ifnull" if arity == 2 => Some(self.ret),
+            "coalesce" => Some(self.ret),
             _ => None,
         }
     }
@@ -1610,6 +1614,247 @@ pub const CATALOG: &[BuiltinSignature] = &[
         ScalarFuncSig::PlusInt,
         false,
     ),
+    // `arithmeticMinusFunctionClass.getFunction`: two ints are MinusInt
+    // (the result's UNSIGNED flag comes from the planner's own result type,
+    // which also honours NO_UNSIGNED_SUBTRACTION).
+    signature(
+        "minus",
+        &[ArgPattern::int(false), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MinusInt,
+        false,
+    ),
+    signature(
+        "minus",
+        &[ArgPattern::int(true), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MinusInt,
+        false,
+    ),
+    signature(
+        "minus",
+        &[ArgPattern::int(false), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MinusInt,
+        false,
+    ),
+    signature(
+        "minus",
+        &[ArgPattern::int(true), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MinusInt,
+        false,
+    ),
+    // `arithmeticMultiplyFunctionClass.getFunction`: two ints are MultiplyInt,
+    // or MultiplyIntUnsigned when either operand is unsigned.
+    signature(
+        "mul",
+        &[ArgPattern::int(false), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MultiplyInt,
+        false,
+    ),
+    signature(
+        "mul",
+        &[ArgPattern::int(true), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MultiplyIntUnsigned,
+        false,
+    ),
+    signature(
+        "mul",
+        &[ArgPattern::int(false), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MultiplyIntUnsigned,
+        false,
+    ),
+    signature(
+        "mul",
+        &[ArgPattern::int(true), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::MultiplyIntUnsigned,
+        false,
+    ),
+    // `arithmeticIntDivideFunctionClass.getFunction`: two ints are
+    // IntDivideInt; any other pair is cast to Decimal and IntDivideDecimal.
+    signature(
+        "intdiv",
+        &[ArgPattern::int(false), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntDivideInt,
+        false,
+    ),
+    signature(
+        "intdiv",
+        &[ArgPattern::int(true), ArgPattern::int(false)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntDivideInt,
+        false,
+    ),
+    signature(
+        "intdiv",
+        &[ArgPattern::int(false), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntDivideInt,
+        false,
+    ),
+    signature(
+        "intdiv",
+        &[ArgPattern::int(true), ArgPattern::int(true)],
+        &[EvalType::Int, EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntDivideInt,
+        false,
+    ),
+    signature(
+        "intdiv",
+        &[ArgPattern::ANY, ArgPattern::ANY],
+        &[EvalType::Decimal, EvalType::Decimal],
+        EvalType::Int,
+        ScalarFuncSig::IntDivideDecimal,
+        false,
+    ),
+    // `absFunctionClass.getFunction`: one signature per argument evaluation
+    // type (every type outside Int/Decimal/Real evaluates as Real); the result
+    // copies the argument's UNSIGNED flag.
+    signature(
+        "abs",
+        &[ArgPattern::int(false)],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::AbsInt,
+        true,
+    ),
+    signature(
+        "abs",
+        &[ArgPattern::int(true)],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::AbsUInt,
+        true,
+    ),
+    signature(
+        "abs",
+        &[ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal],
+        EvalType::Decimal,
+        ScalarFuncSig::AbsDecimal,
+        true,
+    ),
+    signature(
+        "abs",
+        &[ArgPattern::ANY],
+        &[EvalType::Real],
+        EvalType::Real,
+        ScalarFuncSig::AbsReal,
+        true,
+    ),
+    // `isTrueOrFalseFunctionClass.getFunction` for `IS TRUE` / `IS FALSE`
+    // (Go `ast.IsTruthWithoutNull` / `ast.IsFalsity`, keepNull false): the
+    // signature follows the argument domain, nonnumeric domains as Real.
+    signature(
+        "istrue",
+        &[ArgPattern::eval(EvalType::Int)],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntIsTrue,
+        false,
+    ),
+    signature(
+        "istrue",
+        &[ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal],
+        EvalType::Int,
+        ScalarFuncSig::DecimalIsTrue,
+        false,
+    ),
+    signature(
+        "istrue",
+        &[ArgPattern::ANY],
+        &[EvalType::Real],
+        EvalType::Int,
+        ScalarFuncSig::RealIsTrue,
+        false,
+    ),
+    signature(
+        "isfalse",
+        &[ArgPattern::eval(EvalType::Int)],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::IntIsFalse,
+        false,
+    ),
+    signature(
+        "isfalse",
+        &[ArgPattern::eval(EvalType::Decimal)],
+        &[EvalType::Decimal],
+        EvalType::Int,
+        ScalarFuncSig::DecimalIsFalse,
+        false,
+    ),
+    signature(
+        "isfalse",
+        &[ArgPattern::ANY],
+        &[EvalType::Real],
+        EvalType::Int,
+        ScalarFuncSig::RealIsFalse,
+        false,
+    ),
+    // `lengthFunctionClass.getFunction`: the byte length of an ETString
+    // argument, one signature whatever its collation.
+    signature(
+        "length",
+        &[ArgPattern::any_string()],
+        &[EvalType::String],
+        EvalType::Int,
+        ScalarFuncSig::Length,
+        false,
+    ),
+    // `inFunctionClass.getFunction`: the planner has cast every argument to
+    // the comparison type, which selects the signature; the selector reads
+    // the tested argument and `resolve_in` checks the rest share its type.
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::Int)],
+        &[EvalType::Int],
+        EvalType::Int,
+        ScalarFuncSig::InInt,
+        false,
+    ),
+    signature(
+        "in",
+        &[ArgPattern::eval(EvalType::String)],
+        &[EvalType::String],
+        EvalType::Int,
+        ScalarFuncSig::InString,
+        false,
+    ),
+    // `coalesceFunctionClass.getFunction`: the result type is inferred from
+    // every argument (`InferType4ControlFuncs`) and selects the signature.
+    signature("coalesce", &[], &[], EvalType::Int, ScalarFuncSig::CoalesceInt, false),
+    signature("coalesce", &[], &[], EvalType::Real, ScalarFuncSig::CoalesceReal, false),
+    signature("coalesce", &[], &[], EvalType::Decimal, ScalarFuncSig::CoalesceDecimal, false),
+    string_signature(
+        "coalesce",
+        &[],
+        &[],
+        ScalarFuncSig::CoalesceString,
+        RetCollation::ControlBranches,
+    ),
+    signature("coalesce", &[], &[], EvalType::Datetime, ScalarFuncSig::CoalesceTime, false),
+    signature("coalesce", &[], &[], EvalType::Duration, ScalarFuncSig::CoalesceDuration, false),
+    signature("coalesce", &[], &[], EvalType::Json, ScalarFuncSig::CoalesceJson, false),
     // Go `compareFunctionClass.generateCmpSigs`: one signature per
     // comparison type, `ETDatetime` and `ETTimestamp` sharing the `*Time`
     // family. `NullEQ` and the Duration/JSON families are absent because
@@ -2927,10 +3172,15 @@ impl PbScalar {
                 signature,
                 args,
                 control,
-                ..
+                ret_type,
             } => {
                 if let Some(control) = control {
                     return control.field_type.is_unsigned();
+                }
+                // Go reads the function's own `RetType` (`plus`, `minus`,
+                // `mul` and `intdiv` are unsigned when EITHER operand is).
+                if let Some(ret_type) = ret_type {
+                    return ret_type.is_unsigned();
                 }
                 signature.ret_unsigned_from_first_arg
                     && args.first().is_some_and(PbScalar::is_unsigned)
@@ -3108,6 +3358,7 @@ fn control_expression(name: &str, args: &[PbScalar]) -> Option<Expression> {
     let values = match name {
         "if" if arguments.len() == 3 => arguments[1..].to_vec(),
         "ifnull" if arguments.len() == 2 => arguments.clone(),
+        "coalesce" if !arguments.is_empty() => arguments.clone(),
         "case" if arguments.len() >= 2 => arguments
             .iter()
             .enumerate()
@@ -3139,6 +3390,7 @@ fn resolve_conditional(name: &str, args: &[PbScalar]) -> Option<&'static Builtin
         ("case", n) if n >= 2 => {}
         ("if", 3) => {}
         ("ifnull", 2) => {}
+        ("coalesce", n) if n >= 1 => {}
         _ => return None,
     }
     let inferred = control_expression(name, args)?;
@@ -3178,6 +3430,13 @@ fn resolve_control_type(name: &str, domain: EvalType) -> Option<&'static Builtin
         ("ifnull", "Time") => ScalarFuncSig::IfNullTime,
         ("ifnull", "Duration") => ScalarFuncSig::IfNullDuration,
         ("ifnull", "Json") => ScalarFuncSig::IfNullJson,
+        ("coalesce", "Int") => ScalarFuncSig::CoalesceInt,
+        ("coalesce", "Real") => ScalarFuncSig::CoalesceReal,
+        ("coalesce", "Decimal") => ScalarFuncSig::CoalesceDecimal,
+        ("coalesce", "String") => ScalarFuncSig::CoalesceString,
+        ("coalesce", "Time") => ScalarFuncSig::CoalesceTime,
+        ("coalesce", "Duration") => ScalarFuncSig::CoalesceDuration,
+        ("coalesce", "Json") => ScalarFuncSig::CoalesceJson,
         _ => return None,
     };
     CATALOG
@@ -3204,6 +3463,9 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
     if name == "unix_timestamp" {
         return resolve_unix_timestamp(args);
     }
+    if name == "in" {
+        return resolve_in(args);
+    }
     CATALOG.iter().find(|candidate| {
         candidate.name == name
             && candidate.selector.len() == args.len()
@@ -3212,6 +3474,29 @@ pub fn resolve(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignatur
                 .iter()
                 .zip(args)
                 .all(|(pattern, argument)| pattern.matches(argument))
+    })
+}
+
+/// Go `inFunctionClass.getFunction`: the signature is the comparison type
+/// every argument was cast to, so the tested argument selects it and each
+/// member must share its evaluation type.
+fn resolve_in(args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
+    let [tested, members @ ..] = args else {
+        return None;
+    };
+    if members.is_empty()
+        || members
+            .iter()
+            .any(|member| member.eval_type() != tested.eval_type())
+    {
+        return None;
+    }
+    CATALOG.iter().find(|candidate| {
+        candidate.name == "in"
+            && candidate
+                .selector
+                .first()
+                .is_some_and(|pattern| pattern.matches(tested))
     })
 }
 
@@ -3235,7 +3520,7 @@ pub fn build_call(name: &str, args: Vec<PbScalar>) -> Option<PbScalar> {
             }
         })
         .collect::<Option<Vec<_>>>()?;
-    let (signature, control) = if matches!(name, "case" | "if" | "ifnull") {
+    let (signature, control) = if matches!(name, "case" | "if" | "ifnull" | "coalesce") {
         let expression = control_expression(name, &args)?;
         let field_type = expression.static_type()?.clone();
         let signature = resolve_control_type(name, field_type.eval_type())?;

@@ -1281,9 +1281,6 @@ mod tests {
         assert_eq!(bad_table.code, 1051);
         assert_eq!(&bad_table.state, b"42S02");
 
-        // Prepared statements keep the trait's fail-closed defaults.
-        assert!(session.prepare_point_read("SELECT 1").is_err());
-        assert!(session.prepare_write("INSERT INTO t VALUES (1)").is_err());
         // Transaction control is claimed by the hook and reports the state.
         assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
         assert_eq!(session.control_transaction("COMMIT").unwrap(), Some(false));

@@ -376,7 +376,7 @@ pub(crate) fn crc32(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// for a `FLOAT` column is the WIDENED double (captured: `ABS(0.1e0::float)`
 /// is `0.10000000149011612`, not `0.1`), which is why `Float32` produces
 /// `Real` here rather than staying `Float32` the way `CEIL` does.
-fn abs(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
+pub(crate) fn abs(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };

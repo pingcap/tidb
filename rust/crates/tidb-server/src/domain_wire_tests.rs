@@ -20,8 +20,7 @@ mod tests {
     use crate::connection_writers::{write_query_error, ConnectionPacketOutput};
     use crate::mysql_connection::MysqlConnectionError;
     use tidb_exec::real_tikv_ddl::ClusterDdlError;
-    use tidb_exec::real_tikv_dml::ConfiguredWriteError;
-    use tidb_session::domain::session_api::{cluster_ddl_error, configured_write_error};
+    use tidb_session::domain::session_api::{cluster_ddl_error, lock_sql_error};
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::TransactionCause;
 
@@ -59,14 +58,14 @@ mod tests {
     }
 
     #[test]
-    fn configured_write_backoff_error_is_coded_on_the_wire() {
+    fn commit_backoff_error_is_coded_on_the_wire() {
         let driver_error = tidb_exec::pessimistic_lock_error::transaction_cause_to_sql_error(
             &TransactionCause::BackoffExhausted {
                 kind: RegionBackoffKind::StaleCommand,
                 detail: "staleCommand backoffer exhausted".to_owned(),
             },
         );
-        let query_error = configured_write_error(&ConfiguredWriteError::Commit(driver_error));
+        let query_error = lock_sql_error(&driver_error);
         let mut output = RecordingPacketOutput::default();
         write_query_error(&mut output, &query_error, true)
             .expect("a determinate stale-command error writes an ERR packet");

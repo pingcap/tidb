@@ -63,7 +63,6 @@ use crate::sql_node::{
     SqlQueryError,
 };
 use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
-use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::transaction_control::classify_transaction_control;
 use tidb_session::privilege::plugin_needs_cleartext;
 
@@ -81,20 +80,6 @@ use tidb_session::privilege::plugin_needs_cleartext;
 /// its multibyte characters by their source bytes.
 fn decode_client_sql(bytes: &[u8], charset: &str) -> String {
     tidb_parser::carry_client_sql(bytes, tidb_datatype::find_encoding(charset)).into_owned()
-}
-
-/// Extracts the signed-integer parameters a point read requires, rejecting a
-/// string parameter (a point read binds only a clustered integer handle).
-fn point_read_integer_parameters(values: Vec<PreparedValue>) -> Result<Vec<i64>, String> {
-    values
-        .into_iter()
-        .map(|value| match value {
-            PreparedValue::SignedLongLong(value) => Ok(value),
-            // A point read binds a clustered signed handle; every other
-            // parameter shape belongs to the general path.
-            _ => Err("prepared point read parameter must be an integer".to_owned()),
-        })
-        .collect()
 }
 
 enum PreparedCursorOpenError {
@@ -145,35 +130,6 @@ fn open_prepared_cursor<O: ConnectionPacketOutput + ?Sized>(
     Ok(cursor)
 }
 
-/// Converts decoded execute values into the planner's storage-neutral bind
-/// currency, one variant at a time so every wire type reaches the write path
-/// as the exact `PreparedBindValue` shape `configured_stored_value` expects:
-/// a signed integer stays `Int`, an unsigned `BIGINT UNSIGNED` value stays
-/// `UInt` (not truncated through a signed cast), `FLOAT`/`DOUBLE` become
-/// `Float` (not stringified — a stringified float would parse as a `DECIMAL`
-/// text on the other side, silently rounding through `Decimal::parse_mysql`
-/// instead of storing the real IEEE-754 value into a `DOUBLE` column), `NULL`
-/// becomes `PreparedBindValue::Null` (not empty bytes — an empty byte string
-/// would bind to a nullable `VARCHAR` column as `''`, or refuse an `INT`
-/// column as a type mismatch, either way silently losing `NULL`), and
-/// `DECIMAL`/temporal parameters carry their text bytes, exactly as a string
-/// parameter does, for their target column's own type to parse.
-fn write_bind_parameters(values: Vec<PreparedValue>) -> Vec<PreparedBindValue> {
-    values
-        .into_iter()
-        .map(|value| match value {
-            PreparedValue::SignedLongLong(value) => PreparedBindValue::Int(value),
-            PreparedValue::String(bytes)
-            | PreparedValue::Bytes(bytes)
-            | PreparedValue::Decimal(bytes) => PreparedBindValue::Bytes(bytes),
-            PreparedValue::UnsignedLongLong(value) => PreparedBindValue::UInt(value),
-            PreparedValue::Float(value) => PreparedBindValue::Float(f64::from(value)),
-            PreparedValue::Double(value) => PreparedBindValue::Float(value),
-            PreparedValue::Null => PreparedBindValue::Null,
-            PreparedValue::Temporal(text) => PreparedBindValue::Bytes(text.into_bytes()),
-        })
-        .collect()
-}
 
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 /// `CLIENT_MULTI_STATEMENTS`: the client may send several statements in one
@@ -303,8 +259,6 @@ enum AppendParamError {
 
 fn prepared_sql(statement: &PreparedStatement) -> &str {
     match statement {
-        PreparedStatement::PointRead(value) => value.sql(),
-        PreparedStatement::Write(value) => value.sql(),
         PreparedStatement::General(value) => value.sql(),
         PreparedStatement::TransactionControl(value) => value.as_str(),
     }
@@ -317,25 +271,9 @@ fn prepare_connection_statement<S: QuerySession>(
     if classify_transaction_control(sql).is_some() {
         return Ok(PreparedStatement::TransactionControl(sql.to_owned()));
     }
-    match engine.prepare_point_read(sql) {
-        Ok(read) => Ok(PreparedStatement::PointRead(read)),
-        Err(read_error) => match engine.prepare_write(sql) {
-            Ok(write) => Ok(PreparedStatement::Write(write)),
-            Err(_) => engine
-                .prepare_general(sql)
-                .map(PreparedStatement::General)
-                .map_err(|error| {
-                    if error
-                        .message
-                        .contains("does not support general prepared statements")
-                    {
-                        read_error
-                    } else {
-                        error
-                    }
-                }),
-        },
-    }
+    engine
+        .prepare_general(sql)
+        .map(PreparedStatement::General)
 }
 
 struct PreparedStatementRegistry {
@@ -2816,100 +2754,6 @@ fn run_connection_commands<S: QuerySession>(
                             }
                             record_client_warnings(&*output, &*engine);
                         }
-                        PreparedStatement::PointRead(point_read) => {
-                            // A point read binds a signed-integer clustered handle; a
-                            // string parameter has no place there.
-                            let parameters = match point_read_integer_parameters(values) {
-                                Ok(parameters) => parameters,
-                                Err(message) => {
-                                    write_error(
-                                        output,
-                                        1,
-                                        ER_UNKNOWN_ERROR,
-                                        *b"HY000",
-                                        message,
-                                        protocol_41,
-                                    )?;
-                                    return Ok(None);
-                                }
-                            };
-                            let execution =
-                                engine.execute_prepared_point_read(point_read, &parameters);
-                            if execution.is_err() {
-                                let error = execution
-                                    .err()
-                                    .expect("the prepared point read error was just observed");
-                                write_query_error(output, &error, protocol_41)?;
-                                record_client_warnings(&*output, &*engine);
-                                return Ok(None);
-                            }
-                            let mut result = execution
-                                .expect("the prepared point read success was just observed");
-                            if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
-                                match open_prepared_cursor(
-                                    &mut result,
-                                    output,
-                                    framing,
-                                    result_encoder,
-                                ) {
-                                    Ok(cursor) => {
-                                        drop(result);
-                                        drop(prepared.open_cursor(statement_id, cursor));
-                                        queries += 1;
-                                        commands.stmt_execute_successes += 1;
-                                    }
-                                    Err(PreparedCursorOpenError::Query(error)) => {
-                                        drop(result);
-                                        write_query_error(output, &error, protocol_41)?;
-                                    }
-                                    Err(PreparedCursorOpenError::Transport(error)) => {
-                                        return Err(error);
-                                    }
-                                }
-                                record_client_warnings(&*output, &*engine);
-                                return Ok(None);
-                            }
-                            let write_result = {
-                                let statement_options = framing.result_set_with_output(
-                                    result.wire_status(),
-                                    result.warning_count(),
-                                    result.affected_rows(),
-                                    result.last_insert_id(),
-                                    result.info().to_vec(),
-                                    result_encoder,
-                                );
-                                let mut sink = TcpResultSetSink::new(output, 1);
-                                write_connection_binary_result_set_to_sink(
-                                    result.source(),
-                                    &mut sink,
-                                    statement_options,
-                                    RESULT_BATCH_SIZE,
-                                )
-                            };
-                            match write_result {
-                                Ok(_) => {
-                                    queries += 1;
-                                    commands.stmt_execute_successes += 1;
-                                }
-                                Err(error) if !error.bytes_escaped => {
-                                    write_error(
-                                        output,
-                                        1,
-                                        error.cause.code,
-                                        error.cause.state,
-                                        error.cause.message,
-                                        protocol_41,
-                                    )?;
-                                }
-                                Err(error) => {
-                                    return Err(MysqlConnectionError::PartialResult(
-                                        error.cause.message,
-                                    ))
-                                }
-                            }
-                            drop(result);
-                            record_client_warnings(&*output, &*engine);
-                        }
                         PreparedStatement::General(general) => {
                             // Go's read-only cursor: the execute materializes the
                             // rows, holds them on the statement, and answers with
@@ -3038,35 +2882,6 @@ fn run_connection_commands<S: QuerySession>(
                                 )?;
                                 queries += 1;
                                 commands.stmt_execute_successes += 1;
-                            }
-                            record_client_warnings(&*output, &*engine);
-                        }
-                        PreparedStatement::Write(write) => {
-                            // A write answers with one OK packet and never a result
-                            // set. Affected rows reach the client only after the
-                            // transaction committed determinately; every other
-                            // terminal state arrived here as an error.
-                            match engine
-                                .execute_prepared_write(write, &write_bind_parameters(values))
-                            {
-                                Ok(outcome) => {
-                                    let info = engine.statement_info();
-                                    write_affected_rows_ok_with_info(
-                                        output,
-                                        1,
-                                        outcome.affected_rows,
-                                        outcome.last_insert_id,
-                                        engine.wire_status(),
-                                        engine.warning_count(),
-                                        protocol_41,
-                                        &info,
-                                    )?;
-                                    queries += 1;
-                                    commands.stmt_execute_successes += 1;
-                                }
-                                Err(error) => {
-                                    write_query_error(output, &error, protocol_41)?;
-                                }
                             }
                             record_client_warnings(&*output, &*engine);
                         }
@@ -3338,14 +3153,6 @@ fn run_connection_commands<S: QuerySession>(
     }
 }
 
-/// Wire-level proof that a real `COM_STMT_EXECUTE` binary payload — not a
-/// hand-built [`PreparedBindValue`] — reaches the configured write path
-/// correctly typed for every widened scalar family (`2d10dcd232`'s second
-/// documented gap: this exact seam, `decode_prepared_statement_execute` ->
-/// `write_bind_parameters` -> `tidb-planner` bind -> `tidb-exec` plan, had
-/// never been exercised end to end). No cluster is involved: `plan_insert`/
-/// `plan_update` are the same pure, storage-free planning step production
-/// runs before ever opening a real transaction.
 #[cfg(test)]
 mod client_error_recording_output_tests {
     use std::io::{IoSlice, Write};
@@ -3407,233 +3214,6 @@ mod client_error_recording_output_tests {
     }
 }
 
-#[cfg(test)]
-mod prepared_execute_wire_tests {
-    use tidb_exec::real_tikv_dml::{plan_insert, plan_update, ConfiguredWritePlan};
-    use tidb_planner::configured_catalog::ConfiguredCatalog;
-    use tidb_planner::prepared_dml::{lower_prepared_write, ConfiguredPreparedWrite};
-    use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
-    use tidb_protocol::decode_prepared_statement_execute;
-
-    use super::write_bind_parameters;
-
-    /// Builds a real `COM_STMT_EXECUTE` payload binding `params` as
-    /// `(type_code, flag, value_bytes)` triples, or `None` for an explicit
-    /// SQL `NULL` (a set bitmap bit with no value bytes, exactly as the wire
-    /// format requires).
-    fn execute_packet(params: &[Option<(u8, u8, Vec<u8>)>]) -> Vec<u8> {
-        let mut packet = Vec::new();
-        packet.extend_from_slice(&7_u32.to_le_bytes()); // statement ID
-        packet.push(0); // no cursor
-        packet.extend_from_slice(&1_u32.to_le_bytes()); // iteration count
-        let mut null_bitmap = vec![0u8; params.len().div_ceil(8)];
-        for (index, param) in params.iter().enumerate() {
-            if param.is_none() {
-                null_bitmap[index / 8] |= 1 << (index % 8);
-            }
-        }
-        packet.extend_from_slice(&null_bitmap);
-        packet.push(1); // new parameter types follow
-        for param in params {
-            let (type_code, flag) = param
-                .as_ref()
-                .map_or((0x08, 0), |(type_code, flag, _)| (*type_code, *flag));
-            packet.push(type_code);
-            packet.push(flag);
-        }
-        for (_, _, value_bytes) in params.iter().flatten() {
-            packet.extend_from_slice(value_bytes);
-        }
-        packet
-    }
-
-    /// Decodes `params` through the real binary-protocol decoder, then
-    /// through this module's own wire-to-planner conversion — the identical
-    /// two calls production makes for `Command::StmtExecute`.
-    fn decode_and_bind(
-        params: &[Option<(u8, u8, Vec<u8>)>],
-    ) -> Vec<tidb_planner::prepared_dml::PreparedBindValue> {
-        let decoded =
-            decode_prepared_statement_execute(&execute_packet(params), params.len(), None)
-                .expect("a well-formed execute packet decodes");
-        write_bind_parameters(decoded.values)
-    }
-
-    fn widened_table(column: ConfiguredColumn) -> ConfiguredTable {
-        ConfiguredTable::new(
-            "wire",
-            "t",
-            300,
-            [ConfiguredColumn::clustered_primary_key("id", 1), column],
-        )
-    }
-
-    #[test]
-    fn an_unsigned_bigint_wire_parameter_binds_as_uint_not_a_truncated_signed_cast() {
-        // MYSQL_TYPE_LONGLONG with the unsigned flag set, carrying u64::MAX:
-        // truncating through `as i64` (the bug this proof exists to catch)
-        // would silently store -1 instead of refusing or keeping the value.
-        let table = widened_table(ConfiguredColumn::stored_unsigned_bigint_not_null("v", 2));
-        let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
-        let bound = lower_prepared_write(
-            &tidb_parser::parse("INSERT INTO wire.t (id, v) VALUES (?, ?)")
-                .expect("SQL must parse"),
-            &catalog,
-        )
-        .expect("prepared write must lower")
-        .bind(&decode_and_bind(&[
-            Some((0x08, 0, 1_i64.to_le_bytes().to_vec())),
-            Some((0x08, 0x80, u64::MAX.to_le_bytes().to_vec())),
-        ]))
-        .expect("bind must succeed");
-        let ConfiguredPreparedWrite::InsertRows { table, rows } = bound else {
-            panic!("expected an INSERT command");
-        };
-        let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&table, &rows, &tidb_datatype::SessionTimeZone::utc())
-                .expect("insert must plan")
-        else {
-            panic!("an INSERT always publishes");
-        };
-        assert_eq!(
-            tidb_tablecodec::decode_table_row_to_map(
-                mutations[0].value(),
-                &std::collections::BTreeMap::from([(
-                    2,
-                    table.columns()[1].scalar_type().chunk_field_type()
-                )]),
-                None
-            )
-            .expect("row must decode")
-            .remove(&2),
-            Some(tidb_datatype::Datum::UInt(u64::MAX))
-        );
-    }
-
-    #[test]
-    fn a_double_wire_parameter_binds_as_the_real_ieee754_value_not_a_stringified_decimal() {
-        let table = widened_table(ConfiguredColumn::stored_double_not_null("v", 2));
-        let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
-        let bound = lower_prepared_write(
-            &tidb_parser::parse("INSERT INTO wire.t (id, v) VALUES (?, ?)")
-                .expect("SQL must parse"),
-            &catalog,
-        )
-        .expect("prepared write must lower")
-        .bind(&decode_and_bind(&[
-            Some((0x08, 0, 1_i64.to_le_bytes().to_vec())),
-            Some((0x05, 0, 2.5_f64.to_bits().to_le_bytes().to_vec())),
-        ]))
-        .expect("bind must succeed");
-        let ConfiguredPreparedWrite::InsertRows { table, rows } = bound else {
-            panic!("expected an INSERT command");
-        };
-        let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&table, &rows, &tidb_datatype::SessionTimeZone::utc())
-                .expect("insert must plan")
-        else {
-            panic!("an INSERT always publishes");
-        };
-        assert_eq!(
-            tidb_tablecodec::decode_table_row_to_map(
-                mutations[0].value(),
-                &std::collections::BTreeMap::from([(
-                    2,
-                    table.columns()[1].scalar_type().chunk_field_type()
-                )]),
-                None
-            )
-            .expect("row must decode")
-            .remove(&2),
-            Some(tidb_datatype::Datum::Real(2.5))
-        );
-    }
-
-    #[test]
-    fn a_wire_null_bitmap_bit_binds_as_sql_null_into_a_prepared_update() {
-        // The bug this proof exists to catch: mapping a wire NULL to empty
-        // bytes would bind `''`/a type mismatch instead of NULL.
-        let table =
-            widened_table(ConfiguredColumn::stored_varchar_not_null("v", 2, 8, false).nullable());
-        let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
-
-        // Seed the row with a non-NULL value through the same wire path.
-        let seed = lower_prepared_write(
-            &tidb_parser::parse("INSERT INTO wire.t (id, v) VALUES (?, ?)")
-                .expect("SQL must parse"),
-            &catalog,
-        )
-        .expect("prepared write must lower")
-        .bind(&decode_and_bind(&[
-            Some((0x08, 0, 1_i64.to_le_bytes().to_vec())),
-            Some((0x0f, 0, {
-                let mut bytes = vec![5u8];
-                bytes.extend_from_slice(b"hello");
-                bytes
-            })),
-        ]))
-        .expect("bind must succeed");
-        let ConfiguredPreparedWrite::InsertRows {
-            table: seeded_table,
-            rows,
-        } = seed
-        else {
-            panic!("expected an INSERT command");
-        };
-        let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&seeded_table, &rows, &tidb_datatype::SessionTimeZone::utc())
-                .expect("seed insert must plan")
-        else {
-            panic!("an INSERT always publishes");
-        };
-        let stored = mutations[0].value().to_vec();
-
-        // A prepared UPDATE binding a wire NULL parameter.
-        let bound = lower_prepared_write(
-            &tidb_parser::parse("UPDATE wire.t SET v = ? WHERE id = ?").expect("SQL must parse"),
-            &catalog,
-        )
-        .expect("prepared write must lower")
-        .bind(&decode_and_bind(&[
-            None,
-            Some((0x08, 0, 1_i64.to_le_bytes().to_vec())),
-        ]))
-        .expect("bind must succeed");
-        let ConfiguredPreparedWrite::UpdatePoint {
-            handle,
-            column_index,
-            assignment,
-            ..
-        } = bound
-        else {
-            panic!("expected an UPDATE command");
-        };
-        let ConfiguredWritePlan::Write { mutations, .. } = plan_update(
-            &table,
-            handle,
-            column_index,
-            assignment,
-            Some(&stored),
-            &tidb_datatype::SessionTimeZone::utc(),
-        )
-        .expect("update must plan") else {
-            panic!("a changed row publishes");
-        };
-        assert_eq!(
-            tidb_tablecodec::decode_table_row_to_map(
-                mutations[0].value(),
-                &std::collections::BTreeMap::from([(
-                    2,
-                    table.columns()[1].scalar_type().chunk_field_type()
-                )]),
-                None
-            )
-            .expect("row must decode")
-            .remove(&2),
-            Some(tidb_datatype::Datum::Null)
-        );
-    }
-}
 
 #[cfg(test)]
 mod undetermined_tests {

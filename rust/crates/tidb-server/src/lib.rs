@@ -133,8 +133,8 @@ pub use secure_transport::{
 };
 pub use sql_node::{
     ActiveQueryCancellation, BoxedResultSetSource, ConcurrentSqlNode, ConnectionCancellation,
-    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral, PreparedPointRead,
-    PreparedStatement, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
+    ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral,
+    PreparedStatement, QueryCancellationLease, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError, WriteOutcome,
     RESULT_UNDETERMINED_MESSAGE,
 };

@@ -37,7 +37,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidb_exec::cluster_catalog::{configure_loaded_table, ClusterCatalog};
+use tidb_exec::cluster_catalog::ClusterCatalog;
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, statement_storage, SessionTransaction,
 };
@@ -113,27 +113,14 @@ fn parse_arguments() -> Result<Arguments, String> {
 fn run() -> Result<(), String> {
     let arguments = parse_arguments()?;
     let mut loaded: Option<ClusterCatalog> = None;
-    // The authority insists on naming one served table because the bounded
-    // read path is built around a single relation; this driver does not use it,
-    // so the first admitted table satisfies the constructor and the whole
-    // catalog is what the session runs on.
-    let mut authority = ProductionReadProcessAuthority::connect_with_catalog(
+    let mut authority = ProductionReadProcessAuthority::connect(
         [arguments.pd.clone()],
         TIMEOUT,
         |opener| {
-            let catalog =
-                load_catalog_from_cluster(opener, TIMEOUT).map_err(|error| error.to_string())?;
-            let configured = catalog
-                .databases
-                .iter()
-                .find_map(|database| {
-                    database.tables.iter().find_map(|table| {
-                        configure_loaded_table(database.info.name.original(), table).ok()
-                    })
-                })
-                .ok_or_else(|| "the cluster has no table this node can configure".to_owned())?;
-            loaded = Some(catalog);
-            Ok(configured)
+            loaded = Some(
+                load_catalog_from_cluster(opener, TIMEOUT).map_err(|error| error.to_string())?,
+            );
+            Ok(())
         },
     )
     .map_err(|error| error.to_string())?;

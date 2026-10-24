@@ -24072,6 +24072,10 @@ fn a_conjunct_the_cop_description_cannot_express_never_changes_an_answer() {
         "a IN (b, 1)",
         "b IS TRUE",
         "(b IS NOT TRUE)",
+        "b IS FALSE",
+        "a - 1 = 0",
+        "a DIV 2 = 1",
+        "LENGTH(s) > 2",
         // A column against a column and a function of a column.
         "a = b",
         "a < c",

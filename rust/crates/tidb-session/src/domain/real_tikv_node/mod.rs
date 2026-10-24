@@ -405,11 +405,10 @@ impl std::error::Error for RunConfiguredNodeError {
 mod tests {
     use super::*;
     use crate::domain::secure_transport::TransportKind;
-    use crate::domain::session_api::{cluster_ddl_error, configured_write_error};
+    use crate::domain::session_api::cluster_ddl_error;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
     use tidb_exec::real_tikv_ddl::ClusterDdlError;
-    use tidb_exec::real_tikv_dml::ConfiguredWriteError;
     use tidb_txnkv::retry::RegionBackoffKind;
     use tidb_txnkv::transaction::TransactionCause;
 
@@ -687,7 +686,7 @@ mod tests {
             FactoryEvent(Arc::clone(&events)),
             AuthorityEvent {
                 events: Arc::clone(&events),
-                result: Err(ReadProcessShutdownError::AdmissionPoisoned),
+                result: Err(ReadProcessShutdownError::StoreClose("close failed".to_owned())),
             },
             |factory| {
                 drop(factory);

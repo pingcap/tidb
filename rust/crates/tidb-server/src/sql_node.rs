@@ -27,15 +27,12 @@ use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 #[cfg(test)]
-use tidb_exec::real_tikv_dml::ConfiguredWriteError;
 use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
-use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
-use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator, SimpleAllocator};
 
-use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
+use crate::configured_user_store::ConfiguredUserStore;
 use crate::mysql_connection::{
     serve_mysql_connection_with_runtime, MysqlConnectionError, MysqlConnectionRuntime,
 };
@@ -48,9 +45,6 @@ use tidb_session::process::ProcessKillTarget;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
-/// Go `serverIDForStandalone`; shared with the session so `KILL` and the
-/// connection-ID allocator agree. See [`tidb_util::globalconn::SERVER_ID_FOR_STANDALONE`].
-const STANDALONE_SERVER_ID: u64 = tidb_util::globalconn::SERVER_ID_FOR_STANDALONE;
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]
 pub struct ShutdownHandle {
