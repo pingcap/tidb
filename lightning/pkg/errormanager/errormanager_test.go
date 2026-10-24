@@ -271,7 +271,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "test", pool,
+		ctx, tbl, "test", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -487,7 +487,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "test", pool,
+		ctx, tbl, "test", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
