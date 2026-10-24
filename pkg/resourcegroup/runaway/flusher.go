@@ -25,6 +25,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	minFlushRetryBackoff = time.Second
+	maxFlushRetryBackoff = 30 * time.Second
+)
+
 type batchFlusher[K comparable, V any] struct {
 	name          string
 	buffer        map[K]V
@@ -33,6 +38,9 @@ type batchFlusher[K comparable, V any] struct {
 	lastFlushTime time.Time
 	mergeFn       func(map[K]V, K, V)
 	flushFn       func(map[K]V) error
+	// After a failed flush, the records are kept and no flush is tried before nextRetryTime.
+	retryBackoff  time.Duration
+	nextRetryTime time.Time
 
 	batchSizeObserver   prometheus.Observer
 	durationObserver    prometheus.Observer
@@ -87,6 +95,7 @@ func (f *batchFlusher[K, V]) tickerCh() <-chan time.Time {
 
 func (f *batchFlusher[K, V]) stop() {
 	logutil.BgLogger().Info("flushing remaining records before stop", zap.String("name", f.name))
+	f.nextRetryTime = time.Time{}
 	f.flush()
 	logutil.BgLogger().Info("stopped flusher", zap.String("name", f.name))
 	f.ticker.Stop()
@@ -108,8 +117,7 @@ func (f *batchFlusher[K, V]) flush() {
 	failpoint.Inject("skipFlush", func() {
 		failpoint.Return()
 	})
-	batchSize := len(f.buffer)
-	if batchSize == 0 {
+	if len(f.buffer) == 0 {
 		// Reset lastFlushTime so the next real flush after an idle period
 		// does not record the idle gap as flush interval.
 		if !f.lastFlushTime.IsZero() {
@@ -119,22 +127,46 @@ func (f *batchFlusher[K, V]) flush() {
 	}
 
 	now := time.Now()
+	if now.Before(f.nextRetryTime) {
+		return
+	}
 	if !f.lastFlushTime.IsZero() {
 		f.intervalObserver.Observe(now.Sub(f.lastFlushTime).Seconds())
 	}
-
-	start := time.Now()
-	err := f.flushFn(f.buffer)
-	duration := time.Since(start)
-
-	f.batchSizeObserver.Observe(float64(batchSize))
-	f.durationObserver.Observe(duration.Seconds())
 	f.lastFlushTime = now
-	if err != nil {
-		f.flushErrorCounter.Inc()
-		// Keep the records so that the next flush retries them.
-		return
+
+	// Flush in batches of at most threshold records, so that the records kept by failed flushes do not make the
+	// statements larger.
+	for len(f.buffer) > 0 {
+		batch := f.buffer
+		if len(batch) > f.threshold {
+			batch = make(map[K]V, f.threshold)
+			for k, v := range f.buffer {
+				batch[k] = v
+				if len(batch) == f.threshold {
+					break
+				}
+			}
+		}
+		start := time.Now()
+		err := f.flushFn(batch)
+		f.batchSizeObserver.Observe(float64(len(batch)))
+		f.durationObserver.Observe(time.Since(start).Seconds())
+		if err != nil {
+			f.flushErrorCounter.Inc()
+			// Keep the records and retry them after a backoff.
+			f.retryBackoff = min(max(2*f.retryBackoff, minFlushRetryBackoff), maxFlushRetryBackoff)
+			f.nextRetryTime = time.Now().Add(f.retryBackoff)
+			return
+		}
+		f.flushSuccessCounter.Inc()
+		if len(batch) == len(f.buffer) {
+			f.buffer = make(map[K]V, f.threshold)
+		} else {
+			for k := range batch {
+				delete(f.buffer, k)
+			}
+		}
 	}
-	f.flushSuccessCounter.Inc()
-	f.buffer = make(map[K]V, f.threshold)
+	f.retryBackoff = 0
 }
