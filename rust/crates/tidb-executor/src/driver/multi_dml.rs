@@ -409,7 +409,7 @@ pub fn delete_privilege_tables(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, String)>, DriverError> {
-    let tidb_ast::DeleteKind::Multi { targets, from, .. } = &delete.kind else {
+    let tidb_ast::DeleteKind::Multi { .. } = &delete.kind else {
         let tidb_ast::DeleteKind::Single(table) = &delete.kind else {
             unreachable!()
         };
@@ -423,13 +423,11 @@ pub fn delete_privilege_tables(
         let (database, name) = split_table_path(&table.name, current_db)?;
         return Ok(vec![(database.to_owned(), name.to_owned())]);
     };
-    let source = build_multi_layout(from, delete.with.as_ref(), catalog, current_db, ctx)?;
     let mut resolved = Vec::new();
-    for slot in resolve_delete_targets(targets, &source)? {
-        let SourceOrigin::Base { database, name } = &source.tables[slot].origin else {
-            unreachable!()
-        };
-        let table = (database.clone(), name.clone());
+    for target in super::planner_bridge::delete_targets(delete, catalog, current_db, ctx)
+        .map_err(super::planner_error_to_driver)?
+    {
+        let table = (target.database, target.table);
         if !resolved.contains(&table) {
             resolved.push(table);
         }
@@ -1131,55 +1129,6 @@ fn delete_source_rows(
     Ok(out)
 }
 
-/// Binds each written target name to the `FROM` sources it names.
-///
-/// A source is named by its ALIAS once it has one (`DELETE f1 FROM f1 AS x`
-/// is Go's `ErrUnknownTable`), and a schema-qualified target resolves only
-/// against an unaliased source -- the same rule [`ScopeResolver`] applies to
-/// a column's qualifier, so the two cannot drift.
-fn resolve_delete_targets(
-    targets: &[Vec<String>],
-    source: &MultiLayout,
-) -> Result<Vec<usize>, DriverError> {
-    let mut slots = Vec::new();
-    for target in targets {
-        let (schema, name) = match target.as_slice() {
-            [name] => (None, name),
-            [schema, name] => (Some(schema), name),
-            _ => return Err(DriverError::UnknownTableInMultiDelete(target.join("."))),
-        };
-        let mut found = false;
-        for (slot, table) in source.tables.iter().enumerate() {
-            if !table.visible.go_lower_eq(name) {
-                continue;
-            }
-            if let Some(schema) = schema {
-                match &table.qualifiable_db {
-                    Some(db) if db.go_lower_eq(schema) => {}
-                    _ => continue,
-                }
-            }
-            // Go's `collectTableName` records the source under this very
-            // name whether or not it is updatable, and the caller splits the
-            // two outcomes: a name the `FROM` never provides is 1109
-            // ("check sql like: `delete b from (select * from t) as a, t`"),
-            // while a name it provides NON-updatably is 1288 ("check sql
-            // like: `delete a from (select * from t) as a, t`").
-            if matches!(table.origin, SourceOrigin::Derived) {
-                return Err(table.not_updatable("DELETE"));
-            }
-            found = true;
-            if !slots.contains(&slot) {
-                slots.push(slot);
-            }
-        }
-        if !found {
-            return Err(DriverError::UnknownTableInMultiDelete(name.clone()));
-        }
-    }
-    Ok(slots)
-}
-
 /// Go `buildUpdate`/`buildDelete`'s read: the `FROM` join with the `WHERE`,
 /// `ORDER BY` and `LIMIT` above it, as one SELECT for the planner, carrying
 /// the statement's `WITH` clause and hints (`pushTableHints(stmt.TableHints,
@@ -1274,14 +1223,7 @@ pub(crate) fn multi_dml_physical_plan(
             for (database, table) in delete_privilege_tables(delete, catalog, current_db, ctx)? {
                 add_target(database, table, None);
             }
-            delete_multi = Some(delete_multi_input(
-                delete,
-                targets_of(delete),
-                from,
-                catalog,
-                current_db,
-                ctx,
-            )?);
+            delete_multi = Some(delete_multi_input(delete, catalog, current_db, ctx)?);
             (
                 "Delete",
                 multi_dml_select(
@@ -1450,42 +1392,18 @@ fn update_prune(
 /// which declines the pruning for every table.
 fn delete_multi_input(
     delete: &tidb_ast::DeleteStmt,
-    targets: &[Vec<String>],
-    from: &tidb_ast::Join,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput, DriverError> {
-    use tidb_planner::plan_builder::delete_pruning::{DeleteMultiInput, DeleteTarget};
-    let source = build_multi_layout(from, delete.with.as_ref(), catalog, current_db, ctx)?;
-    let mut resolved = Vec::new();
-    for slot in resolve_delete_targets(targets, &source)? {
-        let table = &source.tables[slot];
-        let SourceOrigin::Base { database, name } = &table.origin else {
-            return Err(table.not_updatable("DELETE"));
-        };
-        resolved.push(DeleteTarget {
-            database: database.clone(),
-            table: name.clone(),
-            visible: table.visible.go_to_lower(),
-        });
-    }
+    use tidb_planner::plan_builder::delete_pruning::DeleteMultiInput;
+    let targets = super::planner_bridge::delete_targets(delete, catalog, current_db, ctx)
+        .map_err(super::planner_error_to_driver)?;
     let has_fk = ctx.foreign_key_checks()
-        && resolved.iter().any(|target| {
+        && targets.iter().any(|target| {
             !crate::foreign_key::referring(catalog, &target.database, &target.table).is_empty()
         });
-    Ok(DeleteMultiInput {
-        targets: resolved,
-        has_fk,
-    })
-}
-
-/// The target names of a multi-table DELETE.
-fn targets_of(delete: &tidb_ast::DeleteStmt) -> &[Vec<String>] {
-    match &delete.kind {
-        tidb_ast::DeleteKind::Multi { targets, .. } => targets,
-        tidb_ast::DeleteKind::Single(_) => &[],
-    }
+    Ok(DeleteMultiInput { targets, has_fk })
 }
 
 /// Runs the planned read (the `SelectPlan` under the DML root) of a

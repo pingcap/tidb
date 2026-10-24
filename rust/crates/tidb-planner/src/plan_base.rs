@@ -378,6 +378,9 @@ pub enum PlanErrorKind {
     BadTable(String),
     /// Go ErrUnknownTable (1109), with the clause owning name resolution.
     UnknownTableInClause(String, String),
+    /// Go `plannererrors.ErrNonUpdatableTable` (1288): the table, and the
+    /// statement (`DELETE` or `UPDATE`) that named it.
+    NonUpdatableTable(String, String),
     /// Go `table.ErrUnknownPartition` (1735).
     UnknownPartition {
         /// The lower-cased partition name, matching `FindPartitionByName`.
@@ -682,6 +685,16 @@ impl PlanError {
         Self {
             message: format!("Unknown table '{table}'"),
             kind: PlanErrorKind::BadTable(table),
+        }
+    }
+
+    /// Go `plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(table, statement)`.
+    pub fn non_updatable_table(table: impl Into<String>, statement: impl Into<String>) -> Self {
+        let table = table.into();
+        let statement = statement.into();
+        Self {
+            message: format!("The target table {table} of the {statement} is not updatable"),
+            kind: PlanErrorKind::NonUpdatableTable(table, statement),
         }
     }
 

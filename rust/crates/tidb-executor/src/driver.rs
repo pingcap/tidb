@@ -469,6 +469,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 format!("Unknown table '{table}'"),
             ))
         }
+        tidb_planner::plan_base::PlanErrorKind::NonUpdatableTable(table, statement) => {
+            DriverError::NonUpdatableTable {
+                table: table.clone(),
+                statement: if statement == "UPDATE" { "UPDATE" } else { "DELETE" },
+            }
+        }
         tidb_planner::plan_base::PlanErrorKind::UnknownTableInClause(table, clause) => {
             DriverError::Mysql(MysqlError::terror(
                 &tidb_error::plannererrors::ERR_UNKNOWN_TABLE,

@@ -1370,3 +1370,51 @@ fn fast_point_update_ordered_list_rewrites_over_the_point_schema() {
     assert_eq!(columns[0].unique_id, schema.columns[2].unique_id);
     assert!(list[1].is_none());
 }
+
+#[test]
+fn multi_table_delete_targets_resolve_as_collect_table_name_does() {
+    // Go `buildDelete` over `collectTableName`: a target names a source by its
+    // alias, or `schema.table` when the source has none; only a base table is
+    // updatable.
+    let harness = Harness::new();
+    let resolve = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the DELETE parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        let tidb_ast::DmlStmt::Delete(delete) = &*dml else {
+            panic!("not a DELETE");
+        };
+        harness.builder().resolve_delete_targets(delete)
+    };
+    let names = |targets: Vec<super::delete_pruning::DeleteTarget>| {
+        targets
+            .into_iter()
+            .map(|target| (target.database, target.table, target.visible))
+            .collect::<Vec<_>>()
+    };
+    let t = |visible: &str| ("test".to_owned(), "t".to_owned(), visible.to_owned());
+    assert_eq!(
+        names(resolve("DELETE a FROM t AS a, t AS b").unwrap()),
+        vec![t("a")]
+    );
+    // An unaliased source is named by its table, with or without the schema,
+    // and a name listed twice is one target.
+    assert_eq!(
+        names(resolve("DELETE t, test.t FROM t").unwrap()),
+        vec![t("t")]
+    );
+    // An alias replaces the table name as the only name.
+    let error = resolve("DELETE t FROM t AS a").err().expect("refused");
+    assert_eq!(error.message(), "Unknown table 't' in MULTI DELETE");
+    // A derived table is not updatable (1288), a missing name is 1109.
+    let error = resolve("DELETE d FROM (SELECT * FROM t) AS d, t")
+        .err()
+        .expect("refused");
+    assert_eq!(
+        error.message(),
+        "The target table d of the DELETE is not updatable"
+    );
+    let error = resolve("DELETE x FROM t").err().expect("refused");
+    assert_eq!(error.message(), "Unknown table 'x' in MULTI DELETE");
+}

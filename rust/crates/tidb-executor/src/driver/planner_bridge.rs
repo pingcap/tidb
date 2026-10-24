@@ -2948,6 +2948,28 @@ pub(crate) fn point_update_ordered_list(
     Ok(list)
 }
 
+/// Go `buildDelete`'s resolution of a multi-table DELETE's targets.
+pub(crate) fn delete_targets(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    Vec<tidb_planner::plan_builder::delete_pruning::DeleteTarget>,
+    tidb_planner::plan_base::PlanError,
+> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx)
+        .with_related_tables_for_mdl(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .resolve_delete_targets(delete)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn optimize_built_logical(
     plan: LogicalPlan,
