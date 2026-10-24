@@ -361,6 +361,9 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
+	// TiDBJSONFlatten is a TiDB extension that flattens a JSON document into path=value entries.
+	TiDBJSONFlatten = "tidb_json_flatten"
+
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"
 	VecL1Distance           = "vec_l1_distance"
