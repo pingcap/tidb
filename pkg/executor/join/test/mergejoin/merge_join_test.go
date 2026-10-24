@@ -73,10 +73,14 @@ func TestShuffleMergeJoinInDisk(t *testing.T) {
 	}
 	sort.Strings(expect)
 	result.Sort().Check(testkit.Rows(expect...))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().MemTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().MemTracker.MaxConsumed(), int64(0))
-	require.Equal(t, int64(0), tk.Session().GetSessionVars().DiskTracker.BytesConsumed())
-	require.Greater(t, tk.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
+	stmtMemConsumed := tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed()
+	stmtMemMaxConsumed := tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed()
+	stmtDiskConsumed := tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed()
+	stmtDiskMaxConsumed := tk.Session().GetSessionVars().StmtCtx.DiskTracker.MaxConsumed()
+	require.Equal(t, int64(0), stmtMemConsumed)
+	require.Greater(t, stmtMemMaxConsumed, int64(0))
+	require.Equal(t, int64(0), stmtDiskConsumed)
+	require.Greater(t, stmtDiskMaxConsumed, int64(0))
 }
 
 func TestMergeJoinInDisk(t *testing.T) {
