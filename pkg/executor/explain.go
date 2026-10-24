@@ -228,7 +228,11 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 // Otherwise, in autocommit transaction, the table record change of analyze executor(insert/update/delete...)
 // will not be committed.
 func (e *ExplainExec) getAnalyzeExecToExecutedNoDelay() exec.Executor {
-	if e.explain.Analyze && e.analyzeExec != nil && !e.executed && e.analyzeExec.Schema().Len() == 0 {
+	// An INSERT ... RETURNING has a schema but must still be executed on the no-delay path,
+	// which is the one that runs the foreign key triggers and the pessimistic retry loop.
+	// Its RETURNING rows are discarded: EXPLAIN ANALYZE reports the plan, not the rows.
+	if e.explain.Analyze && e.analyzeExec != nil && !e.executed &&
+		(e.analyzeExec.Schema().Len() == 0 || returningInsertExec(e.analyzeExec) != nil) {
 		e.executed = true
 		return e.analyzeExec
 	}
