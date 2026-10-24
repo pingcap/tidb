@@ -165,6 +165,26 @@ impl TxnManager {
         self.lazy_uniqueness_check_enabled
     }
 
+    /// The session's staged writes.
+    #[must_use]
+    pub fn buffer(&self) -> &MutationBuffer {
+        &self.buffer
+    }
+
+    /// The store the session's transactions open on.
+    #[must_use]
+    pub fn transactions(&self) -> &Arc<dyn ClusterTransactions> {
+        &self.transactions
+    }
+
+    /// Go's MDL considers a RUNNING statement a user of its schema version;
+    /// this hold is what keeps a Go DDL owner from publishing a drop under a
+    /// statement mid-flight. Dropped with the scope.
+    #[must_use]
+    pub fn hold_schema_pin(&self, schema_version: i64) -> Box<dyn Send> {
+        self.schema_pins.hold(self.connection_id, schema_version)
+    }
+
     /// Go `doCommitWithRetry`'s `txnSize` of the last autocommit commit.
     #[must_use]
     pub fn autocommit_txn_bytes(&self) -> usize {

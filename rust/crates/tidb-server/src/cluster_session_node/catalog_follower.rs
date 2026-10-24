@@ -137,3 +137,13 @@ impl CatalogFollower {
         self.skipped = built.skipped;
     }
 }
+
+impl tidb_session::statement_lifecycle::CatalogFollowing for CatalogFollower {
+    fn schema_version(&self) -> i64 {
+        self.schema_version
+    }
+
+    fn rebuild_if_stale(&mut self, session: &mut Session, txn: &TxnManager) {
+        Self::rebuild_if_stale(self, session, txn);
+    }
+}
