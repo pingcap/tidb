@@ -417,11 +417,11 @@ func testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T, rollback 
 		on duplicate key update v = v + 1`)
 	require.NoError(t, insertErr)
 
-	// Let INSERT's asynchronous cleanup finish before reading data, since SELECT can also resolve locks.
+	// Wait for INSERT's asynchronous cleanup before reading data, since SELECT can also resolve locks.
+	// Locks not touched by INSERT may still exist in the same transaction.
 	lockResolver := txnlock.LockResolverProbe{LockResolver: tikvStore.GetLockResolver()}
 	require.Eventually(t, func() bool {
-		count, err := scanLocks()
-		return err == nil && count == 0 && lockResolver.AsyncResolveTaskCount() == 0
+		return lockResolver.AsyncResolveTaskCount() == 0
 	}, 3*time.Second, 10*time.Millisecond)
 	mu.Lock()
 	// Snapshot INSERT's observations before SELECT can issue more RPCs; copy the slice so later callbacks cannot change the snapshot.
