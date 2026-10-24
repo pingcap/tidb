@@ -46,6 +46,7 @@ func TestError(t *testing.T) {
 		ErrTruncatedWrongVal,
 		ErrInvalidWeekModeFormat,
 		ErrWrongValue,
+		ErrSRSNotFound,
 	}
 
 	for _, err := range kvErrs {

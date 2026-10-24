@@ -1157,6 +1157,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			if mysql.HasNotNullFlag(col.GetFlag()) {
 				buf.WriteString(" NOT NULL")
 			}
+			// MySQL prints the SRID attribute here, after NOT NULL and before DEFAULT.
+			if col.HasSRID {
+				fmt.Fprintf(buf, " SRID %d", col.SRID)
+			}
 			// default values are not shown for generated columns in MySQL
 			if !mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.IsGenerated() {
 				defaultValue := col.GetDefaultValue()

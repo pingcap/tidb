@@ -1296,6 +1296,11 @@ error = '''
 Expression of expression index '%s' contains a disallowed function
 '''
 
+["ddl:3760"]
+error = '''
+Spatial expression index is not supported
+'''
+
 ["ddl:3761"]
 error = '''
 The used storage engine cannot index the expression '%s'
@@ -3534,6 +3539,11 @@ The path expression '$' is not allowed in this context.
 ["types:3154"]
 error = '''
 The oneOrAll argument to %s may take these values: 'one' or 'all'.
+'''
+
+["types:3548"]
+error = '''
+There's no spatial reference system with SRID %d.
 '''
 
 ["types:8029"]

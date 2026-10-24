@@ -253,6 +253,15 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 		return errors.Trace(dbterror.ErrJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 	}
 
+	// MySQL turns any index with a geometry column into a spatial index, which TiDB does
+	// not support yet.
+	if col.FieldType.GetType() == mysql.TypeGeometry {
+		if col.Hidden {
+			return dbterror.ErrSpatialFunctionalIndex
+		}
+		return errors.Trace(dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported"))
+	}
+
 	if col.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("only VECTOR INDEX can be added to vector column")
 	}

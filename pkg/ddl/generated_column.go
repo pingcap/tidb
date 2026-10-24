@@ -16,13 +16,16 @@ package ddl
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -254,7 +257,7 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, t
 
 	if newCol.IsGenerated() {
 		// rule 3.
-		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr.Internal()); err != nil {
+		if err := checkIllegalFn4Generated(sctx.GetExprCtx(), schemaName, tbl.Meta(), newCol.Name.L, typeColumn, newCol.GeneratedExpr.Internal()); err != nil {
 			return errors.Trace(err)
 		}
 		if err := checkEmbedTextGeneratedColumn(newCol.Name.L, newCol.GeneratedExpr.Internal(), newCol.GeneratedStored); err != nil {
@@ -294,6 +297,9 @@ type illegalFunctionChecker struct {
 	disallowCastArrayFunc bool
 	otherErr              error
 	allowEmbedText        bool
+	// isGeometry reports whether an expression is typed GEOMETRY; nil if no expression
+	// can be.
+	isGeometry func(ast.ExprNode) bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (skipChildren bool) {
@@ -334,6 +340,12 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (skipChildren bool) {
 		c.hasWindowFunc = true
 		return true
 	case *ast.FuncCastExpr:
+		// CAST(<geometry> AS JSON) computes what ST_AsGeoJSON does, and no geometry
+		// function is allowed in v1.
+		if node.Tp.GetType() == mysql.TypeJSON && c.isGeometry != nil && c.isGeometry(node.Expr) {
+			c.hasIllegalFunc = true
+			return true
+		}
 		c.hasCastArrayFunc = c.hasCastArrayFunc || node.Tp.IsArray()
 		if c.disallowCastArrayFunc && node.Tp.IsArray() {
 			c.otherErr = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
@@ -355,7 +367,9 @@ const (
 	typeIndex
 )
 
-func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error {
+// checkIllegalFn4Generated checks the expression of a generated column or an expression
+// index on the table tblInfo.
+func checkIllegalFn4Generated(ctx exprctx.BuildContext, schemaName ast.CIStr, tblInfo *model.TableInfo, name string, genType int, expr ast.ExprNode) error {
 	if expr == nil {
 		return nil
 	}
@@ -363,6 +377,16 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	// which admits only the dedicated STORED EMBED_TEXT form. Functional
 	// indexes keep EMBED_TEXT blocked by the general illegal-function list.
 	c := illegalFunctionChecker{allowEmbedText: genType == typeColumn}
+	// An expression allowed here can only be typed GEOMETRY through a geometry column.
+	if slices.ContainsFunc(tblInfo.Columns, func(col *model.ColumnInfo) bool {
+		return col.GetType() == mysql.TypeGeometry
+	}) {
+		c.isGeometry = func(expr ast.ExprNode) bool {
+			// An expression that does not build is left to the other checks.
+			e, err := expression.BuildSimpleExpr(ctx, expr, expression.WithTableInfo(schemaName.O, tblInfo))
+			return err == nil && e.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeGeometry
+		}
+	}
 	ast.Walk(expr, &c)
 	if c.hasIllegalFunc {
 		switch genType {

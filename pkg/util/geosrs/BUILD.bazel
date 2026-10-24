@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "geosrs",
+    srcs = ["geosrs.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/geosrs",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "geosrs_test",
+    timeout = "short",
+    srcs = ["geosrs_test.go"],
+    embed = [":geosrs"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

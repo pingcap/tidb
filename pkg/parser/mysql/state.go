@@ -265,4 +265,5 @@ var MySQLState = map[uint16]string{
 	ErrInvalidTypeForJSON:                  "22032",
 	ErrInvalidJsonValueForFuncIndex:        "22018",
 	ErrInvalidJSONType:                     "22032",
+	ErrSRSNotFound:                         "SR001",
 }

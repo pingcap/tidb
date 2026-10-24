@@ -293,6 +293,29 @@ func TestSetTiFlashReplicaForAddGBKColumn(t *testing.T) {
 	tk.MustExec("alter table tgb18030 add column c1 varchar(10) character set utf8;")
 }
 
+func TestSetTiFlashReplicaForGeometryColumn(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// TiFlash does not support geometry, so a geometry column can't be added to a table
+	// with a TiFlash replica, and a table with one can't get a replica.
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("alter table t set tiflash replica 1;")
+	tbl := external.GetTableByName(t, tk, "test", "t")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustGetErrMsg("alter table t add column g point;", "[ddl:8200]unsupported add column 'g' when altering 't' with TiFlash replicas and geometry type")
+	tk.MustGetErrCode("alter table t add column c int, add column g geometry srid 0;", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t add column c int;")
+
+	tk.MustExec("create table tgeo (id int, g geometry);")
+	tk.MustGetErrMsg("alter table tgeo set tiflash replica 1;", "[ddl:8200]Unsupported `set TiFlash replica` settings for table contains geometry column 'g'")
+	tk.MustGetErrMsg("alter table tgeo set tiflash replica 0;", "[ddl:8200]Unsupported `set TiFlash replica` settings for table contains geometry column 'g'")
+	tbl = external.GetTableByName(t, tk, "test", "tgeo")
+	require.Nil(t, tbl.Meta().TiFlashReplica)
+}
+
 func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease)
 
