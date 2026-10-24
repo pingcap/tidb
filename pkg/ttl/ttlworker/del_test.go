@@ -555,6 +555,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	case <-time.After(time.Second):
 		require.FailNow(t, "")
 	}
+	require.Equal(t, int64(1), pool.registeredSessionCalls.Load())
 
 	// before stop, t4, t5 should always retry without any error rows
 	require.Equal(t, uint64(0), tasks[3].statistics.SuccessRows.Load())

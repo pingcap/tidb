@@ -15,6 +15,7 @@ go_test(
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/executor",
+        "//pkg/infoschema/issyncer/mdldef",
         "//pkg/kv",
         "//pkg/parser",
         "//pkg/parser/auth",
