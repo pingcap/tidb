@@ -314,7 +314,16 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
-					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV))
+					// Unlike the index bounds, which are encoded bytes, the column bounds may be in UTC.
+					colLow, colHigh := indexRange.LowVal[0], indexRange.HighVal[0]
+					statsLoc := statsTimeZone(sc, &c.Histogram)
+					if err := toStatsTimeZone(sc, statsLoc, &colLow); err != nil {
+						return statistics.DefaultRowEst(0), err
+					}
+					if err := toStatsTimeZone(sc, statsLoc, &colHigh); err != nil {
+						return statistics.DefaultRowEst(0), err
+					}
+					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &colLow, &colHigh, realtimeRowCount, modifyCount, histNDV))
 				} else {
 					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
