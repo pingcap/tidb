@@ -514,6 +514,19 @@ func (do *Domain) Close() {
 
 	do.runawayManager.Stop()
 
+	// Unset the process-global resource control interceptor first so that no
+	// new request is routed to a stopped controller, then stop the controller
+	// to release its process-wide ownership, so that a later Domain (bootstrap
+	// handoff, initialization retry) can acquire a replacement controller
+	// (see tikv/pd#11080). The unconditional unset relies on the fact that at
+	// most one TiKV-backed Domain is live in a process at a time.
+	if control := do.resourceGroupsController.Load(); control != nil {
+		tikv.UnsetResourceControlInterceptor()
+		if err := control.Stop(); err != nil {
+			logutil.BgLogger().Warn("stop resource group controller failed", zap.Error(err))
+		}
+	}
+
 	do.slowQuery.Close()
 
 	do.cancelFns.mu.Lock()
