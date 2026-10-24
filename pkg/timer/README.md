@@ -15,7 +15,7 @@
   * [FAQs](#faqs)
 <!-- TOC -->
 
-## Introduction
+## Introductions
 
 Timer framework is an internal framework for TiDB to run tasks periodically. You can use it if you have below requirements:
 
