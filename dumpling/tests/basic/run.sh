@@ -9,6 +9,16 @@ DB_NAME="basic"
 TABLE_NAME="t"
 SEQUENCE_NAME="s"
 
+tmpfile=$(mktemp)
+bin/dumpling -V > ${tmpfile}.stdout.log 2> ${tmpfile}.stderr.log
+[ -s ${tmpfile}.stdout.log ]
+[ -e ${tmpfile}.stderr.log -a ! -s ${tmpfile}.stderr.log ]
+rm -f ${tmpfile}*
+bin/dumpling --help > ${tmpfile}.stdout.log 2> ${tmpfile}.stderr.log
+[ -s ${tmpfile}.stdout.log ]
+[ -e ${tmpfile}.stderr.log -a ! -s ${tmpfile}.stderr.log ]
+rm -f ${tmpfile}*
+
 echo "Test for simple case."
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
