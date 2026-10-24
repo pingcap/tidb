@@ -496,13 +496,14 @@ func (w *GCWorker) prepare(ctx context.Context) (bool, uint64, error) {
 	// 3. The user gets `tikv_gc_safe_point` value is t1, then the user thinks the data after time t1 won't be clean by GC.
 	// 4. GC update `tikv_gc_safe_point` value to t2, continue do GC in this round.
 	// Then the data record that has been dropped between time t1 and t2, will be cleaned by GC, but the user thinks the data after t1 won't be clean by GC.
+	// The transaction is pessimistic and locks the gcEnable row, so the user can't set gcEnable until the new safe point is saved.
 	se := createSession(w.store)
 	defer se.Close()
-	_, err := se.ExecuteInternal(ctx, "BEGIN")
+	_, err := se.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	doGC, safePoint, err := w.checkPrepare(ctx)
+	doGC, safePoint, err := w.checkPrepare(ctx, se)
 	if doGC {
 		err = se.CommitTxn(ctx)
 		if err != nil {
@@ -514,11 +515,12 @@ func (w *GCWorker) prepare(ctx context.Context) (bool, uint64, error) {
 	return doGC, safePoint, errors.Trace(err)
 }
 
-func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
-	enable, err := w.checkGCEnable()
+func (w *GCWorker) checkPrepare(ctx context.Context, se sessionapi.Session) (bool, uint64, error) {
+	enable, err := w.lockAndCheckGCEnable(ctx, se)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
+	failpoint.InjectCall("afterCheckGCEnableInPrepare")
 
 	if !enable {
 		logutil.Logger(ctx).Warn("gc status is disabled.", zap.String("category", "gc worker"))
@@ -557,6 +559,25 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
 	return w.loadBooleanWithDefault(gcEnableKey, gcDefaultEnableValue)
+}
+
+// lockAndCheckGCEnable is like checkGCEnable, but it reads and locks the gcEnable row in the transaction of se.
+func (w *GCWorker) lockAndCheckGCEnable(ctx context.Context, se sessionapi.Session) (bool, error) {
+	str, err := loadValueFromSysTableWithSession(ctx, se, gcEnableKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if str == "" {
+		defaultValueStr := booleanFalse
+		if gcDefaultEnableValue {
+			defaultValueStr = booleanTrue
+		}
+		if err = saveValueToSysTableWithSession(ctx, se, gcEnableKey, defaultValueStr); err != nil {
+			return false, errors.Trace(err)
+		}
+		return gcDefaultEnableValue, nil
+	}
+	return strings.EqualFold(str, booleanTrue), nil
 }
 
 func (w *GCWorker) checkUseAutoConcurrency() (bool, error) {
@@ -1618,6 +1639,10 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
 	se := createSession(w.store)
 	defer se.Close()
+	return loadValueFromSysTableWithSession(ctx, se, key)
+}
+
+func loadValueFromSysTableWithSession(ctx context.Context, se sessionapi.Session, key string) (string, error) {
 	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
 	if rs != nil {
 		defer terror.Call(rs.Close)
@@ -1643,12 +1668,16 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 }
 
 func (w *GCWorker) saveValueToSysTable(key, value string) error {
-	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = %?, comment = %?`
 	se := createSession(w.store)
 	defer se.Close()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnGC)
+	return saveValueToSysTableWithSession(ctx, se, key, value)
+}
+
+func saveValueToSysTableWithSession(ctx context.Context, se sessionapi.Session, key, value string) error {
+	const stmt = `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)
+			       ON DUPLICATE KEY
+			       UPDATE variable_value = %?, comment = %?`
 	_, err := se.ExecuteInternal(ctx, stmt,
 		key, value, gcVariableComments[key],
 		value, gcVariableComments[key])

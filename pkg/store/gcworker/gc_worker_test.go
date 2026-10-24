@@ -584,6 +584,44 @@ func TestPrepareGC(t *testing.T) {
 	require.Equal(t, uint64(0), safepoint)
 }
 
+func TestPrepareGCBlocksConcurrentGCDisable(t *testing.T) {
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore), withSchemaLease(220*time.Minute))
+	close(s.gcWorker.done)
+	s.oracle.AddOffset(time.Minute * 40)
+
+	// Like FLASHBACK and RECOVER, disable GC and then read the safe point while GC is preparing.
+	type disableResult struct {
+		safePoint *time.Time
+		err       error
+	}
+	disabled := make(chan disableResult, 1)
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/gcworker/afterCheckGCEnableInPrepare", func() {
+		go func() {
+			err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+			if err != nil {
+				disabled <- disableResult{err: err}
+				return
+			}
+			safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
+			disabled <- disableResult{safePoint: safePoint, err: err}
+		}()
+		time.Sleep(200 * time.Millisecond)
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/afterCheckGCEnableInPrepare"))
+	}()
+
+	ok, _, err := s.gcWorker.prepare(gcContext())
+	require.NoError(t, err)
+	require.True(t, ok)
+	res := <-disabled
+	require.NoError(t, res.err)
+	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	// Disabling GC waits for the prepare, so the safe point read after it is the new one.
+	require.Equal(t, *safePoint, *res.safePoint)
+}
+
 func TestStatusVars(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
