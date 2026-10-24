@@ -36,6 +36,7 @@ func TestFindBestTaskSuite(t *testing.T) {
 	t.Run("TestHintCannotFitProperty", testHintCannotFitProperty)
 	t.Run("RangeCountComparison", testRangeCountComparison)
 	t.Run("RangeCountSkyline", testRangeCountSkyline)
+	t.Run("MissingStatsIndexVsFullScan", testMissingStatsIndexVsFullScan)
 }
 
 func testRangeCountComparison(t *testing.T) {
@@ -100,25 +101,26 @@ func testRangeCountSkyline(t *testing.T) {
 			want      int
 		}{{0, 1}, {1001, 1}, {1000, 0}} {
 			ctx.GetSessionVars().RangeMaxCount = tc.threshold
-			result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs, true)
+			result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs)
 			require.Equal(t, tc.want, result, "pseudo=%v threshold=%d", pseudo, tc.threshold)
-			result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs, true)
+			result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs)
 			require.Equal(t, -tc.want, result, "reversed: pseudo=%v threshold=%d", pseudo, tc.threshold)
 		}
 	}
 
-	// A missing-statistics index must not retain its extra equality/IN preference above the threshold.
+	// Missing statistics and equality/IN counts cannot break the tie between
+	// incomparable access conditions, regardless of the range-count threshold.
 	stats := &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize()}
 	stats.ColAndIdxExistenceMap.InsertIndex(2, true)
 	lhs, rhs := newCandidate(1, 3, 1001, 10), newCandidate(2, 2, 1, 10)
 	for _, tc := range []struct {
 		threshold int64
 		want      int
-	}{{0, 1}, {1001, 1}, {1000, -1}} {
+	}{{0, 0}, {1001, 0}, {1000, 0}} {
 		ctx.GetSessionVars().RangeMaxCount = tc.threshold
-		result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs, true)
+		result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs)
 		require.Equal(t, tc.want, result)
-		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs, true)
+		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs)
 		require.Equal(t, -tc.want, result)
 	}
 }
@@ -259,4 +261,31 @@ func testHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func testMissingStatsIndexVsFullScan(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	// The table has statistics, but index 1 does not.
+	stats := &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize()}
+	idx := &candidatePath{
+		path:              &util.AccessPath{Index: &model.IndexInfo{ID: 1}, Ranges: make(ranger.Ranges, 1), CountAfterAccess: 10},
+		accessCondsColMap: map[int64]int{1: -1, 2: -1},
+		eqOrInCount:       2,
+	}
+	tbl := &candidatePath{
+		path:              &util.AccessPath{IsIntHandlePath: true, Ranges: ranger.FullIntRange(false), IsSingleScan: true, CountAfterAccess: 1000},
+		accessCondsColMap: map[int64]int{},
+	}
+	// The missing-statistics index with 2 equal predicates wins over a full table scan,
+	// independent of tidb_opt_prefer_range_scan.
+	for _, preferRange := range []bool{false, true} {
+		ctx.GetSessionVars().SetAllowPreferRangeScan(preferRange)
+		result, missingStats := compareCandidates(ctx.GetPlanCtx(), stats, prop, idx, tbl)
+		require.Equal(t, 1, result, "preferRange=%v", preferRange)
+		require.True(t, missingStats)
+		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, idx)
+		require.Equal(t, -1, result, "reversed: preferRange=%v", preferRange)
+	}
 }
