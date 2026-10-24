@@ -86,4 +86,15 @@ type AlterTableModeTarget struct {
 	// TargetMode is required input for AlterTableMode requests. It is the table
 	// mode requested by the caller.
 	TargetMode TableMode
+	// ExpectedRevision is optional input for AlterTableMode requests. When
+	// non-nil, the job is rejected with ErrInfoSchemaChanged unless the
+	// table's current Revision (read from the DDL job's own metadata
+	// mutator, so it is atomic with respect to other concurrent DDL on the
+	// same table) still matches. Callers that captured a table schema
+	// snapshot earlier and only later request the mode switch (e.g. IMPORT
+	// INTO, which prepares against a snapshot before acquiring
+	// TableModeImport) use this to detect and reject a schema change that
+	// raced ahead of them, rather than silently proceeding against a stale
+	// snapshot.
+	ExpectedRevision *uint64
 }
