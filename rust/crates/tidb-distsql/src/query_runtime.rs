@@ -24,7 +24,7 @@
 
 pub mod query_response;
 
-pub use query_response::{QueryResponse, QueryResponseError, QueryResultSubset, QuerySelectResult};
+pub use query_response::{CopInfo, QueryResponse, QueryResponseError, QueryResultSubset, QuerySelectResult};
 
 use tidb_datatype::{FieldType, SessionTimeZone};
 use tidb_txnkv::EventCallback;

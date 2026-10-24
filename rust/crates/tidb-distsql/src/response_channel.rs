@@ -77,7 +77,32 @@ pub struct ResponseRuntimeStats {
     /// Go `CopRuntimeStats.TimeDetail`, merged from `TimeDetailV2` or the
     /// legacy `TimeDetail`.
     pub time_detail: TimeDetail,
+    /// Go `copResponse.RespTime()`: how long the task's send took
+    /// (`handleTaskOnce`'s `costTime`).
+    pub resp_time: Duration,
+    /// Go `CopRuntimeStats.ReqStats`: the physical RPCs the task's send made.
+    pub req_stats: Option<RequestStatsSample>,
+    /// Go `CopRuntimeStats.CoprCacheHit`.
+    pub copr_cache_hit: bool,
 }
+
+/// A shared `*tikv.RegionRequestRuntimeStats`, compared by identity.
+#[derive(Clone)]
+pub struct RequestStatsSample(pub Arc<tikv_client::RegionRequestRuntimeStats>);
+
+impl fmt::Debug for RequestStatsSample {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RequestStatsSample({})", self.0)
+    }
+}
+
+impl PartialEq for RequestStatsSample {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for RequestStatsSample {}
 
 /// The statement-wide consumer of every coprocessor response a select result
 /// reads: Go's `selectResult.fetchResp` merges each response's
@@ -89,12 +114,36 @@ pub trait CopResponseSink: Send + Sync + fmt::Debug {
     /// it; `execution_summaries` are the response's tipb summaries.
     fn record_cop_response(
         &self,
+        stream: u64,
         metadata: &SelectResultMetadata,
         sample: &ResponseRuntimeStats,
         fetch_duration: Duration,
         execution_summaries: &[ExecutorExecutionSummary],
     );
+
+    /// Go `selectResult.closeImpl`: the select result `stream` (the id its
+    /// responses were recorded under) closed.
+    fn close_select_result(
+        &self,
+        _stream: u64,
+        _metadata: &SelectResultMetadata,
+        _close: &SelectResultClose,
+    ) {
+    }
 }
+
+/// What a select result knows only when it closes (Go `selectResult.close`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SelectResultClose {
+    /// Go `selectResult.fetchDuration`.
+    pub fetch_duration: Duration,
+    /// Go `HasLimiterWaitStats.GetLimiterWaitStats`.
+    pub limiter_wait: LimiterWaitStats,
+    /// Go `copr.CopInfo`.
+    pub cop_info: Option<crate::query_runtime::CopInfo>,
+}
+
+static SELECT_RESULT_STREAMS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 /// Lifecycle state of an owned response channel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -409,6 +458,20 @@ enum SelectResponseSource {
 }
 
 impl SelectResponseSource {
+    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+        match self {
+            Self::Channel(_) => None,
+            Self::Query(source) => source.cop_info(),
+        }
+    }
+
+    fn limiter_wait_stats(&self) -> LimiterWaitStats {
+        match self {
+            Self::Channel(_) => LimiterWaitStats::default(),
+            Self::Query(source) => source.limiter_wait_stats(),
+        }
+    }
+
     fn next_event(
         &mut self,
         required_rows: usize,
@@ -526,6 +589,9 @@ impl ResponseChannel<prost::bytes::Bytes> {
             result_metadata: None,
             cop_response_sink: None,
             last_fetch: Duration::ZERO,
+            total_fetch: Duration::ZERO,
+            stream_id: SELECT_RESULT_STREAMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            close_reported: false,
             closed: false,
         }
     }
@@ -556,6 +622,12 @@ pub struct SelectResponseIter {
     /// How long the last `source.next_event` took, which Go adds to
     /// `ExecDetails.CopTime` for the response it produced.
     last_fetch: Duration,
+    /// Go `selectResult.fetchDuration`: the sum of every fetch.
+    total_fetch: Duration,
+    /// The id this select result's responses are recorded under.
+    stream_id: u64,
+    /// Whether the sink has been told this select result ended.
+    close_reported: bool,
     closed: bool,
 }
 
@@ -814,6 +886,9 @@ impl SelectResponseIter {
             result_metadata: Some(result_metadata),
             cop_response_sink: None,
             last_fetch: Duration::ZERO,
+            total_fetch: Duration::ZERO,
+            stream_id: SELECT_RESULT_STREAMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            close_reported: false,
             closed: false,
         }
     }
@@ -892,6 +967,7 @@ impl SelectResponseIter {
             let fetch_started = std::time::Instant::now();
             let fetched = self.source.next_event(required_rows);
             self.last_fetch = fetch_started.elapsed();
+            self.total_fetch += self.last_fetch;
             let event = match fetched {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => return Err(ResponseChannelError::Pending),
@@ -926,6 +1002,7 @@ impl SelectResponseIter {
                     return Err(error);
                 }
                 Some(ResponseChannelEvent::Closed) => {
+                    self.report_select_result_close();
                     self.closed = true;
                     return Ok(None);
                 }
@@ -994,6 +1071,7 @@ impl SelectResponseIter {
             let fetch_started = std::time::Instant::now();
             let fetched = self.source.next_event(required_rows);
             self.last_fetch = fetch_started.elapsed();
+            self.total_fetch += self.last_fetch;
             let event = match fetched {
                 Ok(event) => event,
                 Err(ResponseChannelError::Pending) => {
@@ -1031,6 +1109,7 @@ impl SelectResponseIter {
                     return Err(error);
                 }
                 Some(ResponseChannelEvent::Closed) => {
+                    self.report_select_result_close();
                     self.closed = true;
                     return Ok(output);
                 }
@@ -1052,7 +1131,34 @@ impl SelectResponseIter {
         }
         self.channels.clear();
         self.source.close();
+        self.report_select_result_close();
         self.closed = true;
+    }
+
+    /// Go `selectResult.closeImpl`'s registration, once per select result:
+    /// from `close` or when the source reports its end.
+    fn report_select_result_close(&mut self) {
+        if self.close_reported {
+            return;
+        }
+        self.close_reported = true;
+        let cop_info = self.source.cop_info();
+        let mut limiter_wait = self.runtime_stats.limiter_wait;
+        limiter_wait.merge(self.source.limiter_wait_stats());
+        if let (Some(binding), Some(sink)) = (&self.runtime_stats_binding, &self.cop_response_sink)
+        {
+            if binding.collector_enabled {
+                sink.close_select_result(
+                    self.stream_id,
+                    &binding.metadata,
+                    &SelectResultClose {
+                        fetch_duration: self.total_fetch,
+                        limiter_wait,
+                        cop_info,
+                    },
+                );
+            }
+        }
     }
 
     /// Returns whether close or natural source exhaustion has occurred.
@@ -1201,6 +1307,7 @@ impl SelectResponseIter {
         ) {
             if binding.collector_enabled {
                 sink.record_cop_response(
+                    self.stream_id,
                     &binding.metadata,
                     sample,
                     self.last_fetch,

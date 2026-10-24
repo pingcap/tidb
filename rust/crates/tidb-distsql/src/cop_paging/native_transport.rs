@@ -277,6 +277,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
         // building, sends, backoffers and lock resolution.
         let kv_context = request.kv_context().with_txn_start_ts(metadata.start_ts);
         let build_cop_tasks = tidb_util::tracing::start_thread_region("copr.buildCopTasks");
+        let build_started = std::time::Instant::now();
         let topology =
             locate(self.store.as_ref(), &ranges, &kv_context).map_err(|error| error.to_string())?;
         let cache = match self.config.shared_cache.clone() {
@@ -293,6 +294,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
         )
         .map_err(|error| error.to_string())?;
         build_cop_tasks.end();
+        let build_task_elapsed = build_started.elapsed();
         let keep_order = metadata.keep_order;
         let mut metadata = runtime.request_metadata().clone();
         metadata.keep_order = keep_order;
@@ -341,6 +343,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
             backoffers: BTreeMap::new(),
             exceeds_bound: BTreeMap::new(),
             snapshot_locks: Arc::default(),
+            build_task_elapsed,
         };
         // Go's `copIteratorWorker`s run on the query worker runtime.
         tidb_txnkv::rpc::query_worker_runtime()?;
@@ -410,6 +413,8 @@ pub struct NativeCopResponse<S: ?Sized> {
     /// Go `ClientHelper`'s resolved and committed locks for this snapshot,
     /// shared by its tasks.
     snapshot_locks: Arc<std::sync::Mutex<SnapshotLockSet>>,
+    /// Go `copIterator.buildTaskElapsed`.
+    build_task_elapsed: Duration,
 }
 
 impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
@@ -522,13 +527,19 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             .map_err(|error| error.to_string())?;
         wire.context = Some(request.context.clone());
         let backoffer = self.backoffer(logical_task_id);
+        // Go `handleTaskOnce`: `worker.kvclient.Stats` collects the task's
+        // physical RPCs and `costTime` is the send's wall time.
+        let req_stats = Arc::new(tikv_client::RegionRequestRuntimeStats::new());
+        let send_started = std::time::Instant::now();
         let sent = self.store.send(
             &backoffer,
             &wire.encode_to_vec(),
             region,
             self.timeout.min(self.call.timeout()),
             &self.kv_context,
+            Some(Arc::clone(&req_stats)),
         )?;
+        let cost_time = send_started.elapsed();
         let (encoded, address) = match sent {
             NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
             NativeCopSend::RegionError(error) => {
@@ -563,6 +574,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             region,
             address,
             response,
+            (cost_time, req_stats),
         )?;
         self.schedule_batched_remains(logical_task_id, &backoffer, &request.context, remains)
     }
@@ -578,6 +590,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         region: (u64, u64, u64),
         address: String,
         response: CopReadTaskResponse,
+        (cost_time, req_stats): (std::time::Duration, Arc<tikv_client::RegionRequestRuntimeStats>),
     ) -> Result<(), NativeCopError> {
         if let Some(region_error) = response.region_error_ref() {
             let error = format!("{region_error:?}");
@@ -603,7 +616,10 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             );
         }
         let process_time_nanos = response.process_time_nanos();
-        let runtime_sample = response.runtime_sample(&address);
+        let mut runtime_sample = response.runtime_sample(&address);
+        runtime_sample.resp_time = cost_time;
+        runtime_sample.request_rpc_stats_present = req_stats.rpc_type_count() > 0;
+        runtime_sample.req_stats = Some(crate::RequestStatsSample(req_stats));
         let accepted = self.runtime.accept_response_with_runtime(
             attempt_id,
             response,
@@ -884,6 +900,38 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
 }
 
 impl<S: NativeCopStore + ?Sized> QueryResponse for NativeCopResponse<S> {
+    /// Go `copClient.Send`'s concurrency: the request's, capped by the task
+    /// count and by the tasks that are not small, with the extra workers the
+    /// small tasks get (`smallTaskConcurrency`).
+    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+        let tasks = self.logical_order.len();
+        let use_row_hints = !self.metadata.request_source.internal;
+        let small = if use_row_hints {
+            self.runtime.small_task_count()
+        } else {
+            0
+        };
+        let mut extra = crate::RegionTaskEnvelope::small_concurrency(
+            small,
+            tidb_txnkv::rpc::go_max_procs(),
+        );
+        let mut concurrency = usize::try_from(self.metadata.concurrency)
+            .unwrap_or(1)
+            .min(tasks);
+        if tasks - small.min(tasks) < concurrency {
+            concurrency = tasks - small.min(tasks);
+        }
+        concurrency = concurrency.max(1);
+        if self.metadata.keep_order {
+            extra = extra.min(20);
+        }
+        Some(crate::query_runtime::CopInfo {
+            concurrency,
+            extra_concurrency: extra,
+            build_task_elapsed: self.build_task_elapsed,
+        })
+    }
+
     fn next(&mut self) -> Result<Option<QueryResultSubset>, QueryResponseError> {
         loop {
             if self.closed {
@@ -1025,6 +1073,7 @@ impl<S: NativeCopStore + ?Sized> super::cop_iterator::CopWorkerSource for Native
                     .into_iter()
                     .collect(),
                 snapshot_locks: Arc::clone(&self.snapshot_locks),
+                build_task_elapsed: self.build_task_elapsed,
             })
             .collect()
     }

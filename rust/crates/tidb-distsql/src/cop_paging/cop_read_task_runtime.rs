@@ -620,6 +620,10 @@ impl CopReadTaskRuntime {
             .map(|(&id, &index)| (id, &self.tasks[index].task))
     }
 
+    pub(super) fn small_task_count(&self) -> usize {
+        self.tasks.iter().filter(|task| task.task.is_small()).count()
+    }
+
     pub(super) fn has_small_tasks(&self) -> bool {
         self.tasks.iter().any(|task| task.task.is_small())
     }

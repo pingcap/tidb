@@ -1149,9 +1149,27 @@ where
 pub async fn send_req_ctx<PdC, Req>(
     pd_client: std::sync::Arc<PdC>,
     keyspace: crate::request::Keyspace,
+    request: Req,
+    backoffer: std::sync::Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+    timeout: Duration,
+) -> crate::Result<(Req::Response, Option<String>)>
+where
+    PdC: crate::pd::PdClient,
+    Req: crate::request::KvRequest + crate::request::Shardable<Shard = ()>,
+    Req::Response: crate::store::HasRegionError,
+{
+    send_req_ctx_with_stats(pd_client, keyspace, request, backoffer, timeout, None).await
+}
+
+/// [`send_req_ctx`] with client-go's `RegionRequestSender.Stats`: every
+/// physical RPC the send makes (retries included) is recorded in `stats`.
+pub async fn send_req_ctx_with_stats<PdC, Req>(
+    pd_client: std::sync::Arc<PdC>,
+    keyspace: crate::request::Keyspace,
     mut request: Req,
     backoffer: std::sync::Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
     timeout: Duration,
+    stats: Option<std::sync::Arc<RegionRequestRuntimeStats>>,
 ) -> crate::Result<(Req::Response, Option<String>)>
 where
     PdC: crate::pd::PdClient,
@@ -1195,6 +1213,7 @@ where
     let mut responses = crate::request::PlanBuilder::new(pd_client, keyspace, request)
         .rpc_interceptor(interceptors)
         .request_timeout(timeout)
+        .region_request_runtime_stats(stats)
         .retry_region_request(crate::request::plan::SenderBackoffer::new(
             backoffer,
             cancellation,

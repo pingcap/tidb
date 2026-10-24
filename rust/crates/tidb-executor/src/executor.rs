@@ -222,6 +222,13 @@ pub trait ExecutorRuntimeStatsSource: Send + Sync {
     fn cop_runtime_info(&self, _plan_id: i64) -> Option<CopRuntimeInfo> {
         None
     }
+
+    /// Go `RootRuntimeStats.String()` without its basic stats: the group
+    /// stats (a select result's, a join's, ...) registered on `plan_id`,
+    /// joined by `, `. `None` when nothing is registered.
+    fn root_group_runtime_info(&self, _plan_id: i64) -> Option<String> {
+        None
+    }
 }
 
 /// Go `CopRuntimeStats.GetActRows` and `String()` of one plan.

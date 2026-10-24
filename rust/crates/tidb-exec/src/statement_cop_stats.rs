@@ -68,6 +68,7 @@ impl StatementCopStats {
 impl CopResponseSink for StatementCopStats {
     fn record_cop_response(
         &self,
+        _stream: u64,
         metadata: &SelectResultMetadata,
         sample: &ResponseRuntimeStats,
         fetch_duration: Duration,
@@ -113,6 +114,11 @@ impl CopResponseSink for StatementCopStats {
 pub struct RuntimeStatsCollSink {
     coll: std::sync::Arc<crate::runtime_stats::RuntimeStatsColl>,
     inner: Option<std::sync::Arc<dyn CopResponseSink>>,
+    /// Go `selectResult.stats`, by select result: registered on its root
+    /// plan when the select result closes.
+    streams: std::sync::Mutex<
+        HashMap<u64, crate::select_result_stats::SelectResultRuntimeStats>,
+    >,
 }
 
 impl std::fmt::Debug for RuntimeStatsCollSink {
@@ -128,7 +134,11 @@ impl RuntimeStatsCollSink {
         coll: std::sync::Arc<crate::runtime_stats::RuntimeStatsColl>,
         inner: Option<std::sync::Arc<dyn CopResponseSink>>,
     ) -> Self {
-        Self { coll, inner }
+        Self {
+            coll,
+            inner,
+            streams: std::sync::Mutex::default(),
+        }
     }
 }
 
@@ -148,19 +158,56 @@ fn runtime_store_type(store_type: tidb_txnkv::StoreType) -> crate::runtime_stats
 impl CopResponseSink for RuntimeStatsCollSink {
     fn record_cop_response(
         &self,
+        stream: u64,
         metadata: &SelectResultMetadata,
         sample: &ResponseRuntimeStats,
         fetch_duration: Duration,
         execution_summaries: &[ExecutorExecutionSummary],
     ) {
         if let Some(inner) = &self.inner {
-            inner.record_cop_response(metadata, sample, fetch_duration, execution_summaries);
+            inner.record_cop_response(
+                stream,
+                metadata,
+                sample,
+                fetch_duration,
+                execution_summaries,
+            );
         }
         // Go `updateCopRuntimeStats`' gate.
         if metadata.root_plan_id.is_none_or(|plan_id| plan_id <= 0)
             || (sample.callee_address.is_empty() && !sample.request_rpc_stats_present)
         {
             return;
+        }
+        // Go `getOrCreateRuntimeStats` and `mergeCopRuntimeStats`.
+        {
+            let mut streams = self
+                .streams
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let stats = streams.entry(stream).or_insert_with(|| {
+                crate::select_result_stats::SelectResultRuntimeStats::with_concurrency(
+                    i64::try_from(metadata.dist_sql_concurrency).unwrap_or(i64::MAX),
+                )
+            });
+            stats.merge_cop_runtime_stats(
+                &crate::select_result_stats::CopResponseSample {
+                    processed_keys: sample
+                        .scan_detail
+                        .as_ref()
+                        .map_or(0, |scan| scan.processed_keys),
+                    backoff_sleep: sample
+                        .backoff_sleep_ns
+                        .iter()
+                        .map(|(kind, nanos)| (kind.clone(), Duration::from_nanos(*nanos)))
+                        .collect(),
+                    process_time: sample.time_detail.process_time,
+                    wait_time: sample.time_detail.wait_time,
+                    req_stats: sample.req_stats.as_ref().map(|stats| (*stats.0).clone()),
+                    copr_cache_hit: sample.copr_cache_hit,
+                },
+                sample.resp_time,
+            );
         }
         // Only TiKV's positional summaries are recorded here: TiFlash's
         // carry executor IDs and have their own arm.
@@ -205,6 +252,35 @@ impl CopResponseSink for RuntimeStatsCollSink {
                     .record_one_cop_task(*plan_id as i64, store_type, summary);
             }
         }
+    }
+
+    /// Go `selectResult.closeImpl`'s registration of `r.stats` on the root
+    /// plan.
+    fn close_select_result(
+        &self,
+        stream: u64,
+        metadata: &SelectResultMetadata,
+        close: &tidb_distsql::SelectResultClose,
+    ) {
+        let stats = self
+            .streams
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&stream);
+        let (Some(mut stats), Some(root_plan_id)) = (stats, metadata.root_plan_id) else {
+            return;
+        };
+        if root_plan_id <= 0 {
+            return;
+        }
+        stats.limiter_wait.merge(close.limiter_wait);
+        if let Some(info) = close.cop_info {
+            stats.dist_sql_concurrency = i64::try_from(info.concurrency).unwrap_or(i64::MAX);
+            stats.extra_concurrency = i64::try_from(info.extra_concurrency).unwrap_or(i64::MAX);
+            stats.build_task_duration = info.build_task_elapsed;
+        }
+        stats.fetch_rsp_duration = close.fetch_duration;
+        self.coll.register_stats(root_plan_id as i64, Box::new(stats));
     }
 }
 
@@ -259,6 +335,7 @@ mod runtime_stats_coll_sink_tests {
         let coll = Arc::new(crate::runtime_stats::RuntimeStatsColl::new(None));
         let sink = RuntimeStatsCollSink::new(Arc::clone(&coll), None);
         sink.record_cop_response(
+            1,
             &metadata(vec![5, 6], 7),
             &sample(),
             Duration::ZERO,
@@ -286,6 +363,7 @@ mod runtime_stats_coll_sink_tests {
         let coll = Arc::new(crate::runtime_stats::RuntimeStatsColl::new(None));
         let sink = RuntimeStatsCollSink::new(Arc::clone(&coll), None);
         sink.record_cop_response(
+            1,
             &metadata(vec![5, 6], 7),
             &sample(),
             Duration::ZERO,
@@ -293,7 +371,7 @@ mod runtime_stats_coll_sink_tests {
         );
         assert!(coll.get_cop_stats(5).is_none());
         assert!(coll.get_cop_stats(6).is_none());
-        sink.record_cop_response(&metadata(vec![5, 6], 7), &sample(), Duration::ZERO, &[]);
+        sink.record_cop_response(1, &metadata(vec![5, 6], 7), &sample(), Duration::ZERO, &[]);
         assert!(coll.get_cop_stats(5).is_none());
         let root = coll.get_cop_stats(6).unwrap();
         assert!(root
@@ -303,11 +381,55 @@ mod runtime_stats_coll_sink_tests {
             .starts_with(", scan_detail: {total_process_keys: 12"));
         // Go's first gate: no root plan, nothing recorded.
         sink.record_cop_response(
+            1,
             &metadata(vec![8], 0),
             &sample(),
             Duration::ZERO,
             &[summary(1, 1)],
         );
         assert!(coll.get_cop_stats(8).is_none());
+    }
+
+    /// Go `selectResult.closeImpl`: the select result's stats are registered
+    /// on its root plan when it closes, with the concurrency and task-build
+    /// time the iterator reports, and render before the cop stats.
+    #[test]
+    fn close_registers_the_select_result_stats_on_the_root_plan() {
+        use tidb_executor::executor::ExecutorRuntimeStatsSource;
+        let coll = Arc::new(crate::runtime_stats::RuntimeStatsColl::new(None));
+        let sink = RuntimeStatsCollSink::new(Arc::clone(&coll), None);
+        let metadata = metadata(vec![5], 7);
+        let mut one = sample();
+        one.resp_time = Duration::from_micros(749);
+        sink.record_cop_response(3, &metadata, &one, Duration::ZERO, &[summary(12, 1)]);
+        assert_eq!(coll.root_group_runtime_info(7), None);
+        sink.close_select_result(
+            3,
+            &metadata,
+            &tidb_distsql::SelectResultClose {
+                fetch_duration: Duration::from_micros(756),
+                cop_info: Some(tidb_distsql::CopInfo {
+                    concurrency: 1,
+                    extra_concurrency: 0,
+                    build_task_elapsed: Duration::from_nanos(3_540),
+                }),
+                ..tidb_distsql::SelectResultClose::default()
+            },
+        );
+        let text = coll.root_group_runtime_info(7).unwrap();
+        assert!(
+            text.starts_with("cop_task: {num: 1, max: 749µs, proc_keys: 12, "),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(
+                ", build_task_duration: 3.54µs, max_distsql_concurrency: 1}, \
+                 fetch_resp_duration: 756µs"
+            ),
+            "{text}"
+        );
+        // A second close registers nothing more.
+        sink.close_select_result(3, &metadata, &tidb_distsql::SelectResultClose::default());
+        assert_eq!(coll.root_group_runtime_info(7).unwrap(), text);
     }
 }

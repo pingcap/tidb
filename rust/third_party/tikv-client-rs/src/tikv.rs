@@ -1387,6 +1387,32 @@ impl<PdC: PdClient> KvStore<PdC> {
         .await
     }
 
+    /// [`Self::send_req_ctx`] recording every physical RPC in `stats`
+    /// (client-go `RegionRequestSender.Stats`).
+    pub async fn send_req_ctx_with_stats<Req>(
+        &self,
+        backoffer: Arc<tokio::sync::Mutex<crate::retry::RetryBackoffer>>,
+        mut request: Req,
+        region: &crate::region::RegionVerId,
+        timeout: Duration,
+        stats: Option<Arc<crate::RegionRequestRuntimeStats>>,
+    ) -> Result<(Req::Response, Option<String>)>
+    where
+        Req: crate::request::KvRequest + crate::request::RegionPinned,
+        Req::Response: crate::store::HasRegionError,
+    {
+        request.pin_region(region);
+        crate::region_request::send_req_ctx_with_stats(
+            self.pd_client(),
+            self.inner.keyspace(),
+            request,
+            backoffer,
+            timeout,
+            stats,
+        )
+        .await
+    }
+
     /// client-go `KVStore.GetTiKVClient().SendRequest(ctx, addr, req,
     /// timeout)`: one request to the TiKV store at `address`, outside any
     /// region routing (store-level commands such as `UnsafeDestroyRange`).

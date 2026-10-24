@@ -100,6 +100,7 @@ pub mod real_tikv_stats_lock;
 pub mod recordset_lifecycle;
 mod result_metadata;
 pub mod runtime_stats;
+pub mod select_result_stats;
 pub mod schema_validator;
 pub mod session_commit_protocol;
 pub mod sql_query_error;

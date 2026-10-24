@@ -91,8 +91,27 @@ pub trait QueryResponse {
         LimiterWaitStats::default()
     }
 
+    /// Go `copr.CopInfo`: the concurrency and task-building time of the
+    /// iterator behind this response, `None` for owners that are not a
+    /// coprocessor iterator.
+    #[must_use]
+    fn cop_info(&self) -> Option<CopInfo> {
+        None
+    }
+
     /// Closes the response owner and releases any unconsumed subsets.
     fn close(&mut self);
+}
+
+/// Go `copr.CopInfo` (`GetConcurrency`, `GetBuildTaskElapsed`).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CopInfo {
+    /// Go `copIterator.concurrency`.
+    pub concurrency: usize,
+    /// Go `copIterator.smallTaskConcurrency`.
+    pub extra_concurrency: usize,
+    /// Go `copIterator.buildTaskElapsed`.
+    pub build_task_elapsed: std::time::Duration,
 }
 
 /// Go-shaped DistSQL result that owns one raw response until conversion or

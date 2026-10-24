@@ -1349,6 +1349,21 @@ impl tidb_executor::executor::ExecutorRuntimeStatsSource for RuntimeStatsColl {
             .map(|stats| stats as Arc<dyn tidb_executor::executor::ExecutorRuntimeStats>)
     }
 
+    fn root_group_runtime_info(&self, plan_id: i64) -> Option<String> {
+        let stats = {
+            let inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
+            inner.root_stats.get(&plan_id)?.clone()
+        };
+        let stats = stats.lock().expect("RootRuntimeStats mutex poisoned");
+        let groups: Vec<String> = stats
+            .group_rss
+            .iter()
+            .map(|group| group.string())
+            .filter(|text| !text.is_empty())
+            .collect();
+        (!groups.is_empty()).then(|| groups.join(", "))
+    }
+
     fn cop_runtime_info(&self, plan_id: i64) -> Option<tidb_executor::executor::CopRuntimeInfo> {
         let stats = self.get_cop_stats(plan_id)?;
         let stats = stats.lock().expect("CopRuntimeStats mutex poisoned");

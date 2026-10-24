@@ -82,7 +82,7 @@ pub use kv_request::{
     GLOBAL_REPLICA_SCOPE,
 };
 pub use query_runtime::{
-    InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponse, QueryResponseError,
+    CopInfo, InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponse, QueryResponseError,
     QueryResultContext, QueryRuntimeError, QueryTransport,
 };
 pub use read_bytes_ema::ReadBytesEma;
@@ -99,7 +99,8 @@ pub use request_builder::{
 };
 pub use response_channel::{
     CopResponseSink, ResponseChannel, ResponseChannelError, ResponseChannelEvent,
-    ResponseChannelState, ResponseChannelUnsupported, ResponseRuntimeStats, SelectResponseIter,
+    RequestStatsSample, ResponseChannelState, SelectResultClose, ResponseChannelUnsupported, ResponseRuntimeStats,
+    SelectResponseIter,
 };
 pub use select_iter::SelectResultRow;
 pub use signed_handle_range::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};

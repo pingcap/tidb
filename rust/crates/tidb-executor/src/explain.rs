@@ -2132,9 +2132,18 @@ fn physical_explain_operator(
             .executor_runtime_stats_source()
             .and_then(|source| source.cop_runtime_info(i64::from(plan.id())))
         {
+            // `rootStats.String() + ", " + copStats.String()`.
+            let groups = statement_context
+                .executor_runtime_stats_source()
+                .and_then(|source| source.root_group_runtime_info(i64::from(plan.id())));
+            let info = match groups {
+                Some(groups) if !cop.info.is_empty() => format!("{groups}, {}", cop.info),
+                Some(groups) => groups,
+                None => cop.info,
+            };
             operator = operator
                 .with_actual_rows(u64::try_from(cop.act_rows).unwrap_or_default())
-                .with_execution_info(cop.info);
+                .with_execution_info(info);
         }
     }
     // Only publish the runtime of the actual root executor at this seam.
@@ -2143,6 +2152,15 @@ fn physical_explain_operator(
             .and_then(|stats| stats.get(&crate::driver::physical_builder::runtime_plan_key(plan)))
             .and_then(|counter| counter.execution_info())
         {
+            // Go `RootRuntimeStats.String()`: the basic stats, then the
+            // group stats registered on the plan (a reader's select result).
+            let info = match statement_context
+                .executor_runtime_stats_source()
+                .and_then(|source| source.root_group_runtime_info(i64::from(plan.id())))
+            {
+                Some(groups) => format!("{info}, {groups}"),
+                None => info,
+            };
             let info = if let PhysicalPlan::Shuffle(shuffle) = plan {
                 // ShuffleExec.Close registers RuntimeStatsWithConcurrencyInfo.
                 format!("{info}, ShuffleConcurrency:{}", shuffle.concurrency)

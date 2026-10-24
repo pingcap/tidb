@@ -59,6 +59,7 @@ pub struct CopIterator<R: QueryResponse> {
     start: Option<ConcurrentStart<R>>,
     lite: Option<Arc<AtomicBool>>,
     limiter_wait: crate::LimiterWaitStats,
+    info: Option<crate::query_runtime::CopInfo>,
 }
 
 impl<R: QueryResponse> CopIterator<R> {
@@ -70,6 +71,7 @@ impl<R: QueryResponse> CopIterator<R> {
     where
         R: CopTaskSource,
     {
+        let info = source.cop_info();
         if start.is_some() {
             source.use_task_worker();
         }
@@ -93,6 +95,7 @@ impl<R: QueryResponse> CopIterator<R> {
             start,
             lite,
             limiter_wait: crate::LimiterWaitStats::default(),
+            info,
         }
     }
 }
@@ -121,6 +124,10 @@ impl<R: QueryResponse> CopIterator<R> {
 }
 
 impl<R: CopTaskSource> QueryResponse for CopIterator<R> {
+    fn cop_info(&self) -> Option<crate::query_runtime::CopInfo> {
+        self.info
+    }
+
     fn limiter_wait_stats(&self) -> crate::LimiterWaitStats {
         let mut stats = self.limiter_wait;
         match &self.driver {

@@ -65,6 +65,7 @@ pub trait NativeCopStore: Send + Sync + 'static {
         region: (u64, u64, u64),
         timeout: Duration,
         kv_context: &crate::StatementKvContext,
+        stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<NativeCopSend, tikv_client::Error>;
 
     /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`, under the
@@ -191,6 +192,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         region: (u64, u64, u64),
         timeout: Duration,
         kv_context: &crate::StatementKvContext,
+        stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<NativeCopSend, tikv_client::Error> {
         let request = tikv_client::proto::coprocessor::Request::decode(request)
             .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
@@ -201,7 +203,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         };
         let send = self
             .store()
-            .send_req_ctx(Arc::clone(backoffer), request, &region, timeout);
+            .send_req_ctx_with_stats(Arc::clone(backoffer), request, &region, timeout, stats);
         let sent = self.block_on(with_statement_kv_context(kv_context, send));
         match sent {
             Ok((response, address)) => {
