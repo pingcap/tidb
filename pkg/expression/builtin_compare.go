@@ -1720,15 +1720,16 @@ func (c *compareFunctionClass) handleDurationTypeComparisonForNullEq(ctx BuildCo
 // needs to decide to whether to skip the refining or skip plan-cache for safety.
 // For example, `unsigned_int_col > ?(-1)` can be refined to `True`, but the validation of this result
 // can be broken if the parameter changes to 1 after.
-func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowRefining bool) {
+func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression, op opcode.Op) (allowRefining bool) {
 	if !MaybeOverOptimized4PlanCache(ctx, args...) {
 		return true // plan-cache disabled or no parameter in these args
 	}
 
-	// For these 3 cases below, we apply the refining:
+	// For these cases below, we apply the refining:
 	// 1. year-expr <cmp> const
 	// 2. int-expr <cmp> string/float/double/decimal-const
 	// 3. datetime/timestamp column <cmp> int/float/double/decimal-const
+	// 4. duration-expr <=> non-duration constant
 	for conIdx := range 2 {
 		if _, isCon := args[conIdx].(*Constant); !isCon {
 			continue // not a constant
@@ -1757,6 +1758,12 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		// try refine numeric-const to timestamp const
 		// see https://github.com/pingcap/tidb/issues/38361 for more details
 		_, exprIsCon := args[1-conIdx].(*Constant)
+		// An invalid non-NULL value must not match a NULL duration. This requires
+		// value-dependent refinement, which cannot be skipped for cached plans.
+		if op == opcode.NullEQ && !exprIsCon && exprEvalType == types.ETDuration && conEvalType != types.ETDuration {
+			ctx.SetSkipPlanCache("NULL-safe duration comparison requires value-dependent refinement")
+			return true
+		}
 		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
 			ctx.SetSkipPlanCache(fmt.Sprintf("'%v' may be converted to datetime", args[conIdx].StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 			return true
@@ -1785,7 +1792,7 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
 
-	if !allowCmpArgsRefining4PlanCache(ctx, args) {
+	if !allowCmpArgsRefining4PlanCache(ctx, args, c.op) {
 		return args, nil
 	}
 	// We should remove the mutable constant for correctness, because its value may be changed.
