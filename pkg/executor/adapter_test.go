@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -511,6 +512,32 @@ func TestWriteSlowLog(t *testing.T) {
 
 	tk.MustExec(`set global tidb_slow_log_rules="Succ:true"`)
 	checkWriteSlowLog(true)
+}
+
+// TestStmtExecInfoCacheReleasesPrevSQLAfterSummary ensures the per-session
+// CacheStmtExecInfo does not keep referencing the previous statement's text
+// (or the ExecStmt via LazyInfo) after stmtsummaryv2.Add returns, otherwise
+// every idle connection would pin up to tidb_query_log_max_len bytes.
+func TestStmtExecInfoCacheReleasesPrevSQLAfterSummary(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Toggle stmt summary off and back on to clear any in-memory rows left by earlier tests.
+	tk.MustExec("set global tidb_enable_stmt_summary = 0")
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+
+	tk = testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("use test")
+	tk.MustExec("create table t_cache_prev_sql (id int primary key, v varchar(32))")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t_cache_prev_sql values (1, 'v1')")
+	tk.MustExec("commit")
+
+	sessVars := tk.Session().GetSessionVars()
+	require.NotNil(t, sessVars.CacheStmtExecInfo)
+	require.Empty(t, sessVars.CacheStmtExecInfo.PrevSQL)
+	require.Empty(t, sessVars.CacheStmtExecInfo.PrevSQLDigest)
+	require.Nil(t, sessVars.CacheStmtExecInfo.LazyInfo)
 }
 
 func TestSlowLogMaxPerSec(t *testing.T) {
