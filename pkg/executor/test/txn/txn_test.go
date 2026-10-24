@@ -800,3 +800,27 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 		tk.MustExec("commit")
 	}
 }
+
+func TestPessimisticRetryRestoresUserVars(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, u int unique)")
+	tk.MustExec("insert into t values (1, 10)")
+
+	tk.MustExec("set @x = 0")
+	tk.MustExec("begin pessimistic")
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tk.ExecToErr("update t set u = (@x := @x + 1) + sleep(0.5) * 0 where id = 1")
+	}()
+	time.Sleep(100 * time.Millisecond)
+	tk2.MustExec("insert into t values (2, 1)")
+	require.ErrorContains(t, <-errCh, "Duplicate entry '1' for key 't.u'")
+	require.Greater(t, tk.Session().GetSessionVars().StmtCtx.ExecRetryCount, uint64(0))
+	tk.MustQuery("select @x").Check(testkit.Rows("1"))
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 10", "2 1"))
+}

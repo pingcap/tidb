@@ -725,6 +725,22 @@ func (s *UserVars) Clone() UserVarsReader {
 	return cloned
 }
 
+// Restore replaces the user vars with a copy of the user vars in src.
+func (s *UserVars) Restore(src *UserVars) {
+	src.lock.RLock()
+	defer src.lock.RUnlock()
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.values = make(map[string]types.Datum, len(src.values))
+	for name, userVar := range src.values {
+		s.values[name] = *userVar.Clone()
+	}
+	s.types = make(map[string]*types.FieldType, len(src.types))
+	for name, userVarType := range src.types {
+		s.types[name] = userVarType.Clone()
+	}
+}
+
 // SetUserVarVal set user defined variables' value
 func (s *UserVars) SetUserVarVal(name string, dt types.Datum) {
 	s.lock.Lock()

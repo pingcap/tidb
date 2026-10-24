@@ -1962,6 +1962,7 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 		// Normally we can infer the type from SessionVars.User, but we need SessionVars.UserVarTypes when
 		// GetVar has not been executed to fill the SessionVars.Users.
 		sessionVars.SetUserVarType(name, tp)
+		sessionVars.StmtCtx.HasUserVarAssignment = true
 		return
 	}
 	tp, ok := evalCtx.GetUserVarsReader().GetUserVarType(name)
