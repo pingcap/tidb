@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/mjonss/samefn-poc/go/samefn"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -327,13 +328,10 @@ func (b *builtinSinSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
+	// One call into samefn for the whole chunk, in place. NULL rows are computed too and never
+	// read; sin returns NaN, never traps.
 	f64s := result.Float64s()
-	for i := range f64s {
-		if result.IsNull(i) {
-			continue
-		}
-		f64s[i] = math.Sin(f64s[i])
-	}
+	samefn.SinSliceV1(f64s, f64s)
 	return nil
 }
 
