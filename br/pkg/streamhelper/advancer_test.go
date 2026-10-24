@@ -1581,6 +1581,21 @@ func TestGCCheckpoint(t *testing.T) {
 }
 
 func TestRedactBackend(t *testing.T) {
+	t.Run("S3 session credentials", func(t *testing.T) {
+		storage := &backup.S3{AccessKey: "FAKE_STREAM_AK", SecretAccessKey: "FAKE_STREAM_SK", SessionToken: "FAKE_STREAM_STS"}
+		info := &backup.StreamBackupTaskInfo{Storage: &backup.StorageBackend{Backend: &backup.StorageBackend_S3{S3: storage}}}
+		original := info.String()
+
+		output := (redact.TaskInfoRedacted{Info: info}).String()
+
+		require.Equal(t, original, info.String(), "logging must not change task credentials")
+		for _, secret := range []string{storage.AccessKey, storage.SecretAccessKey, storage.SessionToken} {
+			t.Run(secret, func(t *testing.T) {
+				require.NotContains(t, output, secret)
+			})
+		}
+		require.Contains(t, output, `session_token:"[REDACTED]"`)
+	})
 	info := new(backup.StreamBackupTaskInfo)
 	info.Name = "test"
 	info.Storage = &backup.StorageBackend{
