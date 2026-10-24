@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -99,6 +100,9 @@ type Context interface {
 	GetPlanCtx() planctx.PlanContext
 	// GetDistSQLCtx gets the distsql ctx of the current session
 	GetDistSQLCtx() *distsqlctx.DistSQLContext
+	// GetRUConsumptionReporter returns a bound reporter and resource group without initializing DistSQL.
+	// An existing DistSQL cache takes precedence, including a nil reporter or an empty group.
+	GetRUConsumptionReporter() (resourcegroup.ConsumptionReporter, string)
 	// RefreshTxnCtx commits old transaction without retry,
 	// and creates a new transaction.
 	// now just for load data and batch insert.
