@@ -292,6 +292,8 @@ type StatementContext struct {
 
 	IgnoreExplainIDSuffix bool
 	MultiSchemaInfo       *model.MultiSchemaInfo
+	// HasUserVarAssignment indicates the statement assigns user variables in expressions, like `@a := 1`.
+	HasUserVarAssignment bool
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
