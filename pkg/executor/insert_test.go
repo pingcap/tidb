@@ -786,3 +786,28 @@ func TestInsertNullIntoNotNullGenerated(t *testing.T) {
 	tk.MustExec(`delete from t3 where c2 = ""`)
 	tk.MustQuery(`select * from t3`).Check(testkit.Rows())
 }
+
+func TestNullIntoNotNullBaseColumnOfIndexedVirtualColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, stmt := range []string{
+		"insert ignore into t(k, a) values (1, 1) on duplicate key update a = null",
+		"update ignore t set a = null",
+	} {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(k int primary key, a int not null, g int as (a) virtual, h int as (g + 1) virtual, key ig(g), key ih(h))")
+		tk.MustExec("insert into t(k, a) values (1, 1)")
+		tk.MustExec(stmt)
+		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'a' cannot be null"))
+		tk.MustExec("admin check table t")
+		tk.MustQuery("select k, a, g, h from t ignore index(ig, ih)").Check(testkit.Rows("1 0 0 1"))
+		tk.MustQuery("select g from t use index(ig)").Check(testkit.Rows("0"))
+		tk.MustQuery("select h from t use index(ih)").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from t use index(ig) where g = 0").Check(testkit.Rows("1"))
+		tk.MustExec("insert into t(k, a) values (1, 1) on duplicate key update a = 2")
+		tk.MustExec("admin check table t")
+		tk.MustQuery("select k, a, g, h from t").Check(testkit.Rows("1 2 2 3"))
+	}
+}
