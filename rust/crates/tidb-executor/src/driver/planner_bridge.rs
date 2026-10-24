@@ -2610,6 +2610,27 @@ fn physical_names(logical: &LogicalPlan) -> Vec<tidb_datatype::FieldName> {
     logical.output_names().to_vec()
 }
 
+/// Go `buildUpdateLists`'s resolution of a single-table UPDATE's SET items.
+pub(crate) fn single_update_assignments(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>,
+    tidb_planner::plan_base::PlanError,
+> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .resolve_single_update_assignments(update, ctx.allow_write_row_id())
+}
+
 /// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.
 pub(crate) fn insert_target(
     insert: &tidb_ast::InsertStmt,

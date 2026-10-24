@@ -177,6 +177,7 @@ mod update_build;
 mod dml_visits;
 pub mod insert_on_duplicate;
 pub mod insert_values;
+pub mod single_update;
 pub mod ordered_list;
 pub mod expand;
 pub mod field_name;

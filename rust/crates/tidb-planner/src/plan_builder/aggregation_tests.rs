@@ -1706,3 +1706,60 @@ fn insert_on_duplicate_assignments_resolve_over_schema4_on_duplicate() {
         "The value specified for generated column 'c' in table 't' is not allowed."
     );
 }
+
+#[test]
+fn single_table_update_assignments_resolve_to_table_columns() {
+    // Go `buildUpdateLists`: each SET item is found among the table's names
+    // (an alias replaces the table name as the only qualifier), a bare DEFAULT
+    // names its own column, and a generated column accepts only DEFAULT.
+    let parse = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the UPDATE parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        let tidb_ast::DmlStmt::Update(update) = (*dml).clone() else {
+            panic!("not an UPDATE");
+        };
+        update
+    };
+    let harness = Harness::new();
+    let resolve = |harness: &Harness, sql: &str| {
+        harness
+            .builder()
+            .resolve_single_update_assignments(&parse(sql), false)
+    };
+    let resolved = resolve(&harness, "UPDATE t SET c = DEFAULT, b = 1").unwrap();
+    assert_eq!(resolved.iter().map(|item| item.column).collect::<Vec<_>>(), vec![2, 1]);
+    assert!(matches!(
+        &resolved[0].value,
+        Some(tidb_ast::Expr::Default(Some(path))) if path == &vec!["c".to_owned()]
+    ));
+    assert!(resolve(&harness, "UPDATE t AS x SET x.b = 1").is_ok());
+    let error = resolve(&harness, "UPDATE t AS x SET t.b = 1").err().unwrap();
+    assert_eq!(error.message(), "Unknown column 't.b' in 'field list'");
+    let error = resolve(&harness, "UPDATE t SET nope = 1").err().unwrap();
+    assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
+
+    let mut generated = Harness::new();
+    generated.catalog.tables[0].columns[2].is_generated = true;
+    let resolved = resolve(&generated, "UPDATE t SET c = DEFAULT").unwrap();
+    assert!(resolved[0].value.is_none(), "left to the generation expression");
+    let error = resolve(&generated, "UPDATE t SET c = 1").err().unwrap();
+    assert_eq!(
+        error.message(),
+        "The value specified for generated column 'c' in table 't' is not allowed."
+    );
+
+    let mut heap = Harness::new();
+    heap.catalog.tables[0].pk_is_handle = false;
+    heap.catalog.tables[0].handle_col_offsets = Vec::new();
+    let error = resolve(&heap, "UPDATE t SET _tidb_rowid = 1").err().unwrap();
+    assert_eq!(
+        error.message(),
+        "insert, update and replace statements for _tidb_rowid are not supported"
+    );
+    assert!(heap
+        .builder()
+        .resolve_single_update_assignments(&parse("UPDATE t SET _tidb_rowid = 1"), true)
+        .is_ok());
+}

@@ -21,7 +21,6 @@
 use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
 use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
-use tidb_hack::GoCaseCompare;
 
 mod defaults;
 pub(crate) mod delete_record;
@@ -333,6 +332,26 @@ fn physical_dml_plan_with_cache_mode(
     let mut update_tables = Vec::new();
     let mut update_assigns = Vec::new();
     let mut insert_select = None;
+    // Go `buildUpdateLists`: a single-table UPDATE's SET items, resolved once
+    // for the fast point list and the ordinary builder alike.
+    let single_assignments = match update {
+        Some(update) if matches!(update.kind, tidb_ast::UpdateKind::Single(_)) => {
+            Some(update_assignments_for_plan(update, catalog, current_db, ctx)?)
+        }
+        _ => None,
+    };
+    if let Some(assignments) = &single_assignments {
+        update_assigns = assignments
+            .iter()
+            .enumerate()
+            .filter(|(_, assignment)| assignment.value.is_some())
+            .map(|(index, assignment)| tidb_planner::physical::UpdateAssign {
+                table: 0,
+                column: assignment.column,
+                expr: index,
+            })
+            .collect();
+    }
     let mut fast_update_list = false;
 
     // Go `buildInsert` builds the target's schema first
@@ -416,6 +435,7 @@ fn physical_dml_plan_with_cache_mode(
                 if let Some(update) = update {
                     update_expressions = fast_update_ordered_list(
                         update,
+                        single_assignments.as_deref().unwrap_or_default(),
                         &fast,
                         catalog,
                         current_db,
@@ -427,10 +447,13 @@ fn physical_dml_plan_with_cache_mode(
                 }
                 Some(fast)
             } else {
-                let update_assignment_values = update
-                    .filter(|_| multi_update.is_none())
-                    .map(|update| update_assignment_values_for_plan(update, catalog, current_db))
-                    .transpose()?;
+                let update_assignment_values: Option<Vec<Option<tidb_ast::Expr>>> =
+                    single_assignments.as_ref().map(|assignments| {
+                        assignments
+                            .iter()
+                            .map(|assignment| assignment.value.clone())
+                            .collect()
+                    });
                 // Go `buildDelete` prunes the read to what removing a record
                 // needs (the planner's `pruneAndBuildColPositionInfoForDelete`);
                 // a point plan above keeps every column. Foreign keys other
@@ -464,7 +487,9 @@ fn physical_dml_plan_with_cache_mode(
                 delete_col_pos = built.delete_col_pos;
                 delete_tables = built.delete_tables;
                 update_tables = built.update_tables;
-                update_assigns = built.update_assigns;
+                if multi_update.is_some() {
+                    update_assigns = built.update_assigns;
+                }
                 root_base = Some(built.root);
                 Some(built.plan)
             }
@@ -2465,6 +2490,7 @@ pub(crate) fn update_allows_fast_plan(update: &tidb_ast::UpdateStmt) -> bool {
 /// UPDATE as expressions over the point plan's row.
 fn fast_update_ordered_list(
     update: &tidb_ast::UpdateStmt,
+    assignments: &[tidb_planner::plan_builder::single_update::SingleUpdateAssignment],
     fast: &tidb_planner::physical::PhysicalPlan,
     catalog: &Catalog,
     current_db: &str,
@@ -2478,17 +2504,16 @@ fn fast_update_ordered_list(
     let schema = fast
         .schema()
         .ok_or_else(|| DriverError::unsupported("a fast UPDATE's point plan has no schema"))?;
-    let values = update_assignment_values_for_plan(update, catalog, current_db)?;
-    let assignments: Vec<(Vec<String>, Option<tidb_ast::Expr>)> = update
+    let targets: Vec<(Vec<String>, Option<tidb_ast::Expr>)> = update
         .assignments
         .iter()
         .map(|assignment| assignment.col.clone())
-        .zip(values)
+        .zip(assignments.iter().map(|assignment| assignment.value.clone()))
         .collect();
     super::planner_bridge::point_update_ordered_list(
         table_ref,
         schema,
-        &assignments,
+        &targets,
         catalog,
         current_db,
         ctx,
@@ -2498,11 +2523,15 @@ fn fast_update_ordered_list(
     .map_err(super::planner_error_to_driver)
 }
 
-fn update_assignment_values_for_plan(
+/// Go `buildUpdateLists` for a single-table UPDATE: every SET item resolved to
+/// its column, a bare DEFAULT named, a generated column's own DEFAULT left to
+/// its expression. A view or a sequence is no UPDATE target.
+fn update_assignments_for_plan(
     update: &tidb_ast::UpdateStmt,
     catalog: &Catalog,
     current_db: &str,
-) -> Result<Vec<Option<tidb_ast::Expr>>, DriverError> {
+    ctx: &crate::StmtContext,
+) -> Result<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>, DriverError> {
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
         return Ok(Vec::new());
     };
@@ -2512,53 +2541,17 @@ fn update_assignment_values_for_plan(
             "{database}.{name}"
         )))
     })?;
-    let mut columns = table.column_list();
-    if let Some(column) = crate::driver::from::extra_handle_column(table) {
-        columns.push(column);
-    }
-    // Go `buildUpdate` resolves every assignment target while planning, so an
-    // unknown one fails `EXPLAIN UPDATE` as it fails the statement.
-    for assignment in &update.assignments {
-        let unknown = assignment
-            .col
-            .last()
-            .is_none_or(|target| !columns.iter().any(|(column, _)| column.go_lower_eq(target)));
-        if unknown {
-            return Err(DriverError::UnknownColumnInClause {
-                column: assignment.col.join("."),
-                clause: "field list".to_owned(),
-            });
+    match table {
+        TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
+        TableEntry::Sequence(_) => {
+            return Err(DriverError::unsupported(
+                "UPDATE of a sequence is not a statement TiDB accepts",
+            ))
         }
+        _ => {}
     }
-    let column_meta = column_metadata(table);
-    // Go `buildUpdateLists` hands the planner's rewriter every assignment:
-    // a bare `DEFAULT` is the assigned column's own default expression, and a
-    // generated column's own DEFAULT leaves its generation expression as the
-    // value source.
-    Ok(update
-        .assignments
-        .iter()
-        .map(|assignment| {
-            let generated = assignment
-                .col
-                .last()
-                .and_then(|target| {
-                    column_meta
-                        .iter()
-                        .find(|meta| meta.name.go_lower_eq(target))
-                })
-                .is_some_and(|meta| meta.generated);
-            if generated {
-                return None;
-            }
-            Some(match &assignment.value {
-                tidb_ast::Expr::Default(None) => {
-                    tidb_ast::Expr::Default(Some(assignment.col.clone()))
-                }
-                value => value.clone(),
-            })
-        })
-        .collect())
+    super::planner_bridge::single_update_assignments(update, catalog, current_db, ctx)
+        .map_err(super::planner_error_to_driver)
 }
 
 /// The retained definition and cache key for a prepared DML statement.
@@ -3285,60 +3278,17 @@ fn run_update_with_physical(
     });
     let column_list = column_list;
 
-    // An alias REPLACES the table name as the only usable qualifier, in the
-    // SET list as much as the WHERE: `UPDATE u AS x SET x.v = 1` resolves and
-    // `SET u.v = 1` is Go's unknown-column error. Resolving both sides through
-    // the one resolver is what makes those two cases the same case.
-    let resolver = TableResolver {
-        database: Some(&database),
-        table_name: table_ref.alias.as_deref().unwrap_or(&name),
-        columns: &column_list,
-        constant_context: ctx.clone(),
-        zone: ctx.session_zone(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-        clause_message: "field list",
-        subquery_constants: &[],
-    };
-    let mut assignments = Vec::with_capacity(update.assignments.len());
-    for (assignment_index, assignment) in update.assignments.iter().enumerate() {
-        let (offset, _, _) = resolver.resolve(&assignment.col).ok_or_else(|| {
-            // go `getColumns` answers the assignment's unknown target with
-            // the ordinary `ErrBadField` (1054) 'field list' form.
-            DriverError::UnknownColumnInClause {
-                column: assignment.col.join("."),
-                clause: "field list".to_owned(),
-            }
-        })?;
-        if extra_handle_slot == Some(offset) && !ctx.allow_write_row_id() {
-            return Err(DriverError::unsupported(WRITE_ROW_ID_REFUSED));
-        }
-        // Go `IsDefaultExprSameColumn`: a generated target accepts only bare
-        // DEFAULT or DEFAULT(the same resolved column). DEFAULT(other), even
-        // though it has the same AST variant, is error 3105.
-        if column_meta.get(offset).is_some_and(|meta| meta.generated) {
-            let own_default = match &assignment.value {
-                tidb_ast::Expr::Default(None) => true,
-                tidb_ast::Expr::Default(Some(path)) => resolver
-                    .resolve(path)
-                    .is_some_and(|(source, _, _)| source == offset),
-                _ => false,
-            };
-            if !own_default {
-                return Err(DriverError::BadGeneratedColumn {
-                    column: column_meta[offset].name.clone(),
-                    table: name.clone(),
-                });
-            }
-            // The generation expression remains the value source.
-            continue;
-        }
-        assignments.push((assignment_index, offset, assignment.value.clone()));
-    }
+    // Go `buildUpdateLists` resolved every SET item at plan time: the planner's
+    // assignments name the target column of each expression.
+    let assignments: Vec<(usize, usize)> = multi_layout
+        .1
+        .iter()
+        .map(|assign| (assign.expr, assign.column))
+        .collect();
     // Go builds every ordered-list expression in the planner
     // (`buildUpdateLists`, or the fast plan's `buildOrderedList`).
     let mut set_exprs = Vec::with_capacity(assignments.len());
-    for (assignment_index, offset, _) in &assignments {
+    for (assignment_index, offset) in &assignments {
         let planned = planned_update_expressions
             .and_then(|expressions| expressions.get(*assignment_index))
             .and_then(Option::as_ref)
