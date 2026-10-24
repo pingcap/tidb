@@ -381,6 +381,9 @@ pub enum PlanErrorKind {
     /// Go `plannererrors.ErrNonUpdatableTable` (1288): the table, and the
     /// statement (`DELETE` or `UPDATE`) that named it.
     NonUpdatableTable(String, String),
+    /// Go `plannererrors.ErrBadGeneratedColumn` (3105): the generated column
+    /// and its table.
+    BadGeneratedColumn(String, String),
     /// Go `table.ErrUnknownPartition` (1735).
     UnknownPartition {
         /// The lower-cased partition name, matching `FindPartitionByName`.
@@ -685,6 +688,18 @@ impl PlanError {
         Self {
             message: format!("Unknown table '{table}'"),
             kind: PlanErrorKind::BadTable(table),
+        }
+    }
+
+    /// Go `plannererrors.ErrBadGeneratedColumn.GenWithStackByArgs(column, table)`.
+    pub fn bad_generated_column(column: impl Into<String>, table: impl Into<String>) -> Self {
+        let column = column.into();
+        let table = table.into();
+        Self {
+            message: format!(
+                "The value specified for generated column '{column}' in table '{table}' is not allowed."
+            ),
+            kind: PlanErrorKind::BadGeneratedColumn(column, table),
         }
     }
 

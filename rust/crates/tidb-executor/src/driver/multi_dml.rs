@@ -99,307 +99,6 @@ use crate::kv_table::TableHandle;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
-/// Where a `FROM` source's rows live, and therefore whether a write may name
-/// it. This is Go's `updatableTableListResolver`/`collectTableName` decision,
-/// which both make by the same test -- `x.Source.(*ast.TableName)` -- and
-/// which is settled once here rather than at each write site.
-#[derive(Clone)]
-enum SourceOrigin {
-    /// A base table, identified for writing back by schema and stored name.
-    Base {
-        /// The schema the table really lives in.
-        database: String,
-        /// The stored table name.
-        name: String,
-    },
-    /// A derived table: rows materialized from a subquery, with no base-table
-    /// identity behind them. A read source only.
-    Derived,
-}
-
-/// One source participating in a multi-table DML statement's `FROM`.
-#[derive(Clone)]
-struct SourceTable {
-    /// The name the statement qualifies it with: the alias when it has one.
-    visible: String,
-    /// The schema, when a `db.t` reference may still name it -- `None` once
-    /// an alias has replaced the whole path, exactly as in [`FromTable`].
-    qualifiable_db: Option<String>,
-    /// Whether a write may name this source, and where it writes if so.
-    origin: SourceOrigin,
-    columns: Vec<(String, FieldType)>,
-    /// The SQL scope ends in a heap handle, outside visible/writable metadata.
-    extra_handle: bool,
-    /// Go UpdateExec.prepare keeps partitioned heap rows eligible even when
-    /// another physical row has the same bare handle.
-    skip_repeated_updates: bool,
-    /// Default/generation metadata for visible stored columns.
-    default_meta: Vec<super::dml::ColumnDefaultMeta>,
-    /// Generated offsets in the complete writable row, including hidden columns.
-    generated_columns: Vec<usize>,
-    /// Where this table's columns start in the joined row.
-    offset: usize,
-    /// The partition ids a `PARTITION (...)` clause on the reference selects;
-    /// a write that routes outside them is `ErrRowDoesNotMatchGivenPartitionSet`.
-    selected_partitions: Option<Vec<i64>>,
-}
-
-impl SourceTable {
-    fn end(&self) -> usize {
-        self.offset + self.columns.len()
-    }
-
-    /// Go's `ErrNonUpdatableTable` for this source, so the two write sites
-    /// that can reach a non-updatable source raise ONE error.
-    fn not_updatable(&self, statement: &'static str) -> DriverError {
-        DriverError::NonUpdatableTable {
-            table: self.visible.clone(),
-            statement,
-        }
-    }
-}
-
-/// A joined row: one row identity per participating table (`None` where an
-/// outer join NULL-padded that side), then the concatenated column values.
-struct SourceRow {
-    ids: Vec<Option<TableHandle>>,
-    /// Visible SQL scope used to evaluate assignments.
-    values: Vec<Datum>,
-    /// Complete writable preimages retained from the physical child.
-    stored: Vec<Vec<Datum>>,
-}
-
-/// Metadata for the joined values a multi-table write reads.
-struct MultiLayout {
-    tables: Vec<SourceTable>,
-    constant_context: crate::StmtContext,
-    /// The output naming state of a child `NATURAL`/`USING` join. The row
-    /// remains full-width for writes, just as Go resets the join schema for
-    /// DML after using the coalesced names to construct its equality.
-    coalesced: Vec<usize>,
-    star: Vec<usize>,
-}
-
-impl MultiLayout {
-    fn width(&self) -> usize {
-        self.tables.last().map_or(0, SourceTable::end)
-    }
-
-    /// The name scope, so `WHERE`/`ON`/`SET` resolve through the very same
-    /// [`ScopeResolver`] a `SELECT` over this `FROM` would use.
-    fn scope(&self) -> FromScope {
-        FromScope {
-            tables: self
-                .tables
-                .iter()
-                .map(|table| FromTable {
-                    name: table.visible.clone(),
-                    database: table.qualifiable_db.clone(),
-                    columns: table.columns.clone(),
-                    offset: table.offset,
-                })
-                .collect(),
-            coalesced: self.coalesced.clone(),
-            star: self.star.clone(),
-            ..FromScope::for_statement(&self.constant_context)
-        }
-    }
-
-    fn field_types(&self) -> Vec<FieldType> {
-        self.tables
-            .iter()
-            .flat_map(|t| t.columns.iter().map(|(_, ft)| ft.clone()))
-            .collect()
-    }
-
-    /// The table whose columns cover `offset` in the joined row.
-    fn table_of_column(&self, offset: usize) -> Option<usize> {
-        self.tables
-            .iter()
-            .position(|t| offset >= t.offset && offset < t.end())
-    }
-}
-
-/// Resolve source shape through the logical planner without opening any row
-/// source. Derived queries and lateral Apply inputs participate in name/type
-/// resolution, but execute only when the retained physical child is opened.
-fn build_multi_layout(
-    join: &tidb_ast::Join,
-    with: Option<&tidb_ast::WithClause>,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<MultiLayout, DriverError> {
-    let logical =
-        super::planner_bridge::logical_from_plan(join, with, catalog, current_db, ctx, true)
-            .map_err(super::planner_error_to_driver)?;
-    let schema = logical
-        .schema()
-        .ok_or_else(|| DriverError::unsupported("DML source has no schema"))?;
-    let names = logical.output_names();
-    if schema.columns.len() != names.len() {
-        return Err(DriverError::unsupported(
-            "DML source names and schema differ",
-        ));
-    }
-
-    fn node_layout(
-        node: &tidb_ast::JoinNode,
-        with: Option<&tidb_ast::WithClause>,
-        catalog: &Catalog,
-        current_db: &str,
-        ctx: &crate::StmtContext,
-        columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
-    ) -> Result<MultiLayout, DriverError> {
-        let mut selected_partitions = None;
-        let (visible, qualifiable_db, origin, mut columns, default_meta) = match node {
-            tidb_ast::JoinNode::Join(join) => {
-                return join_layout(join, with, catalog, current_db, ctx, columns_for_alias)
-            }
-            // Go `isCTE`: a CTE is a read source only, like a derived table.
-            tidb_ast::JoinNode::Table(table) if super::planner_bridge::is_cte(with, table) => {
-                let visible = table.alias.clone().unwrap_or_else(|| table.name.join("."));
-                let columns = columns_for_alias(&visible)?;
-                (visible, None, SourceOrigin::Derived, columns, Vec::new())
-            }
-            tidb_ast::JoinNode::Table(table) => {
-                let (database, name) = split_table_path(&table.name, current_db)?;
-                let entry = catalog.get_in(database, name).ok_or_else(|| {
-                    DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
-                        "{database}.{name}"
-                    )))
-                })?;
-                selected_partitions = selected_partition_ids(table, entry, name)?;
-                let origin = match entry {
-                    TableEntry::Mem(_) | TableEntry::Kv(_) => SourceOrigin::Base {
-                        database: database.to_owned(),
-                        name: name.to_owned(),
-                    },
-                    TableEntry::View(_) => SourceOrigin::Derived,
-                    TableEntry::Sequence(_) => {
-                        return Err(DriverError::unsupported(
-                            "a sequence is not supported in multi-table DML",
-                        ))
-                    }
-                };
-                (
-                    table.alias.clone().unwrap_or_else(|| name.to_owned()),
-                    table.alias.is_none().then(|| database.to_owned()),
-                    origin,
-                    entry.column_list(),
-                    super::dml::column_metadata(entry),
-                )
-            }
-            tidb_ast::JoinNode::Derived { alias, .. } => {
-                let alias = alias
-                    .as_deref()
-                    .filter(|alias| !alias.is_empty())
-                    .ok_or(DriverError::DerivedMustHaveAlias)?;
-                (
-                    alias.to_owned(),
-                    None,
-                    SourceOrigin::Derived,
-                    columns_for_alias(alias)?,
-                    Vec::new(),
-                )
-            }
-        };
-        let extra = match &origin {
-            SourceOrigin::Base { database, name } => catalog
-                .get_in(database, name)
-                .filter(|_| !super::catalog::is_virtual_schema_table(database, name))
-                .and_then(super::from::extra_handle_column),
-            SourceOrigin::Derived => None,
-        };
-        let extra_handle = extra.is_some();
-        let skip_repeated_updates = match &origin {
-            SourceOrigin::Base { database, name } => match stored_table(catalog, database, name) {
-                Some(TableEntry::Kv(kv)) => !extra_handle || kv.partition().is_none(),
-                _ => true,
-            },
-            SourceOrigin::Derived => true,
-        };
-        let star = (0..columns.len()).collect();
-        if let Some(column) = extra {
-            columns.push(column);
-        }
-        let generated_columns = match &origin {
-            SourceOrigin::Base { database, name } => match stored_table(catalog, database, name) {
-                Some(TableEntry::Kv(kv)) => kv
-                    .columns()
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(offset, column)| column.generated.is_some().then_some(offset))
-                    .collect(),
-                _ => Vec::new(),
-            },
-            SourceOrigin::Derived => Vec::new(),
-        };
-        Ok(MultiLayout {
-            tables: vec![SourceTable {
-                visible,
-                qualifiable_db,
-                origin,
-                columns,
-                extra_handle,
-                skip_repeated_updates,
-                default_meta,
-                generated_columns,
-                offset: 0,
-                selected_partitions,
-            }],
-            constant_context: ctx.clone(),
-            coalesced: Vec::new(),
-            star,
-        })
-    }
-
-    fn join_layout(
-        join: &tidb_ast::Join,
-        with: Option<&tidb_ast::WithClause>,
-        catalog: &Catalog,
-        current_db: &str,
-        ctx: &crate::StmtContext,
-        columns_for_alias: &impl Fn(&str) -> Result<Vec<(String, FieldType)>, DriverError>,
-    ) -> Result<MultiLayout, DriverError> {
-        let left = node_layout(
-            &join.left,
-            with,
-            catalog,
-            current_db,
-            ctx,
-            columns_for_alias,
-        )?;
-        match &join.right {
-            Some(right) => merge_source_layout(
-                left,
-                node_layout(right, with, catalog, current_db, ctx, columns_for_alias)?,
-                join,
-                ctx,
-            ),
-            None => Ok(left),
-        }
-    }
-
-    let columns_for_alias = |alias: &str| {
-        schema
-            .columns
-            .iter()
-            .zip(names)
-            .filter(|(_, name)| name.names.table.original.go_lower_eq(alias))
-            .map(|(column, name)| {
-                Ok((
-                    name.names.column.original.clone(),
-                    column.ret_type.clone().ok_or_else(|| {
-                        DriverError::unsupported("derived DML column has no type")
-                    })?,
-                ))
-            })
-            .collect::<Result<Vec<_>, DriverError>>()
-    };
-    join_layout(join, with, catalog, current_db, ctx, &columns_for_alias)
-}
-
 /// DELETE permissions use the same resolved outer targets as execution and
 /// FK planning. Names that occur only inside derived queries cannot name a
 /// writable outer target.
@@ -435,18 +134,34 @@ pub fn delete_privilege_tables(
     Ok(resolved)
 }
 
-/// Merge naming metadata while retaining the full DML value layout.
-/// Row execution, including outer padding and conditions, belongs to the
-/// shared physical child.
+/// Go's `updatedRowKeys`: per (target position, row identity), whether the
+/// write that reached it CHANGED the row. A repeat visit is skipped only
+/// when the first one changed something -- a no-op first visit leaves the
+/// row eligible. Go also disables skipping for partitioned heap tables.
+type UpdateOnce = BTreeMap<(usize, TableHandle), bool>;
+
+/// What the executor needs of one updated base table beside the planner's
+/// layout: its columns, default metadata and write policy.
+struct UpdatedTable {
+    columns: Vec<(String, FieldType)>,
+    default_meta: Vec<super::dml::ColumnDefaultMeta>,
+    /// Generated offsets in the complete writable row.
+    generated_columns: Vec<usize>,
+    /// Go `UpdateExec.prepare` keeps partitioned heap rows eligible even when
+    /// another physical row has the same bare handle.
+    skip_repeated_updates: bool,
+    selected_partitions: Option<Vec<i64>>,
+}
+
 /// Go's `PARTITION (...)` selection on one reference: the names are resolved
 /// once, against the table, and an unknown one is `ErrUnknownPartition`; a
 /// clause on a table without partitions is its own error.
 fn selected_partition_ids(
-    table: &tidb_ast::TableRef,
+    partitions: &[String],
     entry: &TableEntry,
     name: &str,
 ) -> Result<Option<Vec<i64>>, DriverError> {
-    let Some(first) = table.partitions.first() else {
+    let Some(first) = partitions.first() else {
         return Ok(None);
     };
     let TableEntry::Kv(kv) = entry else {
@@ -458,7 +173,7 @@ fn selected_partition_ids(
     let Some(spec) = kv.partition() else {
         return Err(DriverError::PartitionClauseOnNonpartitioned);
     };
-    crate::partition_pruning::ids_for_selected_partitions(spec, &table.partitions)
+    crate::partition_pruning::ids_for_selected_partitions(spec, partitions)
         .map(Some)
         .map_err(|partition| DriverError::UnknownPartition {
             partition,
@@ -466,153 +181,119 @@ fn selected_partition_ids(
         })
 }
 
-fn merge_source_layout(
-    left: MultiLayout,
-    right: MultiLayout,
-    join: &tidb_ast::Join,
-    ctx: &crate::StmtContext,
-) -> Result<MultiLayout, DriverError> {
-    let left_width = left.width();
-    let left_tables = left.tables.len();
-    // Capture the child naming state before moving their physical table
-    // slots into the full DML row below.
-    let left_scope = left.scope();
-    let right_scope = right.scope();
-    let mut tables = left.tables;
-    for table in right.tables {
-        tables.push(SourceTable {
-            offset: table.offset + left_width,
-            ..table
-        });
-    }
-    // Build the same full physical row that `UPDATE`/`DELETE` use in Go.
-    // The scope carries the separate NATURAL/USING display state: it affects
-    // name resolution, never the row
-    // identities that the write phase needs.
-    let left_visible = left_scope.star_columns();
-    let right_visible: Vec<(usize, String, FieldType)> = right_scope
-        .star_columns()
-        .into_iter()
-        .map(|(offset, name, field_type)| (offset + left_width, name, field_type))
-        .collect();
-    let child_coalesced = !left_scope.star.is_empty() || !right_scope.star.is_empty();
-    let mut scope = left_scope;
-    scope.coalesced.extend(
-        right_scope
-            .coalesced
-            .iter()
-            .map(|offset| offset + left_width),
-    );
-    if !join.natural && join.using.is_empty() && child_coalesced {
-        scope.star = left_visible
-            .iter()
-            .chain(&right_visible)
-            .map(|(offset, ..)| *offset)
-            .collect();
-    }
-
-    let joined = MultiLayout {
-        tables,
-        constant_context: ctx.clone(),
-        coalesced: Vec::new(),
-        star: Vec::new(),
-    };
-    for table in &joined.tables[left_tables..] {
-        // `scope` still has the left tables at their original offsets. The
-        // right tables are appended here exactly once under their full-row
-        // offsets; their identity stays independent of display coalescing.
-        scope.tables.push(FromTable {
-            name: table.visible.clone(),
-            database: table.qualifiable_db.clone(),
-            columns: table.columns.clone(),
-            offset: table.offset,
-        });
-    }
-    if join.natural || !join.using.is_empty() {
-        super::from::coalesce_common_columns(
-            &mut scope,
-            left_visible,
-            right_visible,
-            join.tp,
-            &join.using,
-        )?;
-    }
-    Ok(MultiLayout {
-        coalesced: scope.coalesced,
-        star: scope.star,
-        ..joined
-    })
-}
-
-/// Go's `updatedRowKeys`: per (target position, row identity), whether the
-/// write that reached it CHANGED the row. A repeat visit is skipped only
-/// when the first one changed something -- a no-op first visit leaves the
-/// row eligible. Go also disables skipping for partitioned heap tables.
-type UpdateOnce = BTreeMap<(usize, TableHandle), bool>;
-
-/// Runs a multi-table `UPDATE`, returning MySQL's affected-row count.
+/// Runs a multi-table `UPDATE`, returning MySQL's affected-row count. The
+/// read, its row layout and every assignment's expression are the planner's
+/// (Go `buildUpdate`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_multi_update(
     update: &tidb_ast::UpdateStmt,
-    from: &tidb_ast::Join,
     catalog: &mut Catalog,
-    current_db: &str,
     ctx: &crate::StmtContext,
     physical_plan: Option<&mut tidb_planner::physical::PhysicalPlan>,
+    layout: (
+        &[tidb_planner::physical::UpdateTablePos],
+        &[tidb_planner::physical::UpdateAssign],
+    ),
+    expressions: &[Option<Expression>],
     fk_triggers: &[tidb_planner::physical::FkTriggerNode],
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
-    let source = build_multi_layout(from, update.with.as_ref(), catalog, current_db, ctx)?;
-    let scope = source.scope();
-    let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
-    check_update_list(&assignments, &source, catalog)?;
-    let on_update_now: Vec<super::dml::PreparedOnUpdateNow> = source
-        .tables
+    let (tables, assigns) = layout;
+    if tables.is_empty() {
+        return Err(DriverError::unsupported(
+            "a multi-table UPDATE plan carries no table layout",
+        ));
+    }
+    let plan = physical_plan
+        .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
+    let mut updated = Vec::with_capacity(tables.len());
+    for table in tables {
+        let entry = catalog.get_in(&table.database, &table.table).ok_or_else(|| {
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                "{}.{}",
+                table.database, table.table
+            )))
+        })?;
+        let TableEntry::Kv(kv) = entry else {
+            return Err(DriverError::unsupported(
+                "a multi-table UPDATE target is not a base table",
+            ));
+        };
+        let heap = matches!(table.handle, tidb_planner::physical::DeleteHandle::Extra(_));
+        updated.push(UpdatedTable {
+            columns: entry.column_list(),
+            default_meta: super::dml::column_metadata(entry),
+            generated_columns: kv
+                .columns()
+                .iter()
+                .enumerate()
+                .filter_map(|(offset, column)| column.generated.is_some().then_some(offset))
+                .collect(),
+            skip_repeated_updates: !heap || kv.partition().is_none(),
+            selected_partitions: selected_partition_ids(
+                &table.partitions,
+                entry,
+                &table.table,
+            )?,
+        });
+    }
+    check_update_list(tables, assigns, &updated, catalog)?;
+    let on_update_now: Vec<super::dml::PreparedOnUpdateNow> = updated
         .iter()
         .enumerate()
         .map(|(slot, table)| {
             super::dml::PreparedOnUpdateNow::new(
                 &table.default_meta,
-                assignments
+                assigns
                     .iter()
-                    .filter(move |assignment| assignment.slot == slot)
-                    .map(|assignment| assignment.column),
+                    .filter(move |assign| assign.table == slot)
+                    .map(|assign| assign.column),
             )
         })
         .collect::<Result<_, _>>()?;
-    let field_types = source.field_types();
-    let prune = prune_for_update(&source, &assignments, catalog);
-    let rows = {
-        let plan = physical_plan
-            .ok_or_else(|| DriverError::unsupported("a multi-table write has no read plan"))?;
-        planned_source_rows(
-            &source,
-            plan,
-            catalog,
-            ctx,
-            runtime,
-            crate::mem_quota::label::UPDATE,
-            prune.as_ref(),
-        )?
-    };
+    let field_types: Vec<FieldType> = plan
+        .schema()
+        .ok_or_else(|| DriverError::unsupported("a multi-table read has no schema"))?
+        .columns
+        .iter()
+        .map(|column| {
+            column
+                .ret_type
+                .clone()
+                .ok_or_else(|| DriverError::unsupported("a multi-table read column has no type"))
+        })
+        .collect::<Result<_, _>>()?;
+    let delete_layout: Vec<tidb_planner::physical::DeleteTablePos> = tables
+        .iter()
+        .map(|table| tidb_planner::physical::DeleteTablePos {
+            table_id: table.table_id,
+            database: table.database.clone(),
+            table: table.table.clone(),
+            stored_width: table.stored_width,
+            columns: table.columns.clone(),
+            handle: table.handle.clone(),
+        })
+        .collect();
+    let rows = delete_source_rows(
+        &delete_layout,
+        plan,
+        catalog,
+        ctx,
+        runtime,
+        crate::mem_quota::label::UPDATE,
+        true,
+    )?;
 
     // Go keeps updatedRowKeys per target position, but mergedRowData per
     // base table and handle. Neither map can stand in for the other.
-    let targets: Vec<_> = source
-        .tables
+    let targets: Vec<Option<(String, String)>> = tables
         .iter()
         .enumerate()
         .map(|(slot, table)| {
-            if !assignments.iter().any(|assignment| {
-                assignment.slot == slot && assignment.column < table.default_meta.len()
-            }) {
-                return None;
-            }
-            match &table.origin {
-                SourceOrigin::Base { database, name } => {
-                    Some((database.go_to_lower(), name.go_to_lower()))
-                }
-                SourceOrigin::Derived => None,
-            }
+            assigns
+                .iter()
+                .any(|assign| assign.table == slot && assign.column < table.stored_width)
+                .then(|| (table.database.go_to_lower(), table.table.go_to_lower()))
         })
         .collect();
     let multiple: Vec<_> = targets
@@ -638,36 +319,40 @@ pub(crate) fn run_multi_update(
     let mut touched_rows = 0u64;
     let mut changed_rows = 0u64;
     for (row_index, row) in rows.iter().enumerate() {
-        let (ids, values) = (&row.ids, &row.values);
-        let chunk = row_chunk(values, &field_types)?;
-        let evaluated = assignments
+        let ids = &row.ids;
+        let chunk = row_chunk(&row.raw, &field_types)?;
+        let evaluated = assigns
             .iter()
-            .map(|assignment| {
-                let table = &source.tables[assignment.slot];
-                let extra = table.extra_handle && assignment.column == table.default_meta.len();
-                if !extra && ids[assignment.slot].is_none() {
+            .map(|assign| {
+                let table = &tables[assign.table];
+                let extra = assign.column == table.stored_width;
+                if !extra && ids[assign.table].is_none() {
                     return Ok(None);
                 }
-                let value = assignment
-                    .value
+                let expression = expressions
+                    .get(assign.expr)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| DriverError::unsupported("an UPDATE assignment was not planned"))?;
+                let value = expression
                     .eval(ctx, chunk.get_row(0))
                     .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
                 if extra {
                     return Ok(None);
                 }
+                let columns = &updated[assign.table].columns;
                 cast_value_for_update_assignment(
                     value,
-                    &table.columns[assignment.column].1,
-                    &table.columns[assignment.column].0,
+                    &columns[assign.column].1,
+                    &columns[assign.column].0,
                     row_index,
                     ctx,
                 )
                 .map(Some)
             })
             .collect::<Result<Vec<_>, DriverError>>()?;
-        let mut prepared = Vec::with_capacity(source.tables.len());
+        let mut prepared = Vec::with_capacity(tables.len());
         // Compose every target from the same input row before merging aliases.
-        for (slot, table) in source.tables.iter().enumerate() {
+        for (slot, table) in updated.iter().enumerate() {
             let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
                 prepared.push(None);
                 continue;
@@ -678,10 +363,10 @@ pub(crate) fn run_multi_update(
             }
             let mut old = row.stored[slot].clone();
             let mut new = old.clone();
-            for (assignment, value) in assignments.iter().zip(&evaluated) {
-                if assignment.slot == slot {
+            for (assign, value) in assigns.iter().zip(&evaluated) {
+                if assign.table == slot {
                     if let Some(value) = value {
-                        new[assignment.column] = value.clone();
+                        new[assign.column] = value.clone();
                     }
                 }
             }
@@ -696,9 +381,9 @@ pub(crate) fn run_multi_update(
                             continue;
                         }
                         old[column] = previous[column].clone();
-                        if assignments
+                        if assigns
                             .iter()
-                            .any(|a| a.slot == slot && a.column == column)
+                            .any(|a| a.table == slot && a.column == column)
                         {
                             previous[column] = new[column].clone();
                         } else {
@@ -714,7 +399,7 @@ pub(crate) fn run_multi_update(
         }
         for (slot, prepared) in prepared.iter_mut().enumerate() {
             let Some((old, new)) = prepared else { continue };
-            let table = &source.tables[slot];
+            let table = &updated[slot];
             let id = ids[slot].as_ref().expect("prepared target has an identity");
             let (database, name) = targets[slot]
                 .as_ref()
@@ -738,7 +423,7 @@ pub(crate) fn run_multi_update(
                 id,
                 old,
                 new,
-                source.tables[slot].selected_partitions.as_deref(),
+                table.selected_partitions.as_deref(),
                 update.ignore,
                 super::GeneratedWrite::Update { row_index },
                 ctx,
@@ -775,8 +460,9 @@ pub(crate) fn run_multi_update(
 /// of them (MySQL's `ER_MULTI_UPDATE_KEY_CONFLICT`). Aliases are visited in
 /// join order, and the error names the first alias and the conflicting one.
 fn check_update_list(
-    assignments: &[MultiAssignment],
-    source: &MultiLayout,
+    tables: &[tidb_planner::physical::UpdateTablePos],
+    assigns: &[tidb_planner::physical::UpdateAssign],
+    updated: &[UpdatedTable],
     catalog: &Catalog,
 ) -> Result<(), DriverError> {
     struct UpdatedAlias<'a> {
@@ -786,19 +472,16 @@ fn check_update_list(
     }
     let mut updated_from_other_alias: BTreeMap<(String, String), UpdatedAlias<'_>> =
         BTreeMap::new();
-    for (slot, table) in source.tables.iter().enumerate() {
-        let SourceOrigin::Base { database, name } = &table.origin else {
-            continue;
-        };
-        let mut columns = assignments
+    for (slot, table) in tables.iter().enumerate() {
+        let mut columns = assigns
             .iter()
-            .filter(|assignment| assignment.slot == slot)
-            .filter_map(|assignment| table.columns.get(assignment.column))
+            .filter(|assign| assign.table == slot)
+            .filter_map(|assign| updated[slot].columns.get(assign.column))
             .peekable();
         if columns.peek().is_none() {
             continue;
         }
-        let partition_columns = match catalog.table_in(database, name) {
+        let partition_columns = match catalog.table_in(&table.database, &table.table) {
             Some(TableEntry::Kv(kv)) => kv
                 .partition()
                 .map(|spec| spec.dependencies.clone())
@@ -813,8 +496,8 @@ fn check_update_list(
                 .any(|partition_column| partition_column.go_lower_eq(column));
         }
         let key = (
-            tidb_hack::go_to_lower(database),
-            tidb_hack::go_to_lower(name),
+            tidb_hack::go_to_lower(&table.database),
+            tidb_hack::go_to_lower(&table.table),
         );
         match updated_from_other_alias.get(&key) {
             Some(other) => {
@@ -847,142 +530,6 @@ fn check_update_list(
     Ok(())
 }
 
-/// One resolved `SET` assignment: which target table it writes, that table's
-/// own column offset, and the value expression over the WHOLE joined row.
-struct MultiAssignment {
-    slot: usize,
-    column: usize,
-    value: Expression,
-}
-
-fn resolve_assignments(
-    assignments: &[tidb_ast::Assignment],
-    source: &MultiLayout,
-    scope: &FromScope,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<MultiAssignment>, DriverError> {
-    let resolver = ScopeResolver { scope };
-    let default_row = {
-        let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
-        chunk.set_num_virtual_rows(1);
-        chunk
-    };
-    let mut resolved = Vec::with_capacity(assignments.len());
-    for assignment in assignments {
-        // Go reports a `SET` column it cannot bind -- including one
-        // qualified by a table the join never mentions -- as
-        // `ERROR 1054 Unknown column '<col>' in 'field list'`.
-        let (offset, _, _) = resolver.resolve(&assignment.col).ok_or_else(|| {
-            DriverError::UnknownColumnInClause {
-                column: assignment.col.last().cloned().unwrap_or_default(),
-                clause: "field list".to_owned(),
-            }
-        })?;
-        let slot = source
-            .table_of_column(offset)
-            .ok_or(DriverError::unsupported("SET column outside the join"))?;
-        // Go `buildUpdateLists`, the `!foundListItem` branch: the column
-        // resolved, but against a source the updatable list does not hold --
-        // "subQuery is not counted as updatable table".
-        if matches!(source.tables[slot].origin, SourceOrigin::Derived) {
-            return Err(source.tables[slot].not_updatable("UPDATE"));
-        }
-        let column = offset - source.tables[slot].offset;
-        let target_meta = source.tables[slot].default_meta.get(column);
-        if target_meta.is_none() && !ctx.allow_write_row_id() {
-            return Err(DriverError::unsupported(super::dml::WRITE_ROW_ID_REFUSED));
-        }
-        if let Some(target_meta) = target_meta.filter(|meta| meta.generated) {
-            let own_default = match &assignment.value {
-                tidb_ast::Expr::Default(None) => true,
-                tidb_ast::Expr::Default(Some(path)) => resolver
-                    .resolve(path)
-                    .is_some_and(|(default_offset, _, _)| default_offset == offset),
-                _ => false,
-            };
-            if own_default {
-                continue;
-            }
-            let table_name = match &source.tables[slot].origin {
-                SourceOrigin::Base { name, .. } => name.clone(),
-                SourceOrigin::Derived => source.tables[slot].visible.clone(),
-            };
-            return Err(DriverError::BadGeneratedColumn {
-                column: target_meta.name.clone(),
-                table: table_name,
-            });
-        }
-
-        let value = match &assignment.value {
-            tidb_ast::Expr::Default(None) => {
-                let datum = super::dml::materialize_column_default(
-                    target_meta.ok_or_else(|| DriverError::UnknownColumnInClause {
-                        column: source.tables[slot].columns[column].0.clone(),
-                        clause: "field_list".to_owned(),
-                    })?,
-                    super::dml::DefaultUse::Expression,
-                    ctx,
-                    default_row.get_row(0),
-                )?;
-                Expression::Constant(tidb_expr::constant::Constant::new(
-                    datum,
-                    source.tables[slot].columns[column].1.clone(),
-                ))
-            }
-            value => {
-                let defaults = super::dml::prepare_named_defaults(
-                    value,
-                    ctx,
-                    default_row.get_row(0),
-                    super::dml::DefaultUse::Expression,
-                    |path| {
-                        let (default_offset, _, _) = resolver.resolve(path).ok_or_else(|| {
-                            DriverError::UnknownColumnInClause {
-                                column: path.last().cloned().unwrap_or_default(),
-                                clause: "field list".to_owned(),
-                            }
-                        })?;
-                        let default_slot = source
-                            .table_of_column(default_offset)
-                            .ok_or(DriverError::unsupported("DEFAULT column outside the join"))?;
-                        let default_column = default_offset - source.tables[default_slot].offset;
-                        if matches!(source.tables[default_slot].origin, SourceOrigin::Derived) {
-                            return Err(DriverError::NoDefaultForField(
-                                source.tables[default_slot].columns[default_column]
-                                    .0
-                                    .clone(),
-                            ));
-                        }
-                        Ok(super::dml::ResolvedDefaultColumn {
-                            identity: super::dml::DefaultColumnIdentity {
-                                table: default_slot,
-                                column: default_column,
-                            },
-                            meta: source.tables[default_slot]
-                                .default_meta
-                                .get(default_column)
-                                .cloned()
-                                .ok_or_else(|| DriverError::UnknownColumnInClause {
-                                    column: source.tables[default_slot].columns[default_column]
-                                        .0
-                                        .clone(),
-                                    clause: "field_list".to_owned(),
-                                })?,
-                        })
-                    },
-                )?;
-                super::dml::rewrite_with_prepared_defaults(value, &resolver, &defaults)?
-            }
-        };
-        resolved.push(MultiAssignment {
-            slot,
-            column,
-            value,
-        });
-    }
-    Ok(resolved)
-}
-
 /// Runs a multi-table `DELETE`, returning the number of removed rows.
 pub(crate) fn run_multi_delete(
     delete: &tidb_ast::DeleteStmt,
@@ -1008,6 +555,7 @@ pub(crate) fn run_multi_delete(
             ctx,
             runtime,
             crate::mem_quota::label::DELETE,
+            false,
         )?
     };
 
@@ -1045,6 +593,9 @@ pub(crate) fn run_multi_delete(
 struct DeleteSourceRow {
     ids: Vec<Option<TableHandle>>,
     stored: Vec<Vec<Datum>>,
+    /// The read's row as the planner's expressions see it; kept only when
+    /// the caller evaluates assignments over it (a multi-table UPDATE).
+    raw: Vec<Datum>,
 }
 
 /// Runs the planned read under a multi-table DELETE and splits each row by
@@ -1056,6 +607,7 @@ fn delete_source_rows(
     ctx: &crate::StmtContext,
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
     memory_label: i64,
+    keep_raw: bool,
 ) -> Result<Vec<DeleteSourceRow>, DriverError> {
     use tidb_planner::physical::DeleteHandle;
     let kv_tables = tables
@@ -1119,7 +671,8 @@ fn delete_source_rows(
             }
             // Charge as rows arrive, before retaining them or pulling another chunk.
             accountant.account_row(&row).map_err(DriverError::from)?;
-            out.push(DeleteSourceRow { ids, stored });
+            let raw = if keep_raw { row } else { Vec::new() };
+            out.push(DeleteSourceRow { ids, stored, raw });
             Ok(())
         },
     )?;
@@ -1182,8 +735,8 @@ pub(crate) fn multi_dml_physical_plan(
             }
         }
     };
-    let mut dml_keep = None;
     let mut delete_multi = None;
+    let mut multi_update = None;
     let (operator, select) = match dml {
         MultiDmlRef::Update(update) => {
             let tidb_ast::UpdateKind::Multi { from, .. } = &update.kind else {
@@ -1191,28 +744,24 @@ pub(crate) fn multi_dml_physical_plan(
                     "multi-table UPDATE plan requires a join",
                 ));
             };
+            let select = multi_dml_select(
+                update.with.as_ref(),
+                &update.hints,
+                from,
+                update.where_clause.as_ref(),
+                &update.order_by,
+                update.limit.as_ref(),
+            );
+            // Go's preprocessor (1248 for an unnamed derived table) runs
+            // before the planner builds anything.
+            super::set_opr::validate_query_usage(&select, ctx)?;
             for (database, table, column) in
                 super::planner_bridge::update_target_columns(update, catalog, current_db, ctx)?
             {
                 add_target(database, table, Some(column));
             }
-            // A resolution error is raised by the statement's execution; the
-            // plan simply keeps every column.
-            dml_keep = update_prune(update, from, catalog, current_db, ctx)
-                .ok()
-                .flatten()
-                .map(|prune| prune.keep);
-            (
-                "Update",
-                multi_dml_select(
-                    update.with.as_ref(),
-                    &update.hints,
-                    from,
-                    update.where_clause.as_ref(),
-                    &update.order_by,
-                    update.limit.as_ref(),
-                ),
-            )
+            multi_update = Some(update);
+            ("Update", select)
         }
         MultiDmlRef::Delete(delete) => {
             let tidb_ast::DeleteKind::Multi { from, .. } = &delete.kind else {
@@ -1220,170 +769,37 @@ pub(crate) fn multi_dml_physical_plan(
                     "multi-table DELETE plan requires a join",
                 ));
             };
+            let select = multi_dml_select(
+                delete.with.as_ref(),
+                &delete.hints,
+                from,
+                delete.where_clause.as_ref(),
+                &[],
+                None,
+            );
+            super::set_opr::validate_query_usage(&select, ctx)?;
             for (database, table) in delete_privilege_tables(delete, catalog, current_db, ctx)? {
                 add_target(database, table, None);
             }
             delete_multi = Some(delete_multi_input(delete, catalog, current_db, ctx)?);
-            (
-                "Delete",
-                multi_dml_select(
-                    delete.with.as_ref(),
-                    &delete.hints,
-                    from,
-                    delete.where_clause.as_ref(),
-                    &[],
-                    None,
-                ),
-            )
+            ("Delete", select)
         }
     };
     let specs: Vec<_> = specs.into_values().collect();
     let keep = match delete_multi {
         Some(input) => super::dml::DmlKeep::MultiDelete(input),
-        None => super::dml::DmlKeep::Fixed(dml_keep),
+        None => super::dml::DmlKeep::Auto,
     };
-    super::dml::physical_multi_dml_plan(operator, &select, catalog, current_db, ctx, &specs, keep)
-}
-
-/// What a multi-table write's read keeps (Go prunes the rest from the read:
-/// `buildUpdate`'s `used` set, `pruneAndBuildColPositionInfoForDelete`).
-pub(crate) struct MultiPrune {
-    /// Per source slot, per position of its part of a read row (the stored
-    /// columns, then a heap table's hidden handle), whether the read keeps it.
-    present: Vec<Vec<bool>>,
-    /// The `(table or alias, column)` pairs kept, in lower case, which is how
-    /// the planner recognizes its own columns.
-    pub(crate) keep: std::collections::BTreeSet<(String, String)>,
-}
-
-impl MultiPrune {
-    /// The width of a pruned read's row.
-    fn width(&self) -> usize {
-        self.present.iter().flatten().filter(|kept| **kept).count()
-    }
-
-    /// A full-width row, NULL where the read pruned a column.
-    fn expand(&self, row: Vec<Datum>) -> Vec<Datum> {
-        let mut values = row.into_iter();
-        self.present
-            .iter()
-            .flatten()
-            .map(|kept| {
-                if *kept {
-                    values.next().unwrap_or(Datum::Null)
-                } else {
-                    Datum::Null
-                }
-            })
-            .collect()
-    }
-}
-
-/// A table the catalog stores rows for. A virtual (memory) table has none: its
-/// scan reads the columns the plan keeps and no hidden handle, as a derived
-/// table's does.
-fn stored_table<'a>(catalog: &'a Catalog, database: &str, name: &str) -> Option<&'a TableEntry> {
-    catalog
-        .get_in(database, name)
-        .filter(|_| !super::catalog::is_virtual_schema_table(database, name))
-}
-
-/// The columns of each source's part of a read row, in order.
-fn part_column_names(source: &MultiLayout, catalog: &Catalog) -> Vec<Vec<String>> {
-    source
-        .tables
-        .iter()
-        .map(|table| {
-            let entry = match &table.origin {
-                SourceOrigin::Base { database, name } => stored_table(catalog, database, name),
-                SourceOrigin::Derived => None,
-            };
-            match entry {
-                Some(TableEntry::Kv(kv)) => {
-                    let mut names: Vec<String> = kv
-                        .columns()
-                        .iter()
-                        .map(|column| column.name.clone())
-                        .collect();
-                    if kv.pk_handle_offset().is_none() && kv.common_handle_offsets().is_empty() {
-                        names.push(tidb_model::column::EXTRA_HANDLE_NAME.to_owned());
-                    }
-                    names
-                }
-                _ => table.columns.iter().map(|(name, _)| name.clone()).collect(),
-            }
-        })
-        .collect()
-}
-
-/// [`MultiPrune`] for a decision `keep(slot, position, column name)`; `None`
-/// when it keeps everything.
-fn build_prune(
-    source: &MultiLayout,
-    catalog: &Catalog,
-    keep: impl Fn(usize, usize, &str) -> bool,
-) -> Option<MultiPrune> {
-    let names = part_column_names(source, catalog);
-    let mut present = Vec::with_capacity(names.len());
-    let mut pairs = std::collections::BTreeSet::new();
-    for (slot, columns) in names.iter().enumerate() {
-        let visible = source.tables[slot].visible.go_to_lower();
-        let mut flags = Vec::with_capacity(columns.len());
-        for (position, name) in columns.iter().enumerate() {
-            let kept = keep(slot, position, name);
-            if kept {
-                pairs.insert((visible.clone(), name.go_to_lower()));
-            }
-            flags.push(kept);
-        }
-        present.push(flags);
-    }
-    present
-        .iter()
-        .flatten()
-        .any(|kept| !kept)
-        .then_some(MultiPrune {
-            present,
-            keep: pairs,
-        })
-}
-
-/// Go `buildUpdate`: the read keeps every column of an updated alias and the
-/// columns the SET expressions read from the others.
-fn prune_for_update(
-    source: &MultiLayout,
-    assignments: &[MultiAssignment],
-    catalog: &Catalog,
-) -> Option<MultiPrune> {
-    let mut referenced = std::collections::BTreeSet::new();
-    for assignment in assignments {
-        for column in tidb_expr::simple_expr::extract_columns(&assignment.value) {
-            let Some(index) = usize::try_from(column.index).ok() else {
-                continue;
-            };
-            if let Some(slot) = source.table_of_column(index) {
-                let table = &source.tables[slot];
-                referenced.insert((slot, table.columns[index - table.offset].0.go_to_lower()));
-            }
-        }
-    }
-    build_prune(source, catalog, |slot, _, name| {
-        assignments.iter().any(|assignment| assignment.slot == slot)
-            || referenced.contains(&(slot, name.go_to_lower()))
-    })
-}
-
-fn update_prune(
-    update: &tidb_ast::UpdateStmt,
-    from: &tidb_ast::Join,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Option<MultiPrune>, DriverError> {
-    let source = build_multi_layout(from, update.with.as_ref(), catalog, current_db, ctx)?;
-    let scope = source.scope();
-    let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
-    Ok(prune_for_update(&source, &assignments, catalog))
+    super::dml::physical_multi_dml_plan(
+        operator,
+        &select,
+        multi_update,
+        catalog,
+        current_db,
+        ctx,
+        &specs,
+        keep,
+    )
 }
 
 /// What the planner needs to prune a multi-table DELETE's read and lay out
@@ -1404,148 +820,6 @@ fn delete_multi_input(
             !crate::foreign_key::referring(catalog, &target.database, &target.table).is_empty()
         });
     Ok(DeleteMultiInput { targets, has_fk })
-}
-
-/// Runs the planned read (the `SelectPlan` under the DML root) of a
-/// multi-table write and splits each output row
-/// into the per-table row identities the write needs.
-///
-/// Go reads these identities from `tblID2Handle`'s handle columns in the
-/// optimized `SelectPlan`'s schema (`logical_plan_builder.go:6200`): each
-/// base table contributes its stored columns followed by `_tidb_rowid` when
-/// its handle is not the primary key, the DML build keeps the merged
-/// (uncoalesced) join schema, and a NULL handle is an outer join's padded
-/// side (`unmatchedOuterRow`).
-fn planned_source_rows(
-    source: &MultiLayout,
-    plan: &mut tidb_planner::physical::PhysicalPlan,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-    runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
-    memory_label: i64,
-    prune: Option<&MultiPrune>,
-) -> Result<Vec<SourceRow>, DriverError> {
-    struct Slot<'a> {
-        width: usize,
-        kv: Option<&'a crate::kv_table::KvTable>,
-        stored: usize,
-        visible: usize,
-        extra: bool,
-    }
-    let mut slots = Vec::with_capacity(source.tables.len());
-    for table in &source.tables {
-        let entry = match &table.origin {
-            SourceOrigin::Base { database, name } => stored_table(catalog, database, name),
-            SourceOrigin::Derived => None,
-        };
-        let kv = match entry {
-            Some(TableEntry::Kv(kv)) => Some(&**kv),
-            _ => None,
-        };
-        let extra = kv.is_some_and(|kv| {
-            kv.pk_handle_offset().is_none() && kv.common_handle_offsets().is_empty()
-        });
-        let stored = kv.map_or(table.columns.len(), |kv| kv.columns().len());
-        slots.push(Slot {
-            width: stored + usize::from(extra),
-            kv,
-            stored,
-            visible: table.columns.len() - usize::from(table.extra_handle),
-            extra: table.extra_handle,
-        });
-    }
-    let expected: usize = slots.iter().map(|slot| slot.width).sum();
-    let zone = ctx.session_zone();
-    let accountant = ctx.statement_memory().write_accountant(memory_label);
-    let mut out = Vec::new();
-    let collected = super::physical_builder::execute_dml_source(
-        plan,
-        catalog,
-        ctx,
-        runtime.is_some(),
-        |row| {
-            // A pruned read carries only the columns the write needs; a plan
-            // cached before the decision changed carries them all, which the
-            // row width tells apart.
-            let row = match prune {
-                Some(prune) if row.len() == prune.width() && row.len() != expected => {
-                    prune.expand(row)
-                }
-                _ => row,
-            };
-            if row.len() != expected {
-                return Err(DriverError::unsupported(format!(
-                    "a multi-table read returned {} columns, expected {expected}",
-                    row.len()
-                )));
-            }
-            let mut ids = Vec::with_capacity(slots.len());
-            let mut values = Vec::with_capacity(source.width());
-            let mut stored = Vec::with_capacity(slots.len());
-            let mut start = 0;
-            for slot in &slots {
-                let part = &row[start..start + slot.width];
-                start += slot.width;
-                let id = match slot.kv {
-                    None => None,
-                    Some(kv) => {
-                        let handle = if let Some(offset) = kv.pk_handle_offset() {
-                            match &part[offset] {
-                                Datum::Int(value) => Some(TableHandle::Int(*value)),
-                                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                                _ => None,
-                            }
-                        } else if !kv.common_handle_offsets().is_empty() {
-                            let handle_values: Vec<Datum> = kv
-                                .common_handle_offsets()
-                                .iter()
-                                .map(|offset| part[*offset].clone())
-                                .collect();
-                            if handle_values
-                                .iter()
-                                .any(|value| matches!(value, Datum::Null))
-                            {
-                                None
-                            } else {
-                                Some(
-                                    kv.common_handle_of_values(&handle_values, &zone)
-                                        .map_err(kv_write_error)?,
-                                )
-                            }
-                        } else {
-                            match &part[slot.stored] {
-                                Datum::Int(value) => Some(TableHandle::Int(*value)),
-                                Datum::UInt(value) => Some(TableHandle::Int(*value as i64)),
-                                _ => None,
-                            }
-                        };
-                        handle
-                    }
-                };
-                ids.push(id);
-                values.extend_from_slice(&part[..slot.visible]);
-                if slot.extra {
-                    values.push(part[slot.stored].clone());
-                }
-                accountant
-                    .account_row(&part[..slot.stored])
-                    .map_err(DriverError::from)?;
-                stored.push(part[..slot.stored].to_vec());
-            }
-            // Charge as rows arrive, before retaining them or pulling another chunk.
-            accountant.account_row(&values).map_err(DriverError::from)?;
-            out.push(SourceRow {
-                ids,
-                values,
-                stored,
-            });
-            Ok(())
-        },
-    )?;
-    if let Some(runtime) = runtime {
-        runtime.extend(collected);
-    }
-    Ok(out)
 }
 
 /// The EXPLAIN plan of a multi-table `UPDATE`/`DELETE`: Go's `Update`/

@@ -172,6 +172,8 @@ pub mod cte;
 pub mod delete_pruning;
 pub mod dml_source;
 mod dml_targets;
+pub mod update_targets;
+mod update_build;
 pub mod ordered_list;
 pub mod expand;
 pub mod field_name;
@@ -760,6 +762,10 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub delete_multi: Option<delete_pruning::DeleteMultiInput>,
     /// The layouts [`Self::delete_multi`] produced, for the `Delete` root.
     pub delete_tables: Vec<crate::physical::DeleteTablePos>,
+    /// The layouts of a multi-table UPDATE's updated aliases.
+    pub update_tables: Vec<crate::physical::UpdateTablePos>,
+    /// A multi-table UPDATE's assignments.
+    pub update_assigns: Vec<crate::physical::UpdateAssign>,
 
     /// Go `SessionVars`, narrowed exactly as the rewriter narrows it.
     pub flags: RewriterSessionFlags,
@@ -1564,6 +1570,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             delete_col_pos: None,
             delete_multi: None,
             delete_tables: Vec::new(),
+            update_tables: Vec::new(),
+            update_assigns: Vec::new(),
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: Rc::new(from::JoinHints::default()),

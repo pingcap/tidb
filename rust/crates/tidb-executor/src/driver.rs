@@ -475,6 +475,12 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 statement: if statement == "UPDATE" { "UPDATE" } else { "DELETE" },
             }
         }
+        tidb_planner::plan_base::PlanErrorKind::BadGeneratedColumn(column, table) => {
+            DriverError::BadGeneratedColumn {
+                column: column.clone(),
+                table: table.clone(),
+            }
+        }
         tidb_planner::plan_base::PlanErrorKind::UnknownTableInClause(table, clause) => {
             DriverError::Mysql(MysqlError::terror(
                 &tidb_error::plannererrors::ERR_UNKNOWN_TABLE,

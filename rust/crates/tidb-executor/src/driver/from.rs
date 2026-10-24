@@ -105,14 +105,6 @@ impl FromScope {
         }
     }
 
-    /// Every column of the scope in row order.
-    pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
-        self.tables
-            .iter()
-            .flat_map(|t| t.columns.iter().cloned())
-            .collect()
-    }
-
     pub(crate) fn width(&self) -> usize {
         self.tables.iter().map(|t| t.columns.len()).sum()
     }
@@ -376,143 +368,11 @@ impl ColumnResolver for ScopeResolver<'_> {
     }
 }
 
-/// A type-carrying stand-in value for a column of type `ft`.
-///
-/// Type inference over the probe run needs a datum of the right KIND, and
-/// nothing more -- so this is the neutral value of that kind, never a bound
-/// that arithmetic in the subquery could overflow. Types with no obvious
-/// neutral value fall back to NULL, which is what the probe used before types
-/// were carried at all.
-pub(crate) fn probe_datum(ft: &FieldType) -> Datum {
-    match tidb_datatype::get_min_value(ft) {
-        Datum::Int(_) => Datum::Int(0),
-        Datum::UInt(_) => Datum::UInt(0),
-        Datum::Real(_) => Datum::Real(0.0),
-        Datum::Float32(_) => Datum::Float32(0.0),
-        Datum::Decimal(_) => Datum::new_decimal(tidb_datatype::Decimal::from_signed_literal("0")),
-        other => other,
-    }
-}
-
 /// One common column of a `NATURAL`/`USING` join: the row offset that stays
 /// visible under the shared name, and the one that is coalesced away.
 struct CommonColumn {
     visible: usize,
     redundant: usize,
-}
-
-/// Go `PlanBuilder.coalesceCommonColumns`, as the naming half of a join.
-///
-/// The whole of `NATURAL JOIN` and `JOIN ... USING` is this: an ordinary join
-/// whose `ON` is `l.c = r.c` for every common column `c`, plus a rule about
-/// which names the result answers to. Nothing about the ROW changes -- it is
-/// still the left side's columns followed by the right side's -- so this
-/// rewrites only `scope`'s [`FromScope::star`]
-/// and [`FromScope::coalesced`], and every consumer downstream (`*`, name
-/// resolution, `ONLY_FULL_GROUP_BY`, pruning) reads the scope it always did.
-///
-/// Captured from Go, and the reason the two orders below are separate:
-///
-/// * the common columns come FIRST, ordered by the LEFT side's own column
-///   order -- not by the order the `USING` list writes them (`m1 JOIN m2
-///   USING (b, a)` and `USING (a, b)` both report `a, b, ...`);
-/// * a RIGHT join reports right-then-left throughout, so its common columns
-///   take the RIGHT side's order and the surviving copy is the RIGHT side's
-///   column. That is Go's `leftPlan, rightPlan = rightPlan, leftPlan` swap,
-///   and it is what makes the survivor always the OUTER (row-preserving)
-///   side, whose value is never the NULL-padded one.
-///
-/// `using` empty means `NATURAL`: every common name participates.
-pub(crate) fn coalesce_common_columns(
-    scope: &mut FromScope,
-    left_visible: Vec<(usize, String, FieldType)>,
-    right_visible: Vec<(usize, String, FieldType)>,
-    join_tp: tidb_ast::JoinType,
-    using: &[String],
-) -> Result<(), DriverError> {
-    // The RIGHT-join mirror: from here on "left" means the outer side.
-    let (outer, inner) = match join_tp {
-        tidb_ast::JoinType::Right => (right_visible, left_visible),
-        _ => (left_visible, right_visible),
-    };
-    let lower = |name: &str| name.go_to_lower();
-    let filter: Vec<String> = using.iter().map(|name| lower(name)).collect();
-    let named = |name: &str| filter.is_empty() || filter.iter().any(|f| f == &lower(name));
-
-    // Go checks ambiguity BEFORE matching: a name that a side offers twice
-    // (which only a join can produce) has no single column to coalesce.
-    // Without a `USING` filter the check applies to the common names only,
-    // with one it applies to every name the filter mentions.
-    let ambiguous = |side: &[(usize, String, FieldType)], name: &str| {
-        side.iter()
-            .filter(|(_, candidate, _)| candidate.go_lower_eq(name))
-            .count()
-            > 1
-    };
-    let in_both = |name: &str| {
-        outer.iter().any(|(_, n, _)| n.go_lower_eq(name))
-            && inner.iter().any(|(_, n, _)| n.go_lower_eq(name))
-    };
-    for (_, name, _) in outer.iter().chain(inner.iter()) {
-        // `NATURAL` has only the common names to coalesce, so only those can
-        // be ambiguous; `USING` answers for every name it lists.
-        if !named(name) || (filter.is_empty() && !in_both(name)) {
-            continue;
-        }
-        if ambiguous(&outer, name) || ambiguous(&inner, name) {
-            return Err(DriverError::AmbiguousColumnInClause {
-                column: lower(name),
-                clause: "from clause".to_owned(),
-            });
-        }
-    }
-
-    let mut common: Vec<CommonColumn> = Vec::new();
-    let mut taken: Vec<String> = Vec::new();
-    for (offset, name, _) in &outer {
-        // `USING (a, a)`: Go's filter is a set, so a name coalesces once.
-        if !named(name) || taken.contains(&lower(name)) {
-            continue;
-        }
-        let Some((inner_offset, ..)) = inner.iter().find(|(_, n, _)| n.go_lower_eq(name)) else {
-            continue;
-        };
-        taken.push(lower(name));
-        common.push(CommonColumn {
-            visible: *offset,
-            redundant: *inner_offset,
-        });
-    }
-
-    // A `USING` name neither side pairs up is Go's ErrUnknownColumn against
-    // the `from clause` -- the same 1054 a missing column anywhere reports.
-    if let Some(missing) = filter.iter().find(|name| !taken.contains(name)) {
-        return Err(DriverError::UnknownColumnInClause {
-            column: missing.clone(),
-            clause: "from clause".to_owned(),
-        });
-    }
-
-    // Display order: the common columns, then the outer side's remaining
-    // columns, then the inner side's.
-    let remaining = |side: &[(usize, String, FieldType)], common: &[CommonColumn]| -> Vec<usize> {
-        side.iter()
-            .map(|(offset, ..)| *offset)
-            .filter(|offset| {
-                !common
-                    .iter()
-                    .any(|c| c.visible == *offset || c.redundant == *offset)
-            })
-            .collect()
-    };
-    scope.star = common
-        .iter()
-        .map(|c| c.visible)
-        .chain(remaining(&outer, &common))
-        .chain(remaining(&inner, &common))
-        .collect();
-    scope.coalesced.extend(common.iter().map(|c| c.redundant));
-    Ok(())
 }
 
 /// The table a single-table `UPDATE`/`DELETE` targets.

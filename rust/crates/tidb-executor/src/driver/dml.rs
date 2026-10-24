@@ -254,6 +254,7 @@ pub(crate) fn physical_dml_plan(
 pub(crate) fn physical_multi_dml_plan(
     operator: &str,
     source: &tidb_ast::QueryStmt,
+    update: Option<&tidb_ast::UpdateStmt>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -263,7 +264,7 @@ pub(crate) fn physical_multi_dml_plan(
     physical_dml_plan_with_cache_mode(
         operator,
         Some(source),
-        None,
+        update,
         catalog,
         current_db,
         ctx,
@@ -319,6 +320,8 @@ fn physical_dml_plan_with_cache_mode(
     let mut update_expressions = Vec::new();
     let mut delete_col_pos = None;
     let mut delete_tables = Vec::new();
+    let mut update_tables = Vec::new();
+    let mut update_assigns = Vec::new();
     let mut fast_update_list = false;
 
     // Go `buildInsert` builds the target's schema first
@@ -365,7 +368,10 @@ fn physical_dml_plan_with_cache_mode(
             )
         }
         Some(tidb_ast::QueryStmt::Select(select)) => {
-            let allow_fast_plan = update.is_none_or(|update| update_allows_fast_plan(update));
+            let multi_update = update
+                .filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }));
+            let allow_fast_plan = multi_update.is_none()
+                && update.is_none_or(|update| update_allows_fast_plan(update));
             let fast = (!use_plan_cache && allow_fast_plan)
                 .then(|| {
                     super::access::try_fast_dml_point_physical_plan_with_allocator(
@@ -406,27 +412,27 @@ fn physical_dml_plan_with_cache_mode(
                 Some(fast)
             } else {
                 let update_assignment_values = update
+                    .filter(|_| multi_update.is_none())
                     .map(|update| update_assignment_values_for_plan(update, catalog, current_db))
                     .transpose()?;
                 // Go `buildDelete` prunes the read to what removing a record
                 // needs (the planner's `pruneAndBuildColPositionInfoForDelete`);
                 // a point plan above keeps every column. Foreign keys other
                 // tables reference to this one decline the pruning.
-                let (delete_prune, delete_prune_has_fk, delete_multi) = match keep {
-                    DmlKeep::Fixed(keep) => (keep, None, None),
+                let (delete_prune_has_fk, delete_multi) = match keep {
                     DmlKeep::Auto => (
-                        None,
                         operator
                             .eq_ignore_ascii_case("Delete")
                             .then(|| delete_has_fk(select, catalog, current_db, ctx)),
                         None,
                     ),
-                    DmlKeep::MultiDelete(input) => (None, None, Some(input)),
+                    DmlKeep::MultiDelete(input) => (None, Some(input)),
                 };
-                let (plan, expressions, root, col_pos, tables) =
+                let built =
                     super::planner_bridge::physical_dml_source_plan_with_allocators(
                         select,
                         update_assignment_values.as_deref(),
+                        multi_update,
                         catalog,
                         current_db,
                         ctx,
@@ -434,16 +440,17 @@ fn physical_dml_plan_with_cache_mode(
                         &plan_ids,
                         &column_ids,
                         operator,
-                        delete_prune,
                         delete_prune_has_fk,
                         delete_multi,
                     )
                     .map_err(super::planner_error_to_driver)?;
-                update_expressions = expressions;
-                delete_col_pos = col_pos;
-                delete_tables = tables;
-                root_base = Some(root);
-                Some(plan)
+                update_expressions = built.update_expressions;
+                delete_col_pos = built.delete_col_pos;
+                delete_tables = built.delete_tables;
+                update_tables = built.update_tables;
+                update_assigns = built.update_assigns;
+                root_base = Some(built.root);
+                Some(built.plan)
             }
         }
         Some(query) => Some(
@@ -479,6 +486,8 @@ fn physical_dml_plan_with_cache_mode(
         delete_col_pos,
         delete_tables,
         fast_update_list,
+        update_tables,
+        update_assigns,
     });
     super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
     Ok(plan)
@@ -2842,7 +2851,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
     }
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
-    let (physical_source, update_expressions, fast_update_list, fk_triggers) = match physical_plan {
+    let (physical_source, update_expressions, fast_update_list, fk_triggers, multi_layout) = match physical_plan {
         Some(plan) => {
             let tidb_planner::physical::PhysicalPlan::Dml(root) = plan else {
                 return Err(DriverError::unsupported(
@@ -2860,9 +2869,10 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
                 Some(root.update_expressions.as_slice()),
                 root.fast_update_list,
                 root.fk_triggers.as_slice(),
+                (root.update_tables.as_slice(), root.update_assigns.as_slice()),
             )
         }
-        None => (None, None, false, &[][..]),
+        None => (None, None, false, &[][..], (&[][..], &[][..])),
     };
     run_update_with_physical(
         update,
@@ -2873,6 +2883,7 @@ pub(crate) fn run_update_stmt_with_physical_and_stats(
         update_expressions,
         fast_update_list,
         fk_triggers,
+        multi_layout,
         runtime,
     )
 }
@@ -3658,6 +3669,10 @@ fn run_update_with_physical(
     planned_update_expressions: Option<&[Option<Expression>]>,
     fast_update_list: bool,
     fk_triggers: &[FkTriggerNode],
+    multi_layout: (
+        &[tidb_planner::physical::UpdateTablePos],
+        &[tidb_planner::physical::UpdateAssign],
+    ),
     runtime: Option<&mut super::physical_builder::PhysicalRuntimeStats>,
 ) -> Result<u64, DriverError> {
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
@@ -3669,14 +3684,14 @@ fn run_update_with_physical(
         // A multi-table write reads a joined row source that carries every
         // target's row identity, which is a different read path -- see
         // `multi_dml`'s shared metadata and row-identity owners.
-        tidb_ast::UpdateKind::Multi { from, .. } => {
+        tidb_ast::UpdateKind::Multi { .. } => {
             return super::multi_dml::run_multi_update(
                 update,
-                from,
                 catalog,
-                current_db,
                 ctx,
                 physical_source,
+                multi_layout,
+                planned_update_expressions.unwrap_or_default(),
                 fk_triggers,
                 runtime,
             );
@@ -4238,8 +4253,6 @@ pub(crate) fn run_delete_stmt_with_physical_and_stats(
 pub(crate) enum DmlKeep {
     /// A single-table statement: the planner prunes a DELETE's read.
     Auto,
-    /// The caller decided (a multi-table statement); `None` keeps everything.
-    Fixed(Option<std::collections::BTreeSet<(String, String)>>),
     /// A multi-table DELETE: the planner prunes each target's read and lays
     /// out its rows.
     MultiDelete(tidb_planner::plan_builder::delete_pruning::DeleteMultiInput),

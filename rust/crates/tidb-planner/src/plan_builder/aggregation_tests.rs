@@ -1418,3 +1418,107 @@ fn multi_table_delete_targets_resolve_as_collect_table_name_does() {
     let error = resolve("DELETE x FROM t").err().expect("refused");
     assert_eq!(error.message(), "Unknown table 'x' in MULTI DELETE");
 }
+
+#[test]
+fn update_set_columns_resolve_to_the_updatable_base_tables() {
+    // Go `buildUpdateLists`: each SET column is found among the read's output
+    // names and its source must be a base table of the outer FROM.
+    let harness = Harness::new();
+    let resolve = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the UPDATE parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        let tidb_ast::DmlStmt::Update(update) = &*dml else {
+            panic!("not an UPDATE");
+        };
+        harness.builder().resolve_update_targets(update)
+    };
+    let targets = resolve("UPDATE t AS x, t AS y SET x.b = 1, y.c = 2, x.b = 3").unwrap();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|target| (target.database.as_str(), target.table.as_str(), target.column.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("test", "t", "b"), ("test", "t", "c")]
+    );
+    let error = resolve("UPDATE (SELECT * FROM t) AS d, t SET d.b = 1")
+        .err()
+        .expect("refused");
+    assert_eq!(
+        error.message(),
+        "The target table d of the UPDATE is not updatable"
+    );
+    let error = resolve("UPDATE t AS x, t AS y SET z = 1")
+        .err()
+        .expect("refused");
+    assert_eq!(error.message(), "Unknown column 'z' in 'field list'");
+    let error = resolve("UPDATE t AS x, t AS y SET b = 1")
+        .err()
+        .expect("refused");
+    assert_eq!(error.message(), "Column 'b' in field list is ambiguous");
+}
+
+#[test]
+fn multi_table_update_keeps_updated_aliases_and_what_set_reads() {
+    // Go `buildUpdate`: the read keeps every column of an updated alias and
+    // only the columns the SET expressions read from the others;
+    // `buildUpdateTblColPosInfos` says where each updated table's row sits.
+    use crate::physical::{DeleteHandle, UpdateAssign};
+    let harness = Harness::new();
+    let build = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the UPDATE parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        let tidb_ast::DmlStmt::Update(update) = &*dml else {
+            panic!("not an UPDATE");
+        };
+        let tidb_ast::UpdateKind::Multi { from, .. } = &update.kind else {
+            panic!("not a multi-table UPDATE");
+        };
+        let select = super::dml_source::dml_source_select(
+            update.with.as_ref(),
+            &update.hints,
+            (**from).clone(),
+            update.where_clause.as_ref(),
+            &update.order_by,
+            update.limit.as_ref(),
+        );
+        let mut builder = harness.builder();
+        let (plan, expressions, _) =
+            builder.build_multi_update_dml_source(&select, update, false)?;
+        Ok::<_, crate::plan_base::PlanError>((
+            plan.schema().map(|schema| schema.columns.len()),
+            expressions.len(),
+            builder.update_tables,
+            builder.update_assigns,
+        ))
+    };
+    let (width, expressions, tables, assigns) =
+        build("UPDATE t AS t1, t AS t2 SET t1.b = t2.c + 1").unwrap();
+    assert_eq!(width, Some(4), "t1 whole, plus t2.c");
+    assert_eq!(expressions, 1);
+    assert_eq!(tables.len(), 1);
+    assert_eq!(tables[0].visible, "t1");
+    assert_eq!(tables[0].columns, vec![(0, 0), (1, 1), (2, 2)]);
+    assert_eq!(tables[0].handle, DeleteHandle::Int(0));
+    assert_eq!(
+        assigns,
+        vec![UpdateAssign {
+            table: 0,
+            column: 1,
+            expr: 0
+        }]
+    );
+    let (width, _, tables, assigns) =
+        build("UPDATE t AS t1, t AS t2 SET t2.b = 1, t1.c = 2").unwrap();
+    assert_eq!(width, Some(6));
+    assert_eq!(tables.len(), 2);
+    assert_eq!(tables[0].visible, "t1", "the read's order, not the SET order");
+    assert_eq!(tables[1].columns, vec![(3, 0), (4, 1), (5, 2)]);
+    assert_eq!(assigns[0].table, 1);
+    assert_eq!(assigns[1].table, 0);
+    let error = build("UPDATE t AS t1, t AS t2 SET t1.nope = 1").err().unwrap();
+    assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
+}

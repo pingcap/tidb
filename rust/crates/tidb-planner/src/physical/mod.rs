@@ -2920,6 +2920,43 @@ pub struct DeleteTablePos {
     pub handle: DeleteHandle,
 }
 
+/// Go `physicalop.TblColPosInfo` of one table a multi-table UPDATE writes:
+/// where its columns and handle sit in a row of the (pruned) read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateTablePos {
+    /// Go `TblID`.
+    pub table_id: i64,
+    /// The base table's schema.
+    pub database: String,
+    /// The base table's stored name.
+    pub table: String,
+    /// The name the statement qualifies the source with (the alias, else the
+    /// table name), as written.
+    pub visible: String,
+    /// The number of stored columns the table has.
+    pub stored_width: usize,
+    /// `(row position, table column offset)` of every stored column; an
+    /// updated alias keeps its whole row in the read.
+    pub columns: Vec<(usize, usize)>,
+    /// Go `HandleCols`, resolved to row positions.
+    pub handle: DeleteHandle,
+    /// The partitions a `PARTITION (...)` clause on the reference names.
+    pub partitions: Vec<String>,
+}
+
+/// One assignment of a multi-table UPDATE (Go `expression.Assignment`): the
+/// updated table, its column offset (`stored_width` for `_tidb_rowid`), and
+/// the index of the value in [`PhysicalDmlRoot::update_expressions`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UpdateAssign {
+    /// Index into [`PhysicalDmlRoot::update_tables`].
+    pub table: usize,
+    /// The table column's offset.
+    pub column: usize,
+    /// Index into the assignments' expressions.
+    pub expr: usize,
+}
+
 /// The cached physical root of an INSERT/UPDATE/DELETE whose source is a
 /// SELECT. Go's rebuild visitor descends into `SelectPlan` and otherwise has
 /// no DML-local range state to update.
@@ -2947,6 +2984,11 @@ pub struct PhysicalDmlRoot {
     /// ordered list, already cast to the target columns by
     /// `buildOrderedList`.
     pub fast_update_list: bool,
+    /// Go `Update.TblColPosInfos` of a multi-table UPDATE, one per updated
+    /// alias in the read's order.
+    pub update_tables: Vec<UpdateTablePos>,
+    /// A multi-table UPDATE's assignments (Go `Update.OrderedList`).
+    pub update_assigns: Vec<UpdateAssign>,
 }
 
 /// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
@@ -4964,6 +5006,8 @@ impl PhysicalPlan {
                 delete_col_pos: op.delete_col_pos.clone(),
                 delete_tables: op.delete_tables.clone(),
                 fast_update_list: op.fast_update_list,
+                update_tables: op.update_tables.clone(),
+                update_assigns: op.update_assigns.clone(),
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

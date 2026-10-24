@@ -47,7 +47,7 @@ use tidb_planner::plan_builder::catalog::TableSource;
 use tidb_planner::stats_info::StatsInfo;
 
 use super::FromTable;
-use super::catalog::{Catalog, TableEntry};
+use super::catalog::Catalog;
 use super::from::FromScope;
 
 enum ListColumnsLocated {
@@ -954,138 +954,21 @@ pub(super) fn update_target_columns(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<(String, String, String)>, super::DriverError> {
-    use super::{split_table_path, DriverError};
-    use tidb_ast::{JoinNode, UpdateKind};
-    use tidb_datatype::QualifiedColumnName;
-
-    // A fast single-table update has only one possible write owner; a CTE
-    // target resolves its columns like any source before Go refuses it.
-    let cte_target;
-    let from = match &update.kind {
-        UpdateKind::Single(table) if is_cte(update.with.as_ref(), table) => {
-            cte_target = tidb_ast::Join {
-                left: JoinNode::Table(table.clone()),
-                right: None,
-                tp: tidb_ast::JoinType::Cross,
-                straight: false,
-                on: None,
-                using: Vec::new(),
-                natural: false,
-                explicit_parens: false,
-            };
-            &cte_target
-        }
-        UpdateKind::Single(table) => {
-            let (database, name) = split_table_path(&table.name, current_db)?;
-            return Ok(update
-                .assignments
-                .iter()
-                .filter_map(|assignment| assignment.col.last())
-                .map(|column| (database.to_owned(), name.to_owned(), column.clone()))
-                .collect());
-        }
-        UpdateKind::Multi { from, .. } => from,
-    };
-    let plan = logical_from_plan(from, update.with.as_ref(), catalog, current_db, ctx, true)
+    let source = catalog
+        .planner_catalog(current_db, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx)
+        .with_related_tables_for_mdl(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let targets = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .resolve_update_targets(update)
         .map_err(super::planner_error_to_driver)?;
-
-    // Go's updatableTableListResolver visits only the outer table sources;
-    // a derived query's base tables do not make that derived source writable.
-    fn collect_tables<'a>(node: &'a JoinNode, tables: &mut Vec<&'a tidb_ast::TableRef>) {
-        match node {
-            JoinNode::Table(table) => tables.push(table),
-            JoinNode::Join(join) => {
-                collect_tables(&join.left, tables);
-                if let Some(right) = &join.right {
-                    collect_tables(right, tables);
-                }
-            }
-            JoinNode::Derived { .. } => {}
-        }
-    }
-    let mut tables = Vec::new();
-    collect_tables(&from.left, &mut tables);
-    if let Some(right) = &from.right {
-        collect_tables(right, &mut tables);
-    }
-    let mut targets = Vec::new();
-    for assignment in &update.assignments {
-        let column = match assignment.col.as_slice() {
-            [column] => QualifiedColumnName::new("", "", column),
-            [table, column] => QualifiedColumnName::new("", table, column),
-            [database, table, column] => QualifiedColumnName::new(database, table, column),
-            _ => {
-                return Err(DriverError::UnknownColumnInClause {
-                    column: assignment.col.join("."),
-                    clause: "field list".to_owned(),
-                })
-            }
-        };
-        let index = tidb_expr::find_field_name(plan.output_names(), &column)
-            .map_err(|_| DriverError::AmbiguousColumnInClause {
-                column: column.display_name(),
-                clause: "field list".to_owned(),
-            })?
-            .ok_or_else(|| DriverError::UnknownColumnInClause {
-                column: column.column.original.clone(),
-                clause: "field list".to_owned(),
-            })?;
-        let name = &plan.output_names()[index].names;
-        let mut target = None;
-        for table in &tables {
-            // Go `buildUpdateLists`: `if isCTE(tlW) || IsView() ||
-            // IsSequence()` is 1288. A CTE is no stored table, so it is
-            // recognised before any schema is resolved for it (it needs none).
-            if is_cte(update.with.as_ref(), table) {
-                let visible = table
-                    .alias
-                    .as_deref()
-                    .or_else(|| table.name.last().map(String::as_str))
-                    .unwrap_or_default();
-                if visible.go_lower_eq(&name.table.original) {
-                    break;
-                }
-                continue;
-            }
-            let (database, original) = split_table_path(&table.name, current_db)?;
-            let visible = table.alias.as_deref().unwrap_or(original);
-            // Go `updatableTableListResolver.Leave` lists an aliased table
-            // under its alias with `Schema` blanked, and `buildUpdateLists`
-            // skips the schema check for a blank one.
-            if !visible.go_lower_eq(&name.table.original)
-                || (table.alias.is_none() && !database.go_lower_eq(&name.database.original))
-            {
-                continue;
-            }
-            if matches!(
-                catalog.get_in(database, original),
-                Some(TableEntry::Mem(_) | TableEntry::Kv(_))
-            ) {
-                target = Some((
-                    database.to_owned(),
-                    original.to_owned(),
-                    name.column.original.clone(),
-                ));
-            }
-            break;
-        }
-        let target = target.ok_or_else(|| DriverError::NonUpdatableTable {
-            table: name.table.original.clone(),
-            statement: "UPDATE",
-        })?;
-        // One write target per table column, compared as Go's `.L` names.
-        if !targets
-            .iter()
-            .any(|(database, table, column): &(String, String, String)| {
-                database.go_lower_eq(&target.0)
-                    && table.go_lower_eq(&target.1)
-                    && column.go_lower_eq(&target.2)
-            })
-        {
-            targets.push(target);
-        }
-    }
-    Ok(targets)
+    Ok(targets
+        .into_iter()
+        .map(|target| (target.database, target.table, target.column))
+        .collect())
 }
 
 /// Builds the name-resolution scope of one `FROM` node through Go's logical
@@ -2586,52 +2469,6 @@ pub fn dml_visit_info(
     }
 }
 
-/// Whether `query`, built as Go's `buildSubquery` builds it (before any
-/// optimization), carries a correlated column anywhere in its tree: Go's
-/// `len(ExtractCorrelatedCols4LogicalPlan(np)) > 0`, which makes the
-/// rewriter keep the subquery as an Apply instead of evaluating it.
-pub(crate) fn query_builds_correlated_columns(
-    query: &tidb_ast::QueryStmt,
-    catalog: &Catalog,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<bool, tidb_planner::plan_base::PlanError> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx)
-        .with_privilege_verifier(ctx)
-        .with_related_tables_for_mdl(ctx);
-    let session_zone = ctx.session_zone();
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    let registry = ScalarSubqueryRegistry::default();
-    let evaluator = subquery_evaluator(
-        catalog,
-        ctx,
-        &plan_ids,
-        &column_ids,
-        false,
-        &session_zone,
-        &registry,
-    );
-    let defaults = default_evaluator(catalog, ctx);
-    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator)
-        .with_default_evaluator(&defaults);
-    builder.only_full_group_by = ctx.only_full_group_by();
-    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
-    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
-    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
-    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
-    let node = tidb_resolve::NodeW::new(query.clone());
-    let plan = builder.build_query_node(&node, false)?;
-    Ok(
-        !tidb_planner::expression_rewriter::extract_correlated_cols_4_logical_plan(&plan)
-            .is_empty(),
-    )
-}
-
 /// One INSERT value Go's `getInsertColExpr` rewrites through the planner, and
 /// whether it IS a subquery (which Go rewrites over a column-less dual).
 pub(crate) struct InsertValueRewrite<'a> {
@@ -2728,6 +2565,7 @@ pub(crate) fn lower_insert_value_subqueries(
 pub(crate) fn physical_dml_source_plan_with_allocators(
     select: &tidb_ast::SelectStmt,
     update_assignment_values: Option<&[Option<tidb_ast::Expr>]>,
+    multi_update: Option<&tidb_ast::UpdateStmt>,
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
@@ -2735,19 +2573,9 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
     operator: &str,
-    dml_keep: Option<std::collections::BTreeSet<(String, String)>>,
     delete_prune_has_fk: Option<bool>,
     delete_multi: Option<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput>,
-) -> Result<
-    (
-        PhysicalPlan,
-        Vec<Option<tidb_expr::expression::Expression>>,
-        tidb_planner::physical::BasePhysicalPlan,
-        Option<tidb_planner::physical::DeleteColPos>,
-        Vec<tidb_planner::physical::DeleteTablePos>,
-    ),
-    tidb_planner::plan_base::PlanError,
-> {
+) -> Result<DmlSourcePlan, tidb_planner::plan_base::PlanError> {
     // Go builds an UPDATE/DELETE inside `builder.Build` (`buildUpdate` /
     // `buildDelete` run the read plan's `DoOptimize` themselves), so its
     // `DurationRewrite` covers the read plan's optimization too, and the
@@ -2801,7 +2629,6 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         .optimizer_fix_control()
         .get_bool_with_default(tidb_planner::fix_control::FIX_52869, true);
     builder.add_opt_flag(flags::PRUNE_COLUMNS);
-    builder.dml_keep = dml_keep;
     builder.delete_prune_has_fk = delete_prune_has_fk;
     builder.delete_multi = delete_multi;
     builder.allocate_delete_root = operator.eq_ignore_ascii_case("Delete");
@@ -2812,11 +2639,13 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
         from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
     });
     let wrap_lock = ctx.pessimistic_transaction() && single_source;
-    let (plan, mut update_expressions, mut plan_flags) = match update_assignment_values {
-        Some(values) => {
-            builder.build_update_dml_source(select, values, wrap_lock)?
+    let (plan, mut update_expressions, mut plan_flags) = match (update_assignment_values, multi_update)
+    {
+        (Some(values), _) => builder.build_update_dml_source(select, values, wrap_lock)?,
+        (None, Some(update)) => {
+            builder.build_multi_update_dml_source(select, update, ctx.allow_write_row_id())?
         }
-        None => {
+        (None, None) => {
             let (plan, build_flags) = builder.build_dml_source(select, wrap_lock)?;
             (plan, Vec::new(), build_flags)
         }
@@ -2906,13 +2735,33 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     }
     ctx.phase_durations()
         .set_duration_rewrite(begin_rewrite.elapsed());
-    Ok((
-        physical,
+    Ok(DmlSourcePlan {
+        plan: physical,
         update_expressions,
         root,
-        builder.delete_col_pos.take(),
-        std::mem::take(&mut builder.delete_tables),
-    ))
+        delete_col_pos: builder.delete_col_pos.take(),
+        delete_tables: std::mem::take(&mut builder.delete_tables),
+        update_tables: std::mem::take(&mut builder.update_tables),
+        update_assigns: std::mem::take(&mut builder.update_assigns),
+    })
+}
+
+/// What the shared DML-source build produces for the `Update`/`Delete` root.
+pub(crate) struct DmlSourcePlan {
+    /// The optimized physical read.
+    pub plan: PhysicalPlan,
+    /// The UPDATE assignments' expressions, resolved against the read.
+    pub update_expressions: Vec<Option<tidb_expr::expression::Expression>>,
+    /// The allocated root base.
+    pub root: tidb_planner::physical::BasePhysicalPlan,
+    /// A pruned single-table DELETE's layout.
+    pub delete_col_pos: Option<tidb_planner::physical::DeleteColPos>,
+    /// A multi-table DELETE's layouts.
+    pub delete_tables: Vec<tidb_planner::physical::DeleteTablePos>,
+    /// A multi-table UPDATE's layouts.
+    pub update_tables: Vec<tidb_planner::physical::UpdateTablePos>,
+    /// A multi-table UPDATE's assignments.
+    pub update_assigns: Vec<tidb_planner::physical::UpdateAssign>,
 }
 
 /// Go `buildOrderedList` for the fast point UPDATE (`tryUpdatePointPlan`): the
