@@ -62,7 +62,7 @@ func TestMemTimerStore(t *testing.T) {
 
 	store = api.NewMemoryTimerStore()
 	defer store.Close()
-	runTimerStoreWatchTest(t, store)
+	runTimerStoreWatchTest(t, store, nil)
 }
 
 // createTimerTableSQL returns a SQL to create timer table
@@ -106,7 +106,43 @@ func TestTableTimerStore(t *testing.T) {
 	tk.MustExec(createTimerTableSQL(dbName, tblName))
 	timerStore = tablestore.NewTableTimerStore(1, pool, dbName, tblName, cli)
 	defer timerStore.Close()
-	runTimerStoreWatchTest(t, timerStore)
+	// Watch starts asynchronously in the etcd notifier, so synchronize before producing table events.
+	runTimerStoreWatchTest(t, timerStore, func(ch api.WatchTimerChan) {
+		readyDeadline := time.NewTimer(time.Minute)
+		defer readyDeadline.Stop()
+	retryReady:
+		for {
+			readyID := "watch-ready-" + uuid.NewString()
+			readyKey := fmt.Sprintf("/tidb/timer/cluster/%d/notify/%s", 1, readyID)
+			putCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, err := cli.Put(putCtx, readyKey, fmt.Sprintf(
+				`{"events":[{"tp":"create","timer_id":%q,"timestamp":%d}]}`,
+				readyID,
+				time.Now().Unix(),
+			))
+			cancel()
+			require.NoError(t, err)
+
+			attemptTimer := time.NewTimer(100 * time.Millisecond)
+			for {
+				select {
+				case resp, ok := <-ch:
+					require.True(t, ok)
+					for _, event := range resp.Events {
+						if event.Tp == api.WatchTimerEventCreate && event.TimerID == readyID {
+							attemptTimer.Stop()
+							return
+						}
+					}
+				case <-attemptTimer.C:
+					continue retryReady
+				case <-readyDeadline.C:
+					attemptTimer.Stop()
+					require.FailNow(t, "watch ready timeout")
+				}
+			}
+		}
+	})
 
 	// check pool
 	require.False(t, pool.inuse.Load())
@@ -577,7 +613,7 @@ func runTimerStoreInsertAndList(ctx context.Context, t *testing.T, store *api.Ti
 	checkList([]*api.TimerRecord{&recordTpl1}, timers)
 }
 
-func runTimerStoreWatchTest(t *testing.T, store *api.TimerStore) {
+func runTimerStoreWatchTest(t *testing.T, store *api.TimerStore, prepareWatch func(api.WatchTimerChan)) {
 	require.True(t, store.WatchSupported())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
@@ -595,6 +631,9 @@ func runTimerStoreWatchTest(t *testing.T, store *api.TimerStore) {
 	}
 
 	ch := store.Watch(ctx)
+	if prepareWatch != nil {
+		prepareWatch(ch)
+	}
 	assertWatchEvent := func(tp api.WatchTimerEventType, id string) {
 		timeout := time.NewTimer(time.Minute)
 		defer timeout.Stop()
