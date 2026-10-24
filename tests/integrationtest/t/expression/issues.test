@@ -2350,3 +2350,7 @@ select least(c0, 1.0) like c0, (select least(1.0, (select min(c0) from t_extremu
 select c0 regexp greatest(c0, 1.0), c0 regexp greatest((select max(c0) from t_extremum), 1.0) from t_extremum order by c0;
 select concat(least(c0, 1.0)), concat(greatest(c0, 1.0)) from t_extremum order by c0;
 drop table t_extremum;
+create table t_extremum (a decimal(65,0), b decimal(2,1), c decimal(64,0));
+insert into t_extremum values (99999999999999999999999999999999999999999999999999999999999999999, 1.5, 9999999999999999999999999999999999999999999999999999999999999999), (-99999999999999999999999999999999999999999999999999999999999999999, 1.5, -9999999999999999999999999999999999999999999999999999999999999999);
+select greatest(a, b), least(a, b), greatest(a, 1.0), least(c, 1.0), greatest(c, 1.0) from t_extremum order by a;
+drop table t_extremum;

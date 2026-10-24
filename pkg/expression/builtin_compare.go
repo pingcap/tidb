@@ -581,12 +581,18 @@ func newBaseBuiltinFunc4Extremum(ctx BuildContext, funcName string, args []Expre
 		return newBaseBuiltinFuncWithTp(ctx, funcName, args, resTp, argTps...)
 	}
 	setFlenFromArgs(types.ETDecimal, decimalTp, argFieldTps...)
+	intDigits := decimalTp.GetFlen() - decimalTp.GetDecimal()
 	needCast := false
 	for i := range argFieldTps {
-		if argFieldTps[i].GetDecimal() != decimalTp.GetDecimal() {
-			argFieldTps[i] = decimalTp.Clone()
-			needCast = true
+		if argFieldTps[i].GetDecimal() == decimalTp.GetDecimal() {
+			continue
 		}
+		// The cast would overflow when the result precision is capped at the decimal limit.
+		if argFieldTps[i].GetFlen() < 0 || argFieldTps[i].GetFlen()-argFieldTps[i].GetDecimal() > intDigits {
+			return newBaseBuiltinFuncWithTp(ctx, funcName, args, resTp, argTps...)
+		}
+		argFieldTps[i] = decimalTp.Clone()
+		needCast = true
 	}
 	if !needCast {
 		return newBaseBuiltinFuncWithTp(ctx, funcName, args, resTp, argTps...)
