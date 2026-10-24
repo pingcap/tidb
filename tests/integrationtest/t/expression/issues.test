@@ -2340,3 +2340,13 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# TestIssue71553 and TestIssue71430
+drop table if exists t_extremum;
+create table t_extremum (c0 decimal, c1 decimal(10,2));
+insert into t_extremum values (0, 1.5), (1581606567, 2.25);
+select least(c0, 1.0), greatest(c0, -1.0), least(c0, c1), greatest(c1, 1, 1.125) from t_extremum order by c0;
+select least(c0, 1.0) like c0, (select least(1.0, (select min(c0) from t_extremum))) like '0' from t_extremum order by c0;
+select c0 regexp greatest(c0, 1.0), c0 regexp greatest((select max(c0) from t_extremum), 1.0) from t_extremum order by c0;
+select concat(least(c0, 1.0)), concat(greatest(c0, 1.0)) from t_extremum order by c0;
+drop table t_extremum;

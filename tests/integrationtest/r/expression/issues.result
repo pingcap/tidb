@@ -3461,3 +3461,23 @@ from t_gc;
 concat_collation	group_concat_collation
 utf8mb4_0900_ai_ci	utf8mb4_0900_ai_ci
 drop table if exists t_gc;
+drop table if exists t_extremum;
+create table t_extremum (c0 decimal, c1 decimal(10,2));
+insert into t_extremum values (0, 1.5), (1581606567, 2.25);
+select least(c0, 1.0), greatest(c0, -1.0), least(c0, c1), greatest(c1, 1, 1.125) from t_extremum order by c0;
+least(c0, 1.0)	greatest(c0, -1.0)	least(c0, c1)	greatest(c1, 1, 1.125)
+0.0	0.0	0.00	1.500
+1.0	1581606567.0	2.25	2.250
+select least(c0, 1.0) like c0, (select least(1.0, (select min(c0) from t_extremum))) like '0' from t_extremum order by c0;
+least(c0, 1.0) like c0	(select least(1.0, (select min(c0) from t_extremum))) like '0'
+0	0
+0	0
+select c0 regexp greatest(c0, 1.0), c0 regexp greatest((select max(c0) from t_extremum), 1.0) from t_extremum order by c0;
+c0 regexp greatest(c0, 1.0)	c0 regexp greatest((select max(c0) from t_extremum), 1.0)
+0	0
+0	0
+select concat(least(c0, 1.0)), concat(greatest(c0, 1.0)) from t_extremum order by c0;
+concat(least(c0, 1.0))	concat(greatest(c0, 1.0))
+0.0	1.0
+1.0	1581606567.0
+drop table t_extremum;
