@@ -2340,3 +2340,12 @@ select
   collation(group_concat(' ', first_name, ' ', last_name, ' ', marker)) as group_concat_collation
 from t_gc;
 drop table if exists t_gc;
+
+# TestIssue71927
+drop table if exists t_enum;
+create table t_enum (a enum('X','y') character set utf8mb4 collate utf8mb4_0900_ai_ci);
+insert into t_enum values ('X'),('y');
+select collation(first_value(a) over (order by a)), collation(last_value(a) over ()), collation(nth_value(a, 1) over ()), collation(lag(a) over (order by a)), collation(lead(a) over (order by a)) from t_enum limit 1;
+select count(*) from (select first_value(a) over (order by a) as fv from t_enum) x where fv = 'x';
+select count(*) from (select lag(a, 0) over (order by a) as fv from t_enum) x where fv = 'x';
+drop table t_enum;
