@@ -978,7 +978,10 @@ fn like_between_case_and_builtins() {
     // errors here rather than reporting NULL, but that path is
     // unreachable in practice -- see `Columns::connection_id`'s doc); once
     // set, the same value keeps reporting on later statements.
-    assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["NULL"]]);
+    // A session on the store has its testkit connection ID, as Go's does.
+    if crate::tests_support::in_process_tier() {
+        assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["NULL"]]);
+    }
     session.set_connection_id(42);
     assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["42"]]);
     assert_eq!(row_text(session.run("SELECT CONNECTION_ID()")), [["42"]]);

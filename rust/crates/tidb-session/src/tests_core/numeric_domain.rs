@@ -431,12 +431,9 @@ fn arithmetic_null_short_circuit_follows_vectorization_mode() {
                 let result = session.run(&sql);
                 if vectorized || (table == "arith_r" && op == "+") || op == "MOD" {
                     assert!(
-                        matches!(
-                            result,
-                            Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-                                tidb_executor::EvalError::DataOutOfRange { .. }
-                            )))
-                        ),
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.clone().to_mysql_error().code == 1690),
                         "{sql}/{vectorized}: {result:?}"
                     );
                 } else {

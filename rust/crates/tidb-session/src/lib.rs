@@ -530,6 +530,10 @@ pub struct Session {
     pending_observation_parse: Option<(String, Duration)>,
     pending_statement_exec_details: Option<observation::PendingStatementExecDetails>,
     routed_statement_observation_depth: u32,
+    /// The outer routed statement's kind, for Go `ResetContextOfStmt`'s
+    /// `ROW_COUNT()` promotion that a routed statement does not reach
+    /// through the executor's own boundary.
+    routed_statement_kind: Option<crate::classify::StatementKind>,
     previous_summary_statement: Option<(String, String)>,
     statement_stats: Arc<tidb_util::topsql_stmtstats::StatementStats>,
     /// Go's statement ctx values (`RUDetails`, resource-group taggers) of the
@@ -1065,6 +1069,7 @@ impl Session {
             pending_observation_parse: None,
             pending_statement_exec_details: None,
             routed_statement_observation_depth: 0,
+            routed_statement_kind: None,
             previous_summary_statement: None,
             statement_stats: tidb_util::topsql_stmtstats::create_statement_stats(),
             statement_kv_context: tidb_txnkv::StatementKvContextCell::default(),

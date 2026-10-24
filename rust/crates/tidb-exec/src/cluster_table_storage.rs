@@ -236,11 +236,17 @@ fn acquire_statement_locks<S: StoreClient>(
             if let PessimisticLockFailure::Deadlock(detail) = &failure {
                 crate::deadlock_recording::record_deadlock(detail);
             }
+            // Go `handlePessimisticLockError`: `ErrKeyExists` fails the
+            // statement only; the transaction keeps its earlier writes and
+            // locks (StmtRollback), hinted message or not.
             if let PessimisticLockFailure::Transaction(cause) = &failure {
                 if duplicate_cause(cause) {
-                    if let Some(hint) = duplicate_hints.get(cause.key()) {
-                        return LockKeysOutcome::StatementError(duplicate_key_sql_error(hint));
-                    }
+                    return LockKeysOutcome::StatementError(
+                        match duplicate_hints.get(cause.key()) {
+                            Some(hint) => duplicate_key_sql_error(hint),
+                            None => lock_failure_to_sql_error(&failure),
+                        },
+                    );
                 }
             }
             if is_retryable_statement_failure(&failure) {
@@ -649,6 +655,10 @@ where
     /// shared with every handle of this transaction and taken by the
     /// statement owner when the statement fails.
     statement_lock_failure: Arc<Mutex<Option<StatementLockFailure>>>,
+    /// The executor buffer bound to this transaction, whose duplicate hints
+    /// name a key a statement lock finds already present (Go builds the 1062
+    /// text from the key and schema: `ExtractKeyExistsErrFromHandle`).
+    bound_buffer: Arc<Mutex<Option<MutationBuffer>>>,
 }
 
 /// Go TxnCtx's transaction cache and CurrentStmtPessimisticLockCache.
@@ -714,6 +724,10 @@ impl<S: StoreClient> fmt::Debug for SessionTransaction<S> {
 impl<S: StoreClient> SessionTransaction<S> {
     /// Bind executor staging to the client's own transaction buffer.
     pub fn bind_mutation_buffer(&self, buffer: &MutationBuffer) {
+        *self
+            .bound_buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(buffer.clone());
         let state = self.state.clone();
         buffer.bind_native(
             self.start_ts,
@@ -851,6 +865,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             fair_locking: false,
             schema_lease_checker: None,
             statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
         })
     }
 
@@ -877,6 +892,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             fair_locking: false,
             schema_lease_checker: None,
             statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
         })
     }
 
@@ -904,6 +920,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             fair_locking: false,
             schema_lease_checker: None,
             statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
         })
     }
 
@@ -934,6 +951,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             fair_locking: false,
             schema_lease_checker: None,
             statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
         })
     }
 
@@ -1204,6 +1222,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             locking,
             fair_locking: self.fair_locking,
             statement_lock_failure: Arc::clone(&self.statement_lock_failure),
+            bound_buffer: Arc::clone(&self.bound_buffer),
         }
     }
 
@@ -1743,6 +1762,8 @@ struct SessionSnapshot<S: StoreClient> {
     fair_locking: bool,
     /// See [`SessionTransaction::take_statement_lock_failure`].
     statement_lock_failure: Arc<Mutex<Option<StatementLockFailure>>>,
+    /// See `SessionTransaction::bound_buffer`.
+    bound_buffer: Arc<Mutex<Option<MutationBuffer>>>,
 }
 
 impl<S: StoreClient> SessionSnapshot<S> {
@@ -2102,12 +2123,27 @@ impl<S: StoreClient> SessionSnapshot<S> {
         else {
             unreachable!("checked pessimistic above");
         };
+        let hints: BTreeMap<Vec<u8>, DuplicateKeyHint> = self
+            .bound_buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map(|buffer| {
+                keys.iter()
+                    .filter_map(|key| {
+                        buffer
+                            .duplicate_key_hint_for(key)
+                            .map(|hint| (key.clone(), hint))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let outcome = acquire_statement_locks(
             transaction,
             lock_values,
             &keys,
             &BTreeSet::new(),
-            &BTreeMap::new(),
+            &hints,
             return_values,
             only_if_exists,
             wait,
@@ -2436,6 +2472,7 @@ mod tests {
             locking: false,
             fair_locking: false,
             statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
         };
         assert_eq!(ClusterSnapshot::start_ts(&snapshot), 10);
         snapshot.read_ts = Some(20);
@@ -2617,6 +2654,7 @@ mod tests {
             locking: false,
             fair_locking: false,
             statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
         };
         assert_eq!(
             at_transaction.start_ts(),
@@ -2636,6 +2674,7 @@ mod tests {
             locking: false,
             fair_locking: false,
             statement_lock_failure: Arc::default(),
+            bound_buffer: Arc::default(),
         };
         assert_eq!(
             retried.start_ts(),

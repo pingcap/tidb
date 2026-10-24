@@ -727,6 +727,7 @@ impl Session {
         // The outer routed execution owns one LazyTxn.onStmtStart, including
         // transaction control and SET. Its inner executor only republishes.
         if self.routed_statement_observation_depth == 0 {
+            self.routed_statement_kind = Some(crate::classify::statement_kind_of(stmt));
             if let Some(guard) = &self.process {
                 let digest = self
                     .statement_observation
@@ -772,6 +773,13 @@ impl Session {
         }
         self.routed_statement_observation_depth -= 1;
         if self.routed_statement_observation_depth == 0 {
+            // Go `ResetContextOfStmt`: after SET, DDL or transaction control
+            // the next `ROW_COUNT()` reads 0 (captured: after SET).
+            if self.routed_statement_kind.take() == Some(crate::classify::StatementKind::Other)
+                && !self.in_set_session_states
+            {
+                self.prev_row_count = 0;
+            }
             self.finish_routed_statement_warnings(succeeded);
             self.publish_statement_observation(succeeded, affected_rows, 0, error);
             self.refresh_process_status();

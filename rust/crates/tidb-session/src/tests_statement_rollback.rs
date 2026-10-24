@@ -152,7 +152,7 @@ fn a_failed_statement_inside_a_transaction_keeps_the_transactions_other_writes()
         .run("UPDATE tx SET a = IF(a<3, a+200, a+1) ORDER BY a ASC")
         .unwrap_err()
         .to_mysql_error();
-    assert_eq!(error.code, 1062);
+    assert_eq!(error.code, 1062, "{}", error.message);
     // The failed statement's writes are gone; the earlier one's are not.
     assert_eq!(
         rows(&mut session, "SELECT a,b FROM tx ORDER BY a"),
@@ -346,6 +346,11 @@ fn statement_rollback_undoes_the_rows_but_never_the_auto_increment_burn() {
 /// panics on purpose.
 #[test]
 fn a_panicking_statement_inside_a_transaction_leaves_the_working_catalog_intact() {
+    // Drives the in-process tier's staged working catalog; a session on the
+    // store keeps its transaction in the node connection instead.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session.run("CREATE TABLE p1 (a INT PRIMARY KEY)").unwrap();
     session.run("INSERT INTO p1 VALUES (1)").unwrap();
