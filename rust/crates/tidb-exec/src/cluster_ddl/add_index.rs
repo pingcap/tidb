@@ -239,9 +239,17 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     min_job_id: i64,
     store_count: usize,
     has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+    job_context: &tidb_executor::StmtContext,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
-    let built = build_add_index_job(snapshot, &catalog, statement, store_count)?;
+    let mut built = build_add_index_job(snapshot, &catalog, statement, store_count)?;
+    // Go `Job.Query` is the submitting statement's text, which the job
+    // context carries (the lowered statement's context predates it).
+    if let Some(AddIndexSubmission::Job(spec, _)) = built.as_mut() {
+        if spec.job.query.is_empty() {
+            spec.job.query = job_context.ddl_query().into();
+        }
+    }
     if matches!(built, Some(AddIndexSubmission::Job(..))) {
         check_added_primary_key_holds_no_null(&catalog, statement, has_null)?;
     }

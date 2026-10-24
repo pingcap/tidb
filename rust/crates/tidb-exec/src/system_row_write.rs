@@ -836,10 +836,15 @@ pub fn origin_default(column: &ColumnInfo, table: &str) -> Result<Datum, RowEnco
     let (Datum::Bytes(_) | Datum::String(_)) = &datum else {
         return Ok(datum);
     };
+    // Without strict SQL mode a zero-in or invalid date is kept, not refused:
+    // `ADD COLUMN v DATE DEFAULT '2024-00-01'` under sql_mode '' reads back as
+    // written even from a strict session.
     let flags = tidb_datatype::ConversionFlags::from_bits(
         tidb_datatype::ConversionFlags::IGNORE_TRUNCATE_ERR
             | tidb_datatype::ConversionFlags::ALLOW_NEGATIVE_TO_UNSIGNED
-            | tidb_datatype::ConversionFlags::IGNORE_ZERO_DATE_ERR,
+            | tidb_datatype::ConversionFlags::IGNORE_ZERO_DATE_ERR
+            | tidb_datatype::ConversionFlags::IGNORE_ZERO_IN_DATE_ERR
+            | tidb_datatype::ConversionFlags::IGNORE_INVALID_DATE_ERR,
     );
     datum
         .convert_to(&column.field_type, flags)

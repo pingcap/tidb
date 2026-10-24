@@ -196,7 +196,7 @@ fn raw_and_parsed_state_are_atomic_across_session_global_and_default_writes() {
         "invalid fix control: expected colon not found"
     );
 
-    let mut fresh = Session::new();
+    let mut fresh = Session::with_catalog(session.shared_catalog());
     fresh.attach_globals(globals.clone()).unwrap();
     assert_eq!(
         fresh.vars().optimizer_fix_control().get_bool(52592),

@@ -87,8 +87,12 @@ fn flush_targets_follow_gos_switch() {
         "FLUSH HOSTS",
         "FLUSH CLIENT_ERRORS_SUMMARY",
     ] {
+        // An OK packet, whichever output shape the tier gives it.
         assert!(
-            matches!(session.run(sql), Ok(StmtResult::Done(_))),
+            matches!(
+                session.run(sql),
+                Ok(StmtResult::Done(_) | StmtResult::Affected(0))
+            ),
             "`{sql}` is accepted"
         );
     }

@@ -1477,6 +1477,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             min_job_id,
             store_count,
             has_null,
+            job_context,
         ),
     }
 }
