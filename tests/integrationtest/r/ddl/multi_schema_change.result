@@ -456,3 +456,29 @@ child	CREATE TABLE `child` (
   `ref` int DEFAULT NULL,
   KEY `fk1` (`ref`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t, t2;
+set @@tidb_allow_remove_auto_inc = 1;
+create table t (id bigint auto_increment primary key, v int);
+alter table t modify id bigint auto_random(1), add unique index uv(v);
+Error 8200 (HY000): Unsupported multi schema change for changing auto_random shard bits
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL AUTO_INCREMENT,
+  `v` int DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create table t2 (id bigint auto_random(3) primary key, v int);
+alter table t2 modify id bigint auto_random(4), add column c int;
+Error 8200 (HY000): Unsupported multi schema change for changing auto_random shard bits
+alter table t2 modify id bigint auto_random(3), add column c int;
+show create table t2;
+Table	Create Table
+t2	CREATE TABLE `t2` (
+  `id` bigint NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,
+  `v` int DEFAULT NULL,
+  `c` int DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=3 */
+set @@tidb_allow_remove_auto_inc = default;
+drop table t, t2;
