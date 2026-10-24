@@ -42,6 +42,8 @@ go_library(
         "executor.go",
         "foreign_key.go",
         "generated_column.go",
+        "global_index_cleaner.go",
+        "global_index_cleaner_scheduler.go",
         "index.go",
         "index_auto_presplit.go",
         "index_cop.go",

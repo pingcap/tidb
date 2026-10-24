@@ -427,3 +427,20 @@ func TestModifyTaskParamLoop(t *testing.T) {
 		require.True(t, e.ctrl.Satisfied())
 	})
 }
+
+func TestMergeIndexIDRanges(t *testing.T) {
+	cases := []struct {
+		kept, dropped []int64
+		want          [][2]int64
+	}{
+		{kept: []int64{1, 2}, dropped: []int64{3, 4, 5}, want: [][2]int64{{3, 5}}},
+		{kept: []int64{1, 4}, dropped: []int64{2, 3, 5, 6}, want: [][2]int64{{2, 3}, {5, 6}}},
+		{kept: []int64{1, 9}, dropped: []int64{3, 5, 7}, want: [][2]int64{{3, 7}}},
+		{kept: []int64{6, 1, 4}, dropped: []int64{7, 3, 2, 5}, want: [][2]int64{{2, 3}, {5, 5}, {7, 7}}},
+		{kept: nil, dropped: []int64{8}, want: [][2]int64{{8, 8}}},
+		{kept: []int64{38, 36, 37}, dropped: []int64{2083, 39, 2000, 40}, want: [][2]int64{{39, 2083}}},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, mergeIndexIDRanges(c.kept, c.dropped), "kept %v dropped %v", c.kept, c.dropped)
+	}
+}
