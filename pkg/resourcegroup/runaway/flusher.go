@@ -129,12 +129,12 @@ func (f *batchFlusher[K, V]) flush() {
 
 	f.batchSizeObserver.Observe(float64(batchSize))
 	f.durationObserver.Observe(duration.Seconds())
+	f.lastFlushTime = now
 	if err != nil {
 		f.flushErrorCounter.Inc()
-	} else {
-		f.flushSuccessCounter.Inc()
+		// Keep the records so that the next flush retries them.
+		return
 	}
-
-	f.lastFlushTime = now
+	f.flushSuccessCounter.Inc()
 	f.buffer = make(map[K]V, f.threshold)
 }

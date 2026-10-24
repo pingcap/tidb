@@ -15,6 +15,8 @@
 package runaway
 
 import (
+	"errors"
+	"maps"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -142,4 +144,32 @@ func TestBatchFlusherFlushEmpty(t *testing.T) {
 
 	flusher.flush()
 	re.Equal(int32(1), flushCount.Load())
+}
+
+func TestBatchFlusherKeepsRecordsOnError(t *testing.T) {
+	re := require.New(t)
+
+	var flushed []map[string]int
+	fail := true
+	flusher := newTestBatchFlusher(
+		10,
+		func(m map[string]int, k string, v int) { m[k] = v },
+		func(m map[string]int) error {
+			if fail {
+				return errors.New("mock flush error")
+			}
+			flushed = append(flushed, maps.Clone(m))
+			return nil
+		},
+	)
+
+	flusher.add("a", 1)
+	flusher.flush()
+	re.Equal(map[string]int{"a": 1}, flusher.buffer)
+
+	flusher.add("b", 2)
+	fail = false
+	flusher.flush()
+	re.Empty(flusher.buffer)
+	re.Equal([]map[string]int{{"a": 1, "b": 2}}, flushed)
 }
