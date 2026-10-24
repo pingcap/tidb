@@ -44,6 +44,9 @@ func TestParseKey(t *testing.T) {
 		{"\\n\\r", []byte("\n\r")},
 		{"\\t\\v", []byte("\t\v")},
 		{"\\'", []byte("'")},
+		{"\\x41\\x42", []byte("AB")},
+		{"\\xA", []byte("\x0A")},
+		{"a\\xb", []byte("a\x0b")},
 	}
 
 	for _, tt := range testEscapedKey {
@@ -215,4 +218,22 @@ func TestPrefix(t *testing.T) {
 	require.True(t, IsDBOrDDLJobHistoryKey([]byte("mDB:")))
 	require.True(t, IsDBOrDDLJobHistoryKey([]byte("mDDLHistory")))
 	require.False(t, IsDBOrDDLJobHistoryKey([]byte("DDL")))
+}
+
+// TestParseKeyMalformedHexEscape verifies a malformed \x escape is rejected with an error
+// instead of silently producing a wrong byte (issue #71859).
+func TestParseKeyMalformedHexEscape(t *testing.T) {
+	testInvalidEscapedKey := []string{
+		"\\xZZ",       // no hex digit: the old code appended the stray backslash
+		"\\x4g",       // the trailing non-hex char was consumed and silently dropped by the old code
+		"\\xg4",       // leading non-hex char
+		"\\x4G",       // G is not a hex digit
+		"\\x",         // trailing \x with nothing after it
+		"a\\x1b\\xZZ", // valid escapes before a bad one
+	}
+	for _, k := range testInvalidEscapedKey {
+		_, err := ParseKey("escaped", k)
+		require.Error(t, err, "malformed \\x escape %q must be rejected", k)
+		require.ErrorContains(t, err, "invalid syntax")
+	}
 }
