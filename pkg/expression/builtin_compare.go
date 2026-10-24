@@ -1442,8 +1442,14 @@ func GetAccurateCmpType(ctx EvalContext, lhs, rhs Expression) types.EvalType {
 		// date[time] <cmp> date[time]
 		// string <cmp> date[time]
 		// compare as time
+		_, isLHSConst := lhs.(*Constant)
+		_, isRHSConst := rhs.(*Constant)
 		if lhsFieldType.GetType() == rhsFieldType.GetType() {
 			cmpType = lhsFieldType.EvalType()
+		} else if isDurationColumn(ctx, lhs) && isRHSConst || isDurationColumn(ctx, rhs) && isLHSConst {
+			// <time column> <cmp> <date[time] constant>
+			// MySQL converts the constant to the type of the time column, so the date part is ignored.
+			cmpType = types.ETDuration
 		} else {
 			cmpType = types.ETDatetime
 		}
@@ -1521,6 +1527,11 @@ func isTemporalColumn(ctx EvalContext, expr Expression) bool {
 		return false
 	}
 	return true
+}
+
+func isDurationColumn(ctx EvalContext, expr Expression) bool {
+	_, isCol := expr.(*Column)
+	return isCol && expr.GetType(ctx).GetType() == mysql.TypeDuration
 }
 
 // tryToConvertConstantInt tries to convert a constant with other type to a int constant.
