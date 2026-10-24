@@ -17856,9 +17856,9 @@
     {
       "sql": "SELECT FOUND_ROWS() - 3",
       "args": null,
-      "pass": false,
-      "known": true,
-      "comment": "https://github.com/pingcap/tidb/issues/59620"
+      "pass": true,
+      "known": false,
+      "comment": ""
     },
     {
       "sql": "SELECT FOUND_ROWS() FROM (SELECT SQL_CALC_FOUND_ROWS 1 WHERE FALSE) AS t",

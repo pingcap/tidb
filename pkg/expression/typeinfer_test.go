@@ -881,7 +881,7 @@ func (s *InferTypeSuite) createTestCase4InfoFunc() []typeInferTestCase {
 	return []typeInferTestCase{
 		{"last_insert_id(       )", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag | mysql.NotNullFlag, mysql.MaxIntWidth, 0},
 		{"last_insert_id(c_int_d)", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
-		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag | mysql.UnsignedFlag, mysql.MaxIntWidth, 0},
+		{"found_rows()", mysql.TypeLonglong, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxIntWidth, 0},
 		{"database()", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 64, types.UnspecifiedLength},
 		{"current_user()", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 64, types.UnspecifiedLength},
 		{"current_role()", mysql.TypeVarString, charset.CharsetUTF8MB4, mysql.NotNullFlag, 64, types.UnspecifiedLength},
