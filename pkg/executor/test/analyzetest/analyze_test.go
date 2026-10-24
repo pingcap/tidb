@@ -882,6 +882,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t add index idx(b)")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
