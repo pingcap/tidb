@@ -595,7 +595,19 @@ func TestPrepareGCBlocksConcurrentGCDisable(t *testing.T) {
 		err       error
 	}
 	disabled := make(chan disableResult, 1)
+	var lockErr, writeErr error
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/gcworker/afterCheckGCEnableInPrepare", func() {
+		ctx := gcContext()
+		se := createSession(s.gcWorker.store)
+		defer se.Close()
+		_, err := se.ExecuteInternal(ctx, "SET SESSION innodb_lock_wait_timeout = 1")
+		require.NoError(t, err)
+		_, err = se.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+		require.NoError(t, err)
+		_, lockErr = se.ExecuteInternal(ctx, "SELECT variable_value FROM mysql.tidb WHERE variable_name = %? FOR UPDATE NOWAIT", gcEnableKey)
+		_, writeErr = se.ExecuteInternal(ctx, "UPDATE mysql.tidb SET variable_value = %? WHERE variable_name = %?", booleanFalse, gcEnableKey)
+		se.RollbackTxn(ctx)
+
 		go func() {
 			err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
 			if err != nil {
@@ -605,7 +617,6 @@ func TestPrepareGCBlocksConcurrentGCDisable(t *testing.T) {
 			safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
 			disabled <- disableResult{safePoint: safePoint, err: err}
 		}()
-		time.Sleep(200 * time.Millisecond)
 	}))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/afterCheckGCEnableInPrepare"))
@@ -614,6 +625,9 @@ func TestPrepareGCBlocksConcurrentGCDisable(t *testing.T) {
 	ok, _, err := s.gcWorker.prepare(gcContext())
 	require.NoError(t, err)
 	require.True(t, ok)
+	// The gc enable row is locked while GC is preparing, so changing it has to wait.
+	require.ErrorContains(t, lockErr, "NOWAIT")
+	require.ErrorContains(t, writeErr, "Lock wait timeout exceeded")
 	res := <-disabled
 	require.NoError(t, res.err)
 	safePoint, err := s.gcWorker.loadTime(gcSafePointKey)
