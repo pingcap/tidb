@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // TableKVEncoder encodes a row of data into a KV pair.
@@ -86,8 +87,12 @@ func (en *TableKVEncoder) UseFileColumns(names []string) error {
 	if len(names) == 0 {
 		fieldMappings, columnNames = tableVisCols2FieldMappings(en.fileColumnsTable)
 	} else {
+		tableCols := en.fileColumnsTable.VisibleCols()
 		columnsAndUserVars := make([]*ast.ColumnNameOrUserVar, 0, len(names))
 		for _, name := range names {
+			if table.FindCol(tableCols, name) == nil {
+				return dbterror.ErrBadField.GenWithStackByArgs(name, "field list")
+			}
 			columnsAndUserVars = append(columnsAndUserVars, &ast.ColumnNameOrUserVar{
 				ColumnName: &ast.ColumnName{Name: ast.NewCIStr(name)},
 			})
