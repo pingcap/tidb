@@ -453,9 +453,8 @@ func TestManagerHandleTasks(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return ctrl.Satisfied()
 	}, 5*time.Second, 100*time.Millisecond)
-	require.False(t, m.isExecutorStarted(task1.ID))
-
 	m.executorWG.Wait()
+	require.False(t, m.isExecutorStarted(task1.ID))
 }
 
 func TestSlotManagerInManager(t *testing.T) {
