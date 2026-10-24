@@ -116,6 +116,16 @@ CREATE TABLE t1 (id INT CHECK (id != (SELECT 1)));
 Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
 CREATE TABLE t1 (a int check(a in (SELECT COALESCE(NULL, 1, 1))));
 Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
+CREATE TABLE t1 (a INT CHECK (MAX(a) > 0));
+Error 1111 (HY000): Invalid use of group function
+CREATE TABLE t1 (a INT, CHECK (COUNT(a) > 0));
+Error 1111 (HY000): Invalid use of group function
+CREATE TABLE t1 (a INT CHECK (RANK() OVER (ORDER BY a) > 0));
+Error 3593 (HY000): You cannot use the window function 'rank' in this context.'
+CREATE TABLE t1 (a INT, CHECK (RANK() OVER (ORDER BY a) > 0));
+Error 3593 (HY000): You cannot use the window function 'rank' in this context.'
+CREATE TABLE t1 (a INT, b INT, CHECK (GROUPING(a) > 0));
+Error 1111 (HY000): Invalid use of group function
 drop table if exists t;
 create table t1(f1 TIMESTAMP, f2 DATETIME, f3 INT, f4 VARCHAR(32), f5 FLOAT, f6 CHAR(40), f7 INT PRIMARY KEY AUTO_INCREMENT);
 ALTER TABLE t1 ADD CHECK (f1 + NOW() > '2011-11-21');
@@ -207,6 +217,12 @@ ALTER TABLE t1 ADD CHECK (f3 != (SELECT 1));
 Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
 ALTER TABLE t1 ADD check (f3 in (SELECT COALESCE(NULL, 1, 1)));
 Error 3815 (HY000): An expression of a check constraint 't1_chk_1' contains disallowed function.
+ALTER TABLE t1 ADD CHECK (SUM(f3) > 0);
+Error 1111 (HY000): Invalid use of group function
+ALTER TABLE t1 ADD CHECK (RANK() OVER (ORDER BY f3) > 0);
+Error 3593 (HY000): You cannot use the window function 'rank' in this context.'
+ALTER TABLE t1 ADD CHECK (GROUPING(f3) > 0);
+Error 1111 (HY000): Invalid use of group function
 drop table if exists t, s;
 create table t(a int check(a > 10), b int constraint bbb check(b > 5), c int, check(c < 0));
 create table s like t;
