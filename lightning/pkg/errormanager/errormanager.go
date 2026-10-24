@@ -27,6 +27,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/text"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -615,22 +616,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
-						tbl, overwrittenHandle, tbl.Cols(), overwritten)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					if !tbl.Meta().HasClusteredIndex() {
-						// for nonclustered PK, need to append handle to decodedData for AddRecord
-						decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
-					}
-					_, err = encoder.AddRecord(decodedData)
-					if err != nil {
-						return errors.Trace(err)
-					}
-
 					// find out all the KV pairs that are contained in the data KV
-					kvPairs := encoder.SessionCtx.TakeKvPairs()
+					kvPairs, err := encodeRawRow(encoder, tbl, overwrittenHandle, overwritten)
+					if err != nil {
+						return errors.Trace(err)
+					}
 
 					for _, kvPair := range kvPairs.Pairs {
 						em.logger.Debug("got encoded KV",
@@ -795,22 +785,12 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							if err != nil {
 								return errors.Trace(err)
 							}
-							decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
-								tbl, handle, tbl.Cols(), latestValue)
-							if err != nil {
-								return errors.Trace(err)
-							}
-							if !tbl.Meta().HasClusteredIndex() {
-								// for nonclustered PK, need to append handle to decodedData for AddRecord
-								decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
-							}
-							_, err = encoder.AddRecord(decodedData)
-							if err != nil {
-								return errors.Trace(err)
-							}
 							// calculate the new mustKeepKvPairs corresponding to the new rawKey
 							// find out all the KV pairs that are contained in the data KV
-							mustKeepKvPairs = encoder.SessionCtx.TakeKvPairs()
+							mustKeepKvPairs, err = encodeRawRow(encoder, tbl, handle, latestValue)
+							if err != nil {
+								return errors.Trace(err)
+							}
 						}
 					}
 
@@ -824,22 +804,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
-						tbl, handle, tbl.Cols(), rawValue)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					if !tbl.Meta().HasClusteredIndex() {
-						// for nonclustered PK, need to append handle to decodedData for AddRecord
-						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
-					}
-					_, err = encoder.AddRecord(decodedData)
-					if err != nil {
-						return errors.Trace(err)
-					}
-
 					// find out all the KV pairs that are contained in the data KV
-					kvPairs := encoder.SessionCtx.TakeKvPairs()
+					kvPairs, err := encodeRawRow(encoder, tbl, handle, rawValue)
+					if err != nil {
+						return errors.Trace(err)
+					}
 					for _, kvPair := range kvPairs.Pairs {
 						em.logger.Debug("got encoded KV",
 							logutil.Key("key", kvPair.Key),
@@ -938,6 +907,40 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	}
 
 	return nil
+}
+
+// encodeRawRow decodes a raw row value and encodes it again into all the KV
+// pairs it owns. Virtual generated columns are not stored in the row value, so
+// all generated columns are evaluated again before encoding, otherwise the
+// index KVs that depend on them can't be reconstructed.
+func encodeRawRow(
+	encoder *kv.BaseKVEncoder,
+	tbl tidbtbl.Table,
+	handle tidbkv.Handle,
+	rawValue []byte,
+) (*kv.Pairs, error) {
+	decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
+		tbl, handle, tbl.Cols(), rawValue)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if !tbl.Meta().HasClusteredIndex() {
+		// for nonclustered PK, need to append handle to decodedData for AddRecord
+		decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
+	}
+	if len(encoder.GenCols) > 0 {
+		for _, gc := range encoder.GenCols {
+			// MutRowFromDatums needs a non-null datum to initialize the column.
+			decodedData[gc.Index] = types.GetMinValue(&encoder.Columns[gc.Index].FieldType)
+		}
+		if _, err = encoder.EvalGeneratedColumns(decodedData, encoder.Columns); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if _, err = encoder.AddRecord(decodedData); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return encoder.SessionCtx.TakeKvPairs(), nil
 }
 
 // RecordDuplicateCount reduce the counter of "duplicate entry" errors.
