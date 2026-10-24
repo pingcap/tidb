@@ -180,11 +180,7 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 		"quarantine-record",
 		watchFlushInterval,
 		batchSize,
-		func(m map[string]*QuarantineRecord, k string, v *QuarantineRecord) {
-			if _, ok := m[k]; !ok {
-				m[k] = v
-			}
-		},
+		mergeQuarantineRecord,
 		genBatchInsertWatchStmt,
 		rm.sysSessionPool,
 	)
