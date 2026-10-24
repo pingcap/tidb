@@ -1492,6 +1492,20 @@ func (b *builtinSubstringIndexSig) evalString(ctx EvalContext, row chunk.Row) (d
 	return strings.Join(substrs, delim), false, nil
 }
 
+// hasByteOrientedOffsets reports whether a byte offset into a string of this charset
+// is already a character offset, which holds for every single-byte charset.
+//
+// LOCATE and INSTR report character positions, so single-byte charsets must use the
+// byte-oriented signatures rather than the UTF-8 ones. Running latin1 data through
+// the UTF-8 signatures both miscounts positions, whenever the bytes happen to form a
+// valid UTF-8 sequence, and corrupts the data outright: the []rune round trip they
+// use to slice at a start position rewrites every byte that is not valid UTF-8 to
+// U+FFFD.
+func hasByteOrientedOffsets(cs string) bool {
+	info, ok := charset.CharacterSetInfos[cs]
+	return ok && info.Maxlen == 1
+}
+
 type locateFunctionClass struct {
 	baseFunctionClass
 }
@@ -1510,7 +1524,7 @@ func (c *locateFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 	var sig builtinFunc
 	// Locate is multibyte safe.
-	useBinary := bf.collation == charset.CollationBin
+	useBinary := bf.collation == charset.CollationBin || hasByteOrientedOffsets(bf.charset)
 	switch {
 	case hasStartPos && useBinary:
 		sig = &builtinLocate3ArgsSig{bf}
@@ -1542,7 +1556,9 @@ func (b *builtinLocate2ArgsSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str), case-sensitive.
+// evalInt evals LOCATE(substr,str) over a charset whose byte offsets are character
+// offsets. Case-sensitive unless the collation is a case-insensitive single-byte one,
+// in which case both sides are folded first; see collate.FoldCase.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate2ArgsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(ctx, row)
@@ -1552,6 +1568,10 @@ func (b *builtinLocate2ArgsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	str, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
+	}
+	if collate.IsCICollation(b.collation) {
+		subStr = collate.FoldCase(b.collation, subStr)
+		str = collate.FoldCase(b.collation, str)
 	}
 	subStrLen := len(subStr)
 	if subStrLen == 0 {
@@ -1610,7 +1630,9 @@ func (b *builtinLocate3ArgsSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals LOCATE(substr,str,pos), case-sensitive.
+// evalInt evals LOCATE(substr,str,pos) over a charset whose byte offsets are
+// character offsets. Case-sensitive unless the collation is a case-insensitive
+// single-byte one, in which case both sides are folded first; see collate.FoldCase.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_locate
 func (b *builtinLocate3ArgsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	subStr, isNull, err := b.args[0].EvalString(ctx, row)
@@ -1620,6 +1642,10 @@ func (b *builtinLocate3ArgsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	str, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
+	}
+	if collate.IsCICollation(b.collation) {
+		subStr = collate.FoldCase(b.collation, subStr)
+		str = collate.FoldCase(b.collation, str)
 	}
 	pos, isNull, err := b.args[2].EvalInt(ctx, row)
 	// Transfer the argument which starts from 1 to real index which starts from 0.
@@ -4054,7 +4080,7 @@ func (c *instrFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	bf.tp.SetFlen(11)
-	if bf.collation == charset.CollationBin {
+	if bf.collation == charset.CollationBin || hasByteOrientedOffsets(bf.charset) {
 		sig := &builtinInstrSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Instr)
 		return sig, nil
@@ -4126,6 +4152,11 @@ func (b *builtinInstrSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 	substr, IsNull, err := b.args[1].EvalString(ctx, row)
 	if IsNull || err != nil {
 		return 0, true, err
+	}
+
+	if collate.IsCICollation(b.collation) {
+		str = collate.FoldCase(b.collation, str)
+		substr = collate.FoldCase(b.collation, substr)
 	}
 
 	idx := strings.Index(str, substr)

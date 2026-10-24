@@ -1324,16 +1324,22 @@ func (b *builtinLocate2ArgsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		subStr := buf0.GetString(i)
+		str := buf1.GetString(i)
+		if ci {
+			subStr = collate.FoldCase(b.collation, subStr)
+			str = collate.FoldCase(b.collation, str)
+		}
 		if len(subStr) == 0 {
 			i64s[i] = 1
 			continue
 		}
-		i64s[i] = int64(strings.Index(buf1.GetString(i), subStr) + 1)
+		i64s[i] = int64(strings.Index(str, subStr) + 1)
 	}
 	return nil
 }
@@ -1369,6 +1375,7 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 
 	result.MergeNulls(buf0, buf1)
 	i64s := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := range n {
 		if result.IsNull(i) {
 			continue
@@ -1378,6 +1385,10 @@ func (b *builtinLocate3ArgsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		pos--
 		subStr := buf0.GetString(i)
 		str := buf1.GetString(i)
+		if ci {
+			subStr = collate.FoldCase(b.collation, subStr)
+			str = collate.FoldCase(b.collation, str)
+		}
 		subStrLen := len(subStr)
 		if pos < 0 || pos > int64(len(str)-subStrLen) {
 			i64s[i] = 0
@@ -2208,12 +2219,17 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
+	ci := collate.IsCICollation(b.collation)
 	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
 		strI := str.GetString(i)
 		substrI := substr.GetString(i)
+		if ci {
+			strI = collate.FoldCase(b.collation, strI)
+			substrI = collate.FoldCase(b.collation, substrI)
+		}
 		idx := strings.Index(strI, substrI)
 		res[i] = int64(idx + 1)
 	}

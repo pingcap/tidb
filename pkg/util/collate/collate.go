@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 	"sync/atomic"
 	"unicode/utf8"
 
@@ -311,7 +312,49 @@ func IsDefaultCollationForUTF8MB4(collate string) bool {
 func IsCICollation(collate string) bool {
 	return collate == "utf8_general_ci" || collate == "utf8mb4_general_ci" ||
 		collate == "utf8_unicode_ci" || collate == "utf8mb4_unicode_ci" || collate == "gbk_chinese_ci" ||
-		collate == "utf8mb4_0900_ai_ci" || collate == "gb18030_chinese_ci"
+		collate == "utf8mb4_0900_ai_ci" || collate == "gb18030_chinese_ci" ||
+		collate == "latin1_swedish_ci"
+}
+
+// isByteOrientedCollation returns whether the collation weighs its input byte by
+// byte rather than rune by rune, so UTF-8 based helpers must not be applied to it.
+func isByteOrientedCollation(collate string) bool {
+	return collate == "latin1_swedish_ci"
+}
+
+// SupportedByStorage returns whether TiKV and TiFlash have a collator for the
+// collation, which decides whether expressions over it may be pushed down.
+//
+// TiDB can register a collation before the storage layer implements it. Pushing such
+// an expression down would silently produce wrong results rather than an error,
+// because CollationToProto does not reject a collation the storage layer is missing:
+// it falls back to the default collation ID and only logs a warning. Callers must
+// therefore keep these expressions in TiDB themselves.
+//
+// Index range scans are unaffected. TiDB computes the range bounds with its own
+// collator and the storage layer only scans the resulting raw byte range.
+func SupportedByStorage(coll string) bool {
+	// latin1_swedish_ci is evaluated by TiDB only. Remove it from here once TiKV and
+	// TiFlash ship a matching collator.
+	return coll != "latin1_swedish_ci"
+}
+
+// FoldCase returns str with the case differences of a case-insensitive collation
+// removed, so that callers can fall back to byte-wise search on the result. It is
+// only meaningful when IsCICollation reports true for coll.
+//
+// The fold preserves byte offsets, which callers such as LOCATE and INSTR rely on to
+// convert a byte index back into a character position. That is why byte-oriented
+// collations cannot use strings.ToLower: it assumes UTF-8, so every latin1 byte
+// >= 0x80 decodes to U+FFFD and distinct characters would compare equal, and the
+// 1 -> 3 byte inflation would silently shift every position it reports. Those
+// collations fold through the collation weight table instead, which maps one byte to
+// exactly one byte.
+func FoldCase(coll, str string) string {
+	if isByteOrientedCollation(coll) {
+		return string(GetCollator(coll).KeyWithoutTrimRightSpace(str))
+	}
+	return strings.ToLower(str)
 }
 
 // ConvertAndGetBinCollation converts collation to binary collation
@@ -331,6 +374,8 @@ func ConvertAndGetBinCollation(collate string) string {
 		return "gbk_bin"
 	case "gb18030_chinese_ci":
 		return "gb18030_bin"
+	case "latin1_swedish_ci":
+		return "latin1_bin"
 	}
 
 	return collate
@@ -449,6 +494,8 @@ func init() {
 	newCollatorIDMap[CollationName2ID("ascii_bin")] = &binPaddingCollator{}
 	newCollatorMap["latin1_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("latin1_bin")] = &binPaddingCollator{}
+	newCollatorMap["latin1_swedish_ci"] = &latin1SwedishCICollator{}
+	newCollatorIDMap[CollationName2ID("latin1_swedish_ci")] = &latin1SwedishCICollator{}
 	newCollatorMap["utf8mb4_bin"] = &binPaddingCollator{}
 	newCollatorIDMap[CollationName2ID("utf8mb4_bin")] = &binPaddingCollator{}
 	newCollatorMap["utf8_bin"] = &binPaddingCollator{}
