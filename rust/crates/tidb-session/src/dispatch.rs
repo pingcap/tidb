@@ -1595,7 +1595,17 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<crate::StatementExecution<'a>, DriverError> {
-        if self.node.is_some() {
+        // A node session streams a plain read outside a transaction over a
+        // committed snapshot bound for it (Go's record set holds the
+        // statement open until Close); anything that writes, locks, or must
+        // see a transaction's own writes runs through the node connection.
+        if self.node.is_some()
+            && !(crate::classify::statement_kind_of(&stmt)
+                == crate::classify::StatementKind::Select
+                && !self.in_transaction()
+                && self.statement_read_shape_bound(&stmt)
+                    != tidb_executor::access_path::StatementReadShape::LockingRead)
+        {
             return self.run_with_columns_parsed(stmt, sql).map(crate::StatementExecution::Complete);
         }
         Ok(self.open_record_set_parsed(stmt, sql)?.attach(self))
@@ -1607,6 +1617,7 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<crate::OpenedStatement, DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(sql)?;
         self.begin_text_statement_boundary(&stmt);
         let result =
