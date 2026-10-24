@@ -155,7 +155,7 @@ func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Require
 		if tbInfo.Affinity != nil {
 			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
 				job.State = model.JobStateCancelled
-				return tbInfo, errors.Wrapf(err, "failed to create table affinity groups in PD")
+				return tbInfo, errors.Wrapf(err, "failed to prepare table affinity groups")
 			}
 		}
 

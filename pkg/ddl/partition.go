@@ -2635,6 +2635,14 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	if job.IsRollingback() {
 		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
 	}
+	// Reject an invalid affinity codec before partition replacement becomes
+	// visible; cancelling in delete-reorganization would be too late.
+	if canCancel && tblInfo.Affinity != nil {
+		if err = validateAffinityCodec(jobCtx.store.GetCodec()); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 
 	failpoint.Inject("truncatePartCancel1", func(val failpoint.Value) {
 		if val.(bool) {

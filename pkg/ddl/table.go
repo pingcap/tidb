@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -78,8 +79,11 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 
 	// Materialized views in Stage-1 are non-partitioned, so their table-level
 	// affinity group ID is derived directly from the old physical table ID.
-	groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
-	if err := affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID}); err != nil {
+	groupID, err := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
+	if err == nil {
+		err = affinity.DeleteGroupsWithRetry(jobCtx.ctx, []string{groupID})
+	}
+	if err != nil {
 		logutil.DDLLogger().Warn(
 			"failed to delete old materialized view affinity group after cutover",
 			zap.Int64("tableID", args.OldMViewID),
@@ -569,6 +573,14 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, schemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	// Validate the codec before dropping the old table metadata. A failed
+	// affinity setup must leave TRUNCATE TABLE cancellable without data loss.
+	if kerneltype.IsNextGen() && tblInfo.Affinity != nil {
+		if err := validateAffinityCodec(jobCtx.store.GetCodec()); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 	if tblInfo.IsView() || tblInfo.IsSequence() {
 		job.State = model.JobStateCancelled
