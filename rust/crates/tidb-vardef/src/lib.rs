@@ -239,4 +239,5 @@ pub mod defaults;
 pub mod global_sysvar_initial;
 pub mod modes;
 pub mod option_values;
+pub mod statusvar;
 pub mod tidb_vars;

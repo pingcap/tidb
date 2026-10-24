@@ -1,0 +1,565 @@
+//! `ANALYZE TABLE` on this node: that it reaches the statistics seam at all,
+//! that Go's INSERT-and-SELECT privilege gate is applied before the seam is
+//! reached, and that the clauses this node does not run are refused by name.
+//!
+//! The mock analyzer refuses every table, which is what makes "reached the
+//! seam" and "refused before the seam" two different sentences a test can
+//! tell apart.
+
+use super::super::*;
+use super::mock_cluster::*;
+use super::mock_seams::*;
+use super::node_fixture::*;
+use crate::domain::configured_user_store::ConfiguredUserStore;
+use crate::domain::session_api::{ConnectionCancellation, ConnectionClose};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tidb_datatype::Datum;
+use crate::privilege::GlobalPriv;
+use tidb_txnkv::retry::RegionBackoffKind;
+use tidb_txnkv::transaction::{
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
+};
+
+struct UndeterminedAnalyze;
+
+impl ClusterAnalyze for UndeterminedAnalyze {
+    fn execute(
+        &self,
+        _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &str,
+        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        _: &tidb_util::sqlkiller::SqlKiller,
+        _: &dyn Fn() -> bool,
+        _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+    {
+        Err(crate::domain::session_api::cluster_analyze_error(
+            tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
+                "commit response lost".to_owned(),
+            ),
+        ))
+    }
+}
+
+struct PanickingAnalyze(&'static str);
+
+impl ClusterAnalyze for PanickingAnalyze {
+    fn execute(
+        &self,
+        _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+        _: &str,
+        _: &dyn tidb_exec::real_tikv_analyze::ApproximateTableCountProvider,
+        _: &tidb_util::sqlkiller::SqlKiller,
+        _: &dyn Fn() -> bool,
+        _: &dyn tidb_exec::real_tikv_analyze::AnalyzeJobLifecycle,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::domain::session_api::SqlQueryError>
+    {
+        panic!("{}", self.0)
+    }
+}
+
+#[derive(Default)]
+struct WarningStatsLock {
+    calls: AtomicUsize,
+}
+
+#[test]
+fn failed_later_column_usage_batch_requeues_every_entry() {
+    let sessions = tidb_stats_handle_usage::SessionStatsList::new();
+    let session = sessions.new_session_stats_item();
+    let used_at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10);
+    session.update_col_stats_usage(
+        (1..=tidb_stats_handle_usage::BATCH_INSERT_SIZE + 1).map(|column_id| {
+            tidb_model::TableItemID {
+                table_id: 1,
+                id: i64::try_from(column_id).expect("column ID fits in i64"),
+                is_index: false,
+                is_sync_load_failed: false,
+            }
+        }),
+        used_at,
+    );
+
+    {
+        let mut pending = sessions.begin_column_stats_usage_dump();
+        let entries = pending.entries();
+        let mut batches = 0;
+        let error = persist_column_stats_usage_batches(&mut pending, &entries, |_| {
+            batches += 1;
+            (batches == 1)
+                .then_some(())
+                .ok_or_else(|| "second batch failed".to_owned())
+        })
+        .expect_err("the second batch fails");
+        assert_eq!(error, "second batch failed");
+    }
+
+    let mut retry = sessions.begin_column_stats_usage_dump();
+    let entries = retry.entries();
+    assert_eq!(
+        entries.len(),
+        tidb_stats_handle_usage::BATCH_INSERT_SIZE + 1
+    );
+    persist_column_stats_usage_batches(&mut retry, &entries, |_| Ok(()))
+        .expect("the complete retry succeeds");
+    drop(retry);
+    assert!(sessions
+        .begin_column_stats_usage_dump()
+        .entries()
+        .is_empty());
+}
+
+#[test]
+fn column_usage_timestamp_matches_go_time_format_precision() {
+    let stored = system_time_timestamp(
+        std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(1_000_000)
+            + std::time::Duration::from_micros(654_321),
+    )
+    .expect("timestamp is representable");
+    assert_eq!(stored.core_time().microsecond(), 0);
+    assert_eq!(stored.fsp(), 6);
+}
+
+#[test]
+fn usage_workers_stop_before_the_shutdown_delta_flush() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let stop = Arc::new(UsageWorkerStop {
+        stopped: Mutex::new(false),
+        wake: Condvar::new(),
+    });
+    let worker_stop = Arc::clone(&stop);
+    let worker_events = Arc::clone(&events);
+    let thread = std::thread::spawn(move || {
+        worker_stop.wait(std::time::Duration::from_secs(60));
+        worker_events.lock().unwrap().push("stopped");
+    });
+    let workers = StatsUsageWorkers {
+        stop,
+        threads: vec![thread],
+        flush_on_drop: true,
+    };
+
+    if workers.stop_before_shutdown_flush() {
+        events.lock().unwrap().push("flush");
+    }
+    assert_eq!(*events.lock().unwrap(), ["stopped", "flush"]);
+}
+
+impl crate::domain::cluster_stats_lock_seam::ClusterStatsLock for WarningStatsLock {
+    fn execute(
+        &self,
+        statement: &tidb_exec::cluster_stats_lock::ClusterStatsLockStatement,
+    ) -> Result<
+        tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport,
+        crate::domain::session_api::SqlQueryError,
+    > {
+        assert!(statement.lock);
+        assert_eq!(statement.targets.len(), 1);
+        assert_eq!(statement.targets[0].schema, "app");
+        assert_eq!(statement.targets[0].table, "t");
+        self.calls.fetch_add(1, Ordering::AcqRel);
+        Ok(tidb_exec::real_tikv_stats_lock::ClusterStatsLockReport {
+            warning: "skip locking locked table: app.t".to_owned(),
+        })
+    }
+}
+
+#[test]
+fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transaction() {
+    let node = MockNode::start();
+    let stats_lock = Arc::new(WarningStatsLock::default());
+    let mut session = open_session_on_with_stats_lock(
+        &node,
+        Arc::clone(&stats_lock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    );
+
+    session.execute_write("BEGIN").expect("begin");
+    session
+        .execute_write("LOCK STATS t")
+        .expect("cluster lockstats route");
+    assert_eq!(stats_lock.calls.load(Ordering::Acquire), 1);
+    assert!(session.store.session.in_transaction());
+    assert_eq!(
+        rows(&mut session, "SHOW WARNINGS"),
+        vec![vec![
+            tidb_datatype::Datum::Bytes(b"Warning".to_vec()),
+            tidb_datatype::Datum::Int(1105),
+            tidb_datatype::Datum::Bytes(b"skip locking locked table: app.t".to_vec()),
+        ]]
+    );
+    session
+        .execute_write("ROLLBACK")
+        .expect("rollback user txn");
+}
+
+#[test]
+fn stats_lock_checks_every_target_privilege_before_the_internal_transaction() {
+    let node = MockNode::start();
+    node.accounts.live.create_user("low", "%", "");
+    node.accounts
+        .live
+        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
+    let stats_lock = Arc::new(WarningStatsLock::default());
+    let mut session = open_session_as_with_stats_lock(
+        &node,
+        "low",
+        Arc::clone(&stats_lock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    );
+
+    let error = session
+        .execute_write("LOCK STATS t")
+        .expect_err("INSERT is checked before SELECT and before the stats transaction");
+    assert_eq!(error.code, 1142);
+    assert_eq!(error.state, *b"42000");
+    assert_eq!(
+        error.message,
+        "INSERT command denied to user 'low'@'%' for table 't'"
+    );
+    assert_eq!(stats_lock.calls.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn stats_lock_planning_keeps_go_error_identities() {
+    use tidb_exec::cluster_stats_lock::ClusterStatsLockError;
+    use tidb_exec::real_tikv_stats_lock::ClusterStatsLockCommitError;
+
+    let cases = [
+        (
+            ClusterStatsLockError::NoDatabaseSelected,
+            1046,
+            *b"3D000",
+            "No database selected",
+        ),
+        (
+            ClusterStatsLockError::MissingTable {
+                schema: "app".to_owned(),
+                table: "missing".to_owned(),
+            },
+            1146,
+            *b"42S02",
+            "Table 'app.missing' doesn't exist",
+        ),
+        (
+            ClusterStatsLockError::UnknownPartition {
+                partition: "p9".to_owned(),
+                table: "t".to_owned(),
+            },
+            1735,
+            *b"HY000",
+            "Unknown partition 'p9' in table 't'",
+        ),
+    ];
+    for (error, code, state, message) in cases {
+        let error =
+            crate::domain::session_api::cluster_stats_lock_error(ClusterStatsLockCommitError::Plan(error));
+        assert_eq!((error.code, error.state), (code, state));
+        assert_eq!(error.message, message);
+    }
+}
+
+/// Go runs ANALYZE work and result handling in separate goroutines, so
+/// `pkg/executor/test/analyzetest/panictest` has one failpoint test for each
+/// recovery site. This node runs both phases synchronously behind the single
+/// `ClusterAnalyze::execute` production seam; both source panics therefore
+/// collapse to one recovery boundary, but remain separate cases here so the
+/// integration decision cannot silently drop either source test.
+#[test]
+fn analyze_internal_panics_become_query_errors_and_leave_the_session_usable() {
+    for source_test in [
+        "TestPanicInHandleResultErrorWithSingleGoroutine",
+        "TestPanicInHandleAnalyzeWorkerPanic",
+    ] {
+        let node = MockNode::start();
+        let mut session =
+            open_session_on_with_analyze(&node, Arc::new(PanickingAnalyze(source_test)));
+
+        let query_error = session
+            .execute_write("ANALYZE TABLE t")
+            .expect_err("an internal ANALYZE panic must become a statement error");
+        assert_eq!(query_error.code, 1105, "source test: {source_test}");
+        assert_eq!(query_error.state, *b"HY000", "source test: {source_test}");
+        assert_eq!(
+            query_error.message, "analyze worker panic",
+            "source test: {source_test}"
+        );
+        assert_query_error_packet(&query_error, 1105, "analyze worker panic");
+
+        assert!(
+            rows(&mut session, "SELECT * FROM t").is_empty(),
+            "recovering the statement must keep the session catalog usable: {source_test}"
+        );
+    }
+}
+
+#[test]
+fn analyze_commit_keeps_an_undetermined_verdict_connection_fatal() {
+    let node = MockNode::start();
+    let mut session = open_session_on_with_analyze(&node, Arc::new(UndeterminedAnalyze));
+    let query_error = session
+        .execute_write("ANALYZE TABLE t")
+        .expect_err("ANALYZE cannot answer success after losing its commit response");
+    assert_undetermined_closes_without_packet(&query_error);
+}
+
+#[test]
+fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
+    let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+        receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
+        cause: TransactionCause::BackoffExhausted {
+            kind: RegionBackoffKind::StaleCommand,
+            detail: "staleCommand backoffer exhausted".to_owned(),
+        },
+    });
+    let lock_error = tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+        .expect_err("an exhausted busy backoff cannot answer success");
+    let query_error = crate::domain::session_api::cluster_analyze_error(
+        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),
+    );
+    assert_eq!(
+        query_error.code,
+        tidb_error::tidb::errcode::ErrTiKVStaleCommand
+    );
+    assert_query_error_packet(
+        &query_error,
+        tidb_error::tidb::errcode::ErrTiKVStaleCommand,
+        "TiKV server reports stale command",
+    );
+}
+
+#[test]
+fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
+    let killer = tidb_util::sqlkiller::SqlKiller::default();
+    killer.send_kill_signal(tidb_util::sqlkiller::KillSignal::QueryInterrupted);
+    let error = killer
+        .handle_signal()
+        .expect("the query-interrupted signal has an error")
+        .to_sql_error();
+    let query_error = crate::domain::session_api::cluster_analyze_error(
+        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Killed(error),
+    );
+    assert_eq!((query_error.code, query_error.state), (1317, *b"70100"));
+}
+
+/// `ANALYZE TABLE` reaches the statistics seam rather than the ordinary
+/// statement path.
+///
+/// The mock analyzer refuses by naming the table, so the assertion is
+/// that ITS refusal is what the client is told: had the statement stayed
+/// on the ordinary path it would have come back as an unsupported
+/// administrative statement instead, which is a different sentence and
+/// would have left the cluster's statistics silently untouched.
+#[test]
+fn analyze_table_routes_to_the_statistics_seam() {
+    let (mut session, _node) = open_session();
+    let refusal = session
+        .execute_write("ANALYZE TABLE t")
+        .expect_err("the mock node has no statistics to store")
+        .message;
+    assert!(
+        refusal.contains("the mock node stores no statistics for"),
+        "the statistics seam's own refusal must reach the client: {refusal}"
+    );
+    assert!(
+        refusal.contains("`t`"),
+        "the refusal must name the table: {refusal}"
+    );
+}
+
+/// Temporary tables are the one `ANALYZE` storage class that must not reach
+/// the shared cluster seam. The mock seam rejects every call, so success here
+/// proves the production route sampled the connection's temporary rows.
+#[test]
+fn analyze_temporary_table_uses_the_session_storage_overlay() {
+    let (mut session, _node) = open_session();
+    session.execute_write("BEGIN").expect("begin");
+    session
+        .execute_write("CREATE TEMPORARY TABLE temp_stats (a INT)")
+        .unwrap();
+    let driver_in_transaction = session.store.session.in_transaction();
+    assert!(
+        driver_in_transaction,
+        "Go returns from LOCAL CREATE before opening a DDL transaction, so it must not commit"
+    );
+    session
+        .execute_write("INSERT INTO temp_stats VALUES (1), (2), (3)")
+        .unwrap();
+
+    session
+        .execute_write("ANALYZE TABLE temp_stats")
+        .expect("temporary ANALYZE bypasses the rejecting cluster seam");
+
+    let explain = rows(&mut session, "EXPLAIN SELECT * FROM temp_stats");
+    assert!(
+        explain.iter().all(|row| !row.iter().any(|datum| {
+            matches!(datum, Datum::Bytes(value) if String::from_utf8_lossy(value).contains("stats:pseudo"))
+        })),
+        "explicit ANALYZE must publish real temporary-table statistics: {explain:?}"
+    );
+
+    // A stats publication replaces the node's shared snapshot and forces the
+    // next statement to rebuild its catalog. LOCAL metadata is not part of
+    // that shared image, but Go's process-wide statistics cache retains the
+    // explicit ANALYZE result and the rebuilt session must do the same.
+    session
+        .stats
+        .store_after_analyze((*session.stats.load()).clone());
+    session.rebuild_catalog_now();
+    let explain = rows(&mut session, "EXPLAIN SELECT * FROM temp_stats");
+    assert!(
+        explain.iter().all(|row| !row.iter().any(|datum| {
+            matches!(datum, Datum::Bytes(value) if String::from_utf8_lossy(value).contains("stats:pseudo"))
+        })),
+        "catalog rebuild must retain cached LOCAL temporary statistics: {explain:?}"
+    );
+}
+
+/// Opens a connection authenticated as `user`, which is how a test says
+/// "somebody other than root".
+fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
+    open_session_as_with_stats_lock(
+        node,
+        user,
+        Arc::new(MockStatsLock) as Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+    )
+}
+
+fn open_session_as_with_stats_lock(
+    node: &MockNode,
+    user: &str,
+    stats_lock: Arc<dyn crate::domain::cluster_stats_lock_seam::ClusterStatsLock>,
+) -> ClusterServerSession {
+    let cluster = Arc::clone(&node.cluster);
+    let factory = ClusterSessionFactory::new(
+        Arc::new(MockTransactions(cluster)),
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::domain::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        stats_lock,
+        Arc::clone(&node.catalog),
+        node.accounts.live.clone(),
+        node.sysvars.live.clone(),
+        Arc::new(
+            SharedStats::new(tidb_exec::stats_watch::StatsSnapshot::new())
+                .expect("statistics cache"),
+        ),
+        Arc::new(crate::domain::cluster_session::LocalTableAutoIds::default()),
+    );
+    let users =
+        ConfiguredUserStore::parse(&format!("{user}\t%\tmysql_native_password\t{ABC_HASH}\n"))
+            .expect("configured user store");
+    let identity = users
+        .authenticate_native(user, "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
+        .expect("authenticated identity");
+    let peer_addr: SocketAddr = "127.0.0.1:4001".parse().expect("peer address");
+    let mut session = factory
+        .open_session(SessionContext {
+            connection_id: 2,
+            peer_addr,
+            identity,
+            client_found_rows: false,
+            secure_transport: false,
+            tls_status: None,
+            cancellation: ConnectionCancellation::default(),
+            close: ConnectionClose::default(),
+        })
+        .expect("the cluster session opens");
+    session.execute_write("USE app").expect("USE app");
+    session
+}
+
+/// An account with no privilege on the table cannot `ANALYZE` it.
+///
+/// The statistics an `ANALYZE` writes are not metadata: a TopN entry in
+/// `mysql.stats_top_n` is an ACTUAL COLUMN VALUE. Letting any
+/// authenticated connection analyze any table therefore hands out the
+/// table's contents, which is why Go requires INSERT and SELECT on it
+/// (`planbuilder.go:3205` `requireInsertAndSelectPriv`).
+///
+/// The assertion is on the seam as much as on the error: the mock
+/// analyzer refuses every table by name, so reaching it at all would show
+/// up here as ITS message rather than the access-denied one.
+#[test]
+fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
+    let node = MockNode::start();
+    node.accounts.live.create_user("low", "%", "");
+    // `USE app` is `ErrDBaccessDenied` (1044) for an account with no
+    // evidence at all on the schema, measured in Go, so an account that
+    // cannot see `app` could never reach the 1142 this test is about.
+    // `CREATE TEMPORARY TABLES` is the one privilege that makes a schema
+    // visible without carrying either privilege `ANALYZE` demands.
+    node.accounts
+        .live
+        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
+    let mut session = open_session_as(&node, "low");
+    let refusal = session
+        .execute_write("ANALYZE TABLE t")
+        .expect_err("an account with no privilege on `t` may not analyze it");
+    // Captured from a real TiDB, for a user with no privileges at all and
+    // for a SELECT-only user alike -- INSERT is the visitInfo Go appends
+    // first.
+    assert_eq!(refusal.code, 1142);
+    assert_eq!(refusal.state, *b"42000");
+    assert_eq!(
+        refusal.message,
+        "INSERT command denied to user 'low'@'%' for table 't'"
+    );
+}
+
+/// SELECT alone is not enough, which is Go's answer too: the INSERT the
+/// statement needs is the one that writes `mysql.stats_*`.
+#[test]
+fn analyze_with_only_select_on_the_table_is_still_refused() {
+    let node = MockNode::start();
+    node.accounts.live.create_user("ro", "%", "");
+    node.accounts
+        .live
+        .grant_table("ro", "%", "app", "t", GlobalPriv::Select.mask());
+    let mut session = open_session_as(&node, "ro");
+    let refusal = session
+        .execute_write("ANALYZE TABLE t")
+        .expect_err("SELECT alone does not carry an ANALYZE");
+    assert_eq!(refusal.code, 1142);
+    assert_eq!(
+        refusal.message,
+        "INSERT command denied to user 'ro'@'%' for table 't'"
+    );
+}
+
+/// INSERT and SELECT on the table carry it, and the statement then
+/// reaches the statistics seam -- the grant does not have to be global.
+#[test]
+fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
+    let node = MockNode::start();
+    node.accounts.live.create_user("rw", "%", "");
+    node.accounts.live.grant_table(
+        "rw",
+        "%",
+        "app",
+        "t",
+        GlobalPriv::Select.mask() | GlobalPriv::Insert.mask(),
+    );
+    let mut session = open_session_as(&node, "rw");
+    let refusal = session
+        .execute_write("ANALYZE TABLE t")
+        .expect_err("the mock node has no statistics to store")
+        .message;
+    assert!(
+        refusal.contains("the mock node stores no statistics for"),
+        "a privileged account must reach the statistics seam: {refusal}"
+    );
+}
+
+#[test]
+fn analyze_scan_concurrency_uses_system_setting_only_for_auto_analyze() {
+    assert_eq!(
+        crate::analyze_service::analyze_scan_concurrency_variable(false),
+        tidb_vardef::tidb_vars::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY
+    );
+    assert_eq!(
+        crate::analyze_service::analyze_scan_concurrency_variable(true),
+        tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
+    );
+}

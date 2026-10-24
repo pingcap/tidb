@@ -64,9 +64,9 @@ fn node_and_authority_failures_are_combined_after_factory_drop() {
     let result = run_with_process_shutdown(factory, authority, |factory| {
         events.lock().unwrap().push("node_run");
         drop(factory);
-        Err(RunConfiguredNodeError::Node(
+        Err(RunConfiguredNodeError::Node(Box::new(
             SqlNodeError::WorkerQueueClosed,
-        ))
+        )))
     });
 
     assert_eq!(
@@ -117,9 +117,9 @@ fn post_connect_early_node_failure_still_shuts_down_authority() {
         },
         |factory| {
             drop(factory);
-            Err(RunConfiguredNodeError::Node(
-                SqlNodeError::WorkerQueueClosed,
-            ))
+            Err(RunConfiguredNodeError::Node(Box::new(
+            SqlNodeError::WorkerQueueClosed,
+        )))
         },
     );
 

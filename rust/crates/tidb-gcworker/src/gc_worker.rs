@@ -318,7 +318,7 @@ impl GcWorker {
             go_time_now_string()
         );
         let worker = Self::with_identity(deps, uuid, desc, keyspace_id);
-        tidb_session::statusvar::register_statistics(Arc::new(GcStatistics(Arc::clone(
+        tidb_vardef::statusvar::register_statistics(Arc::new(GcStatistics(Arc::clone(
             &worker.job,
         ))));
         Ok(worker)
@@ -431,7 +431,7 @@ impl GcWorker {
 
     /// Go `GetScope`.
     pub fn get_scope(&self, _status: &str) -> u8 {
-        tidb_session::statusvar::DEFAULT_STATUS_VAR_SCOPE_FLAG
+        tidb_vardef::statusvar::DEFAULT_STATUS_VAR_SCOPE_FLAG
     }
 
     /// Go `Stats`: the GC rows of `mysql.tidb` as status variables.
@@ -621,9 +621,9 @@ impl Drop for GcWorkerHandle {
 /// itself): the GC rows of `mysql.tidb`.
 struct GcStatistics(Arc<GcJobContext>);
 
-impl tidb_session::statusvar::Statistics for GcStatistics {
+impl tidb_vardef::statusvar::Statistics for GcStatistics {
     fn get_scope(&self, _status: &str) -> u8 {
-        tidb_session::statusvar::DEFAULT_STATUS_VAR_SCOPE_FLAG
+        tidb_vardef::statusvar::DEFAULT_STATUS_VAR_SCOPE_FLAG
     }
 
     fn stats(&self) -> Result<std::collections::BTreeMap<String, String>, String> {

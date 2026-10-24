@@ -56,6 +56,7 @@ use crate::resultset_writer::ResultSetSink;
 use crate::secure_transport::TransportKind;
 use tidb_ast::Stmt;
 
+use crate::session_api::record_text_write_failure;
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
     PreparedStatement, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
@@ -841,16 +842,6 @@ fn execute_statement<'a, S: QuerySession>(
 /// go `driver_tidb.go:376` appends every error to StmtCtx. The DML
 /// column-validation path already appends its own warnings, so those codes are
 /// not appended twice (go's INSERT 1264 shows ONE row); a DDL error always is.
-pub(crate) fn record_text_write_failure<S: QuerySession + ?Sized>(
-    engine: &mut S,
-    parsed: Option<&Stmt>,
-    error: &SqlQueryError,
-) {
-    let is_ddl = parsed.is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
-    if is_ddl || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406) {
-        engine.record_write_failure(error.code, error.message.clone());
-    }
-}
 
 fn record_client_warnings<O: ConnectionPacketOutput + ?Sized, S: QuerySession>(
     output: &O,

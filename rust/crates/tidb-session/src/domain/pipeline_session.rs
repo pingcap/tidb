@@ -1,0 +1,1461 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! MySQL wire front for the new pipeline session (`tidb-session`).
+//!
+//! Adapts [`crate::Session`] (parse -> plan -> execute over real
+//! TiKV-format bytes) to the connection layer's [`QuerySession`] contract, so
+//! the existing `COM_QUERY` text path can serve `CREATE TABLE` / `INSERT` /
+//! `SELECT` through the pipeline.
+//!
+//! Write-result representation: `COM_QUERY` writes answer with a real OK
+//! packet carrying their affected-row count, through the [`QuerySession`]
+//! `execute_write` hook. The statement kind is decided before execution
+//! ([`crate::Session::statement_kind`]) so a write runs exactly once --
+//! from the parse for every statement but `EXECUTE`, whose shape is that of
+//! the statement it names.
+//!
+//! Catalog sharing: every session a [`PipelineSessionFactory`] opens shares
+//! one `Arc<Mutex<Catalog>>`, as TiDB's sessions read the domain-owned
+//! `infoschema` rather than private copies -- a table created on one
+//! connection is visible on the others. The per-statement lock stands in for
+//! Go's schema-version/lease machinery, which is a separate tier (deferred).
+//!
+//! Prepared statements and transaction control keep the trait's fail-closed
+//! defaults.
+
+use std::borrow::Cow;
+use std::sync::Arc;
+
+use tidb_chunk::chunk::Chunk;
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
+use tidb_exec::{
+    col_names_to_result_fields, convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata,
+};
+use tidb_protocol::ColumnInfo;
+use crate::privilege::PrivilegeRegistry;
+use crate::process::ProcessRegistry;
+use crate::{
+    GlobalSysvars, OpenedStatement, Session, SessionRecordSet, SharedCatalog, StatementExecution,
+    StmtKind, StmtOutput, StmtResult,
+};
+
+use crate::domain::resultset_source::{ResultSetSource, StatementStatus};
+use crate::domain::session_api::{
+    ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
+};
+use crate::domain::wire_status::WireStatus;
+use crate::domain::configured_user_store::ConfiguredUserStore;
+
+/// One connection's pipeline-backed query session.
+pub struct PipelineServerSession {
+    session: Session,
+}
+
+impl PipelineServerSession {
+    /// Creates a session over a fresh, empty pipeline catalog.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            session: Session::new(),
+        }
+    }
+
+    /// Creates a session over `catalog`, which its peers share.
+    #[must_use]
+    pub fn with_catalog(catalog: SharedCatalog) -> Self {
+        Self {
+            session: Session::with_catalog(catalog),
+        }
+    }
+}
+
+impl Default for PipelineServerSession {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Opens one pipeline [`Session`] per authenticated connection.
+///
+/// Every connection the factory opens shares one catalog, as the sessions of a
+/// TiDB instance share the domain's schema state: a table one connection
+/// creates is immediately visible to the others.
+pub struct PipelineSessionFactory {
+    catalog: SharedCatalog,
+    /// The live connection list `SHOW PROCESSLIST` reads and `KILL` reaches
+    /// into, shared by every connection this factory opens -- Go's one
+    /// `sessmgr.Manager` per TiDB instance.
+    processes: ProcessRegistry,
+    /// The account/global-privilege registry every connection this factory
+    /// opens shares -- Go's one `privilege.Manager` per `Domain`. Bootstraps
+    /// with `root`@`%` holding every privilege, as Go's `mysql.user` table
+    /// does on a fresh cluster.
+    privileges: PrivilegeRegistry,
+    /// The `SET GLOBAL`-scope sysvar table every connection this factory
+    /// opens shares -- Go's one process-wide `GlobalVarsAccessor`. See
+    /// [`crate::vars`] for what "shares" means here: a new session
+    /// snapshots this table's current overrides at open, but a live
+    /// session's own `@@x` never moves just because another connection ran
+    /// `SET GLOBAL`.
+    global_vars: GlobalSysvars,
+    /// Process-wide memory admission authority installed before the listener
+    /// accepts connections.
+    mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    /// One lock namespace shared by every connection this factory opens.
+    advisory_locks: Arc<dyn tidb_executor::advisory_lock_state::AdvisoryLockService>,
+}
+
+impl Drop for PipelineSessionFactory {
+    fn drop(&mut self) {
+        self.catalog
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .plan_cache_invalidation()
+            .stop_maintenance();
+    }
+}
+
+impl Default for PipelineSessionFactory {
+    fn default() -> Self {
+        Self {
+            catalog: SharedCatalog::default(),
+            processes: ProcessRegistry::default(),
+            privileges: PrivilegeRegistry::default(),
+            global_vars: GlobalSysvars::default(),
+            mem_arbitrator: None,
+            advisory_locks: Arc::new(
+                tidb_executor::advisory_lock_state::LocalAdvisoryLockService::default(),
+            ),
+        }
+    }
+}
+
+impl PipelineSessionFactory {
+    /// Builds a wire-facing factory over one configured store.
+    ///
+    /// Both the account table and GLOBAL-scope sysvar table are adopted as a
+    /// pair. This is a correctness and security boundary: SQL executed by a
+    /// session can change `require_secure_transport`, and the next handshake
+    /// must read that exact same process-wide authority. `Default` remains
+    /// available for in-process sessions with no wire authenticator.
+    #[must_use]
+    pub fn with_configured_store(store: &ConfiguredUserStore) -> Self {
+        let mut factory = Self::default();
+        factory.privileges = store.accounts();
+        factory.global_vars = store.global_vars();
+        factory
+    }
+
+    /// Builds a factory over an existing account table AND an existing
+    /// GLOBAL-scope sysvar table -- the pairing [`ConfiguredUserStore`]
+    /// needs so `SET GLOBAL default_password_lifetime` and the login path
+    /// that reads it agree on one process-wide value.
+    ///
+    /// [`ConfiguredUserStore`]: crate::domain::configured_user_store::ConfiguredUserStore
+    #[must_use]
+    pub fn with_accounts_and_globals(
+        accounts: PrivilegeRegistry,
+        global_vars: GlobalSysvars,
+    ) -> Self {
+        let mut factory = Self::default();
+        factory.privileges = accounts;
+        factory.global_vars = global_vars;
+        factory
+    }
+
+    /// The process list of every connection this factory has open.
+    #[must_use]
+    pub fn processes(&self) -> ProcessRegistry {
+        self.processes.clone()
+    }
+
+    /// The account/global-privilege registry every connection this factory
+    /// opens shares.
+    #[must_use]
+    pub fn privileges(&self) -> PrivilegeRegistry {
+        self.privileges.clone()
+    }
+
+    /// The `SET GLOBAL`-scope sysvar table every connection this factory
+    /// opens shares.
+    #[must_use]
+    pub fn global_vars(&self) -> GlobalSysvars {
+        self.global_vars.clone()
+    }
+
+    /// Installs the process memory authority inherited by each connection.
+    #[must_use]
+    pub fn with_mem_arbitrator(
+        mut self,
+        arbitrator: Arc<tidb_util::memory::MemArbitrator>,
+    ) -> Self {
+        self.mem_arbitrator = Some(arbitrator);
+        self
+    }
+}
+
+impl QuerySessionFactory for PipelineSessionFactory {
+    type Session = PipelineServerSession;
+
+    fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
+        let mut session = PipelineServerSession::with_catalog(Arc::clone(&self.catalog));
+        session
+            .session
+            .set_advisory_lock_service(Arc::clone(&self.advisory_locks));
+        session
+            .session
+            .set_server_start_timestamp(crate::domain::real_tikv_node::server_start_unix_timestamp());
+        // Go sets `SessionVars.User` from the identity the handshake matched:
+        // `CURRENT_USER()` reports that matched grant identity and `USER()`
+        // the host the client actually connected from.
+        let identity = &context.identity;
+        session.session.set_user(
+            format!("{}@{}", identity.username(), identity.host()),
+            format!("{}@{}", identity.username(), context.peer_addr.ip()),
+        );
+        // Go sets `SessionVars.ConnectionID` from the connection the front
+        // end accepted; `CONNECTION_ID()` reads it back. This was once
+        // dropped entirely when `SessionContext` was threaded through here --
+        // double-check it actually arrives (see the TCP-level test below).
+        session.session.set_connection_id(context.connection_id);
+        session
+            .session
+            .set_client_found_rows(context.client_found_rows);
+        if let Some(arbitrator) = self.mem_arbitrator.as_ref() {
+            session.session.set_mem_arbitrator(Arc::clone(arbitrator));
+        }
+        session
+            .session
+            .set_secure_transport(context.secure_transport);
+        // Go's `session.Auth` calls `EnableSandBoxMode()` when
+        // `ConnectionVerification` admitted an expired password, which
+        // restricts this connection to the statement that fixes it.
+        if identity.in_sandbox_mode() {
+            session.session.enable_sandbox_mode();
+        }
+        if identity.privilege_bypassed() {
+            session.session.enable_privilege_bypass();
+        }
+        // Go registers the connection with the session manager right after
+        // authentication, which is what puts it in `SHOW PROCESSLIST` and
+        // makes it reachable by `KILL`. The registration is owned by the
+        // session, so the row disappears exactly when the connection ends.
+        let guard = self.processes.register(
+            context.connection_id,
+            identity.username().to_owned(),
+            context.peer_addr.to_string(),
+            session.session.current_database().to_owned(),
+            Some(Arc::new(ConnectionKillTarget::new(
+                context.cancellation.clone(),
+                context.close.clone(),
+            ))),
+        );
+        session.session.attach_process(context.connection_id, guard);
+        // No seeding here: ordinary authentication matched a row in this
+        // same registry, exactly as Go's one `mysql.user` holds both secrets
+        // and grants. Skip-grant authentication is the deliberate exception:
+        // it may have no row, while the registry remains attached as account
+        // statement storage and raw information-schema input.
+        session.session.attach_privileges(self.privileges.clone());
+        // Snapshots this factory's current GLOBAL-scope overrides into the
+        // new session's own copy -- Go's rule that a session's variables are
+        // copied from the global tier once, at connect (see
+        // `crate::vars` for why a live session's `@@x` does not move
+        // when a later `SET GLOBAL` runs on another connection).
+        session
+            .session
+            .attach_globals(self.global_vars.clone())
+            .map_err(map_error)?;
+        Ok(session)
+    }
+
+    fn install_tls_manager(
+        &self,
+        manager: Arc<dyn crate::process::TlsManager>,
+        variables: Vec<(&'static str, String)>,
+    ) {
+        self.processes.set_tls_manager(manager);
+        for (name, value) in variables {
+            self.global_vars.set_startup(name, value);
+        }
+    }
+
+    fn session_manager(&self) -> Option<Arc<dyn tidb_util::memoryusagealarm::SessionManager>> {
+        Some(Arc::new(self.processes.clone()))
+    }
+}
+
+impl PipelineServerSession {
+    fn materialized_general_result<'a>(
+        &'a mut self,
+        process_statement: Option<crate::process::ProcessStatementGuard>,
+        output: StmtOutput,
+        result_authority: Option<crate::ResultMaterializationAuthority>,
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        Ok(match output {
+            StmtOutput::Rows { columns, rows } => {
+                let field_types = columns.iter().map(|(_, field)| field.clone()).collect();
+                let result = QueryResult::new(Box::new(MaterializedResultSetSource::new(
+                    result_set_columns(&columns, self.session.last_result_output_names()),
+                    rows,
+                )))
+                .with_cursor_materialization(
+                    field_types,
+                    result_authority.expect("a row result carries materialization authority"),
+                )
+                .with_statement_status(
+                    self.session.wire_warning_count(),
+                    WireStatus::of_session(&self.session),
+                )
+                .with_statement_output(
+                    self.session.statement_affected_rows(),
+                    self.session.statement_insert_id(),
+                    self.session.statement_message().as_bytes().to_vec(),
+                );
+                GeneralExecuteOutcome::Rows(match process_statement {
+                    Some(statement) => result.with_process_statement(statement),
+                    None => result,
+                })
+            }
+            StmtOutput::Affected(count) => GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: count,
+                last_insert_id: self.session.statement_insert_id(),
+            }),
+            StmtOutput::Done(_) => GeneralExecuteOutcome::Write(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }),
+        })
+    }
+}
+
+impl QuerySession for PipelineServerSession {
+    fn parse_statement(&mut self, sql: &str) -> Result<Option<tidb_ast::Stmt>, SqlQueryError> {
+        self.session
+            .parse_statement(sql)
+            .map(Some)
+            .map_err(map_error)
+    }
+
+    fn migration_session(&mut self) -> Option<&mut crate::Session> {
+        Some(&mut self.session)
+    }
+
+    fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
+        self.session.finish_txn_write_throughput(cost);
+    }
+
+    fn query_cancellation(&self) -> Option<Arc<dyn crate::domain::session_api::ActiveQueryCancellation>> {
+        Some(Arc::new(self.session.begin_query_cancellation()))
+    }
+
+    fn wait_timeout(&self) -> std::time::Duration {
+        self.session.wait_timeout()
+    }
+
+    /// This session's own `@@max_allowed_packet`, which is what Go bounds the
+    /// packet reader by; see the trait's own doc.
+    fn max_allowed_packet(&self) -> Option<usize> {
+        Some(self.session.max_allowed_packet() as usize)
+    }
+
+    fn try_consume_long_data(&mut self, bytes: i64) -> bool {
+        self.session.try_consume_long_data(bytes)
+    }
+
+    fn release_long_data(&mut self, bytes: i64) {
+        self.session.release_long_data(bytes);
+    }
+
+    fn connection_id(&self) -> u64 {
+        self.session.connection_id()
+    }
+
+    /// The live status word Go reads with `cc.ctx.Status()` before every
+    /// OK/EOF packet: this session owns a real transaction and a real
+    /// `autocommit` variable, so both bits come from it rather than from a
+    /// connection-lifetime constant.
+    fn wire_status(&self) -> WireStatus {
+        WireStatus::of_session(&self.session)
+    }
+
+    /// The count Go's `writeOkWith`/`writeEOF` read off `ctx.WarningCount()`.
+    /// It is the same buffer `SHOW WARNINGS` reports, so both channels agree
+    /// on both what warned and how many.
+    fn warning_count(&self) -> u16 {
+        self.session.wire_warning_count()
+    }
+
+    fn statement_info(&self) -> Vec<u8> {
+        self.session.statement_message().as_bytes().to_vec()
+    }
+
+    fn warning_codes(&self) -> Vec<u16> {
+        self.session
+            .warnings()
+            .iter()
+            .map(|warning| warning.code)
+            .collect()
+    }
+
+    /// Go `clientConn.initResultEncoder`'s read: this session's
+    /// `@@character_set_results`.
+    fn result_charset(&self) -> Cow<'_, str> {
+        self.session.result_charset()
+    }
+
+    fn input_charset(&self) -> Cow<'_, str> {
+        self.session.input_charset()
+    }
+
+    /// The handshake's initial database and `COM_INIT_DB`, which Go serves
+    /// with one `useDB` each.
+
+    /// Go leaves `CurrentDB` empty when the handshake carried no schema; see
+    /// the trait's own doc.
+    fn deselect_database(&mut self) {
+        self.session.deselect_database();
+    }
+
+    fn set_collation(&mut self, collation_id: u8) -> Result<(), SqlQueryError> {
+        self.session
+            .set_collation(i32::from(collation_id))
+            .map_err(SqlQueryError::unknown)
+    }
+
+    fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
+        self.session.select_database(name).map_err(map_error)
+    }
+
+    /// BEGIN/COMMIT/ROLLBACK drive the session's transaction, and the caller
+    /// answers with an OK packet whose status carries the returned flag.
+    fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        self.session.control_transaction(sql).map_err(map_error)
+    }
+
+    /// Writes and DDL answer with an OK packet carrying their affected-row
+    /// count; the statement kind is decided by parsing alone so the statement
+    /// runs exactly once.
+    ///
+    /// A `SET` statement answers the same way, which is what a connecting
+    /// client expects for `SET NAMES` and friends.
+    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        self.session.clear_statement_message();
+        // Both questions below are answered off ONE parse: whether this is a
+        // `SET` to apply, and -- if it is not -- what shape its answer takes.
+        // They remain two questions with two answers; only the lexing is
+        // shared, and the session still owns it so the `sql_mode` in force is
+        // the session's own.
+        //
+        // This is the front end's statement boundary, and it must be the
+        // session's own: the `SET` arm below answers without ever reaching
+        // `Session::run`, so a boundary that lived only there would leave a
+        // `SET` appending its warnings to the PREVIOUS statement's buffer --
+        // and reporting that statement's count on the wire.
+        let stmt = self
+            .session
+            .parse_at_statement_boundary(sql)
+            .map_err(map_error)?;
+        if self
+            .session
+            .apply_set_stmt(&stmt)
+            .map_err(map_error)?
+            .is_some()
+        {
+            return Ok(Some(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }));
+        }
+        if self.session.statement_kind_parsed(&stmt) != StmtKind::Write {
+            return Ok(None);
+        }
+        let affected_rows = match self.session.run(sql).map_err(map_error)? {
+            StmtResult::Affected(count) => count,
+            // DDL affects zero rows, exactly as MySQL's OK packet reports.
+            StmtResult::Done(_) => 0,
+            StmtResult::Rows(_) => {
+                return Err(SqlQueryError::unknown(
+                    "a write statement unexpectedly produced rows",
+                ))
+            }
+        };
+        Ok(Some(WriteOutcome {
+            affected_rows,
+            last_insert_id: self.session.statement_insert_id(),
+        }))
+    }
+
+    /// Release physical entries for COM_STMT_CLOSE using session cache policy.
+    fn close_prepared(&mut self, statement: &crate::domain::session_api::PreparedStatement) {
+        if let crate::domain::session_api::PreparedStatement::General(general) = statement {
+            if let Some(prepared) = general.prepared_ast() {
+                self.session.close_prepared(prepared);
+            }
+        }
+    }
+
+    /// Go reports a prepared statement's marker count and result columns at
+    /// PREPARE time. The columns come from planning the statement with every
+    /// marker bound to NULL, which is side-effect free for a query; a
+    /// statement that answers with an OK packet reports none.
+    fn prepare_general(&mut self, sql: &str) -> Result<PreparedGeneral, SqlQueryError> {
+        let prepared = self.session.prepare_ast(sql).map_err(map_error)?;
+        let result_columns = match self.session.statement_kind_parsed(prepared.statement()) {
+            StmtKind::Query => {
+                match self.session.probe_prepared(&prepared) {
+                    Ok(StmtOutput::Rows { columns, .. }) => {
+                        result_set_columns(&columns, self.session.last_result_output_names())
+                    }
+                    Err(error @ tidb_executor::DriverError::Var(_)) => {
+                        return Err(map_error(error));
+                    }
+                    // A query whose metadata this tier cannot resolve without
+                    // real values reports no columns at prepare time. That is
+                    // a LAST resort and not a free one: a MySQL client frames
+                    // the EXECUTE answer against this count, so zero here and
+                    // a result set there is what it reports as
+                    // `2014 Commands out of sync`. The probe must therefore be
+                    // made to succeed for any shape a client will execute --
+                    // see `prepared_handle_range_frames_its_binary_result_set`
+                    // in `pipeline_mysql_client_source`, which pins both ends.
+                    _ => Vec::new(),
+                }
+            }
+            StmtKind::Write => Vec::new(),
+        };
+        Ok(PreparedGeneral::with_prepared_ast(prepared, result_columns))
+    }
+
+    fn execute_general<'a>(
+        &'a mut self,
+        statement: &PreparedGeneral,
+        values: &[tidb_protocol::PreparedValue],
+    ) -> Result<GeneralExecuteOutcome<'a>, SqlQueryError> {
+        let process_statement = self
+            .session
+            .retain_process_statement_with_digest(statement.sql(), statement.digest());
+        let params = prepared_parameters(values);
+        let Some(prepared) = statement.prepared_ast() else {
+            let (output, result_authority) = self
+                .session
+                .run_with_params_and_result_authority(statement.sql(), &params)
+                .map_err(map_error)?;
+            return self.materialized_general_result(process_statement, output, result_authority);
+        };
+
+        let (opened, result_authority) = self
+            .session
+            .open_prepared_with_result_authority(prepared, &params)
+            .map_err(map_error)?;
+        let state = match opened {
+            OpenedStatement::Rows(state) => state,
+            OpenedStatement::Complete(output) => {
+                return self.materialized_general_result(
+                    process_statement,
+                    output,
+                    result_authority,
+                );
+            }
+        };
+        let (warnings, status, last_insert_id, info) = (
+            self.session.wire_warning_count(),
+            WireStatus::of_session(&self.session),
+            self.session.statement_insert_id(),
+            self.session.statement_message().as_bytes().to_vec(),
+        );
+        let field_types: Vec<_> = state
+            .columns()
+            .iter()
+            .map(|(_, field)| field.clone())
+            .collect();
+        let StatementExecution::Rows(state) =
+            OpenedStatement::Rows(state).attach(&mut self.session)
+        else {
+            unreachable!();
+        };
+        let result = QueryResult::new(Box::new(PreparedRecordSet {
+            state,
+            field_types: field_types.clone(),
+        }))
+        .with_cursor_materialization(
+            field_types,
+            result_authority.expect("a row result carries materialization authority"),
+        )
+        .with_statement_status(warnings, status)
+        .with_statement_output(0, last_insert_id, info);
+        Ok(GeneralExecuteOutcome::Rows(match process_statement {
+            Some(statement) => result.with_process_statement(statement),
+            None => result,
+        }))
+    }
+
+    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        let process_statement = self.session.retain_process_statement(sql);
+        let source = match self.session.run_with_columns(sql).map_err(map_error)? {
+            StmtOutput::Rows { columns, rows } => MaterializedResultSetSource::new(
+                result_set_columns(&columns, self.session.last_result_output_names()),
+                rows,
+            ),
+            // Writes normally answer through `execute_write` (a real OK
+            // packet). These arms remain for a caller that invokes `execute`
+            // directly, which the trait permits: report the count as a
+            // one-column result set rather than an invalid zero-column one.
+            StmtOutput::Affected(count) => affected_rows_source(count),
+            StmtOutput::Done(_) => affected_rows_source(0),
+        };
+        // The rows are already materialized, so the buffer this reads is the
+        // finished statement's -- the same one Go's terminal `writeEOF` reads.
+        let result = QueryResult::new(Box::new(source))
+            .with_statement_status(
+                self.session.wire_warning_count(),
+                WireStatus::of_session(&self.session),
+            )
+            .with_statement_output(
+                self.session.statement_affected_rows(),
+                self.session.statement_insert_id(),
+                self.session.statement_message().as_bytes().to_vec(),
+            );
+        Ok(match process_statement {
+            Some(statement) => result.with_process_statement(statement),
+            None => result,
+        })
+    }
+}
+
+/// Binds one `COM_STMT_EXECUTE` parameter list to the driver's datum domain.
+///
+/// Go `ExecBinaryParam` builds one datum per parameter kind: a signed width
+/// becomes an Int, an unsigned one a UInt, FLOAT and DOUBLE their own real
+/// domains, DECIMAL is parsed from its digits, and a NULL parameter is a NULL
+/// datum. A string-family parameter is `types.NewDatum(string)` -- a string
+/// datum in the default collation, the same datum a quoted literal in the
+/// text protocol produces -- and only the BLOB family is `NewBytesDatum`.
+/// Binding every string parameter as binary bytes made `c_last = ?` a
+/// binary-collation comparison against a `utf8mb4` column, which this tier
+/// evaluates locally after fetching the whole scanned range instead of
+/// pushing it to the coprocessor (TPC-C ORDER_STATUS by customer name).
+pub fn prepared_parameters(
+    values: &[tidb_protocol::PreparedValue],
+) -> Vec<tidb_datatype::Datum> {
+    values
+        .iter()
+        .map(|value| match value {
+            tidb_protocol::PreparedValue::SignedLongLong(value) => {
+                tidb_datatype::Datum::Int(*value)
+            }
+            tidb_protocol::PreparedValue::UnsignedLongLong(value) => {
+                tidb_datatype::Datum::UInt(*value)
+            }
+            tidb_protocol::PreparedValue::String(bytes) => {
+                tidb_datatype::Datum::new_string(bytes.clone())
+            }
+            tidb_protocol::PreparedValue::Bytes(bytes) => {
+                tidb_datatype::Datum::new_bytes(bytes.clone())
+            }
+            tidb_protocol::PreparedValue::Float(value) => {
+                tidb_datatype::Datum::Float32(f64::from(*value))
+            }
+            tidb_protocol::PreparedValue::Double(value) => tidb_datatype::Datum::Real(*value),
+            tidb_protocol::PreparedValue::Decimal(digits) => {
+                match std::str::from_utf8(digits) {
+                    Ok(text) => {
+                        tidb_datatype::Datum::Decimal(tidb_datatype::Decimal::from_literal(text))
+                    }
+                    // Go's own FromString reports truncation and keeps
+                    // what it read; digits that are not even text cannot
+                    // be a number at all.
+                    Err(_) => tidb_datatype::Datum::Null,
+                }
+            }
+            tidb_protocol::PreparedValue::Null => tidb_datatype::Datum::Null,
+            // Go parses the rendered text into a Time or Duration datum.
+            // This tier keeps temporal values as their formatted text --
+            // the same documented divergence the temporal casts and the
+            // date/time builtins carry -- so the text IS the value here, and
+            // it is the string datum a quoted temporal literal would be.
+            tidb_protocol::PreparedValue::Temporal(text) => {
+                tidb_datatype::Datum::new_string(text.clone())
+            }
+        })
+        .collect()
+}
+
+fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
+    let mapped = error.to_mysql_error();
+    SqlQueryError::new(mapped.code, mapped.state, mapped.message).with_identity(mapped.identity)
+}
+
+/// Converts a `(name, FieldType)` output schema with no plan names to
+/// protocol column metadata: no schema or table, and `org_name` mirroring the
+/// display name.
+pub fn select_columns(columns: &[(String, FieldType)]) -> Vec<ColumnInfo> {
+    columns
+        .iter()
+        .map(|(name, field_type)| {
+            convert_result_field(&ResultFieldMetadata {
+                schema: String::new(),
+                table: String::new(),
+                org_table: String::new(),
+                name: name.clone(),
+                org_name: name.clone(),
+                empty_org_name: false,
+                default_value: None,
+                field_type: result_field_type(field_type),
+            })
+        })
+        .collect()
+}
+
+/// Go `tidbResultSet.Columns()`: `ConvertColumnInfo` over
+/// `recordSet.Fields()`, which `colNames2ResultFields` derives from the
+/// statement's output names and current database. A computed column has no
+/// table and an empty `OrgName`. Without one name per column the result has
+/// no fields to convert and takes [`select_columns`]' shape.
+pub fn result_set_columns(
+    columns: &[(String, FieldType)],
+    (output_names, current_db): (&[tidb_datatype::FieldNameMetadata], &str),
+) -> Vec<ColumnInfo> {
+    if output_names.len() != columns.len() {
+        return select_columns(columns);
+    }
+    let schema = columns
+        .iter()
+        .map(|(_, field_type)| result_field_type(field_type))
+        .collect::<Vec<_>>();
+    col_names_to_result_fields(&schema, output_names, current_db)
+        .iter()
+        .zip(columns)
+        .map(|(field, (name, _))| {
+            // The display name is the one the executor resolved for the
+            // result, which the integration results pin.
+            let mut field = field.as_result_field();
+            name.clone_into(&mut field.name);
+            convert_result_field(&field)
+        })
+        .collect()
+}
+
+fn result_field_type(field_type: &FieldType) -> ResultFieldTypeMetadata {
+    ResultFieldTypeMetadata {
+        code: field_type.code(),
+        // Only the low 16 bits are MySQL wire column flags.
+        flags: (field_type.flags() & u32::from(u16::MAX)) as u16,
+        flen: length_to_option(field_type.flen()).map(|flen| flen as u32),
+        decimal: length_to_option(field_type.decimal()).map(|decimal| decimal as u8),
+        collation: field_type.collation(),
+    }
+}
+
+const fn length_to_option(length: i64) -> Option<i64> {
+    if length == UNSPECIFIED_LENGTH {
+        None
+    } else {
+        Some(length)
+    }
+}
+
+/// The one-column `affected_rows` result set that carries a write outcome on
+/// the text path (see the module documentation for why not an OK packet).
+pub fn affected_rows_source(count: u64) -> MaterializedResultSetSource {
+    let field_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+    MaterializedResultSetSource::new(
+        select_columns(&[("affected_rows".to_owned(), field_type)]),
+        vec![vec![Datum::UInt(count)]],
+    )
+}
+
+/// A prepared SELECT backed by the session-owned executor record set.
+/// Keeping the session borrow in this source lets the wire writer pull native
+/// chunks without first collecting every row into nested vectors.
+pub struct PreparedRecordSet<'a> {
+    state: SessionRecordSet<'a>,
+    field_types: Vec<FieldType>,
+}
+
+impl ResultSetSource for PreparedRecordSet<'_> {
+    fn statement_status(&self) -> Option<StatementStatus<'_>> {
+        let session = self.state.session();
+        Some(StatementStatus {
+            warnings: session.wire_warning_count(),
+            status: WireStatus::of_session(session),
+            affected_rows: session.statement_affected_rows(),
+            last_insert_id: session.statement_insert_id(),
+            info: session.statement_message().as_bytes(),
+        })
+    }
+
+    fn new_chunk(&self) -> Option<Chunk> {
+        Some(self.state.new_chunk())
+    }
+
+    fn field_types(&self) -> &[FieldType] {
+        &self.field_types
+    }
+
+    fn next_chunk(&mut self, chunk: &mut Chunk) -> Result<(), tidb_executor::MysqlError> {
+        self.state
+            .next(chunk)
+            .map_err(|error| error.to_mysql_error())
+    }
+
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+        let mut chunk = self.state.new_chunk();
+        chunk.set_required_rows(max_rows as isize, max_rows);
+        self.next_chunk(&mut chunk)?;
+        Ok((0..chunk.num_rows())
+            .map(|index| chunk.get_row(index).get_datum_row(&self.field_types))
+            .collect())
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+        Ok(result_set_columns(
+            self.state.columns(),
+            self.state.output_names(),
+        ))
+    }
+
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.state.finish().map_err(|error| error.to_mysql_error())
+    }
+
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        self.state.close().map_err(|error| error.to_mysql_error())
+    }
+
+    fn add_write_sql_resp_duration(&mut self, duration: std::time::Duration) {
+        self.state.add_write_sql_resp_duration(duration);
+    }
+
+    fn add_result_chunk_cells(&mut self, cells: i64) {
+        self.state.add_result_chunk_cells(cells);
+    }
+}
+
+/// A fully materialized result-set source: the pipeline returns complete row
+/// vectors, so batching only replays them to the incremental wire writer.
+pub struct MaterializedResultSetSource {
+    columns: Vec<ColumnInfo>,
+    rows: std::vec::IntoIter<Vec<Datum>>,
+}
+
+impl MaterializedResultSetSource {
+    /// Wraps already-computed columns and rows.
+    #[must_use]
+    pub fn new(columns: Vec<ColumnInfo>, rows: Vec<Vec<Datum>>) -> Self {
+        Self {
+            columns,
+            rows: rows.into_iter(),
+        }
+    }
+}
+
+impl ResultSetSource for MaterializedResultSetSource {
+    fn next_batch(
+        &mut self,
+        max_rows: usize,
+    ) -> Result<Vec<Vec<Datum>>, tidb_executor::MysqlError> {
+        Ok(self.rows.by_ref().take(max_rows.max(1)).collect())
+    }
+
+    fn columns(&mut self) -> Result<Vec<ColumnInfo>, tidb_executor::MysqlError> {
+        Ok(self.columns.clone())
+    }
+
+    fn finish(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), tidb_executor::MysqlError> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::configured_user_store::ConfiguredUserStore;
+    use crate::domain::session_api::ConnectionCancellation;
+    use crate::domain::wire_status::{SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_IN_TRANS};
+    use sha1::{Digest, Sha1};
+    use std::net::SocketAddr;
+    use tidb_protocol::{TYPE_LONGLONG, TYPE_VAR_STRING};
+
+    const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
+    const SALT: [u8; 20] = [7; 20];
+
+    fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
+        let stage_one = Sha1::digest(password);
+        let stage_two = Sha1::digest(stage_one);
+        let mut hasher = Sha1::new();
+        hasher.update(salt);
+        hasher.update(stage_two);
+        let challenge = hasher.finalize();
+        let mut response = [0; 20];
+        for ((destination, stage_one), challenge) in response
+            .iter_mut()
+            .zip(stage_one.iter())
+            .zip(challenge.iter())
+        {
+            *destination = stage_one ^ challenge;
+        }
+        response
+    }
+
+    fn open_session() -> PipelineServerSession {
+        open_on(&PipelineSessionFactory::default(), 1)
+    }
+
+    fn session_context(connection_id: u64) -> SessionContext {
+        let users =
+            ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
+                .expect("configured user store");
+        let identity = users
+            .authenticate(
+                "root",
+                "127.0.0.1",
+                &SALT,
+                &scramble(b"abc", &SALT),
+                crate::domain::secure_transport::TransportKind::DirectTls,
+            )
+            .expect("authenticated identity");
+        let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
+        SessionContext {
+            connection_id,
+            peer_addr,
+            identity,
+            client_found_rows: false,
+            secure_transport: true,
+            tls_status: None,
+            cancellation: ConnectionCancellation::default(),
+            close: crate::domain::session_api::ConnectionClose::default(),
+        }
+    }
+
+    #[test]
+    fn factory_sessions_share_one_advisory_lock_authority() {
+        let factory = PipelineSessionFactory::default();
+        let mut first = open_on(&factory, 42);
+        let mut second = open_on(&factory, 7);
+
+        assert_eq!(
+            first.session.run("SELECT GET_LOCK('shared', 0)").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        assert_eq!(
+            second
+                .session
+                .run("SELECT IS_USED_LOCK('SHARED'), GET_LOCK('shared', 0)")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1), Datum::Int(0)]])
+        );
+
+        drop(first);
+        assert_eq!(
+            second.session.run("SELECT GET_LOCK('shared', 0)").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+    }
+
+    /// A cancel that reaches a running `SLEEP` ends it at once with Go's
+    /// interrupted answer, 1. One that lands before the statement reaches
+    /// `SLEEP` -- a loaded machine can take longer than the delay to set the
+    /// statement up -- kills the statement instead (1317, as Go answers), so
+    /// that attempt is repeated with a longer delay.
+    #[test]
+    fn command_cancellation_reaches_blocking_expression_evaluation() {
+        for delay_ms in [20, 100, 300] {
+            let mut session = open_session();
+            let cancellation = QuerySession::query_cancellation(&session)
+                .expect("pipeline sessions expose command cancellation");
+            let delay = std::time::Duration::from_millis(delay_ms);
+            let interrupter = std::thread::spawn(move || {
+                std::thread::sleep(delay);
+                cancellation.cancel();
+            });
+
+            let started = std::time::Instant::now();
+            let result = session.session.run("SELECT SLEEP(1)");
+            interrupter.join().unwrap();
+            match result {
+                Ok(rows) => {
+                    assert_eq!(rows, StmtResult::Rows(vec![vec![Datum::Int(1)]]));
+                    assert!(started.elapsed() >= delay - std::time::Duration::from_millis(5));
+                    assert!(started.elapsed() < delay + std::time::Duration::from_millis(500));
+                    return;
+                }
+                Err(error) => assert!(
+                    format!("{error:?}").contains("Query execution was interrupted"),
+                    "{error:?}"
+                ),
+            }
+        }
+        panic!("no cancel reached the running SLEEP");
+    }
+
+    fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {
+        factory
+            .open_session(session_context(connection_id))
+            .expect("pipeline session opens without process authorities")
+    }
+
+    #[test]
+    fn factory_rejects_invalid_persisted_fix_control_without_process_leak() {
+        let invalid_globals = GlobalSysvars::from_cluster_rows([(
+            "tidb_opt_fix_control".to_owned(),
+            "invalid".to_owned(),
+        )]);
+        let invalid_factory = PipelineSessionFactory::with_accounts_and_globals(
+            PrivilegeRegistry::default(),
+            invalid_globals,
+        );
+        let Err(error) = invalid_factory.open_session(session_context(41)) else {
+            panic!("an invalid persisted fix-control row must refuse the session");
+        };
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(
+            error.message,
+            "invalid fix control: expected colon not found"
+        );
+        assert!(
+            invalid_factory.processes().snapshot().is_empty(),
+            "a rejected session must release its process registration"
+        );
+
+        let valid_globals = GlobalSysvars::from_cluster_rows([(
+            "tidb_opt_fix_control".to_owned(),
+            "52592:ON".to_owned(),
+        )]);
+        let valid_factory = PipelineSessionFactory::with_accounts_and_globals(
+            PrivilegeRegistry::default(),
+            valid_globals,
+        );
+        let session = valid_factory
+            .open_session(session_context(42))
+            .expect("a valid persisted fix-control row opens normally");
+        assert_eq!(valid_factory.processes().snapshot().len(), 1);
+        drop(session);
+        assert!(valid_factory.processes().snapshot().is_empty());
+    }
+
+    #[test]
+    fn configured_store_and_pipeline_sessions_share_one_global_authority() {
+        let store =
+            ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
+                .expect("configured user store");
+        let login_store = store.clone();
+        let factory = PipelineSessionFactory::with_configured_store(&store);
+        let mut context = session_context(43);
+        context.secure_transport = true;
+        let mut session = factory
+            .open_session(context)
+            .expect("secure pipeline session opens");
+
+        session
+            .execute_write("SET GLOBAL require_secure_transport = ON")
+            .expect("a secure administrator can enable the transport gate");
+
+        assert_eq!(
+            store
+                .global_vars()
+                .get("require_secure_transport")
+                .expect("configured store reads the process-wide value"),
+            "ON",
+            "the next handshake must read the same authority SET GLOBAL wrote"
+        );
+        assert!(matches!(
+            login_store.authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT)),
+            Err(crate::domain::configured_user_store::AuthenticationFailure::SecureTransportRequired)
+        ));
+        // Ordinary pipeline fixtures model secure sessions, so enabling the
+        // process-wide gate must not prevent another fixture from opening.
+        let _independent_session = open_session();
+    }
+
+    /// Go's sessions read the instance-wide schema state, so a table created
+    /// on one connection is visible on every other one. The factory hands each
+    /// session the same catalog, which is what makes that true here.
+    #[test]
+    fn a_table_created_on_one_connection_is_visible_on_another() {
+        let factory = PipelineSessionFactory::default();
+        let mut writer = open_on(&factory, 1);
+        let mut reader = open_on(&factory, 2);
+
+        writer
+            .execute_write("CREATE TABLE t (a BIGINT)")
+            .expect("create table succeeds");
+        writer
+            .execute_write("INSERT INTO t VALUES (7)")
+            .expect("insert succeeds");
+
+        let mut result = reader
+            .execute("SELECT a FROM t")
+            .expect("the peer session sees the table");
+        let (_, rows) = drain(&mut result, 8);
+        assert_eq!(rows, vec![vec![Datum::Int(7)]]);
+    }
+
+    fn drain(result: &mut QueryResult<'_>, batch: usize) -> (Vec<ColumnInfo>, Vec<Vec<Datum>>) {
+        let source = result.source();
+        let mut rows = Vec::new();
+        loop {
+            let batch_rows = source.next_batch(batch).expect("batch");
+            if batch_rows.is_empty() {
+                break;
+            }
+            rows.extend(batch_rows);
+        }
+        let columns = source.columns().expect("columns");
+        source.finish().expect("finish");
+        source.close().expect("close");
+        (columns, rows)
+    }
+
+    /// A whole CREATE/INSERT/SELECT lifecycle through the QuerySession seam.
+    #[test]
+    fn prepared_execution_retains_ast_and_reuses_current_handles() {
+        use tidb_protocol::PreparedValue;
+
+        let mut session = open_session();
+        session
+            .execute_write("CREATE TABLE t (id BIGINT PRIMARY KEY, v BIGINT)")
+            .unwrap();
+        session
+            .execute_write("INSERT INTO t VALUES (1, 10), (2, 20)")
+            .unwrap();
+        let prepared = session
+            .prepare_general("SELECT id, v, v FROM t WHERE id = ?")
+            .unwrap();
+        for (id, expected_hit) in [(1, 0), (2, 1)] {
+            let GeneralExecuteOutcome::Rows(mut result) = session
+                .execute_general(&prepared, &[PreparedValue::SignedLongLong(id)])
+                .unwrap()
+            else {
+                panic!("expected rows")
+            };
+            assert_eq!(
+                drain(&mut result, 8).1,
+                vec![vec![
+                    Datum::Int(id),
+                    Datum::Int(id * 10),
+                    Datum::Int(id * 10)
+                ]]
+            );
+            drop(result);
+            let mut status = session.execute("SELECT @@last_plan_from_cache").unwrap();
+            assert_eq!(
+                drain(&mut status, 8).1,
+                vec![vec![Datum::Int(expected_hit)]]
+            );
+        }
+
+        session.execute_write("SET sql_mode = ''").unwrap();
+        let literal = session
+            .prepare_general("SELECT \"v\" FROM t WHERE id = ?")
+            .unwrap();
+        session
+            .execute_write("SET sql_mode = 'ANSI_QUOTES'")
+            .unwrap();
+        let GeneralExecuteOutcome::Rows(mut result) = session
+            .execute_general(&literal, &[PreparedValue::SignedLongLong(1)])
+            .unwrap()
+        else {
+            panic!("expected rows")
+        };
+        let answer = drain(&mut result, 8).1;
+        assert_eq!(answer.len(), 1);
+        assert_eq!(answer[0][0].as_raw_bytes(), Some(b"v".as_slice()));
+    }
+
+    #[test]
+    fn text_path_serves_the_pipeline_lifecycle() {
+        let mut session = open_session();
+
+        // CREATE TABLE takes the supported write representation: a one-column
+        // `affected_rows` result set reporting zero affected rows.
+        let mut result = session
+            .execute("CREATE TABLE t (a BIGINT, b BIGINT)")
+            .expect("create table");
+        let (columns, rows) = drain(&mut result, 2);
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].name, "affected_rows");
+        assert_eq!(columns[0].type_code, TYPE_LONGLONG);
+        assert_eq!(rows, vec![vec![Datum::UInt(0)]]);
+        drop(result);
+
+        // INSERT reports its inserted-row count on the same path.
+        let mut result = session
+            .execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)")
+            .expect("insert");
+        let (columns, rows) = drain(&mut result, 2);
+        assert_eq!(columns[0].name, "affected_rows");
+        assert_eq!(rows, vec![vec![Datum::UInt(3)]]);
+        drop(result);
+
+        // SELECT streams the pipeline rows with converted column metadata.
+        let mut result = session
+            .execute("SELECT a, a + b AS total FROM t WHERE a >= 2 ORDER BY a DESC")
+            .expect("select");
+        let (columns, rows) = drain(&mut result, 1);
+        assert_eq!(
+            columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["a", "total"]
+        );
+        assert!(columns
+            .iter()
+            .all(|column| column.type_code == TYPE_LONGLONG));
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(3), Datum::Int(33)],
+                vec![Datum::Int(2), Datum::Int(22)],
+            ]
+        );
+    }
+
+    #[test]
+    fn expression_fields_use_their_written_text_as_the_name() {
+        // Go names an unaliased field after `SelectField.Text`, the
+        // ORIGINAL SQL bytes, not the AST's normalized/restored form --
+        // `1 + 1` (with the written spacing) rather than `1+1`.
+        let mut session = open_session();
+        let mut result = session.execute("SELECT 1 + 1").expect("dual select");
+        let (columns, rows) = drain(&mut result, 8);
+        assert_eq!(columns[0].name, "1 + 1");
+        assert_eq!(rows, vec![vec![Datum::Int(2)]]);
+    }
+
+    #[test]
+    fn string_columns_convert_to_var_string_metadata() {
+        let mut session = open_session();
+        session
+            .execute("CREATE TABLE s (v VARCHAR(16))")
+            .expect("create table");
+        let mut result = session.execute("SELECT v FROM s").expect("select");
+        let (columns, rows) = drain(&mut result, 4);
+        // Go's ConvertColumnInfo remaps VARCHAR to VAR_STRING for old clients.
+        assert_eq!(columns[0].type_code, TYPE_VAR_STRING);
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn errors_map_to_sql_query_errors() {
+        let mut session = open_session();
+        let Err(parse) = session.execute("SELEC 1") else {
+            panic!("a parse error must not produce a result");
+        };
+        assert_eq!(parse.code, 1064);
+        assert_eq!(&parse.state, b"42000");
+
+        // A statement kind that is unsupported regardless of catalog state,
+        // so this assertion does not quietly become an unknown-table one.
+        // (This was `CREATE SEQUENCE seq` until sequences were transcreated --
+        // the assertion needs a kind that really is outside the domain.)
+        let Err(unsupported) = session.execute("FLASHBACK TABLE t") else {
+            panic!("an unsupported statement must not produce a result");
+        };
+        assert_eq!(unsupported.code, 1105);
+
+        // DROP TABLE is supported, and a missing name is Go's own 1051 rather
+        // than the 1146 a read of a missing table reports.
+        let Err(bad_table) = session.execute_write("DROP TABLE nosuch") else {
+            panic!("dropping a missing table must fail");
+        };
+        assert_eq!(bad_table.code, 1051);
+        assert_eq!(&bad_table.state, b"42S02");
+
+        // Prepared statements keep the trait's fail-closed defaults.
+        assert!(session.prepare_point_read("SELECT 1").is_err());
+        assert!(session.prepare_write("INSERT INTO t VALUES (1)").is_err());
+        // Transaction control is claimed by the hook and reports the state.
+        assert_eq!(session.control_transaction("BEGIN").unwrap(), Some(true));
+        assert_eq!(session.control_transaction("COMMIT").unwrap(), Some(false));
+        assert_eq!(session.control_transaction("SELECT 1").unwrap(), None);
+    }
+
+    /// A SQL-level `EXECUTE` of a prepared SELECT answers with ROWS, and the
+    /// front end has to frame it as one.
+    ///
+    /// Found while sharing the parse across the pre-passes: `statement_kind`
+    /// classifies every `Stmt::Session` as `Write` -- true of `USE`, `SET` and
+    /// the transaction controls, but `EXECUTE` is a `Stmt::Session` whose
+    /// answer is whatever the PREPARED statement answers. `execute_write`
+    /// therefore claimed it, ran it, got rows back, and reported the internal
+    /// "a write statement unexpectedly produced rows" instead of the result
+    /// set. The shape of an `EXECUTE` is not decidable from its own parse, so
+    /// the write path must not claim it.
+    #[test]
+    fn a_sql_level_execute_of_a_select_answers_with_rows() {
+        let mut session = open_session();
+        session
+            .execute_write("PREPARE p FROM 'SELECT 1'")
+            .expect("prepare answers with an OK packet");
+        assert!(
+            session
+                .execute_write("EXECUTE p")
+                .expect("execute")
+                .is_none(),
+            "EXECUTE must fall through to the result-set path"
+        );
+        let mut result = session.execute("EXECUTE p").expect("execute answers rows");
+        assert_eq!(result.source().columns().expect("columns").len(), 1);
+    }
+
+    /// Connections do not share a catalog (documented deferral): a table made
+    /// by one session is invisible to a session from the same factory.
+    #[test]
+    fn sessions_are_catalog_isolated() {
+        let mut first = open_session();
+        first.execute("CREATE TABLE t (a BIGINT)").expect("create");
+        let mut second = open_session();
+        assert!(second.execute("SELECT a FROM t").is_err());
+    }
+
+    /// Go reads `cc.ctx.Status()` afresh for every OK packet, so a DML inside
+    /// an explicit transaction reports `SERVER_STATUS_IN_TRANS |
+    /// SERVER_STATUS_AUTOCOMMIT` (0x0003), not the bare autocommit word.
+    ///
+    /// Connector/J with `useLocalTransactionState=true` acts on exactly this
+    /// bit: told 0x0002 by the INSERT's OK packet, it concludes no transaction
+    /// is open and never sends the COMMIT, and the writes are lost. The word is
+    /// pinned per statement here because the wire is where the client reads it.
+    #[test]
+    fn begin_dml_commit_pins_the_status_word_of_every_ok_packet() {
+        let mut session = open_session();
+        session
+            .execute_write("CREATE TABLE t (a BIGINT)")
+            .expect("create table");
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT,
+            "outside a transaction: autocommit only"
+        );
+
+        assert_eq!(
+            session.control_transaction("BEGIN").expect("begin"),
+            Some(true)
+        );
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS,
+            "BEGIN opens the transaction (Go SetInTxn(true), isolation/base.go:114)"
+        );
+
+        session
+            .execute_write("INSERT INTO t VALUES (7)")
+            .expect("insert inside the transaction");
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS,
+            "the DML's own OK packet still reports the open transaction"
+        );
+
+        // The result set framing a SELECT inside the transaction carries the
+        // same word on its EOF, snapshotted with the statement.
+        let result = session.execute("SELECT a FROM t").expect("select");
+        assert_eq!(
+            result.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT | SERVER_STATUS_IN_TRANS
+        );
+        drop(result);
+
+        assert_eq!(
+            session.control_transaction("COMMIT").expect("commit"),
+            Some(false)
+        );
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_AUTOCOMMIT,
+            "COMMIT clears IN_TRANS (Go executor/simple.go:792)"
+        );
+    }
+
+    /// `SET autocommit = 0` clears `SERVER_STATUS_AUTOCOMMIT` itself -- Go's
+    /// sysvar hook is `s.SetStatusFlag(mysql.ServerStatusAutocommit,
+    /// isAutocommit)` (`pkg/sessionctx/variable/sysvar.go:2123`) -- so the SET's
+    /// own OK packet carries 0x0000. The next data statement then LAZILY opens a
+    /// transaction (`pkg/sessiontxn/isolation/base.go:323`, guarded by
+    /// `!sessVars.IsAutocommit()`), so its OK packet carries 0x0001: in a
+    /// transaction, not in autocommit.
+    #[test]
+    fn set_autocommit_zero_clears_the_autocommit_bit_and_the_next_dml_opens_a_transaction() {
+        let mut session = open_session();
+        session
+            .execute_write("CREATE TABLE t (a BIGINT)")
+            .expect("create table");
+
+        session
+            .execute_write("SET autocommit = 0")
+            .expect("set autocommit");
+        assert_eq!(
+            session.wire_status().bits(),
+            0,
+            "SET autocommit=0 clears the autocommit bit and opens nothing yet"
+        );
+
+        session
+            .execute_write("INSERT INTO t VALUES (7)")
+            .expect("insert with autocommit off");
+        assert_eq!(
+            session.wire_status().bits(),
+            SERVER_STATUS_IN_TRANS,
+            "the lazy transaction is open, and autocommit is still off"
+        );
+
+        assert_eq!(
+            session.control_transaction("COMMIT").expect("commit"),
+            Some(false)
+        );
+        assert_eq!(
+            session.wire_status().bits(),
+            0,
+            "COMMIT ends the transaction; autocommit stays off until it is SET back"
+        );
+    }
+
+    /// Go `ExecBinaryParam`'s string-family arm is `types.NewDatum(string)`:
+    /// a string datum in the default collation, exactly what a quoted SQL
+    /// literal produces. Binding it as `Datum::Bytes` (the binary collation)
+    /// instead made a prepared `WHERE string_col = ?` incomparable to the
+    /// coprocessor's own describable form, forcing the whole scanned range
+    /// back for a local filter (TPC-C ORDER_STATUS's `c_last = ?` lookup by
+    /// customer name). This must fail before the `prepared_parameters` fix
+    /// and pass after it.
+    #[test]
+    fn a_binary_protocol_string_parameter_binds_the_same_datum_kind_as_a_text_literal() {
+        let bound =
+            prepared_parameters(&[tidb_protocol::PreparedValue::String(b"BARBARBAR".to_vec())]);
+        assert_eq!(bound.len(), 1);
+        assert!(
+            matches!(bound[0], Datum::String(_)),
+            "a string-family binary parameter must bind a string datum, not {:?}",
+            bound[0]
+        );
+        assert_eq!(
+            bound[0],
+            Datum::new_string(b"BARBARBAR".to_vec()),
+            "the collation must be TiDB's default (utf8mb4_bin), matching a literal"
+        );
+
+        // The BLOB family stays a bytes datum, as Go's `NewBytesDatum` arm is.
+        let blob = prepared_parameters(&[tidb_protocol::PreparedValue::Bytes(b"raw".to_vec())]);
+        assert_eq!(blob[0], Datum::new_bytes(b"raw".to_vec()));
+    }
+}

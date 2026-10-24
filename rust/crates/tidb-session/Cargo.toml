@@ -59,8 +59,56 @@ tikv-client.workspace = true
 toml.workspace = true
 serde_json.workspace = true
 serde.workspace = true
+futures.workspace = true
+prost.workspace = true
+tokio.workspace = true
+rand = "0.10"
+base64.workspace = true
+crossbeam-channel = "0.5"
+openssl = "0.10.81"
+rcgen.workspace = true
+rustix.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+x509-parser = { version = "=0.18.1", default-features = false }
+sha1.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+tidb-ddl = { path = "../tidb-ddl" }
+tidb-ddl-logutil = { path = "../tidb-ddl-logutil" }
+tidb-ddl-notifier = { path = "../tidb-ddl-notifier" }
+tidb-ddl-serverstate = { path = "../tidb-ddl-serverstate" }
+tidb-ddl-session = { path = "../tidb-ddl-session" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-dxf = { path = "../tidb-dxf" }
+tidb-unistore = { path = "../tidb-unistore" }
+tidb-meta = { path = "../tidb-meta" }
+tidb-errmsg = { path = "../tidb-errmsg" }
+tidb-pd-client = { path = "../tidb-pd-client" }
+tidb-placement = { path = "../tidb-placement" }
+tidb-owner = { path = "../tidb-owner" }
+tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
+tidb-protocol = { path = "../tidb-protocol" }
+tidb-schemaver = { path = "../tidb-schemaver" }
+tidb-stats-handle-cache = { path = "../tidb-stats-handle-cache" }
+tidb-stats-handle-autoanalyze-exec = { path = "../tidb-stats-handle-autoanalyze-exec" }
+tidb-stats-handle-autoanalyze-priorityqueue = { path = "../tidb-stats-handle-autoanalyze-priorityqueue" }
+tidb-stats-handle-autoanalyze-refresher = { path = "../tidb-stats-handle-autoanalyze-refresher" }
+tidb-stats-handle-initstats = { path = "../tidb-stats-handle-initstats" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+async-trait.workspace = true
+ctrlc.workspace = true
+tidb-gcworker = { path = "../tidb-gcworker" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-syssession = { path = "../tidb-syssession" }
+tidb-resolve = { path = "../tidb-resolve" }
+tidb-resourcemanager = { path = "../tidb-resourcemanager" }
 
 [dev-dependencies]
+tidb-exec = { path = "../tidb-exec", features = ["failpoints"] }
+tidb-util = { path = "../tidb-util", features = ["failpoints"] }
+fail = { version = "0.4", features = ["failpoints"] }
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
 # as record or index keys, which is `tablecodec`'s judgement to make.
 tidb-tablecodec = { path = "../tidb-tablecodec" }
