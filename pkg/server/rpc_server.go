@@ -223,6 +223,8 @@ func (s *rpcServer) createSession() (sessionapi.Session, error) {
 	}
 	extensions, err := extension.GetExtensions()
 	if err != nil {
+		// The session has already been created; do not leak it.
+		se.Close()
 		return nil, err
 	}
 	do := domain.GetDomain(se)
@@ -242,6 +244,8 @@ func (s *rpcServer) createSession() (sessionapi.Session, error) {
 		vars.MemTracker.SetActionOnExceed(action)
 	}
 	if err = vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10)); err != nil {
+		// The session has already been created; do not leak it.
+		se.Close()
 		return nil, err
 	}
 	se.SetExtensions(extensions.NewSessionExtensions())
