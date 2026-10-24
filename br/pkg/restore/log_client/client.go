@@ -1510,7 +1510,7 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 
 	for _, entry := range entries {
 		log.Debug("before rewriting entry", zap.Uint64("key-ts", entry.Ts), zap.Int("key-len", len(entry.E.Key)),
-			zap.Int("value-len", len(entry.E.Value)), zap.ByteString("key", entry.E.Key))
+			zap.Int("value-len", len(entry.E.Value)), logutil.Key("key", entry.E.Key))
 
 		newEntry, err := sr.RewriteMetaKvEntry(&entry.E, columnFamily)
 		if err != nil {
@@ -1526,7 +1526,7 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 			return 0, 0, errors.Trace(err)
 		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
-			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
+			zap.Int("new-value-len", len(entry.E.Value)), logutil.Key("new-key", newEntry.Key))
 
 		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
 			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
@@ -2396,8 +2396,8 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 			log.Info("insert into the delete range",
 				zap.Int64("jobID", newJobID),
 				zap.Int64("elemID", params.ElemID),
-				zap.String("startKey", params.StartKey),
-				zap.String("endKey", params.EndKey),
+				logutil.Redact(zap.String("startKey", params.StartKey)),
+				logutil.Redact(zap.String("endKey", params.EndKey)),
 				zap.Uint64("ts", ts))
 			// (job_id, elem_id, start_key, end_key, ts)
 			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)

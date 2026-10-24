@@ -3653,6 +3653,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			EnabledRateLimitAction: vars.EnabledRateLimitAction,
 			EnableChunkRPC:         vars.EnableChunkRPC,
 			OriginalSQL:            sc.OriginalSQL,
+			EnableRedactLog:        vars.EnableRedactLog,
 			KVVars:                 vars.KVVars,
 			KvExecCounter:          sc.KvExecCounter,
 			SessionMemTracker:      vars.MemTracker,

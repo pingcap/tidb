@@ -20,6 +20,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,4 +91,109 @@ func TestRedactInitAndValueAndKey(t *testing.T) {
 	InitRedact(true)
 	require.Equal(t, Value(secret), redacted)
 	require.Equal(t, Key([]byte(secret)), redacted)
+}
+
+func TestRedactLockInfo(t *testing.T) {
+	previousMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(previousMode) })
+	lock := &kvrpcpb.LockInfo{
+		PrimaryLock: []byte("secret-primary"),
+		LockVersion: 42,
+		Key:         []byte("secret-key"),
+		LockTtl:     3000,
+		Secondaries: [][]byte{[]byte("secret-secondary")},
+		SharedLockInfos: []*kvrpcpb.LockInfo{
+			{PrimaryLock: []byte("secret-shared-primary"), Key: []byte("secret-shared-key"), LockVersion: 43},
+		},
+	}
+
+	InitRedact(false)
+	require.Equal(t, lock.String(), LockInfo(lock).String())
+
+	InitRedact(true)
+	redacted := LockInfo(lock).String()
+	require.NotContains(t, redacted, "secret")
+	require.Contains(t, redacted, "lock_version:42")
+	require.Contains(t, redacted, "lock_ttl:3000")
+	require.Contains(t, redacted, "lock_version:43")
+	// the original lock must not be modified.
+	require.Equal(t, []byte("secret-primary"), lock.PrimaryLock)
+	require.Equal(t, []byte("secret-key"), lock.Key)
+	require.Equal(t, []byte("secret-secondary"), lock.Secondaries[0])
+	require.Equal(t, []byte("secret-shared-key"), lock.SharedLockInfos[0].Key)
+
+	var nilLock *kvrpcpb.LockInfo
+	require.Equal(t, nilLock.String(), LockInfo(nilLock).String())
+
+	for _, test := range []struct {
+		globalMode string
+		mode       string
+		masked     bool
+	}{
+		{globalMode: "OFF", mode: "", masked: false},
+		{globalMode: "OFF", mode: "OFF", masked: false},
+		{globalMode: "OFF", mode: "ON", masked: true},
+		{globalMode: "OFF", mode: "MARKER", masked: true},
+		{globalMode: "ON", mode: "", masked: true},
+		{globalMode: "ON", mode: "OFF", masked: true},
+		{globalMode: "ON", mode: "ON", masked: true},
+		{globalMode: "ON", mode: "MARKER", masked: true},
+		{globalMode: "MARKER", mode: "", masked: true},
+		{globalMode: "MARKER", mode: "OFF", masked: true},
+		{globalMode: "MARKER", mode: "ON", masked: true},
+		{globalMode: "MARKER", mode: "MARKER", masked: true},
+	} {
+		t.Run("global="+test.globalMode+"/session="+test.mode, func(t *testing.T) {
+			errors.RedactLogEnabled.Store(test.globalMode)
+			formatted := LockInfoWithMode(lock, test.mode).String()
+			if test.masked {
+				require.Equal(t, redacted, formatted)
+				require.NotContains(t, formatted, "secret")
+			} else {
+				require.Equal(t, lock.String(), formatted)
+			}
+			require.Equal(t, nilLock.String(), LockInfoWithMode(nilLock, test.mode).String())
+			require.Equal(t, []byte("secret-primary"), lock.PrimaryLock)
+			require.Equal(t, []byte("secret-key"), lock.Key)
+			require.Equal(t, []byte("secret-secondary"), lock.Secondaries[0])
+			require.Equal(t, []byte("secret-shared-primary"), lock.SharedLockInfos[0].PrimaryLock)
+			require.Equal(t, []byte("secret-shared-key"), lock.SharedLockInfos[0].Key)
+		})
+	}
+
+	// Formatting remains lazy and checks the current process-global setting.
+	InitRedact(false)
+	formatted := LockInfoWithMode(lock, "OFF")
+	require.Equal(t, lock.String(), formatted.String())
+	InitRedact(true)
+	require.Equal(t, redacted, formatted.String())
+	InitRedact(false)
+	require.Equal(t, lock.String(), formatted.String())
+}
+
+func TestRedactRegionError(t *testing.T) {
+	defer InitRedact(false)
+	epochNotMatch := &errorpb.Error{
+		Message: "epoch not match for key secret-key",
+		EpochNotMatch: &errorpb.EpochNotMatch{
+			CurrentRegions: []*metapb.Region{{Id: 1, StartKey: []byte("secret-start"), EndKey: []byte("secret-end")}},
+		},
+	}
+	keyNotInRegion := &errorpb.Error{
+		KeyNotInRegion: &errorpb.KeyNotInRegion{Key: []byte("secret-key"), RegionId: 2},
+	}
+	serverIsBusy := &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{Reason: "busy"}}
+
+	InitRedact(false)
+	for _, e := range []*errorpb.Error{epochNotMatch, keyNotInRegion, serverIsBusy, {}} {
+		require.Equal(t, e.String(), RegionError(e))
+	}
+
+	InitRedact(true)
+	require.Equal(t, "message:? epoch_not_match:?", RegionError(epochNotMatch))
+	require.Equal(t, "key_not_in_region:?", RegionError(keyNotInRegion))
+	require.Equal(t, "server_is_busy:?", RegionError(serverIsBusy))
+	require.Equal(t, "?", RegionError(&errorpb.Error{}))
+	var nilErr *errorpb.Error
+	require.Equal(t, nilErr.String(), RegionError(nilErr))
 }

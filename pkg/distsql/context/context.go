@@ -42,6 +42,7 @@ type DistSQLContext struct {
 	EnabledRateLimitAction bool
 	EnableChunkRPC         bool
 	OriginalSQL            string
+	EnableRedactLog        string
 	KVVars                 *tikvstore.Variables
 	KvExecCounter          *stmtstats.KvExecCounter
 	SessionMemTracker      *memory.Tracker
