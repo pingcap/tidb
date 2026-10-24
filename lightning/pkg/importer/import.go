@@ -454,10 +454,12 @@ func NewImportControllerWithPauser(
 		backendConfig := ingestctrl.NewBackendConfig(cfg, maxOpenFiles, p.KeyspaceName, p.ResourceGroupName, p.TaskType, raftKV2SwitchModeDuration)
 		// Use legacy PD region RPCs so newer Lightning can import into older clusters.
 		backendConfig.DisablePDClientRouterClient = true
-		backendObj, err = ingestctrl.NewBackend(ctx, tls, backendConfig, pdCliForTiKV)
+		var localBackend *ingestctrl.Backend
+		localBackend, err = ingestctrl.NewBackend(ctx, tls, backendConfig, pdCliForTiKV)
 		if err != nil {
 			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
 		}
+		backendObj = localBackend
 		err = verifyLocalFile(ctx, cpdb, cfg.TikvImporter.SortedKVDir)
 		if err != nil {
 			return nil, err
