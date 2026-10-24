@@ -120,6 +120,29 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 	tk.MustExec("use test")
 
 	tk.MustExec("create table t_data (id int, a int, b int)")
+	t.Run("read committed parent committed after begin", func(t *testing.T) {
+		tk.MustExec("create table rc_parent(id int primary key)")
+		tk.MustExec("create table rc_child(id int primary key, pid int, foreign key(pid) references rc_parent(id))")
+		child := testkit.NewTestKit(t, store)
+		child.MustExec("use test")
+		child.MustExec("set transaction_isolation='READ-COMMITTED'")
+		id := 0
+		for _, checkTS := range []string{"0", "1"} {
+			for _, insert := range []string{"insert", "insert ignore"} {
+				id++
+				child.MustExec("set tidb_rc_write_check_ts=" + checkTS)
+				child.MustExec("begin pessimistic")
+				tk.MustExec(fmt.Sprintf("insert into rc_parent values(%d)", id))
+				child.MustExec(fmt.Sprintf("%s into rc_child values(%d,%d)", insert, id, id))
+				affected := child.Session().GetSessionVars().StmtCtx.AffectedRows()
+				child.MustQuery("show warnings").Check(testkit.Rows())
+				child.MustGetDBError("insert into rc_child values(999,999)", plannererrors.ErrNoReferencedRow2)
+				child.MustExec("commit")
+				require.Equal(t, uint64(1), affected)
+				child.MustQuery(fmt.Sprintf("select * from rc_child where id=%d", id)).Check(testkit.Rows(fmt.Sprintf("%d %d", id, id)))
+			}
+		}
+	})
 	tk.MustExec("insert into t_data (id, a, b) values (1, 1, 1), (2, 2, 2);")
 	for _, ca := range foreignKeyTestCase1 {
 		tk.MustExec("drop table if exists t2;")
