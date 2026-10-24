@@ -49,6 +49,11 @@ var (
 	DefaultMinDeliverBytes uint64 = 96 * units.KiB
 	// DefaultMinDeliverRowCnt see default for tikv-importer.max-kv-pairs.
 	DefaultMinDeliverRowCnt = 4096
+	// no-op histogram to avoid nil checks in hot path.
+	noopChunkProcessDurHist = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{Name: "noop_chunk_process_operation_seconds"},
+		[]string{"operation"},
+	)
 )
 
 type rowToEncode struct {
@@ -232,6 +237,7 @@ type chunkEncoder struct {
 	// total duration takes by read/encode.
 	readTotalDur   time.Duration
 	encodeTotalDur time.Duration
+	sendTotalDur   time.Duration
 
 	groupChecksum *verify.KVGroupChecksum
 }
@@ -269,10 +275,12 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		currOffset                              int64
 	)
 	metrics, _ := metric.GetCommonMetric(ctx)
+	chunkProcessDurHist := noopChunkProcessDurHist
 	if metrics != nil {
 		encodedBytesCounter = metrics.BytesCounter.WithLabelValues(metric.StateRestored)
 		// table name doesn't matter here, all those metrics will have task-id label.
 		encodedRowsCounter = metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")
+		chunkProcessDurHist = metrics.ChunkProcessSecondsHistogram
 	}
 
 	recordSendReset := func() error {
@@ -315,9 +323,15 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 
 		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
 
+		sendStart := time.Now()
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err
 		}
+		sendDur := time.Since(sendStart)
+		p.sendTotalDur += sendDur
+		chunkProcessDurHist.WithLabelValues(metric.ChunkProcessOpRead).Observe(readDur.Seconds())
+		chunkProcessDurHist.WithLabelValues(metric.ChunkProcessOpEncode).Observe(encodeDur.Seconds())
+		chunkProcessDurHist.WithLabelValues(metric.ChunkProcessOpSend).Observe(sendDur.Seconds())
 
 		if p.collector != nil {
 			p.collector.Processed(totalKVBytes, int64(rowCount))
@@ -381,6 +395,7 @@ func (p *chunkEncoder) summaryFields() []zap.Field {
 	return []zap.Field{
 		zap.Duration("readDur", p.readTotalDur),
 		zap.Duration("encodeDur", p.encodeTotalDur),
+		zap.Duration("sendDur", p.sendTotalDur),
 		zap.Object("checksum", &mergedChecksum),
 	}
 }
@@ -500,12 +515,14 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 	)
 
 	metrics, _ := metric.GetCommonMetric(ctx)
+	chunkProcessDurHist := noopChunkProcessDurHist
 	if metrics != nil {
 		dataKVBytesHist = metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData)
 		indexKVBytesHist = metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex)
 		dataKVPairsHist = metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData)
 		indexKVPairsHist = metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex)
 		deliverBytesCounter = metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten)
+		chunkProcessDurHist = metrics.ChunkProcessSecondsHistogram
 	}
 
 	for {
@@ -528,18 +545,22 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 			defer p.diskQuotaLock.RUnlock()
 
 			start := time.Now()
+			dataWriteStart := time.Now()
 			if err := p.dataWriter.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvBatch.dataKVs)); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
+			dataWriteDur := time.Since(dataWriteStart)
+			indexWriteStart := time.Now()
 			if err := p.indexWriter.AppendRows(ctx, nil, kv.GroupedPairs(kvBatch.indexKVs)); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to index engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
+			indexWriteDur := time.Since(indexWriteStart)
 
 			deliverDur := time.Since(start)
 			p.deliverTotalDur += deliverDur
@@ -554,6 +575,9 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 				indexKVPairsHist.Observe(float64(indexKVCnt))
 				deliverBytesCounter.Add(float64(dataSize + indexSize))
 			}
+			chunkProcessDurHist.WithLabelValues(metric.ChunkProcessOpWriteData).Observe(dataWriteDur.Seconds())
+			chunkProcessDurHist.WithLabelValues(metric.ChunkProcessOpWriteIndex).Observe(indexWriteDur.Seconds())
+			chunkProcessDurHist.WithLabelValues(metric.ChunkProcessOpDeliver).Observe(deliverDur.Seconds())
 			return nil
 		}()
 		if err != nil {
