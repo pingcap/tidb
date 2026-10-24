@@ -405,10 +405,12 @@ fn measured_divergences_from_go_test_alter_column() {
     //    them into the single primary key the column already has, so
     //    `create table (a int key primary key unique unique)` succeeds. This
     //    tier refuses the second one outright.
-    assert!(
+    // A session on the store accepts it, as Go does.
+    assert_eq!(
         session
             .run("CREATE TABLE mu2 (a INT KEY PRIMARY KEY UNIQUE UNIQUE)")
             .is_err(),
+        crate::tests_support::in_process_tier(),
         "captured TiDB accepts this and builds one PRIMARY KEY"
     );
 }

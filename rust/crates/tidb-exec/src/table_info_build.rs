@@ -1453,6 +1453,21 @@ fn synthesize_expression_index_columns(
                 context.connection_charset_info().0,
             )
             .map_err(default_admission_error)?;
+        // Go `buildHiddenColumnInfoWithCheck` -> `checkExpressionIndexAutoIncrement`
+        // (3754), unless `tidb_enable_auto_increment_in_generated` allows it.
+        let auto_increment = columns.iter().find_map(|column| {
+            column
+                .field_type
+                .has_flag(FieldTypeFlags::AUTO_INCREMENT)
+                .then(|| column.name.original().to_owned())
+        });
+        tidb_executor::ddl::check_expression_index_auto_increment(
+            &constraint.name,
+            &hidden,
+            auto_increment.as_deref(),
+            context,
+        )
+        .map_err(default_admission_error)?;
         for (position, hidden) in hidden {
             let column = hidden_index_column_info(hidden, columns.len());
             let part = &mut constraint.parts[position];

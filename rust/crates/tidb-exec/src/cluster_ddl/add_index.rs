@@ -776,9 +776,9 @@ fn check_and_build_index_info(
         info.max_column_id += 1;
         column.id = info.max_column_id;
         column.offset = info.columns.len() as i64;
-        // Go `moveAndUpdateHiddenColumnsToPublic` publishes them with the
-        // index's first state, in this same step.
-        column.state = SchemaState::PUBLIC;
+        // Appended at the end in StateNone; `moveAndUpdateHiddenColumnsToPublic`
+        // below publishes and places them once the index names their offsets.
+        column.state = SchemaState::NONE;
         info.columns.push_go(column);
     }
     // Go `BuildIndexInfo` from the key parts, every one naming a column.
@@ -847,8 +847,57 @@ fn check_and_build_index_info(
     allocate_added_index(info, &mut added);
     let added = GoShared::new(added);
     info.indices.push_handle_go(Some(added.clone()));
+    move_and_update_hidden_columns_to_public(info, &added);
     check_table_info_valid(info)?;
     Ok(added)
+}
+
+/// Go `moveAndUpdateHiddenColumnsToPublic`: the index's hidden columns become
+/// public and move to the first non-public position, so `Columns` keeps the
+/// `[public..., non-public...]` order every `Cols()` reader relies on -- a
+/// column a sibling sub-job is still adding otherwise leaves a hole.
+fn move_and_update_hidden_columns_to_public(info: &mut TableInfo, index: &GoShared<IndexInfo>) {
+    let offsets: Vec<i64> = index
+        .read()
+        .columns
+        .iter_deref()
+        .map(|part| part.read().offset)
+        .collect();
+    let hidden: std::collections::HashSet<i64> = offsets
+        .iter()
+        .copied()
+        .filter(|offset| {
+            info.columns
+                .get(*offset as usize)
+                .is_some_and(|column| column.read().hidden)
+        })
+        .collect();
+    if hidden.is_empty() {
+        return;
+    }
+    let first_non_public = info
+        .columns
+        .iter_deref()
+        .position(|column| column.read().state != SchemaState::PUBLIC)
+        .unwrap_or(info.columns.len() - 1);
+    // Go re-reads each part's offset as it goes: an earlier move shifts the
+    // later parts' offsets through `MoveColumnInfo`.
+    for position in 0..offsets.len() {
+        let offset = index
+            .read()
+            .columns
+            .get(position)
+            .expect("index part")
+            .read()
+            .offset;
+        if let Some(column) = info.columns.get(offset as usize) {
+            column.write().state = SchemaState::PUBLIC;
+        }
+        // Go tests membership with the part's CURRENT offset, as here.
+        if hidden.contains(&offset) {
+            info.move_column_info(offset as isize, first_non_public as isize);
+        }
+    }
 }
 
 /// Plans one step of a persisted ADD INDEX / ADD PRIMARY KEY job: Go

@@ -2085,6 +2085,17 @@ fn lower_alter_table_catalog(
                         name: drop.name.clone(),
                     });
                 }
+                // Go `AlterTable`: each VALIDATION spec appends its own 8200
+                // warning; ENABLE / DISABLE KEYS do nothing (MyISAM only).
+                tidb_ast::AlterTableAction::WithValidation => context.append_warning_parts(
+                    8200,
+                    "ALTER TABLE WITH VALIDATION is currently unsupported",
+                ),
+                tidb_ast::AlterTableAction::WithoutValidation => context.append_warning_parts(
+                    8200,
+                    "ALTER TABLE WITHOUT VALIDATION is currently unsupported",
+                ),
+                tidb_ast::AlterTableAction::SetKeysEnabled(_) => {}
                 tidb_ast::AlterTableAction::Lock(_) => {
                     // go: `LOCK=NONE` is the supported lock for the column
                     // operations and selects nothing observable; the option
@@ -2190,6 +2201,7 @@ fn lower_alter_table_catalog(
                     | tidb_ast::AlterTableAction::Lock(_)
                     | tidb_ast::AlterTableAction::WithValidation
                     | tidb_ast::AlterTableAction::WithoutValidation
+                    | tidb_ast::AlterTableAction::SetKeysEnabled(_)
             ) || matches!(
                 action,
                 tidb_ast::AlterTableAction::SetTableOptions { options }
@@ -2197,25 +2209,12 @@ fn lower_alter_table_catalog(
             )
         }) {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
-            // go raises 8200 for BOTH validation forms, each naming its own
-            // spelling (oracle g-alter: `ALTER TABLE ab3 WITHOUT VALIDATION`
-            // answers `ALTER TABLE WITHOUT VALIDATION is currently
-            // unsupported`, and the WITH form names WITH).
-            let warning = alter.actions.iter().find_map(|action| match action {
-                tidb_ast::AlterTableAction::WithValidation => Some((
-                    8200_u16,
-                    "ALTER TABLE WITH VALIDATION is currently unsupported".to_owned(),
-                )),
-                tidb_ast::AlterTableAction::WithoutValidation => Some((
-                    8200_u16,
-                    "ALTER TABLE WITHOUT VALIDATION is currently unsupported".to_owned(),
-                )),
-                _ => None,
-            });
+            // The loop above appended each VALIDATION spec's 8200 warning,
+            // in order (oracle g-alter names each spelling).
             return Ok(Some(DdlStatement::AcceptedNoOp {
                 schema,
                 table,
-                warning,
+                warning: None,
             }));
         }
         return Ok(None);
@@ -2968,7 +2967,9 @@ fn lower_alter_table_catalog(
                 )),
             }))
         }
-        tidb_ast::AlterTableAction::Algorithm(_) | tidb_ast::AlterTableAction::Lock(_) => {
+        tidb_ast::AlterTableAction::Algorithm(_)
+        | tidb_ast::AlterTableAction::Lock(_)
+        | tidb_ast::AlterTableAction::SetKeysEnabled(_) => {
             // go runs these as no-op jobs: the option selects execution
             // strategy, and there is nothing to execute.
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -4873,16 +4874,20 @@ pub(crate) fn set_global_index_version(table: &TableInfo, index: &mut IndexInfo)
     {
         return;
     }
+    // Go `getNullColInfos`: each key part by name among ALL the table's
+    // columns (an expression part's hidden column is not public yet), null
+    // when it lacks NOT NULL or carries PreventNullInsert.
     let needs_partition_in_key = !index.unique
         || index.columns.iter_deref().any(|part| {
-            usize::try_from(part.read().offset)
-                .ok()
-                .and_then(|offset| table.cols().get(offset))
+            let name = part.read().name.lowercase().to_owned();
+            table
+                .columns
+                .iter_deref()
+                .find(|column| column.read().name.lowercase() == name)
                 .is_some_and(|column| {
-                    !column
-                        .read()
-                        .field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                    let flags = &column.read().field_type;
+                    !flags.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL)
+                        || flags.has_flag(tidb_datatype::FieldTypeFlags::PREVENT_NULL_INSERT)
                 })
         });
     if needs_partition_in_key {
