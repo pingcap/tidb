@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -318,17 +319,35 @@ func TestSlowLogRUVersion(t *testing.T) {
 					if version == rmclient.RUVersionV2 {
 						wantRead, wantWrite = totalRUV2, 0
 						if tc.write {
-							wantRead, wantWrite = 0, totalRUV2
+							// Price the write evidence independently of the log/summary output.
+							sc := tk.Session().GetSessionVars().StmtCtx
+							plan, ok := sc.GetPlan().(base.Plan)
+							require.True(t, ok)
+							work, found := sc.RuntimeStatsColl.GetRootWriteCPUWork(plan.ID())
+							require.True(t, found)
+							commit := sc.GetExecDetails().CommitDetail
+							require.NotNil(t, commit)
+							weights := config.GetGlobalConfig().RUV2.StmtWeights
+							wantWrite = weights.WriteStatement + weights.OperatorNum + weights.CPUWork*work +
+								weights.WriteKey*float64(commit.WriteKeys) + weights.WriteByte*float64(commit.WriteSize)
+							wantRead = totalRUV2 - wantWrite
+							require.Positive(t, wantRead)
+							require.Positive(t, wantWrite)
 						}
 					}
 
 					rows := tk.MustQuery("select request_unit_read, request_unit_write, time_queued_by_rc "+
 						"from information_schema.slow_query where query = ?", sql+";").Rows()
 					require.Len(t, rows, 1)
+					gotValues := make([]float64, 3)
 					for i, want := range []float64{wantRead, wantWrite, ruDetails.RUWaitDuration().Seconds()} {
 						got, err := strconv.ParseFloat(fmt.Sprint(rows[0][i]), 64)
 						require.NoError(t, err)
+						gotValues[i] = got
 						require.InDelta(t, want, got, 1e-9)
+					}
+					if version == rmclient.RUVersionV2 {
+						require.InDelta(t, totalRUV2, gotValues[0]+gotValues[1], 1e-9)
 					}
 				})
 			}
