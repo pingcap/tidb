@@ -789,39 +789,6 @@ fn plan_insert(
     })
 }
 
-/// The subqueries `expr` contains, outermost only.
-pub(crate) fn outermost_subqueries(expr: &tidb_ast::Expr) -> Vec<tidb_ast::QueryStmt> {
-    struct Collector(Vec<tidb_ast::QueryStmt>);
-    impl tidb_ast::Visitor for Collector {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() else {
-                return false;
-            };
-            let query = match expr {
-                tidb_ast::Expr::Subquery(query)
-                | tidb_ast::Expr::Exists {
-                    subquery: query, ..
-                }
-                | tidb_ast::Expr::InSubquery {
-                    subquery: query, ..
-                }
-                | tidb_ast::Expr::CompareSubquery {
-                    subquery: query, ..
-                } => query,
-                _ => return false,
-            };
-            self.0.push((**query).clone());
-            true
-        }
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-    let mut collector = Collector(Vec::new());
-    tidb_ast::Visitable::accept(&mut expr.clone(), &mut collector);
-    collector.0
-}
-
 #[allow(clippy::too_many_arguments)]
 fn run_insert_with_physical(
     insert: &tidb_ast::InsertStmt,

@@ -481,7 +481,7 @@ impl Session {
             &self.current_db,
             |dml| {
                 self.with_planning_catalog(|catalog| {
-                    tidb_executor::driver::write_visit_info(
+                    tidb_executor::driver::dml_visit_info(
                         dml,
                         catalog,
                         &self.current_db,
@@ -493,17 +493,6 @@ impl Session {
                 self.with_planning_catalog(|catalog| {
                     tidb_executor::driver::query_visit_info(query, catalog, &self.current_db, &ctx)
                 })
-            },
-            |dml| {
-                self.with_planning_catalog(|catalog| {
-                    Ok(tidb_executor::driver::dml_visit_info(
-                        dml,
-                        catalog,
-                        &self.current_db,
-                        &ctx,
-                    ))
-                })
-                .unwrap_or_default()
             },
         )
     }

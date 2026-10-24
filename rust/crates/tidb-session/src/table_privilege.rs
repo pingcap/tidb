@@ -266,9 +266,6 @@ pub(crate) fn required_table_privileges(
         Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
         tidb_executor::DriverError,
     >,
-    resolve_dml_read: impl FnOnce(
-        &tidb_ast::DmlStmt,
-    ) -> Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
 ) -> Result<Vec<TablePrivilegeRequest>, tidb_executor::DriverError> {
     let mut requests = Vec::new();
     match stmt {
@@ -297,28 +294,8 @@ pub(crate) fn required_table_privileges(
             // for `ON DUPLICATE KEY UPDATE`. An `INSERT ... SELECT`'s source
             // is planned as an ordinary query, so it carries its own
             // `SelectPriv` entries.
-            DmlStmt::Insert(insert) => {
-                if let Some((schema, table)) = split_path(&insert.table, current_db) {
-                    requests.push(TablePrivilegeRequest::new(
-                        &schema,
-                        &table,
-                        GlobalPriv::Insert,
-                    ));
-                    if insert.replace {
-                        requests.push(TablePrivilegeRequest::new(
-                            &schema,
-                            &table,
-                            GlobalPriv::Delete,
-                        ));
-                    } else if !insert.on_duplicate.is_empty() {
-                        requests.push(TablePrivilegeRequest::new(
-                            &schema,
-                            &table,
-                            GlobalPriv::Update,
-                        ));
-                    }
-                }
-                for visit in resolve_dml_read(dml) {
+            DmlStmt::Insert(_) => {
+                for visit in resolve_write(dml)? {
                     requests.push(request_of_visit(&visit));
                 }
             }

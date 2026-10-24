@@ -15,7 +15,7 @@
 //! 8121), and `DeletePriv` for each table a DELETE removes rows from (with the
 //! `ErrTableaccessDenied` `authErr`).
 
-use tidb_ast::{DeleteKind, DeleteStmt, Expr, UpdateKind, UpdateStmt};
+use tidb_ast::{DeleteKind, DeleteStmt, Expr, InsertStmt, UpdateKind, UpdateStmt};
 use tidb_expr::Columns;
 
 use super::catalog::TableSource;
@@ -25,6 +25,76 @@ use super::PlanBuilder;
 use crate::plan_base::PlanError;
 
 impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
+    /// Everything Go's `buildInsert` appends to `b.visitInfo`: `InsertPriv` on
+    /// the target (with the `ErrTableaccessDenied` authErr), `DeletePriv` for
+    /// `REPLACE` or `UpdatePriv` for `ON DUPLICATE KEY UPDATE`, then what
+    /// building the VALUES lists, the source SELECT and the assignments
+    /// visits -- the tables of every subquery and of the source.
+    ///
+    /// A piece that cannot be built contributes the visits it made before it
+    /// failed: the statement's own planning raises that error.
+    pub fn insert_visits(&mut self, insert: &InsertStmt) -> Vec<VisitInfo> {
+        let (database, table) = match insert.table.as_slice() {
+            [table] if !self.source.current_database().is_empty() => {
+                (self.source.current_database().to_owned(), table.clone())
+            }
+            [database, table] => (database.clone(), table.clone()),
+            // An unqualified name with no current database is `ErrNoDB`,
+            // raised before any privilege is checked.
+            _ => return Vec::new(),
+        };
+        let target = self.resolve_insert_target(insert);
+        let (database, table) = match &target {
+            Ok(target) => (target.database.clone(), target.table.clone()),
+            Err(_) => (database, table),
+        };
+        let (database, table) = (
+            tidb_mysql::to_lowercase(&database),
+            tidb_mysql::to_lowercase(&table),
+        );
+        let named = |privilege, command: &'static str| VisitInfo {
+            privilege,
+            database: database.clone(),
+            table: table.clone(),
+            column: String::new(),
+            error: VisitAuthError::TableAccessDenied {
+                command,
+                table: table.clone(),
+            },
+        };
+        self.visit_info.push(named(tidb_mysql::InsertPriv, "INSERT"));
+        if insert.replace {
+            self.visit_info.push(named(tidb_mysql::DeletePriv, "DELETE"));
+        } else if !insert.on_duplicate.is_empty() {
+            self.visit_info.push(named(tidb_mysql::UpdatePriv, "UPDATE"));
+        }
+        if let Ok(target) = target {
+            match insert.source.as_deref() {
+                None => {
+                    let _ = self.build_insert_values(insert, &target);
+                    let _ = self.build_on_duplicate(insert, &target, None);
+                }
+                Some(source) => {
+                    let extended = self.extend_insert_select(insert, &target);
+                    let (query, actual_col_len) = match &extended {
+                        Some((query, width)) => (query, Some(*width)),
+                        None => (source, None),
+                    };
+                    let node = tidb_resolve::NodeW::new(query.clone());
+                    if let Ok(plan) = self.build_query_node(&node, false) {
+                        let (schema, names) = super::snapshot_schema_and_names(&plan);
+                        let output = super::insert_on_duplicate::InsertSelectOutput {
+                            names,
+                            actual_col_len,
+                        };
+                        let _ = self.build_on_duplicate(insert, &target, Some((&schema, &output)));
+                    }
+                }
+            }
+        }
+        std::mem::take(&mut self.visit_info)
+    }
+
     /// Everything Go's `buildUpdate` appends to `b.visitInfo`: what building
     /// the read and the SET expressions visits (`SelectPriv` of each source,
     /// the subqueries' tables), then `UpdatePriv` of each written table.

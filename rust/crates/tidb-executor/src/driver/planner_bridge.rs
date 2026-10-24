@@ -926,8 +926,8 @@ pub(super) fn logical_from_plan(
     builder.build_join(join)
 }
 
-/// Go's `visitInfo` of an UPDATE or a DELETE, in the order `buildUpdate` /
-/// `buildDelete` append it: what building the read and the SET expressions
+/// Go's `visitInfo` of an INSERT, UPDATE or DELETE, in the order `buildInsert` /
+/// `buildUpdate` / `buildDelete` append it: what building the read and the SET expressions
 /// visits, then `UpdatePriv` for each table an assignment writes or
 /// `DeletePriv` for each table removed from. A source alias is only a lookup
 /// name: authorization always uses the resolved base table identity.
@@ -935,7 +935,22 @@ pub(super) fn logical_from_plan(
 /// The plan is discarded, so an uncorrelated subquery is not RUN (see
 /// [`query_visit_info`]); a read that cannot be built contributes the visits it
 /// made, and the statement's own planning raises the error.
-pub fn write_visit_info(
+pub fn dml_visit_info(
+    statement: &tidb_ast::DmlStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
+    // Planning raises warnings (a folded cast, a hint); this pass plans the
+    // statement a second time, so its warnings must not reach the statement's.
+    let _no_folding = tidb_expr::constant_fold::suspend_constant_folding();
+    let warning_bookmark = ctx.warning_count();
+    let visits = dml_visit_info_inner(statement, catalog, current_db, ctx);
+    ctx.truncate_warnings(warning_bookmark);
+    visits
+}
+
+fn dml_visit_info_inner(
     statement: &tidb_ast::DmlStmt,
     catalog: &Catalog,
     current_db: &str,
@@ -975,11 +990,8 @@ pub fn write_visit_info(
     match statement {
         tidb_ast::DmlStmt::Update(update) => builder.update_visits(update),
         tidb_ast::DmlStmt::Delete(delete) => builder.delete_visits(delete),
-        _ => {
-            return Err(super::DriverError::unsupported(
-                "write target resolution requires UPDATE or DELETE",
-            ))
-        }
+        tidb_ast::DmlStmt::Insert(insert) => Ok(builder.insert_visits(insert)),
+        _ => Ok(Vec::new()),
     }
     .map_err(super::planner_error_to_driver)
 }
@@ -2421,50 +2433,6 @@ fn query_visit_info_inner(
         .build_query_node(&node, false)
         .map_err(super::planner_error_to_driver)?;
     Ok(std::mem::take(&mut builder.visit_info))
-}
-
-/// Go's `visitInfo` for the READ side of an INSERT / UPDATE / DELETE: what the
-/// plan builder appends while it resolves the statement's sources and the
-/// subqueries inside it, in Go's order.
-///
-/// The write privileges themselves (`INSERT`, `UPDATE`, `DELETE` on the
-/// targets) are the caller's; they follow these, as Go appends them after the
-/// source is built. A pass that cannot plan a piece contributes nothing for
-/// it, and the statement's own planning raises the error.
-pub fn dml_visit_info(
-    statement: &tidb_ast::DmlStmt,
-    catalog: &Catalog,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Vec<tidb_planner::plan_builder::visit_info::VisitInfo> {
-    use tidb_ast::DmlStmt;
-    let plan = |query: &tidb_ast::QueryStmt| {
-        query_visit_info(query, catalog, current_database, ctx).unwrap_or_default()
-    };
-    let subqueries = |exprs: &mut dyn Iterator<Item = &tidb_ast::Expr>| {
-        exprs
-            .flat_map(super::outermost_subqueries)
-            .flat_map(|query| plan(&query))
-            .collect::<Vec<_>>()
-    };
-    match statement {
-        DmlStmt::Insert(insert) => {
-            let mut visits = insert
-                .source
-                .as_deref()
-                .map(|query| plan(query))
-                .unwrap_or_default();
-            visits.extend(subqueries(
-                &mut insert
-                    .rows
-                    .iter()
-                    .flatten()
-                    .chain(insert.on_duplicate.iter().map(|assignment| &assignment.value)),
-            ));
-            visits
-        }
-        _ => Vec::new(),
-    }
 }
 
 /// Go `buildInsert`'s expressions: the VALUES lists over the target's schema,
