@@ -298,6 +298,16 @@ type StatementContext struct {
 	IsStaleness     bool
 	InRestrictedSQL bool
 	ViewDepth       int32
+	// HasStaleReadReplicaRead indicates that StaleReadReplicaRead was decided for this stale read statement by the
+	// `tidb_stale_read_*_safe_ts_replica_read` variables. It is only honoured when `tidb_replica_read` is the
+	// default `leader` and there is no replica read hint.
+	HasStaleReadReplicaRead bool
+	// StaleReadReplicaRead is the kv.ReplicaReadType decided for this stale read statement.
+	StaleReadReplicaRead byte
+	// StaleReadAsNonStale indicates that the stale read ts of this statement is above the min safe ts of the TiKV
+	// stores, so no follower could serve it as a stale read. The requests are sent as ordinary (non stale) reads at
+	// the same ts and client-go routes them by the replica read type as it does for any other read.
+	StaleReadAsNonStale bool
 	// mu struct holds variables that change during execution.
 	mu *stmtCtxMu
 	// affectedRows is lifted from mu for performance reason.
@@ -1398,6 +1408,22 @@ func (sc *StatementContext) SetStaleTSOProviderIfNotExist(eval func() (uint64, e
 	}
 	sc.StaleTSOProvider.value = nil
 	sc.StaleTSOProvider.eval = eval
+}
+
+// IsStaleTSOEvaluated reports whether the stale TSO provider has been evaluated for this statement, i.e. the
+// statement's NOW() was derived from the stale TSO provider.
+func (sc *StatementContext) IsStaleTSOEvaluated() bool {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	return sc.StaleTSOProvider.value != nil
+}
+
+// OverrideStaleTSO replaces the evaluated stale TSO so that subsequent NOW() evaluations in this statement
+// use the given TSO instead of the previously estimated one.
+func (sc *StatementContext) OverrideStaleTSO(tso uint64) {
+	sc.StaleTSOProvider.Lock()
+	defer sc.StaleTSOProvider.Unlock()
+	sc.StaleTSOProvider.value = &tso
 }
 
 // GetStaleTSO returns the TSO for stale-read usage which calculate from PD's last response.
