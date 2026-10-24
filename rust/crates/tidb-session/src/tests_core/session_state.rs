@@ -250,25 +250,22 @@ fn session_variables() {
     assert_eq!(session.vars().get_system("autocommit").unwrap(), "ON");
 
     // An unknown system variable is Go's 1193, on read and on write.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.apply_set("SET nonexistent_variable = 1"),
-        Err(DriverError::Var(
-            tidb_executor::VarErrorKind::UnknownSystemVariable(_)
-        ))
-    ));
-    assert!(matches!(
+        1193,
+        "Unknown system variable 'nonexistent_variable'",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT @@nonexistent_variable"),
-        Err(DriverError::Var(
-            tidb_executor::VarErrorKind::UnknownSystemVariable(_)
-        ))
-    ));
+        1193,
+        "Unknown system variable 'nonexistent_variable'",
+    );
     // A read-only variable cannot be set.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.apply_set("SET version = '1'"),
-        Err(DriverError::Var(
-            tidb_executor::VarErrorKind::ReadOnlyVariable(_)
-        ))
-    ));
+        1238,
+        "Variable 'version' is a read only variable",
+    );
 
     // User variables: unset reads as NULL, never an error.
     assert_eq!(
@@ -535,26 +532,14 @@ fn noop_function_gate() {
         );
     }
     // An explicit ASC is written too, so it is gated the same way.
-    assert!(matches!(
-        session.run("SELECT b FROM t GROUP BY b ASC"),
-        Err(DriverError::FunctionsNoopImpl("GROUP BY expr ASC|DESC"))
-    ));
+    crate::tests_support::assert_err(session.run("SELECT b FROM t GROUP BY b ASC"), 1235, "function GROUP BY expr ASC|DESC has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
     // A GROUP BY with no direction is not.
     session.run("SELECT b FROM t GROUP BY b").unwrap();
 
     // The gate reaches a subquery, a derived table and a set operation.
-    assert!(matches!(
-        session.run("SELECT b FROM t WHERE a IN (SELECT a FROM t LOCK IN SHARE MODE)"),
-        Err(DriverError::FunctionsNoopImpl(_))
-    ));
-    assert!(matches!(
-        session.run("SELECT x.b FROM (SELECT b FROM t LOCK IN SHARE MODE) x"),
-        Err(DriverError::FunctionsNoopImpl(_))
-    ));
-    assert!(matches!(
-        session.run("SELECT b FROM t UNION SELECT a FROM t LOCK IN SHARE MODE"),
-        Err(DriverError::FunctionsNoopImpl(_))
-    ));
+    crate::tests_support::assert_err(session.run("SELECT b FROM t WHERE a IN (SELECT a FROM t LOCK IN SHARE MODE)"), 1235, "function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
+    crate::tests_support::assert_err(session.run("SELECT x.b FROM (SELECT b FROM t LOCK IN SHARE MODE) x"), 1235, "function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
+    crate::tests_support::assert_err(session.run("SELECT b FROM t UNION SELECT a FROM t LOCK IN SHARE MODE"), 1235, "function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
 
     // ON: the clause is accepted and does nothing, with no warning.
     session
@@ -587,10 +572,7 @@ fn shared_lock_promotion_bypasses_noop_share_gate() {
         .unwrap();
     session.run("INSERT INTO t VALUES (1, 10)").unwrap();
 
-    assert!(matches!(
-        session.run("SELECT b FROM t WHERE a = 1 FOR SHARE"),
-        Err(DriverError::FunctionsNoopImpl("LOCK IN SHARE MODE"))
-    ));
+    crate::tests_support::assert_err(session.run("SELECT b FROM t WHERE a = 1 FOR SHARE"), 1235, "function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
     session
         .run("SET tidb_enable_shared_lock_promotion = ON")
         .unwrap();
@@ -604,10 +586,7 @@ fn shared_lock_promotion_bypasses_noop_share_gate() {
         .run("SET tidb_enable_shared_lock_promotion = OFF")
         .unwrap();
     assert!(!session.vars().shared_lock_promotion_enabled());
-    assert!(matches!(
-        session.run("SELECT b FROM t WHERE a = 1 LOCK IN SHARE MODE"),
-        Err(DriverError::FunctionsNoopImpl("LOCK IN SHARE MODE"))
-    ));
+    crate::tests_support::assert_err(session.run("SELECT b FROM t WHERE a = 1 LOCK IN SHARE MODE"), 1235, "function LOCK IN SHARE MODE has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
 }
 
 /// Go `varsutil.go:checkReadOnly`: turning one of `noop.go`'s read-only
@@ -698,10 +677,7 @@ fn read_only_noop_variables_need_the_noop_gate() {
     session
         .apply_set("SET tidb_enable_noop_functions = 'OFF'")
         .unwrap();
-    assert!(matches!(
-        session.run("SET TRANSACTION READ ONLY"),
-        Err(DriverError::FunctionsNoopImpl("READ ONLY"))
-    ));
+    crate::tests_support::assert_err(session.run("SET TRANSACTION READ ONLY"), 1235, "function READ ONLY has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions");
 }
 
 /// Go's `tidb_enable_noop_functions` Validation rejects disabling the SESSION
@@ -987,7 +963,7 @@ fn prepared_statement_parameters() {
     // A value that is not UTF-8 does NOT fit a utf8mb4 column: captured, TiDB
     // answers 1366 "Incorrect string value '\xFF' for column 'b'" rather than
     // storing mangled bytes.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run_with_params(
             "INSERT INTO t (a,b,c) VALUES (?,?,?)",
             &[
@@ -996,8 +972,9 @@ fn prepared_statement_parameters() {
                 Datum::Int(30),
             ],
         ),
-        Err(DriverError::IncorrectValue { .. })
-    ));
+        1366,
+        "Incorrect string value '\\xFF' for column 'b'",
+    );
 
     // The same bytes DO survive the round trip through a binary column, which
     // has no character set to validate them against (captured).

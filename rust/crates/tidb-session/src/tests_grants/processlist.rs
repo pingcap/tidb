@@ -140,10 +140,7 @@ fn process_admin_batch_authorization_precedes_numeric_parser() {
         String::new(),
         None,
     );
-    assert!(matches!(
-        bob.run("KILL 7"),
-        Err(DriverError::KillAccessDenied)
-    ));
+    crate::tests_support::assert_err(bob.run("KILL 7"), 1227, "Access denied; you need (at least one of) the SUPER or CONNECTION_ADMIN privilege(s) for this operation");
 }
 
 #[test]
@@ -204,10 +201,7 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     bob.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 1);
     bob.run("SET ROLE NONE").unwrap();
-    assert!(matches!(
-        bob.run(&kill_victim),
-        Err(DriverError::SpecificAccessDenied(_))
-    ));
+    crate::tests_support::assert_err(bob.run(&kill_victim), 1227, "Access denied; you need (at least one of) the RESTRICTED_CONNECTION_ADMIN privilege(s) for this operation");
     let mut same_user = authenticated_session(&privileges, "protected", "%");
     same_user.attach_process(
         protected_id,
@@ -222,10 +216,7 @@ fn process_admin_batch_sem_target_defaults_and_caller_active_roles() {
     // Go matches global_grants independently of the selected user row.
     privileges.create_user("protected", "::1", "");
     privileges.grant_dynamic("protected", "%", "RESTRICTED_USER_ADMIN", false);
-    assert!(matches!(
-        bob.run(&kill_victim),
-        Err(DriverError::SpecificAccessDenied(_))
-    ));
+    crate::tests_support::assert_err(bob.run(&kill_victim), 1227, "Access denied; you need (at least one of) the RESTRICTED_CONNECTION_ADMIN privilege(s) for this operation");
     tidb_util::sem::disable();
     bob.run(&kill_victim).unwrap();
     assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 4);
@@ -737,7 +728,7 @@ fn cluster_lifecycle_batch_auto_analyze_kill_requires_connection_admin() {
     boot.run("GRANT CONNECTION_ADMIN ON *.* TO bob").unwrap();
     let allowed = bob.run(&format!("KILL {id}"));
     GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(id);
-    assert!(matches!(denied, Err(DriverError::KillAccessDenied)));
+    crate::tests_support::assert_err(denied, 1227, "Access denied; you need (at least one of) the SUPER or CONNECTION_ADMIN privilege(s) for this operation");
     allowed.unwrap();
 }
 

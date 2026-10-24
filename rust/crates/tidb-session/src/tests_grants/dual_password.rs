@@ -115,16 +115,14 @@ fn retain_validation_errors_match_go() {
     session
         .run("alter user dpu1 identified with mysql_native_password by 'c'")
         .unwrap();
-    assert!(matches!(
-        session.run(
+    crate::tests_support::assert_err(session.run(
             "alter user dpu1 identified with caching_sha2_password by 'd' retain current password"
-        ),
-        Err(DriverError::PasswordCannotBeRetainedOnPluginChange { .. })
-    ));
-    assert!(matches!(
+        ), 3894, "Current password can not be retained for user 'dpu1'@'%' because authentication plugin is being changed.");
+    crate::tests_support::assert_err(
         session.run("alter user dpu1 identified by '' retain current password"),
-        Err(DriverError::CurrentPasswordCannotBeRetained { .. })
-    ));
+        3895,
+        "Current password can not be retained for user 'dpu1'@'%' because new password is empty.",
+    );
     // No new password at all: Go's HAND PARSER refuses RETAIN without a
     // BY-form auth option (`parseAlterUserSpec`: "RETAIN attaches only to
     // BY-form auth options"), so this is 1064 at parse time -- the
@@ -137,14 +135,16 @@ fn retain_validation_errors_match_go() {
     session
         .run("create user dpemptycur identified by ''")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("alter user dpemptycur identified by 'new' retain current password"),
-        Err(DriverError::SecondPasswordCannotBeEmpty { .. })
-    ));
-    assert!(matches!(
+        3878,
+        "Empty password can not be retained as second password for user 'dpemptycur'@'%'.",
+    );
+    crate::tests_support::assert_err(
         session.run("set password for dpemptycur = 'new' retain current password"),
-        Err(DriverError::SecondPasswordCannotBeEmpty { .. })
-    ));
+        3878,
+        "Empty password can not be retained as second password for user 'dpemptycur'@'%'.",
+    );
 }
 
 /// CAPTURED (`executor/dual_password`): `SET PASSWORD ... RETAIN CURRENT
@@ -356,38 +356,29 @@ fn dual_password_privilege_gates_match_go() {
 
     // APPLICATION_PASSWORD_ADMIN alone is not authority over OTHERS.
     let mut aponly = open("dpaponly@%");
-    assert!(matches!(
+    crate::tests_support::assert_err(
         aponly.run("alter user dpvictim identified by 'v2' retain current password"),
-        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "CREATE USER"
-    ));
-    assert!(matches!(
+        1227,
+        "Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation",
+    );
+    crate::tests_support::assert_err(
         aponly.run("alter user dpvictim discard old password"),
-        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "CREATE USER"
-    ));
+        1227,
+        "Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation",
+    );
     // Cross-user SET PASSWORD ... RETAIN keeps the SUPER-only 1044.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         aponly.run("set password for dpvictim = 'v2' retain current password"),
-        Err(DriverError::DbAccessDenied { .. })
-    ));
+        1044,
+        "Access denied for user 'dpaponly'@'%' to database 'mysql'",
+    );
 
     // Self-service without APPLICATION_PASSWORD_ADMIN: denied, naming it.
     let mut selfish = open("dpself@%");
-    assert!(matches!(
-        selfish.run("set password = 's2' retain current password"),
-        Err(DriverError::SpecificAccessDenied(privilege))
-            if privilege == "APPLICATION_PASSWORD_ADMIN"
-    ));
-    assert!(matches!(
-        selfish.run("alter user 'dpself'@'%' identified by 's2' retain current password"),
-        Err(DriverError::SpecificAccessDenied(privilege))
-            if privilege == "APPLICATION_PASSWORD_ADMIN"
-    ));
+    crate::tests_support::assert_err(selfish.run("set password = 's2' retain current password"), 1227, "Access denied; you need (at least one of) the APPLICATION_PASSWORD_ADMIN privilege(s) for this operation");
+    crate::tests_support::assert_err(selfish.run("alter user 'dpself'@'%' identified by 's2' retain current password"), 1227, "Access denied; you need (at least one of) the APPLICATION_PASSWORD_ADMIN privilege(s) for this operation");
     // ... and ALTER USER USER() goes through the same gate.
-    assert!(matches!(
-        selfish.run("alter user user() identified by 's2' retain current password"),
-        Err(DriverError::SpecificAccessDenied(privilege))
-            if privilege == "APPLICATION_PASSWORD_ADMIN"
-    ));
+    crate::tests_support::assert_err(selfish.run("alter user user() identified by 's2' retain current password"), 1227, "Access denied; you need (at least one of) the APPLICATION_PASSWORD_ADMIN privilege(s) for this operation");
 
     // With it: allowed, secondary set; DISCARD via USER() clears it.
     let mut selfadmin = open("dpselfadmin@%");
@@ -417,8 +408,9 @@ fn dual_password_privilege_gates_match_go() {
     // Self-service dual-password must NOT piggy-back COMMENT: the extra
     // statement-level option routes it through the CREATE USER admin check.
     let mut selfadmin2 = open("dpselfadmin@%");
-    assert!(matches!(
+    crate::tests_support::assert_err(
         selfadmin2.run("alter user 'dpselfadmin'@'%' discard old password comment 'x'"),
-        Err(DriverError::SpecificAccessDenied(privilege)) if privilege == "CREATE USER"
-    ));
+        1227,
+        "Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation",
+    );
 }

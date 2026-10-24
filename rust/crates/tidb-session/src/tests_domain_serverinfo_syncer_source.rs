@@ -823,7 +823,9 @@ fn cluster_config_checks_config_privilege_before_discovery() {
     let error = reader
         .run("SELECT * FROM information_schema.cluster_config")
         .unwrap_err();
-    assert!(matches!(error, DriverError::SpecificAccessDenied(ref name) if name == "CONFIG"));
+    let error = error.to_mysql_error();
+    assert_eq!(error.code, 1227);
+    assert!(error.message.contains("CONFIG"), "{}", error.message);
 }
 
 #[test]
@@ -945,10 +947,12 @@ fn cluster_config_live_http_filters_roles_warnings_and_prepared_reads() {
     let mut reader = authenticated_session(&registry, "http_reader", "%");
     reader.set_server_info_syncer(syncer);
     reader.set_cluster_config_client(client);
-    assert!(matches!(
-        reader.run("SELECT * FROM information_schema.cluster_config"),
-        Err(DriverError::SpecificAccessDenied(_))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(
+            reader.run("SELECT * FROM information_schema.cluster_config")
+        ),
+        1227
+    );
     assert_eq!(
         requests.load(Ordering::SeqCst),
         4,
@@ -972,10 +976,11 @@ fn cluster_config_live_http_filters_roles_warnings_and_prepared_reads() {
         "SHOW filters run after shared live retrieval, as Go does"
     );
     reader.run("SET ROLE NONE").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         reader.run("SHOW CONFIG"),
-        Err(DriverError::SpecificAccessDenied(_))
-    ));
+        1227,
+        "Access denied; you need (at least one of) the CONFIG privilege(s) for this operation",
+    );
 }
 
 #[test]

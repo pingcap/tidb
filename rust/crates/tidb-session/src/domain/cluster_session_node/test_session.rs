@@ -121,6 +121,16 @@ impl ClusterServerSession {
         Ok(())
     }
 
+    /// Go `clientConn.handleQuery`'s transaction-control step alone:
+    /// `Some(in_transaction)` for a `BEGIN`/`COMMIT`/`ROLLBACK`, applied to
+    /// this connection's transaction buffer, `None` for any other statement.
+    pub(crate) fn run_transaction_control(
+        &mut self,
+        sql: &str,
+    ) -> Result<Option<bool>, tidb_executor::DriverError> {
+        QuerySession::control_transaction(self, sql).map_err(driver_error)
+    }
+
     /// Go `clientConn.handleQuery` for one statement, read back as the rows a
     /// [`Session::run`] caller expects: parse once, then transaction
     /// control, then a write answered by an OK packet, and only then a

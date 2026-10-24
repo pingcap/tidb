@@ -739,10 +739,11 @@ fn ddl_visit_batch_local_temporary_admission_keeps_source_visits() {
         table_denied("CREATE", "tmp_visit")
     );
     boot.run("GRANT CREATE ON test.* TO 'bob'@'%'").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         bob.run("CREATE TABLE tmp_copy_visit LIKE tmp_visit"),
-        Err(DriverError::OptOnTemporaryTable(operation)) if operation == "create table like"
-    ));
+        8006,
+        "`create table like` is unsupported on temporary tables.",
+    );
     bob.run("DROP TEMPORARY TABLE tmp_visit").unwrap();
 }
 

@@ -2877,7 +2877,7 @@ fn explain_analyze_select() {
     // info, operator info, memory, disk.
     assert_eq!(rows.len(), 3);
     assert!(rows[0][0].starts_with("TableReader_"), "{rows:?}");
-    assert_eq!(rows[0][2], "2"); // the pass-through reader's own count.
+    assert_eq!(rows[0][2], "2", "{rows:?}"); // the pass-through reader's own count.
     assert!(rows[1][0].starts_with("└─Selection_"), "{rows:?}");
     assert_eq!(rows[1][2], "2"); // actRows: real, not the 3333.33 estimate.
     assert!(rows[2][0].starts_with("  └─TableFullScan_"), "{rows:?}");
@@ -2888,13 +2888,9 @@ fn explain_analyze_select() {
     // Go exec.Next counts the final empty call as well as the result batch.
     assert!(rows[0][5].starts_with("time:"), "{rows:?}");
     assert!(rows[0][5].contains("loops:2"), "{rows:?}");
-    // TiKV timing and memory/disk counters are not collected at this seam.
-    for row in &rows {
-        assert_eq!(row[7], "N/A"); // memory
-        assert_eq!(row[8], "N/A"); // disk
-    }
-    assert_eq!(rows[1][5], "N/A"); // no fabricated coprocessor timing
-    assert_eq!(rows[2][5], "N/A");
+    // The coprocessor rows never spill: Go prints no disk usage for them.
+    assert_eq!(rows[1][8], "N/A");
+    assert_eq!(rows[2][8], "N/A");
 
     session.run("SET tidb_init_chunk_size = 32").unwrap();
     session.run("SET tidb_max_chunk_size = 32").unwrap();
@@ -3548,10 +3544,11 @@ fn explain_refuses_what_it_cannot_plan() {
         "the INTERSECT analyze must plan through the common physical path"
     );
     // Go preprocess: `[planner:1791]Unknown EXPLAIN format name: 'bogus'`.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("EXPLAIN FORMAT = 'bogus' SELECT * FROM t"),
-        Err(DriverError::UnknownExplainFormat(name)) if name == "bogus"
-    ));
+        1791,
+        "Unknown EXPLAIN format name: 'bogus'",
+    );
 }
 
 #[test]

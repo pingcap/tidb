@@ -1476,6 +1476,7 @@ pub fn prepare_persisted_job_submission<S: MetaSnapshot>(
             upgrading,
             min_job_id,
             store_count,
+            has_null,
         ),
     }
 }

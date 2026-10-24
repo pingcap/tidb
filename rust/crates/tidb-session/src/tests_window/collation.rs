@@ -249,12 +249,13 @@ fn window_frame_shape_is_refused_with_gos_own_code() {
         [["150"], ["140"], ["120"], ["90"], ["50"]]
     );
     // And a bad OFFSET on a legal shape is still 3586, not one of the new codes.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run(
-            "SELECT SUM(v) OVER (ORDER BY id ROWS BETWEEN 1.5 PRECEDING AND CURRENT ROW) FROM w1"
+            "SELECT SUM(v) OVER (ORDER BY id ROWS BETWEEN 1.5 PRECEDING AND CURRENT ROW) FROM w1",
         ),
-        Err(DriverError::WindowFrameIllegal)
-    ));
+        3586,
+        "Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+    );
 }
 
 #[test]

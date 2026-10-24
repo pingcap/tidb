@@ -230,12 +230,7 @@ fn modify_column_auto_increment_transitions() {
 
     // Dropping it needs @@tidb_allow_remove_auto_inc, which is OFF by
     // default. Captured: 8200. The refusal must leave the column alone.
-    assert!(matches!(
-        session.run("ALTER TABLE mc MODIFY COLUMN a BIGINT"),
-        Err(DriverError::UnsupportedModifyColumn(
-            "can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled"
-        ))
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE mc MODIFY COLUMN a BIGINT"), 8200, "Unsupported modify column: can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled");
     let create = show_create(&mut session, "mc");
     assert!(
         create.contains("`a` bigint NOT NULL AUTO_INCREMENT"),
@@ -259,12 +254,11 @@ fn modify_column_auto_increment_transitions() {
 
     // Adding it back is refused whatever the variable says. Captured: 8200
     // "can't set auto_increment".
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE mc MODIFY COLUMN a BIGINT AUTO_INCREMENT"),
-        Err(DriverError::UnsupportedModifyColumn(
-            "can't set auto_increment"
-        ))
-    ));
+        8200,
+        "Unsupported modify column: can't set auto_increment",
+    );
 }
 
 /// Go, same block: an AUTO_INCREMENT column cannot also carry a DEFAULT
@@ -276,10 +270,11 @@ fn modify_column_refuses_auto_increment_with_a_default() {
     session
         .run("CREATE TABLE mc (a INT KEY NONCLUSTERED AUTO_INCREMENT, b INT)")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE mc MODIFY COLUMN a BIGINT AUTO_INCREMENT DEFAULT 5"),
-        Err(DriverError::InvalidDefault(_))
-    ));
+        1067,
+        "Invalid default value for 'a'",
+    );
 }
 
 /// Go's `multi_unique` block: several anonymous key constraints on one column
@@ -432,20 +427,16 @@ fn modify_column_rechecks_the_full_affected_index_key_length() {
         )
         .unwrap();
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE wide MODIFY COLUMN a VARCHAR(3000)"),
-        Err(DriverError::TooLongKey {
-            length: 3100,
-            max: 3072
-        })
-    ));
-    assert!(matches!(
+        1071,
+        "Specified key was too long (3100 bytes); max key length is 3072 bytes",
+    );
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE wide MODIFY COLUMN c BIGINT"),
-        Err(DriverError::TooLongKey {
-            length: 3079,
-            max: 3072
-        })
-    ));
+        1071,
+        "Specified key was too long (3079 bytes); max key length is 3072 bytes",
+    );
 }
 
 /// `checkTypeChangeSupported` (Go `pkg/types/field_type.go:1569-1603`, called
@@ -485,10 +476,7 @@ fn modify_column_type_pair_gate_rule_1_time_like_to_bit() {
     // Rule 1 origin set: date/datetime/timestamp, TIME, YEAR, any string,
     // JSON. Target: BIT. Using JSON -> BIT here.
     session.run("CREATE TABLE r1e (a JSON)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r1e MODIFY COLUMN a BIT(1)"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r1e MODIFY COLUMN a BIT(1)"), 8200, "Unsupported modify column: change from original type json to bit(1) is currently unsupported yet");
 
     session.run("CREATE TABLE r1c (a INT)").unwrap();
     assert!(session
@@ -499,10 +487,7 @@ fn modify_column_type_pair_gate_rule_1_time_like_to_bit() {
     session
         .run(r#"INSERT INTO r1p VALUES ('{"x":1}')"#)
         .unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r1p MODIFY COLUMN a BIT(1)"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r1p MODIFY COLUMN a BIT(1)"), 8200, "Unsupported modify column: change from original type json to bit(1) is currently unsupported yet");
 }
 
 #[test]
@@ -512,10 +497,7 @@ fn modify_column_type_pair_gate_rule_2_numeric_and_time_to_enum_set() {
     // Rule 2 origin set: date/datetime/timestamp, TIME, YEAR, DECIMAL,
     // FLOAT, DOUBLE, JSON, BIT. Target: ENUM/SET. Using FLOAT -> ENUM here.
     session.run("CREATE TABLE r2e (a FLOAT)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r2e MODIFY COLUMN a ENUM('x','y')"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r2e MODIFY COLUMN a ENUM('x','y')"), 8200, "Unsupported modify column: change from original type float to enum('x','y') is currently unsupported yet");
 
     session.run("CREATE TABLE r2c (a INT)").unwrap();
     assert!(session
@@ -524,10 +506,7 @@ fn modify_column_type_pair_gate_rule_2_numeric_and_time_to_enum_set() {
 
     session.run("CREATE TABLE r2p (a FLOAT)").unwrap();
     session.run("INSERT INTO r2p VALUES (3.14)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r2p MODIFY COLUMN a ENUM('x','y')"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r2p MODIFY COLUMN a ENUM('x','y')"), 8200, "Unsupported modify column: change from original type float to enum('x','y') is currently unsupported yet");
 }
 
 #[test]
@@ -539,10 +518,7 @@ fn modify_column_type_pair_gate_rule_3_enum_set_bit_decimal_float_double_to_time
     // deliberately NOT a target of this rule (that is rule 5's job), and
     // YEAR is deliberately NOT an origin of this rule.
     session.run("CREATE TABLE r3e (a FLOAT)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r3e MODIFY COLUMN a DATE"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r3e MODIFY COLUMN a DATE"), 8200, "Unsupported modify column: change from original type float to date is currently unsupported yet");
 
     session.run("CREATE TABLE r3c (a INT)").unwrap();
     assert!(session
@@ -551,10 +527,7 @@ fn modify_column_type_pair_gate_rule_3_enum_set_bit_decimal_float_double_to_time
 
     session.run("CREATE TABLE r3p (a FLOAT)").unwrap();
     session.run("INSERT INTO r3p VALUES (3.14)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r3p MODIFY COLUMN a DATE"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r3p MODIFY COLUMN a DATE"), 8200, "Unsupported modify column: change from original type float to date is currently unsupported yet");
 }
 
 #[test]
@@ -562,16 +535,10 @@ fn modify_column_type_pair_gate_rule_4_vector_on_either_side() {
     let mut session = Session::new();
 
     session.run("CREATE TABLE r4v (a VECTOR)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r4v MODIFY COLUMN a INT"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r4v MODIFY COLUMN a INT"), 8200, "Unsupported modify column: change from original type vector to int(11) is currently unsupported yet");
 
     session.run("CREATE TABLE r4i (a INT)").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r4i MODIFY COLUMN a VECTOR"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r4i MODIFY COLUMN a VECTOR"), 8200, "Unsupported modify column: change from original type int(11) to vector is currently unsupported yet");
 }
 
 #[test]
@@ -581,10 +548,7 @@ fn modify_column_type_pair_gate_rule_5_enum_set_bit_to_duration() {
     // Rule 5 origin set: ENUM, SET, BIT. Target: TIME (DURATION). Using
     // BIT -> TIME here.
     session.run("CREATE TABLE r5e (a BIT(8))").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r5e MODIFY COLUMN a TIME"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r5e MODIFY COLUMN a TIME"), 8200, "Unsupported modify column: change from original type bit(8) to time is currently unsupported yet");
 
     session.run("CREATE TABLE r5c (a INT)").unwrap();
     assert!(session
@@ -593,10 +557,7 @@ fn modify_column_type_pair_gate_rule_5_enum_set_bit_to_duration() {
 
     session.run("CREATE TABLE r5p (a BIT(8))").unwrap();
     session.run("INSERT INTO r5p VALUES (b'1')").unwrap();
-    assert!(matches!(
-        session.run("ALTER TABLE r5p MODIFY COLUMN a TIME"),
-        Err(DriverError::UnsupportedModifyColumnType { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE r5p MODIFY COLUMN a TIME"), 8200, "Unsupported modify column: change from original type bit(8) to time is currently unsupported yet");
 }
 
 #[test]

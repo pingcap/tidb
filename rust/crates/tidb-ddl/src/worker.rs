@@ -3351,13 +3351,38 @@ impl KvTableIndexBackfiller {
             cluster_table(&plan.partitioned, &storage, &AutoIdSource::Unavailable)
                 .map_err(exchange_validation_internal)?;
         let context = StmtContext::for_query();
+        let ordinal = plan
+            .partitioned
+            .partition
+            .as_ref()
+            .and_then(|partition| {
+                partition
+                    .read()
+                    .definitions
+                    .snapshot()
+                    .iter()
+                    .position(|definition| definition.id == plan.partition_id)
+            })
+            .ok_or_else(|| {
+                exchange_validation_internal(format!(
+                    "partition {} is not in the partitioned table",
+                    plan.partition_id
+                ))
+            })?;
         let rows = standalone
             .scan_rows_with_context(&RowDecodeContext::for_query(&context))
             .map_err(exchange_validation_table_error)?;
         for row in rows {
-            partitioned
-                .validate_insert_partitions(&row, &[plan.partition_id], &context)
-                .map_err(exchange_validation_table_error)?;
+            // Go's literal condition (HASH's signed `mod(expr, num) != index`),
+            // not the row's route.
+            if partitioned
+                .exchange_row_mismatches(ordinal, &row, &context)
+                .map_err(exchange_validation_table_error)?
+            {
+                return Err(exchange_validation_table_error(
+                    tidb_executor::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet,
+                ));
+            }
             // Go applies the CHECK constraints only while
             // `vardef.EnableCheckConstraint` is on.
             if plan.check_constraints {

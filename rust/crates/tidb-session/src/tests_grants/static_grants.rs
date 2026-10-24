@@ -195,10 +195,11 @@ fn create_user_rejects_a_duplicate_account() {
 #[test]
 fn grant_to_an_unknown_user_is_refused() {
     let mut session = session_with_privileges();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("GRANT SELECT ON *.* TO 'nouser'@'%'"),
-        Err(DriverError::GrantToUnknownUser)
-    ));
+        1410,
+        "You are not allowed to create a user with GRANT",
+    );
 }
 
 /// CAPTURED: an unrecognized privilege name parses (through
@@ -400,13 +401,11 @@ fn db_scope_grant_rejects_global_only_privilege() {
     let mut session = session_with_privileges();
     session.run("CREATE USER 'u1'@'%'").unwrap();
     session.run("CREATE DATABASE db1").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("GRANT PROCESS ON db1.* TO 'u1'@'%'"),
-        Err(DriverError::WrongUsage {
-            first: "DB GRANT",
-            second: "GLOBAL PRIVILEGES"
-        })
-    ));
+        1221,
+        "Incorrect usage of DB GRANT and GLOBAL PRIVILEGES",
+    );
 }
 
 /// CAPTURED: `REVOKE ... ON db.*` for an account with no `mysql.DB` row
@@ -470,19 +469,16 @@ fn table_scope_grant_revoke_and_show_grants_round_trip() {
 
     // Invalid-scope privilege: refused before the table-existence
     // check runs (captured `ErrIllegalGrantForTable`/1144).
-    assert!(matches!(
-        session.run("GRANT PROCESS ON db1.t1 TO 'u1'@'%'"),
-        Err(DriverError::IllegalGrantForTable)
-    ));
+    crate::tests_support::assert_err(session.run("GRANT PROCESS ON db1.t1 TO 'u1'@'%'"), 1144, "Illegal GRANT/REVOKE command; please consult the manual to see which privileges can be used");
 
     // A valid privilege on a table that does not exist: refused with
     // `ErrTableNotExists`/1146 (captured), unless `CREATE` is among the
     // granted privileges (Go's issue #28533/#29268 exception).
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("GRANT SELECT ON db1.nosuchtable TO 'u1'@'%'"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(ref name)))
-            if name == "db1.nosuchtable"
-    ));
+        1146,
+        "Table 'db1.nosuchtable' doesn't exist",
+    );
     session
         .run("GRANT CREATE ON db1.nosuchtable TO 'u1'@'%'")
         .unwrap();
@@ -588,13 +584,11 @@ fn tls_owner_grant_require_shares_account_policy_at_every_scope() {
 fn create_and_drop_role_lists_are_atomic() {
     let mut session = session_with_privileges();
     session.run("CREATE ROLE r2").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE ROLE r1, r2, r3"),
-        Err(DriverError::CannotUserRole {
-            operation: "CREATE ROLE",
-            ..
-        })
-    ));
+        1396,
+        "Operation CREATE ROLE failed for 'r2'@'%'",
+    );
     match session.run("DROP ROLE r1, r2, r3") {
         Err(DriverError::CannotUserRole { operation, target }) => {
             assert_eq!((operation, target.as_str()), ("DROP ROLE", "r1@%"));
@@ -624,10 +618,11 @@ fn roles_and_grant_created_users_take_the_default_plugin() {
         create[0][0].contains("IDENTIFIED WITH 'caching_sha2_password'"),
         "{create:?}"
     );
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("GRANT SELECT ON test.* TO auto_user"),
-        Err(DriverError::GrantToUnknownUser)
-    ));
+        1410,
+        "You are not allowed to create a user with GRANT",
+    );
     session.run("SET sql_mode = ''").unwrap();
     session.run("GRANT SELECT ON test.* TO auto_user").unwrap();
     let create = row_text(session.run("SHOW CREATE USER auto_user"));

@@ -63,10 +63,12 @@ fn correlated_subquery_in_select_list() {
     );
 
     // Go's max-one-row check: 1242, raised per outer row.
-    assert!(matches!(
-        session.run("SELECT id, (SELECT v FROM t2 WHERE t2.t1_id = t1.id) FROM t1 ORDER BY id"),
-        Err(DriverError::SubqueryReturnsMoreThanOneRow)
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(
+            session.run("SELECT id, (SELECT v FROM t2 WHERE t2.t1_id = t1.id) FROM t1 ORDER BY id")
+        ),
+        1242
+    );
 
     // An UNcorrelated subquery beside a correlated one still folds to a
     // constant, so both fields answer in the same row.

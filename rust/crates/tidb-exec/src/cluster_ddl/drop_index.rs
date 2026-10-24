@@ -160,8 +160,20 @@ fn check_drop_index(
                 Err((arg.if_exist, DdlPlanError::IndexDoesNotExist(name))),
             ));
         };
-        // Go `checkIndexNeededInForeignKeyInOwner`.
         let found = index.read().clone_like_go();
+        // Go `checkInvisibleIndexesOnPK`: what is left must not make an
+        // invisible unique index the implicit primary key.
+        let mut remaining = stored.clone_like_go();
+        let kept: Vec<IndexInfo> = remaining
+            .indices
+            .iter_deref()
+            .filter(|other| other.read().name.lowercase() != found.name.lowercase())
+            .map(|other| other.read().clone_like_go())
+            .collect();
+        remaining.indices = kept.into();
+        super::check_invisible_index_on_pk(&remaining)
+            .map_err(|error| cancel_ddl_job(active, error))?;
+        // Go `checkIndexNeededInForeignKeyInOwner`.
         crate::foreign_key_build::check_index_needed_in_foreign_key(
             catalog, &schema, &stored, &found,
         )

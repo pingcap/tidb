@@ -312,13 +312,14 @@ fn recursive_is_a_clause_flag_not_a_per_cte_one() {
         column(session.run("WITH c AS (SELECT 1 AS n UNION SELECT 2) SELECT n FROM c ORDER BY n")),
         vec!["1", "2"]
     );
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run(
             "WITH c AS (SELECT 1 AS n UNION ALL SELECT n+1 FROM c WHERE n<5) \
-                     SELECT * FROM c"
+                     SELECT * FROM c",
         ),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
-    ));
+        1146,
+        "Table 'test.c' doesn't exist",
+    );
 }
 
 /// The blocks split into a leading run of seeds and a trailing run of

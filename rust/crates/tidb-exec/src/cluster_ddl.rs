@@ -3987,6 +3987,7 @@ pub(super) fn build_add_column(
 ) -> Result<Result<(tidb_model::ColumnInfo, usize), String>, DdlPlanError> {
     // Go `AddColumn`, then `checkAndCreateNewColumn`.
     check_add_column_too_many_columns(info.columns.len() + 1)?;
+    check_unsupported_column_constraint(column, schema, table)?;
     // Go `table.FindCol`: `strings.EqualFold(col.Name.O, name)`, so `s`
     // finds an existing `ſ` here although CREATE TABLE keys by `.L`.
     if info.columns.iter_deref().any(|candidate| {
@@ -4163,6 +4164,43 @@ pub(crate) fn checked_refusal(code: u16, message: impl Into<String>) -> DdlPlanE
         Some(proto) => coded_refusal(proto, message),
         None => DdlPlanError::from_mysql_error(tidb_executor::MysqlError::sql_error(code, message)),
     }
+}
+
+/// Go `checkUnsupportedColumnConstraint`: the column options ADD COLUMN
+/// refuses, checked before the column's name.
+fn check_unsupported_column_constraint(
+    column: &tidb_ast::ColumnDef,
+    schema: &str,
+    table: &str,
+) -> Result<(), DdlPlanError> {
+    for option in &column.options {
+        let constraint = match option {
+            tidb_ast::ColumnOption::AutoIncrement => "AUTO_INCREMENT",
+            tidb_ast::ColumnOption::InlineKey(key) => match key.kind {
+                tidb_ast::InlineKeyKind::Primary { .. } => "PRIMARY KEY",
+                tidb_ast::InlineKeyKind::Unique => "UNIQUE KEY",
+            },
+            tidb_ast::ColumnOption::AutoRandom(_) => {
+                // `ErrInvalidAutoRandom.GenWithStackByArgs(AutoRandomAlterAddColumn)`.
+                return Err(coded_refusal(
+                    &tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM,
+                    format!(
+                        "Invalid auto random: unsupported add column '{}' constraint AUTO_RANDOM when altering '{schema}.{table}'",
+                        column.name
+                    ),
+                ));
+            }
+            _ => continue,
+        };
+        return Err(coded_refusal(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_COLUMN,
+            format!(
+                "unsupported add column '{}' constraint {constraint} when altering '{schema}.{table}'",
+                column.name
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn coded_refusal(proto: &'static TerrorError, message: impl Into<String>) -> DdlPlanError {

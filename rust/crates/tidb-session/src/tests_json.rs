@@ -196,23 +196,18 @@ fn json_and_approximate_aggregates() {
     // Captured: "[json:3158]JSON documents may not contain NULL member
     // names." -- raised while folding the group, so it fails the
     // statement even though one non-NULL key was already written.
-    assert!(matches!(
-        session.run("SELECT JSON_OBJECTAGG(s, i) FROM t"),
-        Err(DriverError::JsonDocumentNullKey)
-    ));
-    assert!(matches!(
+    assert_eq!(
+        crate::tests_support::err_code(session.run("SELECT JSON_OBJECTAGG(s, i) FROM t")),
+        3158
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT JSON_OBJECTAGG(s, i) FROM t WHERE id IN (1,3)"),
-        Err(DriverError::JsonDocumentNullKey)
-    ));
+        3158,
+        "JSON documents may not contain NULL member names.",
+    );
     // Neither JSON aggregate accepts DISTINCT -- Go's parser rejects it.
-    assert!(matches!(
-        session.run("SELECT JSON_ARRAYAGG(DISTINCT i) FROM t"),
-        Err(DriverError::Parse(_))
-    ));
-    assert!(matches!(
-        session.run("SELECT JSON_OBJECTAGG(DISTINCT s, i) FROM t"),
-        Err(DriverError::Parse(_))
-    ));
+    crate::tests_support::assert_err(session.run("SELECT JSON_ARRAYAGG(DISTINCT i) FROM t"), 1064, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 31 near \"i) FROM t\" ");
+    crate::tests_support::assert_err(session.run("SELECT JSON_OBJECTAGG(DISTINCT s, i) FROM t"), 1064, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 32 near \"s, i) FROM t\" ");
 
     // APPROX_COUNT_DISTINCT is EXACT at this cardinality: Go's BJKST
     // sketch discards nothing below 65536 distinct values.
@@ -298,50 +293,54 @@ fn json_and_approximate_aggregates() {
         [["2"]]
     );
     // The percentage is validated at PLAN time, against [1, 100].
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i, 0) FROM p"),
-        Err(DriverError::PercentageOutOfRange(0))
-    ));
-    assert!(matches!(
+        1105,
+        "Percentage value 0 is out of range [1, 100]",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i, 101) FROM p"),
-        Err(DriverError::PercentageOutOfRange(101))
-    ));
-    assert!(matches!(
+        1105,
+        "Percentage value 101 is out of range [1, 100]",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i, -1) FROM p"),
-        Err(DriverError::PercentageOutOfRange(-1))
-    ));
+        1105,
+        "Percentage value -1 is out of range [1, 100]",
+    );
     // A DECIMAL literal reads as 0 and a FLOAT literal as its IEEE-754
     // bit pattern, because Go's `Constant.EvalInt` reads the datum's
     // int64 field UNCONVERTED for both (captured verbatim).
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i, 50.5) FROM p"),
-        Err(DriverError::PercentageOutOfRange(0))
-    ));
-    assert!(matches!(
+        1105,
+        "Percentage value 0 is out of range [1, 100]",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i, 50e0) FROM p"),
-        Err(DriverError::PercentageOutOfRange(4632233691727265792))
-    ));
+        1105,
+        "Percentage value 4632233691727265792 is out of range [1, 100]",
+    );
     // A STRING literal, though, takes Go's converting branch.
     assert_eq!(
         row_text(session.run("SELECT APPROX_PERCENTILE(i, '50') FROM p")),
         [["4"]]
     );
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i, NULL) FROM p"),
-        Err(DriverError::ApproxPercentileArgument(message))
-            if message.contains("cannot be NULL")
-    ));
-    assert!(matches!(
+        1105,
+        "APPROX_PERCENTILE: Percentage value cannot be NULL",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i) FROM p"),
-        Err(DriverError::ApproxPercentileArgument(
-            "APPROX_PERCENTILE should take 2 arguments"
-        ))
-    ));
-    assert!(matches!(
+        1105,
+        "APPROX_PERCENTILE should take 2 arguments",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_PERCENTILE(i, i) FROM p"),
-        Err(DriverError::ApproxPercentileArgument(message))
-            if message.contains("constant expression")
-    ));
+        1105,
+        "APPROX_PERCENTILE should take a constant expression as percentage argument",
+    );
 
     // JSON aggregates support windows, including their frames.
     assert_eq!(
@@ -433,10 +432,11 @@ fn json_and_approximate_aggregates() {
             [["1", "NULL"], ["2", "NULL"], ["3", "NULL"], ["4", "NULL"]]
         );
     }
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT i) OVER () FROM t"),
-        Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
-    ));
+        1235,
+        "This version of TiDB doesn't yet support '<window function>(DISTINCT ..)'",
+    );
 }
 
 #[test]
@@ -532,10 +532,10 @@ fn json_aggregates_wrap_binary_charset_values_as_opaque() {
     // A BINARY-charset KEY fails the statement with 3144 -- captured:
     // "[json:3144]Cannot create a JSON value from a string with CHARACTER
     // SET 'binary'.".
-    assert!(matches!(
-        session.run("SELECT JSON_OBJECTAGG(c_varbin, 1) FROM t"),
-        Err(DriverError::InvalidJsonCharset { charset }) if charset == "binary"
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("SELECT JSON_OBJECTAGG(c_varbin, 1) FROM t")),
+        3144
+    );
 }
 
 #[test]

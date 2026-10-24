@@ -91,34 +91,29 @@ fn a_non_strict_mode_still_refuses_a_unique_or_multi_part_over_long_key() {
     let mut session = permissive();
 
     // UNIQUE: the sum is an error whatever the mode.
-    assert!(matches!(
-        session.run("CREATE TABLE tc2 (a VARCHAR(3000), UNIQUE KEY(a)) CHARSET=utf8mb4"),
-        Err(DriverError::TooLongKey {
-            length: 12000,
-            max: 3072
-        })
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(
+            session.run("CREATE TABLE tc2 (a VARCHAR(3000), UNIQUE KEY(a)) CHARSET=utf8mb4")
+        ),
+        1071
+    );
     // Two key parts: likewise.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE TABLE p4 (a VARCHAR(1000), b VARCHAR(1000), KEY(a,b)) CHARSET=utf8mb4"),
-        Err(DriverError::TooLongKey {
-            length: 4000,
-            max: 3072
-        })
-    ));
+        1071,
+        "Specified key was too long (4000 bytes); max key length is 3072 bytes",
+    );
     // ADD INDEX: Go re-runs `buildIndexColumns` in the DDL job worker with a
     // NIL context, which reads as strict -- captured, this fails 1071 even
     // though the identical key inside a CREATE TABLE is truncated above.
     session
         .run("CREATE TABLE tc3 (a VARCHAR(3000)) CHARSET=utf8mb4")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE tc3 ADD KEY(a)"),
-        Err(DriverError::TooLongKey {
-            length: 12000,
-            max: 3072
-        })
-    ));
+        1071,
+        "Specified key was too long (12000 bytes); max key length is 3072 bytes",
+    );
     // ... and the table keeps no index.
     assert!(!show_create(&mut session, "tc3").contains("KEY"));
 }
@@ -129,13 +124,12 @@ fn a_non_strict_mode_still_refuses_a_unique_or_multi_part_over_long_key() {
 #[test]
 fn a_strict_mode_refuses_the_over_long_key_the_permissive_one_truncates() {
     let mut session = Session::new();
-    assert!(matches!(
-        session.run("CREATE TABLE tc1 (a VARCHAR(3000), KEY(a)) CHARSET=utf8mb4"),
-        Err(DriverError::TooLongKey {
-            length: 12000,
-            max: 3072
-        })
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(
+            session.run("CREATE TABLE tc1 (a VARCHAR(3000), KEY(a)) CHARSET=utf8mb4")
+        ),
+        1071
+    );
     // A key that FITS is unaffected in either mode.
     session
         .run("CREATE TABLE ok1 (a VARCHAR(255), b VARCHAR(255), KEY(a,b)) CHARSET=utf8mb4")

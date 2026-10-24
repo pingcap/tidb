@@ -539,14 +539,16 @@ fn insert_casts_to_column_type() {
 
     // Captured: under the default strict mode a value that does not fit
     // fails the statement, and the row is not written.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO t (v) VALUES ('abcdefg')"),
-        Err(DriverError::DataTooLong { row: 1, .. })
-    ));
-    assert!(matches!(
+        1406,
+        "Data too long for column 'v' at row 1",
+    );
+    crate::tests_support::assert_err(
         session.run("INSERT INTO t (i) VALUES ('x')"),
-        Err(DriverError::IncorrectValue { row: 1, .. })
-    ));
+        1366,
+        "Incorrect int value: 'x' for column 'i' at row 1",
+    );
     assert_eq!(row_text(session.run("SELECT i FROM t")).len(), 2);
     // The failure is reported with Go's own message.
     match session.run("INSERT INTO t (i) VALUES ('x')") {
@@ -567,10 +569,11 @@ fn insert_casts_to_column_type() {
         row_text(session.run("SELECT d FROM t WHERE i = 8")),
         [["9.877"]]
     );
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("UPDATE t SET v = 'abcdefg' WHERE i = 8"),
-        Err(DriverError::DataTooLong { .. })
-    ));
+        1406,
+        "Data too long for column 'v' at row 1",
+    );
 
     // Captured: without a strict mode the converted value is stored and
     // the same message is a warning -- the string truncates to the
@@ -638,10 +641,11 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     session.run("INSERT IGNORE INTO tt VALUES (1000)").unwrap();
     assert_eq!(session.warnings()[0].code, 1264);
     assert_eq!(row_text(session.run("SELECT a FROM tt")), [["127"]]);
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO tt VALUES (1000)"),
-        Err(DriverError::DataOutOfRange { row: 1, .. })
-    ));
+        1264,
+        "Out of range value for column 'a' at row 1",
+    );
 
     session.run("CREATE TABLE ti (a INT)").unwrap();
     session
@@ -649,10 +653,11 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
         .unwrap();
     assert_eq!(session.warnings()[0].code, 1366);
     assert_eq!(row_text(session.run("SELECT a FROM ti")), [["12"]]);
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO ti VALUES ('12abc')"),
-        Err(DriverError::IncorrectValue { row: 1, .. })
-    ));
+        1366,
+        "Incorrect int value: '12abc' for column 'a' at row 1",
+    );
 
     session.run("CREATE TABLE td (a DATE)").unwrap();
     session
@@ -660,10 +665,11 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
         .unwrap();
     assert_eq!(session.warnings()[0].code, 1292);
     assert_eq!(row_text(session.run("SELECT a FROM td")), [["0000-00-00"]]);
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO td VALUES ('2020-13-45')"),
-        Err(DriverError::IncorrectTemporalValue { row: 1, .. })
-    ));
+        1292,
+        "Incorrect date value: '2020-13-45' for column 'a' at row 1",
+    );
 
     // The bad-NULL group is the one rule `IGNORE` does not reach through
     // the strict flag: Go promotes a SINGLE-ROW insert to an error in every
@@ -672,10 +678,11 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     session.run("INSERT IGNORE INTO nn VALUES (NULL)").unwrap();
     assert_eq!(session.warnings()[0].code, 1048);
     assert_eq!(row_text(session.run("SELECT a FROM nn")), [["0"]]);
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO nn VALUES (NULL)"),
-        Err(DriverError::ColumnCannotBeNull(_))
-    ));
+        1048,
+        "Column 'a' cannot be null",
+    );
 }
 
 /// `UPDATE IGNORE` takes the same value-conversion path as `INSERT IGNORE`:
@@ -745,10 +752,11 @@ fn update_ignore_downgrades_a_duplicate_key_to_a_warning() {
         row_text(session.run("SELECT id,u FROM update_ignore_key ORDER BY id")),
         [["1", "1"], ["2", "2"]]
     );
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("UPDATE update_ignore_key SET u = 2 WHERE id = 1"),
-        Err(DriverError::DuplicateEntry { .. })
-    ));
+        1062,
+        "Duplicate entry '2' for key 'update_ignore_key.u'",
+    );
 }
 
 /// Duplicate detection is ordered with the write stream. Moving the higher
@@ -1008,10 +1016,16 @@ fn duplicate_entry_renders_every_datum_kind_as_go_does() {
     let duplicate = |session: &mut Session, create: &str, insert: &str, key: &str| {
         session.run(create).unwrap();
         session.run(insert).unwrap();
-        match session.run(insert) {
-            Err(DriverError::DuplicateEntry { value, .. }) => assert_eq!(value, key),
-            other => panic!("expected a 1062, got {other:?}"),
-        }
+        // Go renders the duplicate value inside the 1062 message.
+        let error = session.run(insert).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1062, "{}", error.message);
+        assert!(
+            error
+                .message
+                .starts_with(&format!("Duplicate entry '{key}' for key ")),
+            "{}",
+            error.message
+        );
     };
 
     duplicate(

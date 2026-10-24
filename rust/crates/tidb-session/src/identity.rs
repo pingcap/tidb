@@ -963,6 +963,13 @@ impl Session {
         &mut self,
         globals: vars::GlobalSysvars,
     ) -> Result<(), crate::DriverError> {
+        // A session on the store reads its domain's GLOBAL table, as a Go
+        // session reads its domain's (`GlobalVarsAccessor`); a private table
+        // would hide every `SET GLOBAL` the node persists from this session.
+        if self.node.is_some() {
+            drop(globals);
+            return Ok(());
+        }
         self.vars
             .seed_from_globals(globals)
             .map_err(crate::variables::var_error)

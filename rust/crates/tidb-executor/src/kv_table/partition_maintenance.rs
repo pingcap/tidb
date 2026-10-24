@@ -518,7 +518,7 @@ impl KvTable {
     /// negative value that routing would place by its absolute value, and a
     /// NULL anywhere but the first partition. The other methods compare the
     /// row's route, and a row no partition accepts does not match.
-    pub(crate) fn exchange_row_mismatches(
+    pub fn exchange_row_mismatches(
         &self,
         ordinal: usize,
         row: &[Datum],

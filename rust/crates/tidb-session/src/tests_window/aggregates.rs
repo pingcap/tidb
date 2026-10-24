@@ -98,10 +98,11 @@ fn window_over_group_by() {
         [["1", "1"], ["2", "2"], ["3", "3"]]
     );
     // A window in HAVING is still Go's 3593, wherever the query groups.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT g FROM gw GROUP BY g HAVING RANK() OVER (ORDER BY g) = 1"),
-        Err(DriverError::WindowInvalidWindowFuncUse(ref name)) if name == "rank"
-    ));
+        3593,
+        "You cannot use the window function 'rank' in this context.'",
+    );
 }
 
 /// The same aggregate named in BOTH the select list and a window's own

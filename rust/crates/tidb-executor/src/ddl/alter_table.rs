@@ -4810,9 +4810,9 @@ pub(super) fn prepare_modify_column(
         id: table.columns[offset].id,
         field_type,
         column_info_version: table.columns[offset].column_info_version,
-        // Go `getModifiableColumnJob` CLONES the old column and then lets
-        // `ProcessModifyColumnOptions` overlay only what the spec names, so
-        // a MODIFY that does not repeat COMMENT keeps the existing one.
+        // Go `GetModifiableColumnJob` builds the new column from the spec
+        // without the old comment, so a MODIFY that does not repeat COMMENT
+        // clears it (asked of the Go server).
         comment: match super::column_comment_option(&def.options) {
             Some(comment) => super::validate_comment_length(
                 &comment,
@@ -4820,7 +4820,7 @@ pub(super) fn prepare_modify_column(
                 super::CommentOwner::Field,
                 ctx,
             )?,
-            None => table.columns[offset].comment.clone(),
+            None => String::new(),
         },
         generated,
         default_value: prepared_default.default,

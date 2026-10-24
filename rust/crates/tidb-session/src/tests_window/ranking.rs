@@ -244,13 +244,14 @@ fn window_percent_rank_and_cume_dist() {
         )),
         [["0"], ["0.25"], ["0.5"], ["0.5"], ["1"]]
     );
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run(
             "SELECT PERCENT_RANK() OVER (ORDER BY v ROWS BETWEEN CURRENT ROW AND 1 PRECEDING) \
-                 FROM pr"
+                 FROM pr",
         ),
-        Err(DriverError::WindowFrameIllegal)
-    ));
+        3586,
+        "Window '<unnamed window>': frame start or end is negative, NULL or of non-integral type",
+    );
 
     // Both are a NOT NULL DOUBLE (Go's `typeInfer4PercentRank` /
     // `typeInfer4CumeDist`) when spelled as Go's `NewWindowFuncDesc` switch

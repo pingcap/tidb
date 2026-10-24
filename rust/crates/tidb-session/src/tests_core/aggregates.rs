@@ -1105,10 +1105,11 @@ fn grouping_with_rollup() {
     // Captured: GROUPING() without WITH ROLLUP is
     // "[planner:1111]Invalid use of group function", whether the query
     // groups or not.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT a, GROUPING(a) FROM t GROUP BY a"),
-        Err(DriverError::InvalidGroupFuncUse)
-    ));
+        1111,
+        "Invalid use of group function",
+    );
     let invalid = session.run("SELECT a, GROUPING(a) FROM t");
     assert!(
         matches!(invalid, Err(DriverError::InvalidGroupFuncUse)),
@@ -1117,10 +1118,11 @@ fn grouping_with_rollup() {
 
     // Captured: an argument that is not grouped is
     // "[planner:3602]Argument #0 of GROUPING function is not in GROUP BY".
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT a, GROUPING(c) FROM t GROUP BY a, b WITH ROLLUP"),
-        Err(DriverError::FieldInGroupingNotGroupBy(0))
-    ));
+        3602,
+        "Argument #0 of GROUPING function is not in GROUP BY",
+    );
 
     // Expand gives every GROUP BY expression its own carrier, so GROUPING()
     // may name that expression rather than only a base column.

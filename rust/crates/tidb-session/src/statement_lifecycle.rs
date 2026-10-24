@@ -219,23 +219,21 @@ impl StatementLifecycle<'_> {
         // drop under a statement mid-flight. Dropped with the scope.
         let _statement_pin = self.txn.hold_schema_pin(self.follower.schema_version());
         let savepoint = self.txn.buffer().checkpoint();
-        self.session.set_selected_lock_keys(
-            self.txn
-                .explicit
-                .as_ref()
-                .filter(|transaction| transaction.is_pessimistic())
-                .map(|_| {
-                    tidb_executor::select_lock::SelectedLockKeys::new(
-                        tidb_txnkv::transaction::LockWaitTime::Timeout(
-                            self.session.lock_wait_timeout(),
-                        ),
-                        self.session.vars().shared_lock_promotion_enabled(),
-                    )
-                    .with_read_committed(self.session.is_read_committed())
-                    .with_lock_state_observer(self.session.transaction_lock_state_observer())
-                    .with_lock_in_execution(true)
-                }),
-        );
+        // An optimistic transaction's locking reads lock nothing during
+        // execution; their keys reach the owner's lock step, which flags
+        // them as Go's optimistic `LockKeys` does.
+        self.session
+            .set_selected_lock_keys(self.txn.explicit.as_ref().map(|transaction| {
+                tidb_executor::select_lock::SelectedLockKeys::new(
+                    tidb_txnkv::transaction::LockWaitTime::Timeout(
+                        self.session.lock_wait_timeout(),
+                    ),
+                    self.session.vars().shared_lock_promotion_enabled(),
+                )
+                .with_read_committed(self.session.is_read_committed())
+                .with_lock_state_observer(self.session.transaction_lock_state_observer())
+                .with_lock_in_execution(transaction.is_pessimistic())
+            }));
         let delta_savepoint = self.session.table_delta_savepoint();
         let mut retried: u32 = 0;
         self.session.begin_external_mpp_query_scope();
@@ -738,6 +736,7 @@ impl StatementLifecycle<'_> {
             return Ok(PessimisticStep::Done);
         };
         if !transaction.is_pessimistic() {
+            self.lock_optimistic_statement_keys();
             return Ok(PessimisticStep::Done);
         }
         // Go `handlePessimisticDML`: `KeysNeedToLock` plus
@@ -767,6 +766,24 @@ impl StatementLifecycle<'_> {
             }
         }
         Ok(PessimisticStep::Done)
+    }
+
+    /// Go `SelectLockExec.Next` -> `doLockKeys` in an optimistic
+    /// transaction: `LockKeys` takes no lock and only flags the keys the
+    /// statement's lock operators published (see
+    /// `MutationBuffer::lock_keys_optimistically`).
+    fn lock_optimistic_statement_keys(&mut self) {
+        if self
+            .txn
+            .explicit
+            .as_ref()
+            .is_none_or(|transaction| transaction.is_pessimistic())
+        {
+            return;
+        }
+        let taken = self.session.take_selected_locks();
+        let keys: Vec<Vec<u8>> = taken.reads.into_iter().flat_map(|(_, keys)| keys).collect();
+        self.txn.buffer().lock_keys_optimistically(&keys);
     }
 
     pub fn lock_pessimistic_keys(
@@ -1009,6 +1026,25 @@ impl StatementLifecycle<'_> {
                 .set_resource_group_name(resource_group)
                 .map_err(SqlQueryError::unknown)?;
         }
+        // An optimistic transaction's locking read runs as a read; its lock
+        // operator publishes the keys, which `end_read_statement` flags.
+        if shape == StatementReadShape::LockingRead
+            && self
+                .txn
+                .explicit
+                .as_ref()
+                .is_some_and(|transaction| !transaction.is_pessimistic())
+        {
+            self.session.set_selected_lock_keys(Some(
+                tidb_executor::select_lock::SelectedLockKeys::new(
+                    tidb_txnkv::transaction::LockWaitTime::Timeout(
+                        self.session.lock_wait_timeout(),
+                    ),
+                    self.session.vars().shared_lock_promotion_enabled(),
+                )
+                .with_lock_state_observer(self.session.transaction_lock_state_observer()),
+            ));
+        }
         let scope = self.begin_statement_scope(true);
         let statement = ReadStatement {
             _pin: self.txn.hold_schema_pin(self.follower.schema_version()),
@@ -1043,6 +1079,9 @@ impl StatementLifecycle<'_> {
             if let Some(start_ts) = statement.read_ts.get() {
                 self.session.record_started_txn_info(start_ts);
             }
+        }
+        if success && self.txn.explicit.is_some() {
+            self.lock_optimistic_statement_keys();
         }
         let result = if success {
             finished

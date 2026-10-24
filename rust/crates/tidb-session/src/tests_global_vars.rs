@@ -639,9 +639,9 @@ fn default_authentication_plugin_global_validation_matches_go() {
 
 #[test]
 fn statement_context_reads_global_sysvars_through_the_live_accessor() {
-    let globals = vars::GlobalSysvars::new();
-    let mut session = Session::new();
-    session.attach_globals(globals.clone()).unwrap();
+    let session = Session::new();
+    // The session's own live GLOBAL table, whichever tier owns it.
+    let globals = session.vars().global_sysvars();
     let context = session.statement_context(false);
     let read = || {
         tidb_executor::Columns::sysvar(
@@ -690,7 +690,7 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     // A brand new session opened AFTER the SET GLOBAL inherits it as its own
     // session default -- the same snapshot-at-connect step
     // `PipelineSessionFactory::open_session` performs via `attach_globals`.
-    let mut fresh = Session::new();
+    let mut fresh = Session::with_catalog(first.shared_catalog());
     fresh.attach_globals(globals).unwrap();
     assert_eq!(
         fresh.run("SELECT @@autocommit").unwrap(),
@@ -1982,7 +1982,7 @@ fn global_isolation_skip_waits_for_the_next_session() {
         .unwrap_err();
     assert_eq!(error.to_mysql_error().code, 8048);
 
-    let mut inherited = Session::new();
+    let mut inherited = Session::with_catalog(current.shared_catalog());
     inherited.attach_globals(globals).unwrap();
     inherited
         .run("SET SESSION transaction_isolation = 'SERIALIZABLE'")

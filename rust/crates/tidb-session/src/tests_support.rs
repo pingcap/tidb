@@ -35,6 +35,51 @@ pub(crate) fn cell_text(value: &Datum) -> String {
     }
 }
 
+/// The MySQL error code a refused statement answers with, which is what Go's
+/// tests check (`MustGetErrCode`): the typed Rust error behind it differs
+/// between the in-process tier and a session on the store.
+pub(crate) fn err_code<T: std::fmt::Debug>(result: Result<T, DriverError>) -> u16 {
+    result.unwrap_err().to_mysql_error().code
+}
+
+/// Asserts a refusal by the code and message the client reads (Go's
+/// `require.EqualError` on a `*terror.Error`), not by the Rust error type.
+#[track_caller]
+pub(crate) fn assert_err<T: std::fmt::Debug>(
+    result: Result<T, DriverError>,
+    code: u16,
+    message: &str,
+) {
+    let error = result.unwrap_err().to_mysql_error();
+    assert_eq!((error.code, error.message.as_str()), (code, message));
+}
+
+/// Records the code and message of a refusal under `site`, for
+/// rewriting variant assertions into [`assert_err`].
+pub(crate) fn harvest_err<T: std::fmt::Debug>(result: &Result<T, DriverError>, site: &str) {
+    use std::io::Write;
+    let Ok(path) = std::env::var("TIDB_HARVEST_ERR") else {
+        return;
+    };
+    let Err(error) = result else { return };
+    let error = error.clone().to_mysql_error();
+    let line = format!("{site}\t{}\t{:?}\n", error.code, error.message);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .unwrap();
+    file.write_all(line.as_bytes()).unwrap();
+}
+
+/// Whether this run's sessions are the in-process tier rather than sessions
+/// on the embedded store (Go's testkit). An assertion of Go behavior that
+/// tier never had returns early under it, and one of a behavior only that
+/// tier has runs only under it; the guard goes with the tier (Milestone 3e).
+pub(crate) fn in_process_tier() -> bool {
+    !Session::mock_store_enabled()
+}
+
 /// RENAME TABLE, checked against captured TiDB behavior.
 /// A result's rows as text, so an assertion does not depend on which
 /// datum kind the codec hands back for a given column type.

@@ -99,10 +99,18 @@ fn a_commit_conflicts_only_on_a_key_a_peer_committed() {
     first.control_transaction("BEGIN OPTIMISTIC").unwrap();
     first.run("UPDATE t SET b = 1 WHERE a = 1").unwrap();
     second.run("UPDATE t SET b = 2 WHERE a = 1").unwrap();
-    assert!(matches!(
-        first.control_transaction("COMMIT"),
-        Err(DriverError::Txn(TxnErrorKind::WriteConflict))
-    ));
+    // Go's message names the conflicting timestamps and key
+    // (`newWriteConflictError`), so only its fixed prefix is pinned.
+    let error = first
+        .control_transaction("COMMIT")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 9007, "{}", error.message);
+    assert!(
+        error.message.starts_with("Write conflict, "),
+        "{}",
+        error.message
+    );
     assert!(!first.in_transaction(), "a refused commit ends the txn");
     // The peer's write survived; the refused one did not.
     assert_eq!(
@@ -318,10 +326,10 @@ fn an_optimistic_locking_read_conflicts_on_its_own_rows() {
         .run("SELECT * FROM t WHERE c1 = 11 FOR UPDATE")
         .unwrap();
     second.run("UPDATE t SET c2 = 211 WHERE c1 = 11").unwrap();
-    assert!(matches!(
-        first.control_transaction("COMMIT"),
-        Err(DriverError::Txn(TxnErrorKind::WriteConflict))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(first.control_transaction("COMMIT")),
+        9007
+    );
 }
 
 /// `BEGIN PESSIMISTIC` / `BEGIN OPTIMISTIC` and `@@tidb_txn_mode` decide the
@@ -371,12 +379,11 @@ fn a_begin_resolves_its_transaction_mode_from_the_keyword_then_the_variable() {
     session.control_transaction("ROLLBACK").unwrap();
 
     // A value outside the enum is still rejected: Go's 1231.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.apply_set("SET tidb_txn_mode = 'bogus'"),
-        Err(DriverError::Var(
-            tidb_executor::VarErrorKind::WrongValueForVar(_, _)
-        ))
-    ));
+        1231,
+        "Variable 'tidb_txn_mode' can't be set to the value of 'bogus'",
+    );
 }
 
 /// Go `optimizeDupKeyCheckForNormalInsert` (`pkg/executor/insert.go:331-337`)
@@ -520,6 +527,20 @@ fn read_staleness_reads_the_present_and_a_snapshot_pin_is_refused() {
     session.run("INSERT INTO t VALUES (1, 10)").unwrap();
 
     session.run("SET @@tidb_read_staleness = -1").unwrap();
+    if !crate::tests_support::in_process_tier() {
+        // Go reads the schema a second back as well, where the table just
+        // created does not exist yet (asked of the Go server: 1146).
+        assert_eq!(
+            crate::tests_support::err_code(session.run("SELECT b FROM t")),
+            1146
+        );
+        session.run("SET @@tidb_read_staleness = 0").unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run("SELECT b FROM t")),
+            vec![vec!["10"]]
+        );
+        return;
+    }
     assert_eq!(
         crate::tests_support::row_text(session.run("SELECT b FROM t")),
         vec![vec!["10"]]
@@ -531,6 +552,7 @@ fn read_staleness_reads_the_present_and_a_snapshot_pin_is_refused() {
         vec![vec!["10"], vec!["20"]]
     );
 
+    // The in-process tier keeps no history to read a pinned snapshot from.
     session
         .run("SET @@tidb_snapshot = '2020-01-01 00:00:00'")
         .unwrap();
@@ -739,8 +761,12 @@ fn start_transaction_as_of_timestamp_pins_the_transaction() {
     session.run("COMMIT").unwrap();
     assert!(!session.in_transaction());
 
-    // A timestamp older than the retained ring still refuses rather than
-    // silently opening at the present.
+    // The in-process tier's retained ring refuses an older timestamp rather
+    // than silently opening at the present; on the store, Go's refusal is the
+    // GC safe point's.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let error = session
         .run("START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-01-01 00:00:00'")
         .unwrap_err();

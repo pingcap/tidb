@@ -101,10 +101,11 @@ fn rolling_back_drops_the_savepoints_taken_after_it() {
     session.run("SAVEPOINT s1").unwrap();
     session.run("SAVEPOINT s2").unwrap();
     session.run("ROLLBACK TO s1").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ROLLBACK TO s2"),
-        Err(DriverError::SavepointNotExists(name)) if name == "s2"
-    ));
+        1305,
+        "SAVEPOINT s2 does not exist",
+    );
 }
 
 /// `RELEASE SAVEPOINT` drops the named savepoint and everything above it
@@ -138,10 +139,11 @@ fn releasing_a_middle_savepoint_keeps_the_ones_below_it() {
     session.run("SAVEPOINT s2").unwrap();
     session.run("SAVEPOINT s3").unwrap();
     session.run("RELEASE SAVEPOINT s2").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ROLLBACK TO s3"),
-        Err(DriverError::SavepointNotExists(_))
-    ));
+        1305,
+        "SAVEPOINT s3 does not exist",
+    );
     session.run("ROLLBACK TO s1").unwrap();
     assert!(ids(&mut session).is_empty());
 }
@@ -196,14 +198,16 @@ fn redefining_a_savepoint_moves_it_to_the_end_of_the_stack() {
 fn a_savepoint_outside_a_transaction_records_nothing() {
     let mut session = session_with_table();
     session.run("SAVEPOINT s1").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ROLLBACK TO s1"),
-        Err(DriverError::SavepointNotExists(_))
-    ));
-    assert!(matches!(
+        1305,
+        "SAVEPOINT s1 does not exist",
+    );
+    crate::tests_support::assert_err(
         session.run("RELEASE SAVEPOINT s1"),
-        Err(DriverError::SavepointNotExists(_))
-    ));
+        1305,
+        "SAVEPOINT s1 does not exist",
+    );
 }
 
 /// An unknown name is Go's `ErrSavepointNotExists` -- 1305, SQLSTATE 42000,
@@ -221,10 +225,11 @@ fn an_unknown_savepoint_is_error_1305() {
     // ROLLBACK TO with no transaction at all reports the same error, which is
     // Go's `!txn.Valid()` arm.
     session.run("ROLLBACK").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ROLLBACK TO nosuch"),
-        Err(DriverError::SavepointNotExists(_))
-    ));
+        1305,
+        "SAVEPOINT nosuch does not exist",
+    );
 }
 
 /// A statement that fails rolls ITSELF back and leaves the savepoint stack
@@ -276,10 +281,11 @@ fn a_ddl_statements_implicit_commit_clears_the_savepoint_stack() {
     session.run("BEGIN").unwrap();
     session.run("SAVEPOINT s1").unwrap();
     session.run("CREATE TABLE sp2 (id INT)").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ROLLBACK TO s1"),
-        Err(DriverError::SavepointNotExists(_))
-    ));
+        1305,
+        "SAVEPOINT s1 does not exist",
+    );
 }
 
 /// A plain `ROLLBACK` ends the transaction and takes the whole stack with it;

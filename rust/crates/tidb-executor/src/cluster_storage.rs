@@ -523,6 +523,27 @@ pub struct DuplicateKeyHint {
     pub key: String,
 }
 impl MutationBuffer {
+    /// Go `KVTxn.LockKeys` in an optimistic transaction: no lock request,
+    /// only the buffer flags client-go's exclusive lock sets, so COMMIT
+    /// prewrites each key as an `Op_Lock` mutation that conflicts with a
+    /// write a peer committed after the transaction started.
+    pub fn lock_keys_optimistically(&self, keys: &[Vec<u8>]) {
+        use tikv_client::kv::FlagsOp;
+        self.state().memdb.write(|buffer| {
+            for key in keys {
+                buffer.update_flags(
+                    key,
+                    &[
+                        FlagsOp::SetKeyLocked,
+                        FlagsOp::DelNeedCheckExists,
+                        FlagsOp::SetKeyLockedValueExists,
+                        FlagsOp::SetKeyLockedInExclusiveMode,
+                    ],
+                );
+            }
+        });
+    }
+
     /// Attach SQL staging to the native transaction. Pending statement writes
     /// must be attached before acquiring locks; an empty handle can also attach
     /// to a transaction that already owns locks without replacing its MemDB.

@@ -31,11 +31,14 @@ use crate::txn_manager::{CommitHooks, TxnManager};
 use crate::{Session, StmtResult};
 
 /// A driver error as the client sees it: Go's code, SQLSTATE and message, with
-/// the error's own identity carried across.
+/// the error's own identity and its typed cause (Go `errors.Cause`) carried
+/// across.
 #[must_use]
 pub fn sql_query_error(error: tidb_executor::DriverError) -> SqlQueryError {
-    let mapped = error.to_mysql_error();
-    SqlQueryError::new(mapped.code, mapped.state, mapped.message).with_identity(mapped.identity)
+    let mapped = error.clone().to_mysql_error();
+    SqlQueryError::new(mapped.code, mapped.state, mapped.message)
+        .with_identity(mapped.identity)
+        .with_cause(error)
 }
 
 /// Builds what a commit reads off the server, for the schema version the

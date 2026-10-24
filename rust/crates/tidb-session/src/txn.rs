@@ -769,6 +769,13 @@ impl Session {
     /// one before starting the new one, which this reproduces. `COMMIT` and
     /// `ROLLBACK` with no open transaction are no-ops, as in MySQL.
     pub fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, DriverError> {
+        // A node-backed session's transaction is the connection's buffer, as
+        // a Go `testkit` session's is its store transaction.
+        if let Some(mut node) = self.node.take() {
+            let result = node.control_transaction(self, sql);
+            self.node = Some(node);
+            return result;
+        }
         let stmt = self.parse(sql)?;
         self.control_transaction_stmt(&stmt)
     }

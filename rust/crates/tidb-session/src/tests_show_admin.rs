@@ -115,13 +115,10 @@ fn flush_targets_follow_gos_switch() {
 }
 
 /// Go `ColumnInfo.Comment` reaches all four readers, and `MODIFY COLUMN`
-/// treats an absent `COMMENT` differently from an empty one.
-///
-/// Go's `getModifiableColumnJob` CLONES the old column and lets
-/// `ProcessModifyColumnOptions` overlay only the options the spec names, so
-/// a MODIFY that does not repeat COMMENT keeps the existing one while
-/// `COMMENT ''` clears it. Before this, no column comment was stored at all:
-/// the DDL accepted it and every reader showed nothing.
+/// replaces it with whatever the new definition says: Go's
+/// `GetModifiableColumnJob` builds the new column from the spec, so a MODIFY
+/// that does not repeat COMMENT clears it, as `COMMENT ''` does (asked of the
+/// Go server).
 #[test]
 fn column_comments_round_trip_and_modify_overlays_them() {
     let mut session = Session::new();
@@ -162,7 +159,7 @@ fn column_comments_round_trip_and_modify_overlays_them() {
     assert_eq!(full[0][8], "kept");
     assert_eq!(full[3][8], "");
 
-    // Absent COMMENT keeps, a written one replaces, and an empty one clears.
+    // A written COMMENT replaces; an absent or empty one clears.
     session.run("ALTER TABLE t MODIFY COLUMN a bigint").unwrap();
     session
         .run("ALTER TABLE t MODIFY COLUMN b bigint COMMENT 'new'")
@@ -172,8 +169,8 @@ fn column_comments_round_trip_and_modify_overlays_them() {
         .unwrap();
     let altered = row_text(session.run("SHOW CREATE TABLE t"))[0][1].clone();
     assert!(
-        altered.contains("`a` bigint DEFAULT NULL COMMENT 'kept'"),
-        "an absent COMMENT keeps the old one: {altered}"
+        altered.contains("`a` bigint DEFAULT NULL,"),
+        "an absent COMMENT clears the old one: {altered}"
     );
     assert!(
         altered.contains("`b` bigint DEFAULT NULL COMMENT 'new'"),

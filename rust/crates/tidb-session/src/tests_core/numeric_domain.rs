@@ -108,12 +108,11 @@ fn division_by_zero() {
 
     // Captured: under the default SQL mode an INSERT fails with 1365 and
     // writes nothing.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO t VALUES (1 / 0, 1)"),
-        Err(DriverError::Exec(tidb_executor::ExecError::Eval(
-            tidb_executor::EvalError::DivisionByZero
-        )))
-    ));
+        1365,
+        "Division by 0",
+    );
     assert_eq!(
         session.run("SELECT a FROM t").unwrap(),
         StmtResult::Rows(vec![])

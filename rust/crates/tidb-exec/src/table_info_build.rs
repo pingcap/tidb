@@ -196,6 +196,7 @@ fn prefix_length(
     field_type: &tidb_datatype::FieldType,
     column: &str,
     part: &KeyPart,
+    strict: bool,
 ) -> Refusal<i64> {
     use tidb_executor::ddl::index_prefix::{stored_index_length, IndexedColumn, PrefixError};
 
@@ -203,8 +204,9 @@ fn prefix_length(
     // This builder lowers an ALREADY ADMITTED catalog, whose expression key
     // parts have become ordinary hidden columns; the hidden-column arms of
     // `checkIndexColumn` were decided when the catalog was built.
-    stored_index_length(field_type, IndexedColumn::Named(column), declared, true).map_err(|error| {
-        match error {
+    stored_index_length(field_type, IndexedColumn::Named(column), declared, strict).map_err(
+        |error| {
+            match error {
         PrefixError::IncorrectPrefixKey => DdlAdmissionError::with_proto(
             &tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY,
             "Incorrect prefix key; the used key part isn't a string, the used length is longer \
@@ -234,32 +236,29 @@ fn prefix_length(
         // reach.
         other => unreachable!("a named key part cannot report {other:?}"),
         }
-    })
+        },
+    )
 }
 
 /// Go `buildIndexColumns`' running sum over one index's key parts, mapped onto
 /// this builder's refusal. The per-part rules are [`prefix_length`]; this is
-/// the separate limit on their TOTAL.
+/// the separate limit on their TOTAL, which a non-strict mode downgrades to a
+/// truncation for a single non-unique key part.
 fn key_length_sum<'a>(
     parts: impl IntoIterator<Item = (&'a tidb_datatype::FieldType, i64)>,
     part_count: usize,
     unique: bool,
-) -> Refusal<()> {
+    strict: bool,
+) -> Refusal<tidb_executor::ddl::index_prefix::KeyLengthOutcome> {
     use tidb_executor::ddl::index_prefix::{check_index_key_length, PrefixError};
 
-    // Strict: this tier builds a table info from an ALREADY ADMITTED catalog,
-    // so the truncating arm cannot be reached here.
-    check_index_key_length(parts, part_count, unique, true)
-        .map(|_| ())
-        .map_err(|error| match error {
-            PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_proto(
-                &tidb_util::dbterror::ERR_TOO_LONG_KEY,
-                format!(
-                    "Specified key was too long ({length} bytes); max key length is {max} bytes"
-                ),
-            ),
-            other => unreachable!("the key-length sum reports only ErrTooLongKey, got {other:?}"),
-        })
+    check_index_key_length(parts, part_count, unique, strict).map_err(|error| match error {
+        PrefixError::TooLongKey { length, max } => DdlAdmissionError::with_proto(
+            &tidb_util::dbterror::ERR_TOO_LONG_KEY,
+            format!("Specified key was too long ({length} bytes); max key length is {max} bytes"),
+        ),
+        other => unreachable!("the key-length sum reports only ErrTooLongKey, got {other:?}"),
+    })
 }
 
 /// The MySQL error number for a refusal that has no Go code of its own.
@@ -2693,7 +2692,12 @@ fn build_table(
             // deferring; what it must not do is store an ILLEGAL one, which
             // is what it did before this call existed.
             let column = column.read();
-            let length = prefix_length(&column.field_type, column.name.original(), part)?;
+            let length = prefix_length(
+                &column.field_type,
+                column.name.original(),
+                part,
+                context.strict(),
+            )?;
             tidb_executor::ddl::index_prefix::note_multi_valued_part(
                 &mut mv_index,
                 &column.field_type,
@@ -2715,13 +2719,31 @@ fn build_table(
         // Go `buildIndexColumns`: the sum of every key part's stored bytes
         // must stay within `config.MaxIndexLength`. Each part above may be
         // legal on its own and the total still refused.
-        key_length_sum(
+        let outcome = key_length_sum(
             part_lengths
                 .iter()
                 .map(|(field_type, length)| (field_type, *length)),
             constraint.parts.len(),
             primary || constraint.kind == ConstraintKind::Unique,
+            context.strict(),
         )?;
+        if let tidb_executor::ddl::index_prefix::KeyLengthOutcome::Truncated {
+            length,
+            stored_length,
+        } = outcome
+        {
+            // Go `ctx.AppendWarning(ErrTooLongKey...)` and
+            // `indexColLen = maxIndexLength / colLenPerUint`; the downgrade
+            // exists only for a single key part.
+            context.append_warning_parts(
+                tidb_error::tidb::errcode::ErrTooLongKey,
+                &format!(
+                    "Specified key was too long ({length} bytes); max key length is {} bytes",
+                    tidb_executor::ddl::index_prefix::MAX_INDEX_LENGTH
+                ),
+            );
+            index_columns[0].length = stored_length;
+        }
         table.max_index_id += 1;
         let mut index = IndexInfo {
             id: table.max_index_id,

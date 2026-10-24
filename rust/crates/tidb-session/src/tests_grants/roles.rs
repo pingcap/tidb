@@ -22,44 +22,40 @@ use crate::*;
 fn role_and_user_share_one_namespace_and_collide_only_on_creation() {
     let mut session = session_with_privileges();
     session.run("CREATE ROLE r1").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE ROLE r1"),
-        Err(DriverError::CannotUserRole {
-            operation: "CREATE ROLE",
-            ref target,
-        }) if target == "'r1'@'%'"
-    ));
+        1396,
+        "Operation CREATE ROLE failed for 'r1'@'%'",
+    );
     // A USER cannot take a name a ROLE already holds, and vice versa.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE USER r1"),
-        Err(DriverError::CreateUserAlreadyExists { .. })
-    ));
+        1396,
+        "Operation CREATE USER failed for 'r1'@'%'",
+    );
     session.run("CREATE USER u1").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE ROLE u1"),
-        Err(DriverError::CannotUserRole {
-            operation: "CREATE ROLE",
-            ..
-        })
-    ));
+        1396,
+        "Operation CREATE ROLE failed for 'u1'@'%'",
+    );
     // Cross-drops both succeed: no kind check anywhere.
     session.run("DROP ROLE u1").unwrap();
     session.run("DROP USER r1").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SHOW GRANTS FOR 'u1'@'%'"),
-        Err(DriverError::NonexistingGrant { .. })
-    ));
+        1141,
+        "There is no such grant defined for user 'u1' on host '%'",
+    );
 
     session.run("CREATE ROLE r1").unwrap();
     session.run("CREATE ROLE IF NOT EXISTS r1").unwrap();
     session.run("DROP ROLE IF EXISTS nosuch").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("DROP ROLE nosuch"),
-        Err(DriverError::CannotUserRole {
-            operation: "DROP ROLE",
-            ref target,
-        }) if target == "nosuch@%"
-    ));
+        1396,
+        "Operation DROP ROLE failed for nosuch@%",
+    );
 }
 
 /// CAPTURED: a role cannot log in. `CREATE ROLE` writes
@@ -109,17 +105,16 @@ fn granting_a_role_adds_an_edge_and_a_show_grants_line() {
         ]
     );
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("GRANT r1 TO nosuchuser"),
-        Err(DriverError::CannotUserRole {
-            operation: "GRANT ROLE",
-            ref target,
-        }) if target == "nosuchuser@%"
-    ));
-    assert!(matches!(
+        1396,
+        "Operation GRANT ROLE failed for nosuchuser@%",
+    );
+    crate::tests_support::assert_err(
         session.run("GRANT nosuchrole TO 'u1'@'%'"),
-        Err(DriverError::GrantUnknownRole { ref role, .. }) if role == "nosuchrole"
-    ));
+        3523,
+        "Unknown authorization ID `nosuchrole`@`%`",
+    );
     // A self-grant is accepted, not rejected as a cycle.
     session.run("GRANT r1 TO r1").unwrap();
 }
@@ -176,11 +171,11 @@ fn set_default_role_replaces_the_whole_default_set() {
     session.run("SET DEFAULT ROLE NONE TO 'u1'@'%'").unwrap();
     assert!(registry.default_roles(&u1).is_empty());
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SET DEFAULT ROLE r2 TO 'u1'@'%'"),
-        Err(DriverError::RoleNotGranted { ref role, ref user, .. })
-            if role == "r2" && user == "u1"
-    ));
+        3530,
+        "`r2`@`%` is not granted to u1@%",
+    );
 }
 
 #[test]
@@ -200,20 +195,16 @@ fn skip_unknown_current_user_is_not_the_explicit_self_shortcut() {
     let sentinel = ("sentinel".to_owned(), "%".to_owned());
     registry.set_default_roles(&actual, std::slice::from_ref(&sentinel));
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SET DEFAULT ROLE no_such_role TO CURRENT_USER"),
-        Err(DriverError::CannotUserRole {
-            operation: "SET DEFAULT ROLE",
-            ref target,
-        }) if target == "@"
-    ));
-    assert!(matches!(
+        1396,
+        "Operation SET DEFAULT ROLE failed for @",
+    );
+    crate::tests_support::assert_err(
         session.run("SET DEFAULT ROLE ALL TO CURRENT_USER"),
-        Err(DriverError::CannotUserRole {
-            operation: "SET DEFAULT ROLE",
-            ref target,
-        }) if target == "@"
-    ));
+        1396,
+        "Operation SET DEFAULT ROLE failed for @",
+    );
     session
         .run("SET DEFAULT ROLE NONE TO CURRENT_USER")
         .expect("NONE is a storage-only delete of the raw AST identity");
@@ -233,11 +224,11 @@ fn set_default_role_multi_target_failure_publishes_nothing() {
     session.run("GRANT r1 TO u1").unwrap();
     let registry = session.privileges.clone().unwrap();
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SET DEFAULT ROLE r1 TO u1, u2"),
-        Err(DriverError::RoleNotGranted { ref role, ref user, .. })
-            if role == "r1" && user == "u2"
-    ));
+        3530,
+        "`r1`@`%` is not granted to u2@%",
+    );
     assert!(registry
         .default_roles(&("u1".to_owned(), "%".to_owned()))
         .is_empty());
@@ -285,10 +276,11 @@ fn set_role_forms_and_current_role() {
 
     // An ungranted role is refused and the previous set survives.
     session.run("SET ROLE ALL").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SET ROLE r2"),
-        Err(DriverError::RoleNotGranted { ref role, .. }) if role == "r2"
-    ));
+        3530,
+        "`r2`@`%` is not granted to u1@%",
+    );
     assert_eq!(current_role(&mut session), "`r1`@`%`,`r3`@`%`");
 }
 
@@ -329,10 +321,11 @@ fn activation_is_direct_but_inheritance_is_transitive() {
         row_text(session.run("SELECT CURRENT_ROLE()")),
         [["`ra`@`%`"]]
     );
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SET ROLE rb"),
-        Err(DriverError::RoleNotGranted { ref role, .. }) if role == "rb"
-    ));
+        3530,
+        "`rb`@`%` is not granted to u2@%",
+    );
     // ... yet its privileges arrive through `ra`, printed under u2's own
     // name and merged into u2's dynamic line.
     assert_eq!(
@@ -380,13 +373,11 @@ fn revoking_and_dropping_a_role_clean_up_every_edge() {
     assert_eq!(registry.default_roles(&u1), std::slice::from_ref(&r3));
     // A repeat revoke is a silent no-op.
     session.run("REVOKE r1 FROM 'u1'@'%'").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("REVOKE nosuchrole FROM 'u1'@'%'"),
-        Err(DriverError::CannotUserRole {
-            operation: "REVOKE ROLE",
-            ref target,
-        }) if target == "`nosuchrole`@`%`"
-    ));
+        1396,
+        "Operation REVOKE ROLE failed for `nosuchrole`@`%`",
+    );
 
     session.run("GRANT r1 TO 'u1'@'%'").unwrap();
     session.run("GRANT r3 TO r1").unwrap();
@@ -413,10 +404,7 @@ fn with_admin_option_is_not_grammar() {
     let mut session = session_with_privileges();
     session.run("CREATE ROLE r1").unwrap();
     session.run("CREATE USER u1").unwrap();
-    assert!(matches!(
-        session.run("GRANT r1 TO 'u1'@'%' WITH ADMIN OPTION"),
-        Err(DriverError::Parse(_))
-    ));
+    crate::tests_support::assert_err(session.run("GRANT r1 TO 'u1'@'%' WITH ADMIN OPTION"), 1064, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 25 near \"WITH ADMIN OPTION\" ");
 }
 
 /// A role may live at a specific host, and is then named with that host

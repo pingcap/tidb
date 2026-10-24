@@ -93,17 +93,19 @@ fn account_authentication_strings_follow_go_encode_password() {
     // Captured error wording: ALTER USER quotes the account like CREATE
     // USER and is silenced by IF EXISTS; SET PASSWORD reports 1133
     // instead of reusing ErrCannotUser.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER USER 'nosuch'@'%' IDENTIFIED BY 'p'"),
-        Err(DriverError::AlterUserMissing { .. })
-    ));
+        1396,
+        "Operation ALTER USER failed for 'nosuch'@'%'",
+    );
     session
         .run("ALTER USER IF EXISTS 'nosuch'@'%' IDENTIFIED BY 'p'")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SET PASSWORD FOR 'nosuch'@'%' = 'p'"),
-        Err(DriverError::SetPasswordNoMatchingRow)
-    ));
+        1133,
+        "Can't find any matching row in the user table",
+    );
 }
 
 /// CAPTURED: `CREATE USER ... IDENTIFIED WITH <plugin> [BY '<password>' |
@@ -161,28 +163,27 @@ fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
 
     // A malformed `AS` hash is ErrPasswordFormat (1827), not a silent
     // truncation or panic.
-    assert!(matches!(
-        session.run("CREATE USER 'bad'@'%' IDENTIFIED WITH mysql_native_password AS 'short'"),
-        Err(DriverError::PasswordFormat)
-    ));
+    crate::tests_support::assert_err(session.run("CREATE USER 'bad'@'%' IDENTIFIED WITH mysql_native_password AS 'short'"), 1827, "The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.");
     assert!(!registry.user_exists("bad", "%"));
 
     // An unrecognized plugin is ErrPluginIsNotLoaded (1524): this tier
     // registers no extension auth plugins, so nothing outside Go's built-in
     // CREATE USER switch can ever be loaded.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE USER 'nope'@'%' IDENTIFIED WITH 'no_such_plugin' BY 'x'"),
-        Err(DriverError::PluginIsNotLoaded { plugin }) if plugin == "no_such_plugin"
-    ));
+        1524,
+        "Plugin 'no_such_plugin' is not loaded",
+    );
     assert!(!registry.user_exists("nope", "%"));
 
     // `mysql_clear_password` and `tidb_session_token` are built-in plugin
     // NAMES (reserved against extensions) but are not in Go's CREATE USER
     // switch either, so they are refused the same way.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE USER 'clear'@'%' IDENTIFIED WITH mysql_clear_password BY 'x'"),
-        Err(DriverError::PluginIsNotLoaded { .. })
-    ));
+        1524,
+        "Plugin 'mysql_clear_password' is not loaded",
+    );
 }
 
 /// CAPTURED: `RENAME USER` carries the authentication string AND every
@@ -367,10 +368,11 @@ fn alter_user_account_lock_unlock() {
     session.run("ALTER USER 'bob'@'%' ACCOUNT UNLOCK").unwrap();
     assert!(!registry.is_role("bob", "%"));
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER USER 'nosuch'@'%' ACCOUNT LOCK"),
-        Err(DriverError::AlterUserMissing { .. })
-    ));
+        1396,
+        "Operation ALTER USER failed for 'nosuch'@'%'",
+    );
     session
         .run("ALTER USER IF EXISTS 'nosuch'@'%' ACCOUNT LOCK")
         .unwrap();
@@ -475,13 +477,11 @@ fn show_create_user_reflects_account_lock_for_roles_and_locked_users() {
 #[test]
 fn show_create_user_reports_cannot_user_for_a_missing_account() {
     let mut session = session_with_privileges();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SHOW CREATE USER 'nosuch'@'%'"),
-        Err(DriverError::CannotUserRole {
-            operation: "SHOW CREATE USER",
-            ref target,
-        }) if target == "'nosuch'@'%'"
-    ));
+        1396,
+        "Operation SHOW CREATE USER failed for 'nosuch'@'%'",
+    );
 }
 
 /// `SHOW CREATE USER CURRENT_USER()` resolves the SESSION's own identity,

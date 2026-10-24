@@ -347,12 +347,13 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
                     has_null,
                 )?
             }
-            AlterColumnAction::AddIndex { .. } => add_index::build_add_index_job(
-                snapshot,
-                &catalog,
-                &single_statement(schema, table, action),
-                store_count,
-            )?,
+            AlterColumnAction::AddIndex { .. } => {
+                let statement = single_statement(schema, table, action);
+                let built =
+                    add_index::build_add_index_job(snapshot, &catalog, &statement, store_count)?;
+                add_index::check_added_primary_key_holds_no_null(&catalog, &statement, has_null)?;
+                built
+            }
             AlterColumnAction::DropIndex { .. } | AlterColumnAction::DropPrimaryKey => {
                 drop_index::build_drop_index_job(
                     snapshot,

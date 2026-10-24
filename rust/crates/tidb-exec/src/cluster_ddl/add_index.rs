@@ -238,10 +238,64 @@ pub fn prepare_add_index_job_submission<S: MetaSnapshot>(
     upgrading: bool,
     min_job_id: i64,
     store_count: usize,
+    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
 ) -> Result<Option<AddIndexSubmission>, DdlPlanError> {
     let catalog = load_cluster_catalog(snapshot)?;
     let built = build_add_index_job(snapshot, &catalog, statement, store_count)?;
+    if matches!(built, Some(AddIndexSubmission::Job(..))) {
+        check_added_primary_key_holds_no_null(&catalog, statement, has_null)?;
+    }
     submit_built_job(snapshot, &catalog, built, start_ts, upgrading, min_job_id)
+}
+
+/// Go `checkPrimaryKeyNotNull` -> `modifyColsFromNull2NotNull` ->
+/// `checkForNullValue`: a primary key over a nullable column that holds a
+/// NULL is refused with 1138. Go's owner asks during the job; this node asks
+/// in the submitting transaction, as it does for MODIFY COLUMN.
+pub(super) fn check_added_primary_key_holds_no_null(
+    catalog: &ClusterCatalog,
+    statement: &DdlStatement,
+    has_null: &mut dyn FnMut(&TableInfo, i64) -> Result<bool, DdlPlanError>,
+) -> Result<(), DdlPlanError> {
+    let DdlStatement::CreateIndex {
+        schema,
+        table,
+        index,
+        ..
+    } = statement
+    else {
+        return Ok(());
+    };
+    if !index.primary {
+        return Ok(());
+    }
+    let (_, stored) = locate_table(catalog, schema, table)?;
+    for part in index.columns.iter_deref() {
+        let name = part.read().name.lowercase().to_owned();
+        let Some(column) = stored
+            .columns
+            .iter_deref()
+            .find(|column| column.read().name.lowercase() == name)
+        else {
+            continue;
+        };
+        let (id, nullable) = {
+            let column = column.read();
+            (
+                column.id,
+                !column
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
+            )
+        };
+        if nullable && has_null(stored, id)? {
+            return Err(coded_refusal(
+                &tidb_util::dbterror::ERR_INVALID_USE_OF_NULL,
+                "Invalid use of NULL value",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The executor half without `doDDLJob2`: the job unsubmitted, which a
@@ -1308,6 +1362,7 @@ fn plan_rollback_add_index(
 /// Go `DropIndexColumnFlag`, `RemoveDependentHiddenColumns` and
 /// `removeIndexInfo`.
 pub(super) fn remove_index_and_hidden_columns(info: &mut TableInfo, index: &IndexInfo) {
+    drop_index_column_flag(info, index);
     let hidden: Vec<String> = index
         .columns
         .iter_deref()
@@ -1353,6 +1408,47 @@ pub(super) fn remove_index_and_hidden_columns(info: &mut TableInfo, index: &Inde
                 part.offset = offset as i64;
             }
         }
+    }
+}
+
+/// Go `DropIndexColumnFlag`: the flag the index gave its columns goes, and
+/// another index led by the same first column puts its own flag back.
+fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
+    use tidb_datatype::FieldTypeFlags;
+    let unflag = |offset: i64, flag| {
+        if let Some(column) = usize::try_from(offset)
+            .ok()
+            .and_then(|offset| info.columns.get(offset))
+        {
+            column.write().field_type.del_flags(flag);
+        }
+    };
+    let Some(first) = index.columns.get(0) else {
+        return;
+    };
+    if index.primary {
+        for part in index.columns.iter_deref() {
+            unflag(part.read().offset, FieldTypeFlags::PRI_KEY);
+        }
+    } else if index.unique && index.columns.len() == 1 {
+        unflag(first.read().offset, FieldTypeFlags::UNIQUE_KEY);
+    } else {
+        unflag(first.read().offset, FieldTypeFlags::MULTIPLE_KEY);
+    }
+    let first_name = first.read().name.lowercase().to_owned();
+    for other in info.indices.iter_deref() {
+        let other = other.read();
+        if other.name.lowercase() == index.name.lowercase() {
+            continue;
+        }
+        if other
+            .columns
+            .get(0)
+            .is_none_or(|part| part.read().name.lowercase() != first_name)
+        {
+            continue;
+        }
+        super::add_index_column_flag(info, &other);
     }
 }
 

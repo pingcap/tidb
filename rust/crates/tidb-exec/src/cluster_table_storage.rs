@@ -2071,6 +2071,18 @@ impl<S: StoreClient> SessionSnapshot<S> {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let SessionTransactionState::Optimistic(transaction) = &mut *state {
+            // Go `KVTxn.LockKeys` in an optimistic transaction acquires no
+            // lock: each key only takes `flagKeyLocked`, so prewrite carries
+            // it as an `Op_Lock` mutation and COMMIT conflicts on a row a
+            // peer committed after the transaction's start. Nothing returns
+            // values, so this statement keeps reading its snapshot.
+            let call = UnaryCallContext::with_timeout(self.timeout);
+            return transaction
+                .acquire_locks(&keys, &BTreeSet::new(), wait, &call)
+                .map(|_| ())
+                .map_err(|failure| StorageError::Backend(format!("{failure:?}")));
+        }
         if !matches!(&*state, SessionTransactionState::Pessimistic { .. }) {
             return Ok(());
         }

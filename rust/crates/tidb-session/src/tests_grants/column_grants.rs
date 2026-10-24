@@ -190,20 +190,21 @@ fn a_column_that_does_not_exist_is_refused_at_grant_time() {
         .unwrap();
     session.run("CREATE USER 'u3'@'%'").unwrap();
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("GRANT SELECT (nope) ON test.t TO 'u3'@'%'"),
-        Err(DriverError::UnknownGrantColumn(ref column)) if column == "nope"
-    ));
+        1105,
+        "Unknown column: nope",
+    );
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u3'@'%'")),
         [vec!["GRANT USAGE ON *.* TO 'u3'@'%'".to_owned()]]
     );
 
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("GRANT SELECT (a) ON test.nosuchtable TO 'u3'@'%'"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(ref name)))
-            if name == "test.nosuchtable"
-    ));
+        1146,
+        "Table 'test.nosuchtable' doesn't exist",
+    );
 
     for statement in [
         "REVOKE SELECT (nope) ON test.t FROM 'u3'@'%'",
@@ -222,10 +223,11 @@ fn a_column_that_does_not_exist_is_refused_at_grant_time() {
     session
         .run("GRANT SELECT (a) ON test.t TO 'u3'@'%'")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("REVOKE SELECT (nope) ON test.t FROM 'u3'@'%'"),
-        Err(DriverError::UnknownGrantColumn(ref column)) if column == "nope"
-    ));
+        1105,
+        "Unknown column: nope",
+    );
 }
 
 /// CAPTURED: a role's column grants merge into the account's line under the

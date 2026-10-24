@@ -2074,7 +2074,9 @@ pub fn partition_spec_from_metadata(
         PartitionType::HASH | PartitionType::RANGE | PartitionType::LIST => {
             let expr = tidb_model::generated_expr::parse_expression(expr_text)
                 .map_err(|error| DriverError::Parse(error.message))?;
-            let (expr_text, built, dependencies, _dependency_offsets) = build_partition_expression(
+            // Go keeps the stored `PartitionInfo.Expr` text as it is; restoring
+            // the parsed form again would bracket it a second time.
+            let (_restored, built, dependencies, _dependency_offsets) = build_partition_expression(
                 &expr,
                 names,
                 types,
@@ -2082,6 +2084,7 @@ pub fn partition_spec_from_metadata(
                 ctx.like_default_escape(),
                 PartitionBuildMode::Load,
             )?;
+            let expr_text = expr_text.to_owned();
             let kind = match kind {
                 PartitionType::RANGE => {
                     // Go's loader reads each bound with `strconv`

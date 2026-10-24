@@ -246,6 +246,20 @@ impl MockStoreConnection {
         result
     }
 
+    /// Applies a transaction-control statement through the node connection
+    /// with `session` inside it; see
+    /// [`ClusterServerSession::run_transaction_control`].
+    pub(crate) fn control_transaction(
+        &mut self,
+        session: &mut Session,
+        sql: &str,
+    ) -> Result<Option<bool>, tidb_executor::DriverError> {
+        std::mem::swap(session, self.connection.driver_session_mut());
+        let result = self.connection.run_transaction_control(sql);
+        std::mem::swap(session, self.connection.driver_session_mut());
+        result
+    }
+
     /// Runs `body` over `session` inside the connection with a committed
     /// snapshot bound; see [`ClusterServerSession::with_read_snapshot`].
     pub(crate) fn with_read_snapshot<R>(

@@ -28,14 +28,16 @@ fn validate_password_enforces_account_writes_and_scores_sql_values() {
     // Go resolves account existence and the configured default plugin before
     // password validation. A missing account still reports 1133, and a
     // non-cleartext default plugin bypasses the cleartext policy entirely.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SET PASSWORD FOR 'missing'@'%' = '1'"),
-        Err(DriverError::SetPasswordNoMatchingRow)
-    ));
-    assert!(matches!(
+        1133,
+        "Can't find any matching row in the user table",
+    );
+    crate::tests_support::assert_err(
         session.run("ALTER USER 'missing'@'%' IDENTIFIED BY '1'"),
-        Err(DriverError::AlterUserMissing { .. })
-    ));
+        1396,
+        "Operation ALTER USER failed for 'missing'@'%'",
+    );
     session
         .run("ALTER USER IF EXISTS 'missing'@'%' IDENTIFIED BY '1'")
         .unwrap();
@@ -57,10 +59,7 @@ fn validate_password_enforces_account_writes_and_scores_sql_values() {
         )
         .unwrap();
     let sha2_before = registry.auth_string("sha2-policy", "%").unwrap();
-    assert!(matches!(
-        session.run("ALTER USER 'sha2-policy'@'%' IDENTIFIED BY '1234'"),
-        Err(DriverError::NotValidPassword { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER USER 'sha2-policy'@'%' IDENTIFIED BY '1234'"), 1819, "Your password does not satisfy the current policy requirements (Require Password Length: 8)");
     assert_eq!(
         registry.auth_string("sha2-policy", "%").as_deref(),
         Some(sha2_before.as_str())
@@ -82,18 +81,12 @@ fn validate_password_enforces_account_writes_and_scores_sql_values() {
     let original = registry.auth_string("operator", "%").unwrap();
     session.set_user("operator@%".to_owned(), "operator@127.0.0.1".to_owned());
 
-    assert!(matches!(
-        session.run("ALTER USER CURRENT_USER() IDENTIFIED BY '1234'"),
-        Err(DriverError::NotValidPassword { .. })
-    ));
+    crate::tests_support::assert_err(session.run("ALTER USER CURRENT_USER() IDENTIFIED BY '1234'"), 1819, "Your password does not satisfy the current policy requirements (Require Password Length: 8)");
     assert_eq!(
         registry.auth_string("operator", "%").as_deref(),
         Some(original.as_str())
     );
-    assert!(matches!(
-        session.run("SET PASSWORD = '1234'"),
-        Err(DriverError::NotValidPassword { .. })
-    ));
+    crate::tests_support::assert_err(session.run("SET PASSWORD = '1234'"), 1819, "Your password does not satisfy the current policy requirements (Require Password Length: 8)");
     assert_eq!(
         registry.auth_string("operator", "%").as_deref(),
         Some(original.as_str())
@@ -330,10 +323,11 @@ fn show_create_user_prints_the_lockout_and_expiry_clauses() {
 #[test]
 fn password_expire_interval_out_of_range_is_rejected_and_creates_nothing() {
     let mut session = session_with_privileges();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE USER bad PASSWORD EXPIRE INTERVAL 0 DAY"),
-        Err(DriverError::PasswordExpireIntervalOutOfRange { days: 0 })
-    ));
+        1525,
+        "Incorrect DAY value: '0'",
+    );
     assert!(!session.privileges.clone().unwrap().user_exists("bad", "%"));
 }
 
@@ -359,10 +353,7 @@ fn a_sandboxed_session_may_only_fix_its_own_password() {
     }
     // A syntax error is still a syntax error: Go gates the PARSED statement,
     // so parsing fails first.
-    assert!(matches!(
-        sandbox.run("SELECT FROM WHERE"),
-        Err(DriverError::Parse(_))
-    ));
+    crate::tests_support::assert_err(sandbox.run("SELECT FROM WHERE"), 1064, "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 11 near \"FROM WHERE\" ");
 
     sandbox.run("SET PASSWORD = 'fixed'").unwrap();
     assert!(!sandbox.in_sandbox_mode());
@@ -375,10 +366,11 @@ fn a_sandboxed_session_may_only_fix_its_own_password() {
     // `ALTER USER ... IDENTIFIED BY` is the other way out.
     let mut sandbox = session_as(&registry, session.catalog.clone(), "sandboxed", "%");
     sandbox.enable_sandbox_mode();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         sandbox.run("SELECT 1"),
-        Err(DriverError::MustChangePassword)
-    ));
+        1820,
+        "You must reset your password using ALTER USER statement before executing this statement",
+    );
     sandbox
         .run("ALTER USER CURRENT_USER() IDENTIFIED BY 'again'")
         .unwrap();

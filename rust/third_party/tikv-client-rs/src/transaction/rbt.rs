@@ -405,7 +405,9 @@ impl Rbt {
         let appended_value_log_index = if value.is_some() && !can_modify_value {
             self.undo.push(Undo {
                 key: key.to_vec(),
-                old_value: if existed_before { old } else { None },
+                // client-go `memdbVlog` records a flag-only node's value as
+                // null, so reverting this write keeps only persistent flags.
+                old_value: old.filter(Option::is_some),
                 old_history_len,
                 old_value_log_undo_index,
             });
@@ -815,6 +817,25 @@ fn assert_values_available(value_epoch: &Option<ValueEpoch>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_of_a_write_over_flags_alone_keeps_only_persistent_flags() {
+        let mut db = Rbt::new();
+        let stage = db.staging();
+        db.set(b"plain", None, &[FlagsOp::SetPresumeKeyNotExists])
+            .unwrap();
+        db.set(b"plain", Some(b"v"), &[FlagsOp::SetAssertNotExist])
+            .unwrap();
+        db.set(b"locked", None, &[FlagsOp::SetKeyLocked]).unwrap();
+        db.set(b"locked", Some(b"v"), &[FlagsOp::SetAssertNotExist])
+            .unwrap();
+        db.cleanup(stage);
+        assert!(db.flags(b"plain").is_err());
+        let locked = db.flags(b"locked").unwrap();
+        assert!(locked.has_locked());
+        assert!(!locked.has_assertion_flags());
+        assert!(db.get(b"locked").is_err());
+    }
 
     fn key(number: u32) -> [u8; 4] {
         number.to_be_bytes()

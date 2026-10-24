@@ -497,7 +497,9 @@ impl Art {
         let appended_value_log_index = if value.is_some() && !can_modify_value {
             self.undo.push(Undo {
                 key: key.to_vec(),
-                old_value: if existed { old_value } else { None },
+                // client-go `memdbVlog` records a flag-only node's value as
+                // null, so reverting this write keeps only persistent flags.
+                old_value: old_value.filter(Option::is_some),
                 old_history_len,
                 old_value_log_undo_index,
                 old_deleted,
@@ -999,6 +1001,25 @@ mod tests {
             )))
             .is_err()
         );
+    }
+
+    #[test]
+    fn cleanup_of_a_write_over_flags_alone_keeps_only_persistent_flags() {
+        let mut tree = Art::new();
+        let stage = tree.staging();
+        tree.set(b"plain", None, &[FlagsOp::SetPresumeKeyNotExists])
+            .unwrap();
+        tree.set(b"plain", Some(b"v"), &[FlagsOp::SetAssertNotExist])
+            .unwrap();
+        tree.set(b"locked", None, &[FlagsOp::SetKeyLocked]).unwrap();
+        tree.set(b"locked", Some(b"v"), &[FlagsOp::SetAssertNotExist])
+            .unwrap();
+        tree.cleanup(stage);
+        assert!(tree.flags(b"plain").is_err());
+        let locked = tree.flags(b"locked").unwrap();
+        assert!(locked.has_locked());
+        assert!(!locked.has_assertion_flags());
+        assert!(tree.get(b"locked").is_err());
     }
 
     #[test]

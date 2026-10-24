@@ -336,7 +336,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         let Some(idx_scan) = scan.idx_scan.as_ref() else {
             return other_error("executor missing idx_scan body");
         };
-        let mut scanned_rows = 0;
+        let mut produced = ExecutorRows::default();
         let response = exec_index_scan(
             store,
             context,
@@ -345,9 +345,9 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
             limit,
             aggregation,
             topn.as_ref(),
-            &mut scanned_rows,
+            &mut produced,
         );
-        return with_scan_detail(response, scanned_rows, started.elapsed());
+        return finish_dag_response(response, context, &produced, started.elapsed());
     }
     if scan.tp() != tipb::ExecType::TypeTableScan {
         return other_error("index scans (closure_exec.go) are a later course of this port");
@@ -355,7 +355,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
         return other_error("executor missing tbl_scan body");
     };
-    let mut scanned_rows = 0;
+    let mut produced = ExecutorRows::default();
     let response = exec_table_scan(
         store,
         context,
@@ -364,9 +364,64 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
         limit,
         aggregation,
         topn.as_ref(),
-        &mut scanned_rows,
+        &mut produced,
     );
-    with_scan_detail(response, scanned_rows, started.elapsed())
+    finish_dag_response(response, context, &produced, started.elapsed())
+}
+
+/// The rows each executor of the closure shape produced, Go's
+/// `execDetail.numProducedRows` per `mppExec`: the scan's every row, the
+/// selection's survivors, and what the limit, topN or aggregation above
+/// them emitted.
+#[derive(Default)]
+struct ExecutorRows {
+    scanned: u64,
+    selected: u64,
+    output: u64,
+}
+
+/// Go `genRespWithMPPExec`'s tail: the scan detail, and -- when the request
+/// collects them -- one execution summary per executor, each charged the
+/// whole request's duration ("for simplicity, we assume all executors to be
+/// spending the same amount of time as the request") with no iterations.
+fn finish_dag_response(
+    response: coprocessor::Response,
+    context: &DagContext,
+    produced: &ExecutorRows,
+    elapsed: std::time::Duration,
+) -> coprocessor::Response {
+    let mut response = with_scan_detail(response, produced.scanned, elapsed);
+    if !context.dag_req.collect_execution_summaries()
+        || !response.other_error.is_empty()
+        || response.locked.is_some()
+    {
+        return response;
+    }
+    let mut select = match tipb::SelectResponse::decode(response.data.as_ref()) {
+        Ok(select) => select,
+        Err(error) => return other_error(&format!("decode coprocessor response: {error}")),
+    };
+    let time_processed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+    select.execution_summaries = context
+        .dag_req
+        .executors
+        .iter()
+        .map(|executor| {
+            let rows = match executor.tp() {
+                tipb::ExecType::TypeTableScan | tipb::ExecType::TypeIndexScan => produced.scanned,
+                tipb::ExecType::TypeSelection => produced.selected,
+                _ => produced.output,
+            };
+            tipb::ExecutorExecutionSummary {
+                time_processed_ns: Some(time_processed_ns),
+                num_produced_rows: Some(rows),
+                num_iterations: Some(0),
+                ..tipb::ExecutorExecutionSummary::default()
+            }
+        })
+        .collect();
+    response.data = select.encode_to_vec().into();
+    response
 }
 
 /// Go `buildResp`: every DAG response carries `ExecDetailsV2` whose
@@ -413,7 +468,7 @@ fn exec_index_scan(
     limit: usize,
     aggregation: Option<&tipb::Aggregation>,
     topn: Option<&TopNSpec>,
-    scanned_rows: &mut u64,
+    produced: &mut ExecutorRows,
 ) -> coprocessor::Response {
     use tidb_datatype::Datum;
     const EXTRA_HANDLE_ID: i64 = -1;
@@ -545,14 +600,14 @@ fn exec_index_scan(
                 return other_error("decoded index entry does not match its executor schema");
             }
             // Go `indexScanExec.rowCnt`: every entry the scan produced.
-            *scanned_rows += 1;
+            produced.scanned += 1;
             match conditions_hold(
                 conditions,
                 &row,
                 context.div_precision_increment,
                 &timezone,
             ) {
-                Ok(true) => {}
+                Ok(true) => produced.selected += 1,
                 Ok(false) => continue,
                 Err(error) => {
                     if context.flags & 2 != 0 {
@@ -646,6 +701,7 @@ fn exec_index_scan(
             rows.push(projected);
         }
     }
+    produced.output = rows.len() as u64;
     encode_default_rows(rows, &timezone, eval_warnings)
 }
 
@@ -729,7 +785,7 @@ fn exec_table_scan(
     limit: usize,
     aggregation: Option<&tipb::Aggregation>,
     topn: Option<&TopNSpec>,
-    scanned_rows: &mut u64,
+    produced: &mut ExecutorRows,
 ) -> coprocessor::Response {
     let timezone = match context.time_zone.resolve() {
         Ok(timezone) => timezone,
@@ -888,7 +944,7 @@ fn exec_table_scan(
                 }
             }
             // Go `tableScanExec.rowCnt`: every row the scan produced.
-            *scanned_rows += 1;
+            produced.scanned += 1;
             // Go `selectionProcessor`: a row survives only when EVERY
             // condition evaluates non-null and non-zero.
             match conditions_hold(
@@ -897,7 +953,7 @@ fn exec_table_scan(
                 context.div_precision_increment,
                 &timezone,
             ) {
-                Ok(true) => {}
+                Ok(true) => produced.selected += 1,
                 Ok(false) => continue,
                 Err(error) => return executor_error_response(&error, Vec::new()),
             }
@@ -1008,6 +1064,7 @@ fn exec_table_scan(
             };
             current.extend_from_slice(&encoded);
             current_rows += 1;
+            emitted += 1;
             if current_rows == CHUNK_MAX_ROWS {
                 chunks.push(tipb::Chunk {
                     rows_data: Some((std::mem::take(&mut current)).into()),
@@ -1017,6 +1074,7 @@ fn exec_table_scan(
             }
         }
     }
+    produced.output = emitted as u64;
     if !current.is_empty() {
         chunks.push(tipb::Chunk {
             rows_data: Some((current).into()),

@@ -222,22 +222,19 @@ fn lateral_derived_table_join_shapes() {
 
     // Go's buildLateralJoin supports only INNER JOIN and the comma syntax
     // (logical_plan_builder.go:984): LEFT and RIGHT refuse with 3809.
-    assert!(matches!(
+    crate::tests_support::assert_err(
+        session
+            .run("SELECT t.a FROM t LEFT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"),
+        3809,
+        "Invalid use of LATERAL: LEFT JOIN is not supported with LATERAL",
+    );
+    crate::tests_support::assert_err(
         session.run(
-            "SELECT t.a FROM t LEFT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"
+            "SELECT t.a FROM t RIGHT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE",
         ),
-        Err(DriverError::InvalidLateralJoin(
-            "LEFT JOIN is not supported with LATERAL"
-        ))
-    ));
-    assert!(matches!(
-        session.run(
-            "SELECT t.a FROM t RIGHT JOIN LATERAL (SELECT v FROM s WHERE s.k = t.a) x ON TRUE"
-        ),
-        Err(DriverError::InvalidLateralJoin(
-            "RIGHT JOIN is not supported with LATERAL"
-        ))
-    ));
+        3809,
+        "Invalid use of LATERAL: RIGHT JOIN is not supported with LATERAL",
+    );
 
     // A leftmost `LATERAL` has nothing to correlate with and reads as an
     // ordinary derived table (captured: it runs).
@@ -384,14 +381,8 @@ fn lateral_alias_column_list_renames_positionally() {
             .code,
         1353
     );
-    assert!(matches!(
-        session.run("SELECT * FROM t, LATERAL (SELECT 1, 2) x(c)"),
-        Err(DriverError::ViewWrongList)
-    ));
-    assert!(matches!(
-        session.run("SELECT * FROM t, LATERAL (SELECT 1) x(c1, c2)"),
-        Err(DriverError::ViewWrongList)
-    ));
+    crate::tests_support::assert_err(session.run("SELECT * FROM t, LATERAL (SELECT 1, 2) x(c)"), 1353, "In definition of view, derived table or common table expression, SELECT list and column names list have different column counts");
+    crate::tests_support::assert_err(session.run("SELECT * FROM t, LATERAL (SELECT 1) x(c1, c2)"), 1353, "In definition of view, derived table or common table expression, SELECT list and column names list have different column counts");
 
     // A plain derived table's alias column list never parses.
     assert!(session
@@ -501,11 +492,11 @@ fn show_create_view_prints_the_stored_definition() {
     assert_eq!(table_rows, view_rows);
 
     // Captured: [executor:1347]'test.t' is not VIEW.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SHOW CREATE VIEW t"),
-        Err(DriverError::Schema(SchemaErrorKind::WrongObject { ref name, expected: "VIEW" }))
-            if name == "test.t"
-    ));
+        1347,
+        "'test.t' is not VIEW",
+    );
 
     // An aliased body keeps the alias, both in the FROM and in the
     // column references. Captured from Go.
@@ -562,11 +553,10 @@ fn view_and_table_statements_do_not_cross() {
     let mut session = view_session();
 
     // Captured: [ddl:1347]'test.t' is not VIEW.
-    assert!(matches!(
-        session.run("DROP VIEW t"),
-        Err(DriverError::Schema(SchemaErrorKind::WrongObject { ref name, expected: "VIEW" }))
-            if name == "test.t"
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("DROP VIEW t")),
+        1347
+    );
     // The refusal really did not drop the table.
     assert_eq!(
         row_text(session.run("SELECT COUNT(*) FROM t")),
@@ -575,17 +565,15 @@ fn view_and_table_statements_do_not_cross() {
 
     // Captured: [schema:1051]Unknown table 'test.v' -- DROP TABLE does not
     // see a view at all.
-    assert!(matches!(
-        session.run("DROP TABLE v"),
-        Err(DriverError::Schema(SchemaErrorKind::BadTable(ref name))) if name == "test.v"
-    ));
+    crate::tests_support::assert_err(session.run("DROP TABLE v"), 1051, "Unknown table 'test.v'");
     assert_eq!(row_text(session.run("SELECT COUNT(*) FROM v")).len(), 1);
 
     // Captured: [schema:1050]Table 'test.v' already exists.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE VIEW v AS SELECT 1"),
-        Err(DriverError::Schema(SchemaErrorKind::TableExists(ref name))) if name == "test.v"
-    ));
+        1050,
+        "Table 'test.v' already exists",
+    );
     // OR REPLACE overwrites it instead.
     session
         .run("CREATE OR REPLACE VIEW v AS SELECT a AS a, b AS b FROM t")
@@ -596,25 +584,24 @@ fn view_and_table_statements_do_not_cross() {
     // Captured: [schema:1051]Unknown table 'test.nosuch', suppressed by
     // IF EXISTS.
     session.run("DROP VIEW IF EXISTS nosuch").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("DROP VIEW nosuch"),
-        Err(DriverError::Schema(SchemaErrorKind::BadTable(ref name))) if name == "test.nosuch"
-    ));
+        1051,
+        "Unknown table 'test.nosuch'",
+    );
 
     // Captured: [ddl:1353], the column list and the select list disagree.
-    assert!(matches!(
-        session.run("CREATE VIEW vbad(x, y) AS SELECT a FROM t"),
-        Err(DriverError::ViewWrongList)
-    ));
+    crate::tests_support::assert_err(session.run("CREATE VIEW vbad(x, y) AS SELECT a FROM t"), 1353, "In definition of view, derived table or common table expression, SELECT list and column names list have different column counts");
 
     // Captured: a view is hidden from its own replacement's body, so
     // `SELECT ... FROM v` inside `CREATE OR REPLACE VIEW v` is
     // [planner:1146]Table 'test.v' doesn't exist -- which is also why no
     // directly recursive view can be built.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE OR REPLACE VIEW v AS SELECT * FROM v"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(ref name))) if name == "test.v"
-    ));
+        1146,
+        "Table 'test.v' doesn't exist",
+    );
 
     // A comma-separated DROP VIEW drops them all.
     session.run("DROP VIEW v, v2, v3").unwrap();
@@ -629,21 +616,24 @@ fn writes_through_a_view_are_refused() {
 
     // Captured: "insert into view v is not supported now" -- a plain Go
     // error, so it carries no error class.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO v VALUES (1, 2)"),
-        Err(DriverError::InsertIntoViewUnsupported(ref name)) if name == "v"
-    ));
+        1105,
+        "insert into view v is not supported now",
+    );
     // Captured: [planner:1288]The target table v of the UPDATE is not
     // updatable.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("UPDATE v SET a = 1"),
-        Err(DriverError::TableNotUpdatable(ref name)) if name == "v"
-    ));
+        1288,
+        "The target table v of the UPDATE is not updatable",
+    );
     // Captured: "delete view v is not supported now".
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("DELETE FROM v"),
-        Err(DriverError::DeleteViewUnsupported(ref name)) if name == "v"
-    ));
+        1105,
+        "delete view v is not supported now",
+    );
     // None of the refusals touched the base table.
     assert_eq!(
         row_text(session.run("SELECT COUNT(*) FROM t")),
@@ -667,10 +657,7 @@ fn a_view_over_a_dropped_table_is_invalid() {
     // Captured: [planner:1356]View 'test.vb' references invalid table(s)
     // or column(s) or function(s) or definer/invoker of view lack rights
     // to use them.
-    assert!(matches!(
-        session.run("SELECT * FROM vb"),
-        Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(ref name))) if name == "test.vb"
-    ));
+    crate::tests_support::assert_err(session.run("SELECT * FROM vb"), 1356, "View 'test.vb' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them");
     // SHOW CREATE VIEW still answers from the stored definition.
     let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vb");
     assert_eq!(
@@ -883,10 +870,11 @@ fn a_view_body_may_be_a_set_operation() {
 
     // Captured: [planner:1222]The used SELECT statements have a different
     // number of columns.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE VIEW vubad AS SELECT a FROM t UNION SELECT a, c FROM s"),
-        Err(DriverError::WrongNumberOfColumnsInSelect)
-    ));
+        1222,
+        "The used SELECT statements have a different number of columns",
+    );
 }
 
 /// A view body containing a derived table, and the derived tables a plain
@@ -925,21 +913,24 @@ fn a_view_body_may_contain_a_derived_table() {
 
     // Captured: [ddl:1248]Every derived table must have its own alias --
     // in a view body and in a plain SELECT alike.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("CREATE VIEW vnd AS SELECT * FROM (SELECT a FROM t)"),
-        Err(DriverError::DerivedMustHaveAlias)
-    ));
-    assert!(matches!(
+        1248,
+        "Every derived table must have its own alias",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT * FROM (SELECT a FROM t)"),
-        Err(DriverError::DerivedMustHaveAlias)
-    ));
+        1248,
+        "Every derived table must have its own alias",
+    );
 
     // Captured: [planner:1060]Duplicate column name 'a' -- a derived
     // table is a named relation, so its columns must be unique.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT * FROM (SELECT * FROM t JOIN s ON t.a = s.a) q"),
-        Err(DriverError::DuplicateColumnName(ref name)) if name == "a"
-    ));
+        1060,
+        "Duplicate column name 'a'",
+    );
 
     // Plain derived tables: the alias is the only qualifier they answer
     // to, an expression field keeps its written name, and a set
@@ -1014,10 +1005,11 @@ fn a_view_check_option_is_stored_and_reported() {
     );
 
     // The check would apply to a write, and a write never gets that far.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO vcl VALUES (4, 5)"),
-        Err(DriverError::InsertIntoViewUnsupported(ref name)) if name == "vcl"
-    ));
+        1105,
+        "insert into view vcl is not supported now",
+    );
 }
 
 /// `information_schema.columns` and `SHOW TABLE STATUS` for a view.
@@ -1222,10 +1214,7 @@ fn a_view_column_type_follows_the_base_column() {
     // DESCRIBE fails with the body's own error, and the view drops out of
     // information_schema.columns entirely -- all captured.
     session.run("ALTER TABLE bt DROP COLUMN y").unwrap();
-    assert!(matches!(
-        session.run("SELECT * FROM vb"),
-        Err(DriverError::Schema(SchemaErrorKind::ViewInvalid(ref name))) if name == "test.vb"
-    ));
+    crate::tests_support::assert_err(session.run("SELECT * FROM vb"), 1356, "View 'test.vb' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them");
     assert!(session.run("DESCRIBE vb").is_err());
     let (_, rows) = query_text(&mut session, columns_query);
     assert_eq!(rows, Vec::<Vec<String>>::new());

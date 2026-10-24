@@ -27,14 +27,12 @@ fn create_drop_database() {
     // tk.MustGetDBError("select * from t;", plannererrors.ErrNoDB)
     // Dropping the current database leaves none selected.
     assert_eq!(session.current_database(), "");
-    assert!(matches!(
-        session.run("SELECT * FROM t"),
-        Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))
-    ));
-    assert!(matches!(
+    crate::tests_support::assert_err(session.run("SELECT * FROM t"), 1046, "No database selected");
+    crate::tests_support::assert_err(
         session.run("INSERT INTO t VALUES (1)"),
-        Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))
-    ));
+        1046,
+        "No database selected",
+    );
 
     // Re-select a database: the block above deliberately left none.
     session.run("USE test").unwrap();
@@ -58,29 +56,29 @@ fn create_drop_database() {
     // Creating a database that exists is Go's ErrDBCreateExists unless
     // IF NOT EXISTS was written.
     session.run("CREATE DATABASE drop_test").unwrap();
-    assert!(matches!(
-        session.run("CREATE DATABASE drop_test"),
-        Err(DriverError::Schema(SchemaErrorKind::DatabaseExists(_)))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("CREATE DATABASE drop_test")),
+        1007
+    );
     session
         .run("CREATE DATABASE IF NOT EXISTS drop_test")
         .unwrap();
     // Dropping one that does not exist is ErrDBDropExists (1008) unless IF
     // EXISTS.
     session.run("DROP DATABASE drop_test").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("DROP DATABASE drop_test"),
-        Err(DriverError::DdlCoded { proto, .. })
-            if proto.identity()
-                == tidb_error::catalog::infoschema::ERR_DATABASE_DROP_EXISTS.identity()
-    ));
+        1008,
+        "Can't drop database 'drop_test'; database doesn't exist",
+    );
     session.run("DROP DATABASE IF EXISTS drop_test").unwrap();
 
     // USE on an unknown schema is Go's ErrDatabaseNotExists.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("USE no_such_database"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(_)))
-    ));
+        1049,
+        "Unknown database 'no_such_database'",
+    );
 }
 
 /// `CREATE TABLE IF NOT EXISTS` gets one and only one Go `AppendNote` for the
@@ -278,18 +276,19 @@ fn drop_table() {
     };
 
     // Captured: [schema:1051]Unknown table 'test.nosuch'
-    assert!(matches!(
-        session.run("DROP TABLE nosuch"),
-        Err(DriverError::Schema(SchemaErrorKind::BadTable(_)))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("DROP TABLE nosuch")),
+        1051
+    );
     // Captured: IF EXISTS is a no-op.
     session.run("DROP TABLE IF EXISTS nosuch").unwrap();
 
     // Captured: `drop table d1, nosuch` errors AND still drops d1.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("DROP TABLE d1, nosuch"),
-        Err(DriverError::Schema(SchemaErrorKind::BadTable(_)))
-    ));
+        1051,
+        "Unknown table 'test.nosuch'",
+    );
     assert_eq!(tables(&mut session), vec!["d2".to_owned(), "d3".to_owned()]);
 
     // A multi-table drop removes them all.
@@ -379,23 +378,26 @@ fn alter_table_columns() {
     assert!(session.run("SELECT w FROM a").is_err());
 
     // Captured error codes.
-    assert!(matches!(
-        session.run("ALTER TABLE a ADD COLUMN v BIGINT"),
-        Err(DriverError::DuplicateColumnName(_))
-    ));
-    assert!(matches!(
+    assert_eq!(
+        crate::tests_support::err_code(session.run("ALTER TABLE a ADD COLUMN v BIGINT")),
+        1060
+    );
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE a DROP COLUMN nosuch"),
-        Err(DriverError::UnknownColumnInAlter(_))
-    ));
+        1091,
+        "Can't DROP 'nosuch'; check that column/key exists",
+    );
     session.run("CREATE TABLE one (a BIGINT)").unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE one DROP COLUMN a"),
-        Err(DriverError::CannotDropOnlyColumn { .. })
-    ));
-    assert!(matches!(
+        1090,
+        "can't drop only column a in table one",
+    );
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE a DROP COLUMN id"),
-        Err(DriverError::UnsupportedDropIntegerPrimaryKey)
-    ));
+        8200,
+        "Unsupported drop integer primary key",
+    );
 
     // Captured: a SINGLE-column index is dropped along with its column,
     // while a COMPOSITE one refuses the drop with 8200.
@@ -424,10 +426,11 @@ fn alter_table_columns() {
     session
         .run("CREATE TABLE comp (a BIGINT, b BIGINT, c BIGINT, KEY kab (a, b))")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE comp DROP COLUMN a"),
-        Err(DriverError::CannotDropColumnWithCompositeIndex(_))
-    ));
+        8200,
+        "can't drop column a with composite index covered or Primary Key covered now",
+    );
     let create_comp = match session.run_with_columns("SHOW CREATE TABLE comp").unwrap() {
         StmtOutput::Rows { rows, .. } => datum_text(&rows[0][1]).unwrap(),
         other => panic!("expected rows, got {other:?}"),
@@ -534,14 +537,16 @@ fn modify_column() {
 
     // Captured: an unknown column is 1054 naming the table, unless the
     // statement says IF EXISTS.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE t MODIFY COLUMN nosuch BIGINT"),
-        Err(DriverError::UnknownColumnInTable { .. })
-    ));
-    assert!(matches!(
+        1054,
+        "Unknown column 'nosuch' in 't'",
+    );
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE t CHANGE COLUMN nosuch e BIGINT"),
-        Err(DriverError::UnknownColumnInTable { .. })
-    ));
+        1054,
+        "Unknown column 'nosuch' in 't'",
+    );
     session
         .run("ALTER TABLE t MODIFY COLUMN IF EXISTS nosuch BIGINT")
         .unwrap();
@@ -562,36 +567,34 @@ fn modify_column() {
     // primary key column whose change needs reorganization, clustered or not
     // (`reorg_partition.result` records the NONCLUSTERED refusal); widening
     // an integer is metadata-only.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE t MODIFY COLUMN a VARCHAR(10)"),
-        Err(DriverError::UnsupportedModifyColumn(
-            "this column has primary key flag"
-        ))
-    ));
-    assert!(matches!(
+        8200,
+        "Unsupported modify column: this column has primary key flag",
+    );
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE t MODIFY COLUMN a INT"),
-        Err(DriverError::UnsupportedModifyColumn(
-            "this column has primary key flag"
-        ))
-    ));
+        8200,
+        "Unsupported modify column: this column has primary key flag",
+    );
     session
         .run("CREATE TABLE nonclustered_handle (a INT PRIMARY KEY NONCLUSTERED)")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE nonclustered_handle MODIFY COLUMN a VARCHAR(20)"),
-        Err(DriverError::UnsupportedModifyColumn(
-            "this column has primary key flag"
-        ))
-    ));
+        8200,
+        "Unsupported modify column: this column has primary key flag",
+    );
     session
         .run("ALTER TABLE nonclustered_handle MODIFY COLUMN a BIGINT")
         .unwrap();
 
     // Captured: an index cannot cover a full BLOB/TEXT column (1170).
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE t MODIFY COLUMN b TEXT"),
-        Err(DriverError::BlobKeyWithoutLength(_))
-    ));
+        1170,
+        "BLOB/TEXT column 'b' used in key specification without a key length",
+    );
 
     // Captured: NOT NULL and DEFAULT come from the new definition.
     session
@@ -625,10 +628,11 @@ fn modify_column() {
 
     // Captured: renaming onto an existing column is 1060; renaming a
     // column to its own name is allowed.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("ALTER TABLE t CHANGE COLUMN bb a VARCHAR(20)"),
-        Err(DriverError::DuplicateColumnName(_))
-    ));
+        1060,
+        "Duplicate column name 'a'",
+    );
     session
         .run("ALTER TABLE t CHANGE COLUMN d d BIGINT")
         .unwrap();
@@ -700,19 +704,17 @@ fn index_ddl() {
     assert!(create(&mut session).contains("KEY `ia` (`a`)"));
 
     // Captured: a duplicate index name is 1061.
-    assert!(matches!(
-        session.run("CREATE INDEX ia ON i1 (b)"),
-        Err(DriverError::DuplicateKeyName(_))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("CREATE INDEX ia ON i1 (b)")),
+        1061
+    );
     // Captured: a unique index over data that already collides is 1062
     // naming table.index, and the index is NOT created.
-    match session.run("CREATE UNIQUE INDEX ua ON i1 (a)") {
-        Err(DriverError::DuplicateEntry { value, key }) => {
-            assert_eq!(value, "10");
-            assert_eq!(key, "i1.ua");
-        }
-        other => panic!("expected a duplicate-entry error, got {other:?}"),
-    }
+    crate::tests_support::assert_err(
+        session.run("CREATE UNIQUE INDEX ua ON i1 (a)"),
+        1062,
+        "Duplicate entry '10' for key 'i1.ua'",
+    );
     assert!(!create(&mut session).contains("ua"));
 
     // A unique index over data that does not collide is created.
@@ -728,10 +730,11 @@ fn index_ddl() {
     session.run("INSERT INTO i1 VALUES (4, 10, 1)").unwrap();
 
     // Captured: dropping one that does not exist is 1091.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("DROP INDEX nosuch ON i1"),
-        Err(DriverError::UnknownIndex(_))
-    ));
+        1091,
+        "index nosuch doesn't exist",
+    );
 
     // ALTER TABLE ADD INDEX takes the same path.
     session.run("ALTER TABLE i1 ADD INDEX ic (b)").unwrap();
@@ -795,10 +798,11 @@ fn truncate_table() {
     );
 
     // Captured: truncating a table that does not exist is 1146.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("TRUNCATE TABLE nosuch"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
-    ));
+        1146,
+        "Table 'test.nosuch' doesn't exist",
+    );
 }
 
 #[test]
@@ -824,15 +828,16 @@ fn rename_table() {
 
     // Captured: renaming onto an existing name is 1050.
     session.run("CREATE TABLE t3 (a BIGINT)").unwrap();
-    assert!(matches!(
-        session.run("RENAME TABLE t2 TO t3"),
-        Err(DriverError::Schema(SchemaErrorKind::TableExists(_)))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("RENAME TABLE t2 TO t3")),
+        1050
+    );
     // Captured: renaming a table that does not exist is 1146.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("RENAME TABLE nosuch TO t9"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
-    ));
+        1146,
+        "Table 'test.nosuch' doesn't exist",
+    );
 
     // Captured: ALTER TABLE ... RENAME TO is the same operation.
     session.run("ALTER TABLE t2 RENAME TO t4").unwrap();
@@ -861,10 +866,11 @@ fn rename_table() {
         .unwrap();
     session.run("INSERT INTO dup VALUES (1)").unwrap();
     session.run("RENAME TABLE dup TO dup2").unwrap();
-    match session.run("INSERT INTO dup2 VALUES (1)") {
-        Err(DriverError::DuplicateEntry { key, .. }) => assert_eq!(key, "dup2.ua"),
-        other => panic!("expected a duplicate-entry error, got {other:?}"),
-    }
+    crate::tests_support::assert_err(
+        session.run("INSERT INTO dup2 VALUES (1)"),
+        1062,
+        "Duplicate entry '1' for key 'dup2.ua'",
+    );
 }
 
 /// A rename that cannot be carried out MOVES NOTHING.
@@ -886,29 +892,23 @@ fn a_refused_rename_leaves_the_source_table_readable() {
     let rows = StmtResult::Rows(vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]);
 
     // Captured: 1025, and `d1.src` survives with both rows.
-    assert!(matches!(
-        session.run("RENAME TABLE d1.src TO nosuchdb.t"),
-        Err(DriverError::Schema(
-            SchemaErrorKind::RenameTargetDatabaseMissing { .. }
-        ))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(session.run("RENAME TABLE d1.src TO nosuchdb.t")),
+        1025
+    );
     assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
 
     // `ALTER TABLE ... RENAME TO` is the same operation and the same refusal.
-    assert!(matches!(
-        session.run("ALTER TABLE d1.src RENAME TO nosuchdb.t"),
-        Err(DriverError::Schema(
-            SchemaErrorKind::RenameTargetDatabaseMissing { .. }
-        ))
-    ));
+    crate::tests_support::assert_err(session.run("ALTER TABLE d1.src RENAME TO nosuchdb.t"), 1025, "Error on rename of 'd1.src' to 'nosuchdb.t' (errno: 168 - Database `nosuchdb` doesn't exist)");
     assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
 
     // Captured: renaming a table onto ITSELF is refused as 1050, and the
     // table is still there afterwards.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("RENAME TABLE d1.src TO d1.src"),
-        Err(DriverError::Schema(SchemaErrorKind::TableExists(_)))
-    ));
+        1050,
+        "Table 'd1.src' already exists",
+    );
     assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
 
     // Captured: a multi-pair rename is ALL OR NOTHING. `d1.src TO d1.moved`
@@ -922,10 +922,11 @@ fn a_refused_rename_leaves_the_source_table_readable() {
 
     // The same for a second pair that names a missing SCHEMA rather than a
     // missing table -- the destructive shape this test exists for.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("RENAME TABLE d1.src TO d1.moved, d1.src TO nosuchdb.q"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownTable(_)))
-    ));
+        1146,
+        "Table 'd1.src' doesn't exist",
+    );
     assert_eq!(session.run("SELECT a FROM d1.src").unwrap(), rows);
 
     // The success path still works, including across schemas, and staging
@@ -1020,10 +1021,12 @@ fn column_default_is_normalized_and_checked() {
         "{created}"
     );
     assert_eq!(row_text(session.run("SELECT e FROM t")), [["3.14"]]);
-    assert!(matches!(
-        session.run("ALTER TABLE t ADD COLUMN f VARCHAR(2) DEFAULT 'toolong'"),
-        Err(DriverError::InvalidDefault(_))
-    ));
+    assert_eq!(
+        crate::tests_support::err_code(
+            session.run("ALTER TABLE t ADD COLUMN f VARCHAR(2) DEFAULT 'toolong'")
+        ),
+        1067
+    );
 }
 
 /// What a declared column type REPORTS on the three surfaces that report it,

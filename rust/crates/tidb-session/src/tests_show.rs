@@ -206,10 +206,11 @@ fn show_databases_and_tables() {
         other => panic!("expected rows, got {other:?}"),
     }
     // An unknown schema is Go's ErrBadDB.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SHOW TABLES IN nope"),
-        Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(_)))
-    ));
+        1049,
+        "Unknown database 'nope'",
+    );
 }
 
 /// SHOW COLUMNS / DESCRIBE, with Go's ColDesc field names and key flags.
@@ -1951,10 +1952,11 @@ fn a_utf8mb4_column_validates_its_bytes_and_a_binary_column_does_not() {
     session
         .run("CREATE TABLE t (b VARCHAR(20), vb VARBINARY(20))")
         .unwrap();
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("INSERT INTO t (b) VALUES (x'FFFE7A')"),
-        Err(DriverError::IncorrectValue { .. })
-    ));
+        1366,
+        "Incorrect string value '\\xFF' for column 'b'",
+    );
     session
         .run("INSERT INTO t (vb) VALUES (x'FFFE7A')")
         .unwrap();

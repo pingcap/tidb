@@ -472,14 +472,16 @@ fn window_errors_and_refusals() {
 
     // Captured: "[planner:3593]You cannot use the window function
     // 'row_number' in this context.'" -- WHERE and HAVING alike.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT g FROM t WHERE ROW_NUMBER() OVER (ORDER BY v) > 1"),
-        Err(DriverError::WindowInvalidWindowFuncUse(ref name)) if name == "row_number"
-    ));
-    assert!(matches!(
+        3593,
+        "You cannot use the window function 'row_number' in this context.'",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT g FROM t GROUP BY g HAVING RANK() OVER (ORDER BY g) > 1"),
-        Err(DriverError::WindowInvalidWindowFuncUse(ref name)) if name == "rank"
-    ));
+        3593,
+        "You cannot use the window function 'rank' in this context.'",
+    );
 
     // Captured: "[planner:1210]Incorrect arguments to ntile" for a zero,
     // a negative, and a non-constant bucket count.
@@ -495,61 +497,65 @@ fn window_errors_and_refusals() {
     }
 
     // Captured: "[planner:3579]Window name 'w' is not defined."
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT ROW_NUMBER() OVER w FROM t"),
-        Err(DriverError::WindowNoSuchWindow(ref name)) if name == "w"
-    ));
+        3579,
+        "Window name 'w' is not defined.",
+    );
 
     // Captured: "[planner:3581]A window which depends on another cannot
     // define partitioning."
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run(
             "SELECT ROW_NUMBER() OVER (w PARTITION BY g) FROM t \
-                 WINDOW w AS (PARTITION BY g)"
+                 WINDOW w AS (PARTITION BY g)",
         ),
-        Err(DriverError::WindowNoChildPartitioning)
-    ));
+        3581,
+        "A window which depends on another cannot define partitioning.",
+    );
 
     // Captured: "[planner:3583]Window '<unnamed window>' cannot inherit
     // 'w' since both contain an ORDER BY clause."
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run(
             "SELECT ROW_NUMBER() OVER (w ORDER BY v) FROM t \
-             WINDOW w AS (PARTITION BY g ORDER BY v)"
+             WINDOW w AS (PARTITION BY g ORDER BY v)",
         ),
-        Err(DriverError::WindowNoRedefineOrderBy { ref window, ref base })
-            if window == "<unnamed window>" && base == "w"
-    ));
+        3583,
+        "Window '<unnamed window>' cannot inherit 'w' since both contain an ORDER BY clause.",
+    );
 
     // Captured with a NAMED extending window, which Go names in the same
     // message: "[planner:3583]Window 'w2' cannot inherit 'w' since both
     // contain an ORDER BY clause."
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run(
             "SELECT ROW_NUMBER() OVER w2 FROM t \
-             WINDOW w AS (PARTITION BY g ORDER BY v), w2 AS (w ORDER BY g)"
+             WINDOW w AS (PARTITION BY g ORDER BY v), w2 AS (w ORDER BY g)",
         ),
-        Err(DriverError::WindowNoRedefineOrderBy { ref window, ref base })
-            if window == "w2" && base == "w"
-    ));
+        3583,
+        "Window 'w2' cannot inherit 'w' since both contain an ORDER BY clause.",
+    );
 
     // Captured: "[planner:3582]Window 'w' has a frame definition, so
     // cannot be referenced by another window."
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run(
             "SELECT ROW_NUMBER() OVER w2 FROM t \
              WINDOW w AS (PARTITION BY g ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), \
-             w2 AS (w ORDER BY v)"
+             w2 AS (w ORDER BY v)",
         ),
-        Err(DriverError::WindowNoInheritFrame(ref base)) if base == "w"
-    ));
+        3582,
+        "Window 'w' has a frame definition, so cannot be referenced by another window.",
+    );
 
     // Captured: "[planner:3580]There is a circularity in the window
     // dependency graph."
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT ROW_NUMBER() OVER w FROM t WINDOW w AS (w2), w2 AS (w)"),
-        Err(DriverError::WindowCircularity)
-    ));
+        3580,
+        "There is a circularity in the window dependency graph.",
+    );
 
     // Captured: "[planner:1235]This version of TiDB doesn't yet support
     // 'group_concat as window function'" -- Go refuses GROUP_CONCAT
@@ -558,21 +564,24 @@ fn window_errors_and_refusals() {
     // (...)` exactly like Go's grammar does (any aggregate name may
     // take an `OVER` suffix); the rejection happens at plan/exec time
     // in `tidb_exec::window::build_call`, not at parse time.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT GROUP_CONCAT(v) OVER (ORDER BY v) FROM t"),
-        Err(DriverError::NotSupportedYet(ref feature)) if feature == "group_concat as window function"
-    ));
-    assert!(matches!(
+        1235,
+        "This version of TiDB doesn't yet support 'group_concat as window function'",
+    );
+    crate::tests_support::assert_err(
         session.run("SELECT COUNT(DISTINCT v) OVER (PARTITION BY g) FROM t"),
-        Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
-    ));
+        1235,
+        "This version of TiDB doesn't yet support '<window function>(DISTINCT ..)'",
+    );
 
     // Current Go parses approximate aggregates with OVER; DISTINCT still
     // reaches the common planner refusal rather than a syntax error.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT APPROX_COUNT_DISTINCT(DISTINCT v) OVER (ORDER BY v) FROM t"),
-        Err(DriverError::NotSupportedYet(ref feature)) if feature == "<window function>(DISTINCT ..)"
-    ));
+        1235,
+        "This version of TiDB doesn't yet support '<window function>(DISTINCT ..)'",
+    );
 
     // Frame validation is the PLANNER's, so it fires for every function
     // -- including the ranking ones, whose frame is then ignored.
@@ -593,12 +602,9 @@ fn window_errors_and_refusals() {
     // PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression,
     // of numeric or temporal type" -- and it OUTRANKS the RANGE-offset
     // deferral above, because Go checks the ORDER BY shape first.
-    assert!(matches!(
-        session.run(
+    crate::tests_support::assert_err(session.run(
             "SELECT SUM(v) OVER (PARTITION BY g RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t"
-        ),
-        Err(DriverError::WindowRangeFrameOrderType)
-    ));
+        ), 3587, "Window '<unnamed window>' with RANGE N PRECEDING/FOLLOWING frame requires exactly one ORDER BY expression, of numeric or temporal type");
 
     // Captured: "[planner:3588]Window '<unnamed window>' with RANGE frame
     // has ORDER BY expression of datetime type. Only INTERVAL bound value
@@ -609,22 +615,16 @@ fn window_errors_and_refusals() {
     session
         .run("INSERT INTO rt VALUES ('2020-01-01',1),('2020-01-02',2)")
         .expect("insert rt");
-    assert!(matches!(
-        session.run(
+    crate::tests_support::assert_err(session.run(
             "SELECT SUM(v) OVER (ORDER BY d RANGE BETWEEN 1 PRECEDING AND CURRENT ROW) FROM rt"
-        ),
-        Err(DriverError::WindowRangeFrameTemporalType)
-    ));
+        ), 3588, "Window '<unnamed window>' with RANGE frame has ORDER BY expression of datetime type. Only INTERVAL bound value allowed.");
 
     // Captured: "[planner:3589]... of numeric type, INTERVAL bound value
     // not allowed." -- and, over a STRING key, 3587 wins over BOTH the
     // interval check and the interval refusal below.
-    assert!(matches!(
-            session.run(
+    crate::tests_support::assert_err(session.run(
                 "SELECT SUM(v) OVER (ORDER BY v RANGE BETWEEN INTERVAL 1 DAY PRECEDING AND CURRENT ROW) FROM t"
-            ),
-            Err(DriverError::WindowRangeFrameNumericType)
-        ));
+            ), 3589, "Window '<unnamed window>' with RANGE frame has ORDER BY expression of numeric type, INTERVAL bound value not allowed.");
     session
         .run("CREATE TABLE rs (k VARCHAR(10), v BIGINT)")
         .expect("create rs");
@@ -640,10 +640,11 @@ fn window_errors_and_refusals() {
 
     // Captured: "[planner:1210]Incorrect arguments to nth_value" -- the
     // position must be a POSITIVE integer constant, like NTILE's count.
-    assert!(matches!(
+    crate::tests_support::assert_err(
         session.run("SELECT NTH_VALUE(v, 0) OVER (PARTITION BY g ORDER BY v) FROM t"),
-        Err(DriverError::WrongArguments(ref name)) if name == "nth_value"
-    ));
+        1210,
+        "Incorrect arguments to nth_value",
+    );
 }
 
 /// The pipeline ABOVE the window stage -- an `ORDER BY`-only window,
