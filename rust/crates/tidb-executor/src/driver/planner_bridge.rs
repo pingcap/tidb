@@ -2017,6 +2017,14 @@ fn default_evaluator<'a>(
         )
         .map_err(|error| match error {
             crate::DriverError::Exec(crate::ExecError::Eval(error)) => error,
+            // Go `table.ErrNoDefaultValue.GenWithStackByArgs(colName)`.
+            crate::DriverError::NoDefaultForField(name) => tidb_expr::EvalError::Conversion(
+                tidb_error::terror::TerrorError::registered(
+                    tidb_error::terror::TerrorClass::Table,
+                    tidb_error::terror::TerrorCode::new(1364),
+                    format!("Field '{name}' doesn't have a default value"),
+                ),
+            ),
             error => {
                 let error = error.to_mysql_error();
                 tidb_expr::EvalError::Conversion(tidb_error::terror::TerrorError::compatible(

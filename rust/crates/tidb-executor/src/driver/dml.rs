@@ -33,7 +33,7 @@ use delete_record::DeleteRecords;
 use tidb_planner::physical::FkTriggerNode;
 use update_record::UpdateRecords;
 
-use correlated::{dml_table_scope, insert_table_scope, DmlExpression, UpdateExpression};
+use correlated::UpdateExpression;
 
 pub(crate) use defaults::{
     column_default, column_metadata, materialize_column_default, prepare_named_defaults,
@@ -395,9 +395,7 @@ fn physical_dml_plan_with_cache_mode(
                 Some(fast)
             } else {
                 let update_assignment_values = update
-                    .map(|update| {
-                        update_assignment_values_for_plan(update, catalog, current_db, ctx)
-                    })
+                    .map(|update| update_assignment_values_for_plan(update, catalog, current_db))
                     .transpose()?;
                 // Go `buildDelete` prunes the read to what removing a record
                 // needs (the planner's `pruneAndBuildColPositionInfoForDelete`);
@@ -2897,7 +2895,6 @@ fn update_assignment_values_for_plan(
     update: &tidb_ast::UpdateStmt,
     catalog: &Catalog,
     current_db: &str,
-    ctx: &crate::StmtContext,
 ) -> Result<Vec<Option<tidb_ast::Expr>>, DriverError> {
     let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
         return Ok(Vec::new());
@@ -2926,21 +2923,35 @@ fn update_assignment_values_for_plan(
             });
         }
     }
-    let scope = dml_table_scope(table_ref, &database, &name, columns, ctx);
-    update
+    let column_meta = column_metadata(table);
+    // Go `buildUpdateLists` hands the planner's rewriter every assignment:
+    // a bare `DEFAULT` is the assigned column's own default expression, and a
+    // generated column's own DEFAULT leaves its generation expression as the
+    // value source.
+    Ok(update
         .assignments
         .iter()
         .map(|assignment| {
-            let folded = super::subquery::fold_subqueries(
-                &assignment.value,
-                &scope,
-                catalog,
-                current_db,
-                ctx,
-            )?;
-            Ok(super::subquery::expr_has_subquery(&folded).then_some(folded))
+            let generated = assignment
+                .col
+                .last()
+                .and_then(|target| {
+                    column_meta
+                        .iter()
+                        .find(|meta| meta.name.go_lower_eq(target))
+                })
+                .is_some_and(|meta| meta.generated);
+            if generated {
+                return None;
+            }
+            Some(match &assignment.value {
+                tidb_ast::Expr::Default(None) => {
+                    tidb_ast::Expr::Default(Some(assignment.col.clone()))
+                }
+                value => value.clone(),
+            })
         })
-        .collect()
+        .collect())
 }
 
 /// The retained definition and cache key for a prepared DML statement.
@@ -3744,7 +3755,6 @@ fn run_update_with_physical(
         }
         assignments.push((assignment_index, offset, assignment.value.clone()));
     }
-    let dml_scope = dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx);
     let default_row = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
@@ -3803,20 +3813,18 @@ fn run_update_with_physical(
                             })
                         },
                     )?;
+                    // Go builds every ordered-list expression in the planner
+                    // (`buildUpdateLists`, or the fast plan's
+                    // `buildOrderedList`); only the latter reaches here, and
+                    // it declines a SET expression with a subquery.
                     if expr_has_subquery(value) {
-                        UpdateExpression::applied(DmlExpression::build_with_prepared_defaults(
-                            value,
-                            dml_scope.clone(),
-                            catalog,
-                            current_db,
-                            ctx,
-                            &defaults,
-                        )?)
-                    } else {
-                        UpdateExpression::scalar(rewrite_with_prepared_defaults(
-                            value, &resolver, &defaults,
-                        )?)
+                        return Err(DriverError::unsupported(
+                            "an UPDATE assignment with a subquery was not planned",
+                        ));
                     }
+                    UpdateExpression::scalar(rewrite_with_prepared_defaults(
+                        value, &resolver, &defaults,
+                    )?)
                 }
             }
         };
@@ -3933,7 +3941,7 @@ fn run_update_with_physical(
     // warning, and the source's `SelectLockExec` locks after the last chunk's
     // writes. Assignments that read the catalog (a correlated subquery)
     // instead see the whole statement snapshot first.
-    if writes_stored_columns && !set_exprs.iter().any(|(_, expr)| expr.reads_catalog()) {
+    if writes_stored_columns {
         let mut row_index = 0usize;
         stream_physical_write_rows(
             physical,
@@ -3950,8 +3958,6 @@ fn run_update_with_physical(
                     field_types: &field_types,
                     column_names: &column_names,
                     set_exprs: &set_exprs,
-                    catalog: &*catalog,
-                    current_db,
                     ctx,
                     on_update_now: &on_update_now,
                     extra_handle: extra_handle_slot.is_some(),
@@ -4011,8 +4017,6 @@ fn run_update_with_physical(
         field_types: &field_types,
         column_names: &column_names,
         set_exprs: &set_exprs,
-        catalog,
-        current_db,
         ctx,
         on_update_now: &on_update_now,
         extra_handle: extra_handle_slot.is_some(),
@@ -4067,8 +4071,6 @@ struct UpdateRowEvaluator<'a> {
     field_types: &'a [FieldType],
     column_names: &'a [String],
     set_exprs: &'a [(usize, UpdateExpression)],
-    catalog: &'a Catalog,
-    current_db: &'a str,
     ctx: &'a crate::StmtContext,
     on_update_now: &'a PreparedOnUpdateNow,
     /// Whether `field_types` ends in Go's extra handle column, so the row
@@ -4111,14 +4113,7 @@ impl UpdateRowEvaluator<'_> {
         // is, rather than a rule the loop has to re-establish per assignment.
         let mut new_row = row.to_vec();
         for (offset, expr) in self.set_exprs {
-            let value = expr.eval(
-                sql_row,
-                chunk.get_row(0),
-                physical_row,
-                self.catalog,
-                self.current_db,
-                self.ctx,
-            )?;
+            let value = expr.eval(chunk.get_row(0), physical_row, self.ctx)?;
             // ExtraHandleID has no column metadata in Go composeNewRow:
             // evaluate it, but neither cast it nor put it in the writable row.
             if self.extra_handle && *offset == visible {

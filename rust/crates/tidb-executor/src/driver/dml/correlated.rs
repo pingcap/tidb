@@ -14,102 +14,17 @@
 
 use super::*;
 
-/// One row expression after Go's expression rewriter has inserted the Apply
-/// operators required by correlated subqueries.
-pub(super) struct DmlExpression {
-    expression: Expression,
-    field_types: Vec<FieldType>,
-    applies: Vec<(CorrelatedSubquery, FromScope)>,
-}
-
-impl DmlExpression {
-    pub(super) fn build_with_prepared_defaults(
-        expr: &tidb_ast::Expr,
-        mut scope: FromScope,
-        catalog: &Catalog,
-        current_db: &str,
-        ctx: &crate::StmtContext,
-        defaults: &[super::defaults::PreparedNamedDefault],
-    ) -> Result<Self, DriverError> {
-        let mut rewritten = fold_subqueries(expr, &scope, catalog, current_db, ctx)?;
-        let mut applies = Vec::new();
-        while expr_has_subquery(&rewritten) {
-            let index = scope.width();
-            let mut found = None;
-            rewritten = extract_correlated_subquery(
-                &rewritten, &scope, catalog, current_db, index, &mut found, ctx,
-            )?;
-            let Some(correlated) = found else {
-                break;
-            };
-            let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
-                subquery_result_type(&correlated, &scope, catalog, current_db, ctx)
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
-            } else {
-                FieldType::new(FieldTypeCode::LongLong)
-            };
-            applies.push((correlated, scope.clone()));
-            scope.tables.push(FromTable {
-                name: String::new(),
-                database: None,
-                columns: vec![(format!("__apply_{index}"), value_type)],
-                offset: index,
-            });
-        }
-        let expression =
-            rewrite_with_prepared_defaults(&rewritten, &ScopeResolver { scope: &scope }, defaults)?;
-        let field_types = scope
-            .column_list()
-            .into_iter()
-            .map(|(_, field_type)| field_type)
-            .collect();
-        Ok(Self {
-            expression,
-            field_types,
-            applies,
-        })
-    }
-
-    pub(super) fn eval(
-        &self,
-        row: &[Datum],
-        catalog: &Catalog,
-        current_db: &str,
-        ctx: &crate::StmtContext,
-    ) -> Result<Datum, DriverError> {
-        let base_width = self.field_types.len() - self.applies.len();
-        let mut values = row.iter().take(base_width).cloned().collect::<Vec<_>>();
-        for (correlated, scope) in &self.applies {
-            values.push(run_correlated_subquery(
-                correlated, &values, scope, catalog, current_db, ctx,
-            )?);
-        }
-        let chunk = row_chunk(&values, &self.field_types)?;
-        self.expression
-            .eval(ctx, chunk.get_row(0))
-            .map_err(|error| DriverError::Exec(ExecError::Eval(error)))
-    }
-}
-
+/// One assignment of an UPDATE: the planner's expression over the read's row
+/// (Go `Update.OrderedList`), or, for a point update the fast plan reads,
+/// an expression over the table's own row.
 pub(super) enum UpdateExpression {
     Scalar(Expression),
     Physical(Expression),
-    Applied(DmlExpression),
 }
 
 impl UpdateExpression {
-    /// Whether evaluating this assignment reads the catalog (a correlated
-    /// subquery), so it must see the statement's snapshot before any write.
-    pub(super) fn reads_catalog(&self) -> bool {
-        matches!(self, Self::Applied(_))
-    }
-
     pub(super) fn scalar(expression: Expression) -> Self {
         Self::Scalar(expression)
-    }
-
-    pub(super) fn applied(expression: DmlExpression) -> Self {
-        Self::Applied(expression)
     }
 
     pub(super) fn physical(expression: Expression) -> Self {
@@ -118,11 +33,8 @@ impl UpdateExpression {
 
     pub(super) fn eval(
         &self,
-        row: &[Datum],
         scalar_row: tidb_chunk::row::Row<'_>,
         physical_row: Option<tidb_chunk::row::Row<'_>>,
-        catalog: &Catalog,
-        current_db: &str,
         ctx: &crate::StmtContext,
     ) -> Result<Datum, DriverError> {
         match self {
@@ -139,45 +51,6 @@ impl UpdateExpression {
                     })?,
                 )
                 .map_err(|error| DriverError::Exec(ExecError::Eval(error))),
-            Self::Applied(expression) => expression.eval(row, catalog, current_db, ctx),
         }
     }
-}
-
-pub(super) fn dml_table_scope(
-    table_ref: &tidb_ast::TableRef,
-    database: &str,
-    name: &str,
-    columns: Vec<(String, FieldType)>,
-    ctx: &crate::StmtContext,
-) -> FromScope {
-    with_statement_context(
-        single_table_scope(
-            table_ref.alias.as_deref().unwrap_or(name),
-            table_ref.alias.is_none().then(|| database.to_owned()),
-            columns,
-        ),
-        ctx,
-    )
-}
-
-/// The INSERT target as the outer scope of a subquery in its VALUES lists
-/// or ON DUPLICATE KEY UPDATE assignments (Go's `mockTablePlan`).
-pub(super) fn insert_table_scope(
-    database: &str,
-    name: &str,
-    columns: Vec<(String, FieldType)>,
-    ctx: &crate::StmtContext,
-) -> FromScope {
-    with_statement_context(single_table_scope(name, Some(database.to_owned()), columns), ctx)
-}
-
-fn with_statement_context(mut scope: FromScope, ctx: &crate::StmtContext) -> FromScope {
-    let statement = FromScope::for_statement(ctx);
-    scope.constant_context = statement.constant_context;
-    scope.zone = statement.zone;
-    scope.like_default_escape = statement.like_default_escape;
-    scope.no_unsigned_subtraction = statement.no_unsigned_subtraction;
-    scope.div_precision_increment = statement.div_precision_increment;
-    scope
 }

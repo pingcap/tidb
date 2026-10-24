@@ -5129,10 +5129,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         Ok((LogicalPlan::Projection(projection), self.get_opt_flag()))
     }
 
-    /// Go `buildUpdateLists`: rewrite correlated SET expressions against the
+    /// Go `buildUpdateLists`: rewrite every SET expression against the
     /// frozen UPDATE input, carrying every inserted Apply into the source
-    /// plan. Entries that contain no remaining subquery stay `None`; their
-    /// ordinary scalar/default lowering is owned by the Update executor.
+    /// plan. An entry the caller leaves `None` (a generated column's own
+    /// DEFAULT) has no expression.
     pub fn build_update_dml_source(
         &mut self,
         select: &SelectStmt,
@@ -5150,13 +5150,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         continue;
                     };
                     let mut scratch = Self::clause_scratch(value);
-                    let (next_plan, lowered) =
-                        builder.lower_scalar_subqueries(plan, &mut scratch)?;
+                    let (next_plan, _) = builder.lower_scalar_subqueries(plan, &mut scratch)?;
                     plan = next_plan;
-                    if !lowered {
-                        expressions.push(None);
-                        continue;
-                    }
                     let (schema, names) = snapshot_schema_and_names(&plan);
                     let mut markers = BTreeMap::new();
                     markers.insert(MarkerKind::Column, schema.columns.clone());

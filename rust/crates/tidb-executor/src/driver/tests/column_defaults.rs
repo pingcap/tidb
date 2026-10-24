@@ -563,14 +563,19 @@ fn explicit_no_default_and_not_null_enum_follow_go_order() {
     assert_eq!(row[0], Datum::Int(0));
     assert_eq!(row[1].go_bytes(), b"first");
 
-    assert!(matches!(
-        run_update_on(
-            "UPDATE nil_default SET n = DEFAULT WHERE id = 999",
-            &mut catalog,
-            &strict,
-        ),
-        Err(DriverError::NoDefaultForField(name)) if name == "n"
-    ));
+    // The planner builds the assignment (Go `buildUpdateLists`, or the fast
+    // plan's `buildOrderedList`), so the refusal reaches the client as
+    // ErrNoDefaultValue (1364) whichever read the statement has.
+    for statement in [
+        "UPDATE nil_default SET n = DEFAULT WHERE id = 999",
+        "UPDATE nil_default SET n = DEFAULT WHERE id > 998",
+    ] {
+        let error = run_update_on(statement, &mut catalog, &strict)
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 1364, "{statement}");
+        assert_eq!(error.message, "Field 'n' doesn't have a default value");
+    }
 }
 
 /// Multi-table UPDATE resolves each DEFAULT through the joined scope, but
