@@ -481,7 +481,7 @@ impl Session {
             &self.current_db,
             |dml| {
                 self.with_planning_catalog(|catalog| {
-                    tidb_executor::driver::write_privilege_tables(
+                    tidb_executor::driver::write_visit_info(
                         dml,
                         catalog,
                         &self.current_db,

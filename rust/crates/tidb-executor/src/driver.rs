@@ -58,45 +58,9 @@ pub mod infoschema_meta;
 mod multi_dml;
 pub mod metricsschema;
 pub mod perfschema;
-pub use multi_dml::delete_privilege_tables;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
-/// Resolve the write targets used by statement authorization through the
-/// same metadata owners that build UPDATE/DELETE execution policies.
-pub fn write_privilege_tables(
-    statement: &tidb_ast::DmlStmt,
-    catalog: &Catalog,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<(String, String)>, DriverError> {
-    match statement {
-        tidb_ast::DmlStmt::Update(update) => {
-            update_privilege_tables(update, catalog, current_database, ctx)
-        }
-        // Go `buildDelete` appends a visitInfo of `DBInfo.Name.L`,
-        // `TableInfo.Name.L` per target.
-        tidb_ast::DmlStmt::Delete(delete) => {
-            let mut tables = Vec::new();
-            for (database, table) in
-                delete_privilege_tables(delete, catalog, current_database, ctx)?
-            {
-                let target = (
-                    tidb_hack::go_to_lower(&database),
-                    tidb_hack::go_to_lower(&table),
-                );
-                if !tables.contains(&target) {
-                    tables.push(target);
-                }
-            }
-            Ok(tables)
-        }
-        _ => Err(DriverError::unsupported(
-            "write target resolution requires UPDATE or DELETE",
-        )),
-    }
-}
-
-pub use planner_bridge::{dml_visit_info, query_visit_info, update_privilege_tables};
+pub use planner_bridge::{dml_visit_info, query_visit_info, write_visit_info};
 mod record_set;
 pub use record_set::QueryRecordSet;
 pub(crate) mod fk_trigger_plan;

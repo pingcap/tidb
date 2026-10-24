@@ -926,26 +926,37 @@ pub(super) fn logical_from_plan(
     builder.build_join(join)
 }
 
-/// Resolves UPDATE privilege targets through the logical plan's output names,
-/// as Go `buildUpdateLists` / `buildNewAssignments` do. A source alias is only
-/// a lookup name: authorization always uses the resolved base table identity.
-/// This builds metadata without installing a subquery evaluator or reading rows.
-pub fn update_privilege_tables(
-    update: &tidb_ast::UpdateStmt,
+/// Go's write-privilege `visitInfo` of an UPDATE or a DELETE, as `buildUpdate`
+/// / `buildDelete` append it after the read: `UpdatePriv` for each table an
+/// assignment writes, `DeletePriv` for each table removed from. A source alias
+/// is only a lookup name: authorization always uses the resolved base table
+/// identity. This builds metadata without installing a subquery evaluator or
+/// reading rows.
+pub fn write_visit_info(
+    statement: &tidb_ast::DmlStmt,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Vec<(String, String)>, super::DriverError> {
-    // Go appends a visitInfo of `name.DBName.L` and `name.OrigTblName.L` per
-    // assignment; repeats of the same lowered pair check nothing new.
-    let mut tables = Vec::new();
-    for (database, table, _) in update_target_columns(update, catalog, current_db, ctx)? {
-        let target = (database.go_to_lower(), table.go_to_lower());
-        if !tables.contains(&target) {
-            tables.push(target);
+) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, super::DriverError> {
+    let source = catalog
+        .planner_catalog(current_db, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx)
+        .with_related_tables_for_mdl(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    match statement {
+        tidb_ast::DmlStmt::Update(update) => builder.update_write_visits(update),
+        tidb_ast::DmlStmt::Delete(delete) => builder.delete_write_visits(delete),
+        _ => {
+            return Err(super::DriverError::unsupported(
+                "write target resolution requires UPDATE or DELETE",
+            ))
         }
     }
-    Ok(tables)
+    .map_err(super::planner_error_to_driver)
 }
 
 pub(super) fn update_target_columns(

@@ -256,7 +256,10 @@ pub(crate) fn required_table_privileges(
     current_db: &str,
     resolve_write: impl FnOnce(
         &tidb_ast::DmlStmt,
-    ) -> Result<Vec<(String, String)>, tidb_executor::DriverError>,
+    ) -> Result<
+        Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
+        tidb_executor::DriverError,
+    >,
     resolve_read: impl FnOnce(
         &tidb_ast::QueryStmt,
     ) -> Result<
@@ -329,12 +332,8 @@ pub(crate) fn required_table_privileges(
                 for visit in resolve_dml_read(dml) {
                     requests.push(request_of_visit(&visit));
                 }
-                for (schema, table) in resolve_write(dml)? {
-                    requests.push(TablePrivilegeRequest::unnamed(
-                        &schema,
-                        &table,
-                        GlobalPriv::Update,
-                    ));
+                for visit in resolve_write(dml)? {
+                    requests.push(request_of_visit(&visit));
                 }
             }
             // `buildDelete` (`logical_plan_builder.go` around line 6640):
@@ -347,12 +346,8 @@ pub(crate) fn required_table_privileges(
                 for visit in resolve_dml_read(dml) {
                     requests.push(request_of_visit(&visit));
                 }
-                for (schema, table) in resolve_write(dml)? {
-                    requests.push(TablePrivilegeRequest::new(
-                        &schema,
-                        &table,
-                        GlobalPriv::Delete,
-                    ));
+                for visit in resolve_write(dml)? {
+                    requests.push(request_of_visit(&visit));
                 }
             }
             // Go `buildImportInto`: IMPORT INTO needs the full DML privileges

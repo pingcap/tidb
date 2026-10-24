@@ -1522,3 +1522,58 @@ fn multi_table_update_keeps_updated_aliases_and_what_set_reads() {
     let error = build("UPDATE t AS t1, t AS t2 SET t1.nope = 1").err().unwrap();
     assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
 }
+
+#[test]
+fn write_visits_follow_the_targets_the_builder_resolved() {
+    // Go `buildUpdateLists` appends `UpdatePriv` per assignment's base table
+    // (no authErr); `buildDelete` appends `DeletePriv` per target with the
+    // `ErrTableaccessDenied` authErr; a CTE target is `ErrNonUpdatableTable`.
+    use super::visit_info::VisitAuthError;
+    let harness = Harness::new();
+    let dml = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the statement parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        (*dml).clone()
+    };
+    let tidb_ast::DmlStmt::Update(update) = dml("UPDATE t AS x, t AS y SET x.b = 1, y.c = 2") else {
+        panic!("not an UPDATE");
+    };
+    let visits = harness.builder().update_write_visits(&update).unwrap();
+    assert_eq!(visits.len(), 1, "both aliases are the one base table");
+    assert_eq!(
+        (visits[0].database.as_str(), visits[0].table.as_str()),
+        ("test", "t")
+    );
+    assert_eq!(visits[0].privilege, tidb_mysql::UpdatePriv);
+    assert_eq!(visits[0].error, VisitAuthError::None);
+
+    let tidb_ast::DmlStmt::Delete(delete) = dml("DELETE x FROM t AS x, t AS y WHERE x.a = y.a")
+    else {
+        panic!("not a DELETE");
+    };
+    let visits = harness.builder().delete_write_visits(&delete).unwrap();
+    assert_eq!(visits.len(), 1);
+    assert_eq!(visits[0].privilege, tidb_mysql::DeletePriv);
+    assert_eq!(
+        visits[0].error,
+        VisitAuthError::TableAccessDenied {
+            command: "DELETE",
+            table: "t".to_owned()
+        }
+    );
+
+    let tidb_ast::DmlStmt::Delete(delete) = dml("DELETE FROM t WHERE a = 1") else {
+        panic!("not a DELETE");
+    };
+    let visits = harness.builder().delete_write_visits(&delete).unwrap();
+    assert_eq!(visits.len(), 1);
+    assert_eq!(visits[0].table, "t");
+
+    let tidb_ast::DmlStmt::Delete(delete) = dml("WITH c AS (SELECT 1) DELETE FROM c") else {
+        panic!("not a DELETE");
+    };
+    let error = harness.builder().delete_write_visits(&delete).err().unwrap();
+    assert_eq!(error.message(), "The target table c of the DELETE is not updatable");
+}

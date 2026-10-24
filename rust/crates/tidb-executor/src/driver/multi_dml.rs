@@ -99,41 +99,6 @@ use crate::kv_table::TableHandle;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 
-/// DELETE permissions use the same resolved outer targets as execution and
-/// FK planning. Names that occur only inside derived queries cannot name a
-/// writable outer target.
-pub fn delete_privilege_tables(
-    delete: &tidb_ast::DeleteStmt,
-    catalog: &Catalog,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<(String, String)>, DriverError> {
-    let tidb_ast::DeleteKind::Multi { .. } = &delete.kind else {
-        let tidb_ast::DeleteKind::Single(table) = &delete.kind else {
-            unreachable!()
-        };
-        // Go `buildDelete`'s single-table arm: `if isCTE(tblW)` is 1288.
-        if super::planner_bridge::is_cte(delete.with.as_ref(), table) {
-            return Err(DriverError::NonUpdatableTable {
-                table: table.name.join("."),
-                statement: "DELETE",
-            });
-        }
-        let (database, name) = split_table_path(&table.name, current_db)?;
-        return Ok(vec![(database.to_owned(), name.to_owned())]);
-    };
-    let mut resolved = Vec::new();
-    for target in super::planner_bridge::delete_targets(delete, catalog, current_db, ctx)
-        .map_err(super::planner_error_to_driver)?
-    {
-        let table = (target.database, target.table);
-        if !resolved.contains(&table) {
-            resolved.push(table);
-        }
-    }
-    Ok(resolved)
-}
-
 /// Go's `updatedRowKeys`: per (target position, row identity), whether the
 /// write that reached it CHANGED the row. A repeat visit is skipped only
 /// when the first one changed something -- a no-op first visit leaves the
@@ -778,8 +743,10 @@ pub(crate) fn multi_dml_physical_plan(
                 None,
             );
             super::set_opr::validate_query_usage(&select, ctx)?;
-            for (database, table) in delete_privilege_tables(delete, catalog, current_db, ctx)? {
-                add_target(database, table, None);
+            for target in super::planner_bridge::delete_targets(delete, catalog, current_db, ctx)
+                .map_err(super::planner_error_to_driver)?
+            {
+                add_target(target.database, target.table, None);
             }
             delete_multi = Some(delete_multi_input(delete, catalog, current_db, ctx)?);
             ("Delete", select)

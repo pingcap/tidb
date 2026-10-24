@@ -174,6 +174,7 @@ pub mod dml_source;
 mod dml_targets;
 pub mod update_targets;
 mod update_build;
+mod dml_visits;
 pub mod ordered_list;
 pub mod expand;
 pub mod field_name;
