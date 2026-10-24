@@ -712,8 +712,8 @@ const (
 	CursorTypeScrollable
 )
 
-// ZlibCompressDefaultLevel is the zlib compression level for the compressed protocol
-const ZlibCompressDefaultLevel = 6
+// ZlibCompressDefaultLevel is the zlib compression level for the compressed protocol (BestSpeed).
+const ZlibCompressDefaultLevel = 1
 
 const (
 	// CompressionNone is no compression in use
