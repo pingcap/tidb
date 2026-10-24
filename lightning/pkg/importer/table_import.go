@@ -729,17 +729,17 @@ func (tr *TableImporter) preprocessEngine(
 	flushPendingChunks := make([]chunkFlushStatus, 0, 16)
 
 	chunkCpChan := make(chan *checkpoints.ChunkCheckpoint, 16)
+	checkpointDone := make(chan struct{})
+	defer func() {
+		close(chunkCpChan)
+		<-checkpointDone
+	}()
 	go func() {
-		for {
-			select {
-			case cp, ok := <-chunkCpChan:
-				if !ok {
-					return
-				}
-				saveCheckpoint(rc, tr, engineID, cp)
-			case <-ctx.Done():
-				return
-			}
+		defer close(checkpointDone)
+		// Drain completed chunks even on cancellation. Exiting early can block
+		// the producer on a full queue and discard already-flushed checkpoints.
+		for cp := range chunkCpChan {
+			saveCheckpoint(rc, tr, engineID, cp)
 		}
 	}()
 
