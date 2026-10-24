@@ -17,10 +17,12 @@ package windows_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestWindowFunctions(t *testing.T) {
@@ -478,4 +480,59 @@ func TestVarSampAsAWindowFunction(t *testing.T) {
 	tk.MustExec("create table t1 (c1 int)")
 	tk.MustExec("select var_samp(c1) from t1")
 	tk.MustExec("select c1, var_samp(c1) over (partition by c1) from t1")
+}
+
+func TestWholePartitionAggWindowSpill(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'LOG'")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (p int, id int, v int, s varchar(32), primary key (p, id) clustered)")
+	// Partition 0 spans many chunks, and partitions 1 to 300 have 1 to 3 rows.
+	values := make([]string, 0, 1600)
+	for i := range 1000 {
+		v := fmt.Sprintf("%d", i*7%101-50)
+		if i%17 == 0 {
+			v = "NULL"
+		}
+		values = append(values, fmt.Sprintf("(0, %d, %s, 's%03d')", i, v, i%997))
+	}
+	for p := 1; p <= 300; p++ {
+		for id := 0; id <= p%3; id++ {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, 's%03d')", p, id, p*id%13, p%7))
+		}
+	}
+	tk.MustExec("insert into t values " + strings.Join(values, ","))
+	tk.MustExec("set @@tidb_max_chunk_size = 32")
+	tk.MustExec("set @@tidb_window_concurrency = 1")
+
+	queries := []string{
+		"select p, id, sum(v) over w, count(*) over w, count(v) over w, avg(v) over w, max(s) over w, min(v) over w from t window w as (partition by p)",
+		"select p, id, bit_and(v) over w, bit_or(v) over w, bit_xor(v) over w, var_pop(v) over w, stddev_samp(v) over w from t window w as (partition by p rows between unbounded preceding and unbounded following)",
+		"select p, id, sum(v) over (), max(v) over (), min(s) over () from t",
+	}
+	for _, query := range queries {
+		// The non-pipelined window executor does not spill and serves as the reference.
+		tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
+		tk.MustExec("set @@tidb_mem_quota_query = default")
+		expected := tk.MustQuery(query).Sort().Rows()
+
+		tk.MustExec("set @@tidb_enable_pipelined_window_function = 1")
+		tk.MustQuery(query).Sort().Check(expected)
+		tk.MustExec("set @@tidb_mem_quota_query = 1")
+		tk.MustQuery(query).Sort().Check(expected)
+
+		rows := tk.MustQuery("explain analyze " + query).Rows()
+		found := false
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprintf("%v", row[0]), "Window") {
+				found = true
+				disk := fmt.Sprintf("%v", row[len(row)-1])
+				require.NotEqual(t, "N/A", disk, query)
+				require.NotContains(t, disk, "0 Bytes", query)
+			}
+		}
+		require.True(t, found, query)
+	}
 }
