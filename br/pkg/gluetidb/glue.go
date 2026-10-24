@@ -108,7 +108,7 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 		return nil, errors.Trace(err)
 	}
 	if existDom == nil {
-		err = session.InitMDLVariable(store)
+		_, err = session.InitMDLVariable(store, session.MDLInitKeepDisabledOnNull)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +200,7 @@ func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = session.InitMDLVariable(store); err != nil {
+	if _, err = session.InitMDLVariable(store, session.MDLInitKeepDisabledOnNull); err != nil {
 		return errors.Trace(err)
 	}
 

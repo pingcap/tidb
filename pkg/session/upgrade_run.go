@@ -27,17 +27,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
-// For example, add new system variables into mysql.global_variables table.
-func upgrade(s sessionapi.Session) {
+// upgradeWithMDLState runs upgrade work after the persisted MDL state has been loaded.
+func upgradeWithMDLState(s sessionapi.Session, mdlIsNull bool) {
 	// Do upgrade works then update bootstrap version.
-	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during upgrade", zap.Error(err))
-	}
-
 	var ver int64
-	ver, err = getBootstrapVersion(s)
+	ver, err := getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
@@ -48,7 +42,7 @@ func upgrade(s sessionapi.Session) {
 
 	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
 	// but during upgrade we disable it.
-	if isNull {
+	if mdlIsNull {
 		upgradeToVer99Before(s)
 	}
 
@@ -63,7 +57,7 @@ func upgrade(s sessionapi.Session) {
 				zap.Int64("target-version", currentBootstrapVersion))
 		}
 	}
-	if isNull {
+	if mdlIsNull {
 		upgradeToVer99After(s)
 	}
 
@@ -92,25 +86,55 @@ func upgrade(s sessionapi.Session) {
 	}
 }
 
-// InitMDLVariableForUpgrade initializes the metadata lock variable.
-func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
-	isNull := false
+// MDLInitPolicy controls how InitMDLVariable handles a missing persisted MDL value.
+type MDLInitPolicy int
+
+const (
+	// MDLInitForceEnable is used by Bootstrap. It always persists and enables MDL.
+	MDLInitForceEnable MDLInitPolicy = iota
+	// MDLInitEnableOnNull is used by Normal startup. It repairs a missing key
+	// as enabled for compatibility with nightly-2022-11-07 to nightly-2022-11-17.
+	MDLInitEnableOnNull
+	// MDLInitKeepDisabledOnNull is used by Upgrade and BR. It leaves a missing
+	// key untouched and preserves the legacy non-MDL behavior.
+	MDLInitKeepDisabledOnNull
+)
+
+// InitMDLVariable applies the policy-specific MDL change in one transaction.
+// It initializes the process-wide runtime setting only after that transaction
+// succeeds. For policies that read the existing value, isNull reports whether
+// the key was missing before the policy was applied.
+func InitMDLVariable(store kv.Storage, policy MDLInitPolicy) (isNull bool, err error) {
 	enable := false
-	var err error
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
+		if policy == MDLInitForceEnable {
+			enable = true
+			return t.SetMetadataLock(true)
+		}
 		enable, isNull, err = t.GetMetadataLock()
 		if err != nil {
 			return err
 		}
+		switch policy {
+		case MDLInitEnableOnNull:
+			if isNull {
+				enable = true
+				logutil.BgLogger().Warn("metadata lock is null")
+				return t.SetMetadataLock(true)
+			}
+		case MDLInitKeepDisabledOnNull:
+			// Keep the value returned from meta KV. A missing key is read as false.
+		default:
+			panic("invalid MDL initialization policy")
+		}
 		return nil
 	})
-	if isNull || !enable {
-		vardef.SetEnableMDL(false)
-	} else {
-		vardef.SetEnableMDL(true)
+	if err != nil {
+		return isNull, err
 	}
-	return isNull, err
+	vardef.SetEnableMDL(enable)
+	return isNull, nil
 }
 
 func printClusterState(s sessionapi.Session, ver int64) {
