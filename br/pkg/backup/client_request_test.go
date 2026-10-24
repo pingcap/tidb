@@ -64,3 +64,21 @@ func TestBuildProgressRangeTreeLoadsCheckpointDataFromMetadataStorage(t *testing
 	require.Len(t, incomplete, 0)
 	require.NoError(t, metaWriter.FinishWriteMetas(ctx, metautil.AppendDataFile))
 }
+
+func TestCheckCheckpointRejectsAnotherCluster(t *testing.T) {
+	cfgHash := []byte("hash")
+	bc := &Client{clusterID: 1}
+	require.NoError(t, bc.CheckCheckpoint(cfgHash))
+
+	bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{ConfigHash: cfgHash, BackupTS: 2, ClusterID: 1}
+	require.NoError(t, bc.CheckCheckpoint(cfgHash))
+
+	// legacy checkpoint metadata without the cluster id
+	bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{ConfigHash: cfgHash, BackupTS: 2}
+	require.NoError(t, bc.CheckCheckpoint(cfgHash))
+
+	bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{ConfigHash: cfgHash, BackupTS: 2, ClusterID: 3}
+	err := bc.CheckCheckpoint(cfgHash)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "created by the cluster 3 instead of the current cluster 1")
+}
