@@ -424,6 +424,7 @@ func testInsertOnDuplicateKeyUpdateResolvesRepeatedLocks(t *testing.T, rollback 
 		return err == nil && count == 0 && lockResolver.AsyncResolveTaskCount() == 0
 	}, 3*time.Second, 10*time.Millisecond)
 	mu.Lock()
+	// Snapshot INSERT's observations before SELECT can issue more RPCs; copy the slice so later callbacks cannot change the snapshot.
 	insertObservations := observations
 	insertObservations.resolveErrors = append([]string(nil), observations.resolveErrors...)
 	mu.Unlock()
