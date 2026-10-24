@@ -33,7 +33,7 @@ use tidb_executor::remote_scan::{
     PushdownPartialAggregate, PushdownScan, PushdownScanRequest, PushdownStatementContext,
 };
 use tidb_executor::storage::{StorageError, StorageIterator, TableStorage};
-use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable, ScanPredicate};
+use tidb_executor::{IndexRange, KvColumn, KvIndex, KvTable};
 use tidb_txnkv::Key;
 
 const TABLE_ID: i64 = 42;
@@ -149,7 +149,7 @@ fn count_over_primary() -> PushdownPartialAggregate {
 fn capture(table: &mut KvTable, captured: Arc<Mutex<Option<PushdownScanRequest>>>) {
     let opened = table.pushdown_partial_aggregate_cursor(
         &[0],
-        Vec::<ScanPredicate>::new().as_slice(),
+        Vec::<tidb_expr::expression::Expression>::new().as_slice(),
         Option::<&[IndexRange]>::None,
         &count_over_primary(),
         &tidb_executor::StmtContext::default(),

@@ -32,7 +32,6 @@ use super::{
     RowDecodeContext, TableHandle,
 };
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::predicate_pushdown::ScanPredicate;
 use crate::remote_scan::{
     PushdownAggregateKind, PushdownIndexScan, PushdownPartialAggregate, PushdownRowStream,
     PushdownScanColumn, PushdownScanRequest, PushdownStatementContext, PushdownTopN,
@@ -47,6 +46,7 @@ use tidb_codec::table_key::{
 };
 use tidb_codec::Encoder;
 use tidb_datatype::{Datum, Decimal, FieldType, SessionTimeZone};
+use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_txnkv::Key;
 
@@ -501,7 +501,7 @@ impl KvTable {
     pub fn pushdown_row_cursor_with_context(
         &mut self,
         keep: &[usize],
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
@@ -542,7 +542,7 @@ impl KvTable {
     pub fn pushdown_row_cursor_with_physical_id(
         &mut self,
         keep: &[usize],
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
@@ -580,7 +580,7 @@ impl KvTable {
     fn pushdown_row_cursor_with_context_and_key_ranges(
         &mut self,
         keep: &[usize],
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         output_offsets: Option<&[usize]>,
         topn: Option<&PushdownTopN>,
         limit: Option<u64>,
@@ -806,7 +806,7 @@ impl KvTable {
             handle_index,
             primary_column_ids: primary_column_ids.clone(),
             primary_prefix_column_ids: primary_prefix_column_ids.clone(),
-            predicates: predicates.to_vec(),
+            conditions: predicates.to_vec(),
             output_offsets: response_offsets.clone(),
             topn: topn.cloned(),
             limit,
@@ -1041,7 +1041,7 @@ impl KvTable {
         handles: &[TableHandle],
         physical_ids: Option<&[i64]>,
         scan_keep: &[usize],
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
         required_rows: usize,
@@ -1121,7 +1121,7 @@ impl KvTable {
     fn build_physical_table_reader(
         &mut self,
         scan_keep: &[usize],
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         context: &RowDecodeContext,
         statement: &PushdownStatementContext,
         required_rows: usize,
@@ -1454,7 +1454,7 @@ impl KvTable {
     pub fn pushdown_partial_aggregate_cursor(
         &mut self,
         keep: &[usize],
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         handle_ranges: Option<&[IndexRange]>,
         aggregate: &PushdownPartialAggregate,
         context: &crate::StmtContext,
@@ -1525,7 +1525,7 @@ impl KvTable {
             handle_index: None,
             primary_column_ids,
             primary_prefix_column_ids,
-            predicates: predicates.to_vec(),
+            conditions: predicates.to_vec(),
             output_offsets: None,
             topn: None,
             limit: None,
@@ -1574,7 +1574,7 @@ impl KvTable {
         index_id: i64,
         ranges: &[IndexRange],
         scan_keep: &[usize],
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         aggregate: &PushdownPartialAggregate,
         context: &crate::StmtContext,
         zone: &SessionTimeZone,
@@ -1696,7 +1696,7 @@ impl KvTable {
             .collect::<Vec<_>>();
         let mut remote_predicates = predicates.to_vec();
         for predicate in &mut remote_predicates {
-            if crate::predicate_pushdown::remap_scan_predicate(predicate, &index_keep).is_none() {
+            if crate::predicate_pushdown::remap_expression(predicate, &index_keep).is_none() {
                 return Ok(None);
             }
         }
@@ -1770,7 +1770,7 @@ impl KvTable {
                 .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
                 .collect(),
             primary_prefix_column_ids: Vec::new(),
-            predicates: remote_predicates,
+            conditions: remote_predicates,
             output_offsets: None,
             topn: None,
             limit: None,
@@ -1799,7 +1799,7 @@ impl KvTable {
         // See the identical guard in `pushdown_partial_aggregate_cursor`: an
         // aggregate's rows are already reduced, so a predicate the backend
         // did not confirm applying must refuse the whole pushdown here.
-        if !request.predicates.is_empty() && !scan.stream.predicates_applied() {
+        if !request.conditions.is_empty() && !scan.stream.predicates_applied() {
             scan.stream.close();
             return Ok(None);
         }
@@ -1908,7 +1908,7 @@ impl KvTable {
         ranges: &[IndexRange],
         scan_keep: &[usize],
         scan_extra_handle_slot: Option<usize>,
-        predicates: &[ScanPredicate],
+        predicates: &[Expression],
         topn: Option<&PushdownTopN>,
         zone: &SessionTimeZone,
         statement: &PushdownStatementContext,
@@ -2053,7 +2053,15 @@ impl KvTable {
         let null_layout = source_layout(&null_columns);
         let Some(predicates) = predicates
             .iter()
-            .map(|predicate| predicate.remapped_index_columns(&layout, &null_layout))
+            .map(|predicate| {
+                let mut predicate = predicate.clone();
+                crate::predicate_pushdown::remap_index_expression(
+                    &mut predicate,
+                    &layout,
+                    &null_layout,
+                )
+                .map(|()| predicate)
+            })
             .collect::<Option<Vec<_>>>()
         else {
             return Ok(None);
@@ -2271,7 +2279,7 @@ impl KvTable {
                 .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
                 .collect(),
             primary_prefix_column_ids: Vec::new(),
-            predicates,
+            conditions: predicates,
             // Select handle columns after the full index executor stack.
             output_offsets,
             topn,
@@ -2297,7 +2305,7 @@ impl KvTable {
             scan.stream.close();
             return Ok(None);
         }
-        if !request.predicates.is_empty() && !scan.stream.predicates_applied() {
+        if !request.conditions.is_empty() && !scan.stream.predicates_applied() {
             scan.stream.close();
             return Ok(None);
         }
@@ -2982,7 +2990,10 @@ impl RemoteRowMaterialization {
         })
     }
 
-    fn remap_predicates(&self, keep: &[usize], predicates: &[ScanPredicate]) -> Vec<ScanPredicate> {
+    /// The conditions in the materialized row space. One that reads a column
+    /// the wire does not carry keeps the whole list local: the request never
+    /// carries a subset of a Selection it then reports on.
+    fn remap_predicates(&self, keep: &[usize], predicates: &[Expression]) -> Vec<Expression> {
         // A virtual column's wire value is only its default, so a predicate
         // reading one stays above the materialization.
         let layout: Vec<_> = self
@@ -2999,8 +3010,13 @@ impl RemoteRowMaterialization {
             .collect();
         predicates
             .iter()
-            .filter_map(|predicate| predicate.remapped_columns(&layout))
-            .collect()
+            .map(|predicate| {
+                let mut predicate = predicate.clone();
+                crate::predicate_pushdown::remap_expression(&mut predicate, &layout)
+                    .map(|()| predicate)
+            })
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default()
     }
 
     fn project_row(&self, mut row: Vec<Datum>) -> Result<Vec<Datum>, KvTableError> {
@@ -4207,7 +4223,7 @@ pub struct TableScanExec {
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// The same conjuncts as a description, for a backend that can evaluate
     /// them at the region. They are applied locally regardless.
-    pushed: Vec<ScanPredicate>,
+    pushed: Vec<Expression>,
     /// Final offsets into the wider scan row, applied only after `filter`.
     /// A remote cursor already returns this projection; the local path
     /// applies it after evaluating the same filter against the wider row.
@@ -4356,10 +4372,10 @@ impl TableScanExec {
     /// A coprocessor receipt covers only the descriptions sent to it, not
     /// conditions retained solely in the executable Selection. Operations
     /// after Selection may move remote only when that entire input is known.
-    fn filter_fully_described(&self) -> bool {
+    fn filter_fully_pushable(&self) -> bool {
         self.filter
             .as_ref()
-            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described)
+            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable)
     }
 
     /// Builds a scan over `table` with an explicit row-decode context.
@@ -5026,7 +5042,7 @@ impl Executor for TableScanExec {
         // Go `TableReaderExecutor.Open`'s `corColInFilter`.
         if let Some(filter) = self.filter.as_mut() {
             if filter.redescribe_correlated() {
-                self.pushed = filter.predicates().to_vec();
+                self.pushed = filter.conditions().to_vec();
             }
         }
         self.scanned.set(0);
@@ -5042,7 +5058,7 @@ impl Executor for TableScanExec {
         if let Some(aggregate) = self
             .partial_aggregate
             .as_ref()
-            .filter(|_| !virtual_projection && self.filter_fully_described())
+            .filter(|_| !virtual_projection && self.filter_fully_pushable())
         {
             let context = self
                 .partial_context
@@ -5196,7 +5212,7 @@ impl Executor for TableScanExec {
         // A completed remote Selection needs no local re-evaluation, but
         // must not destroy the retained filter: the next Open (or a refused
         // request) may read through the local/staged cursor instead.
-        let remote_filter_complete = self.filter_fully_described()
+        let remote_filter_complete = self.filter_fully_pushable()
             && self.remote_materialization.is_none()
             && self
                 .remote
@@ -5504,7 +5520,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         self.pushed = self
             .filter
             .as_ref()
-            .map_or_else(Vec::new, |filter| filter.predicates().to_vec());
+            .map_or_else(Vec::new, |filter| filter.conditions().to_vec());
         true
     }
 
@@ -5518,7 +5534,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         // reconstructed from the narrowed response. Local fallback applies
         // the same projection after the optional scan filter.
         if self.physical_table_id_slot.is_some()
-            || !self.filter_fully_described()
+            || !self.filter_fully_pushable()
             || self.table.has_dirty_content(&self.statement.staged_writes)
             || self.has_virtual_projection()
             || self.partial_aggregate.is_some()
@@ -5563,7 +5579,7 @@ impl crate::table_access::TableAccess for TableScanExec {
     fn accept_remote_topn(&mut self, topn: &PushdownTopN) -> bool {
         // TopN must see the merged relation. Reordering/capping only the
         // snapshot would break both merge order and replacement semantics.
-        if !self.filter_fully_described()
+        if !self.filter_fully_pushable()
             || topn.order_by.is_empty()
             || self.table.has_dirty_content(&self.statement.staged_writes)
             || self.has_virtual_projection()
@@ -5601,7 +5617,7 @@ impl crate::table_access::TableAccess for TableScanExec {
     /// order, so stopping after `cap` of them yields the same prefix a
     /// `LimitExec` above would have kept.
     fn accept_scan_limit(&mut self, cap: u64) -> bool {
-        if !self.filter_fully_described() {
+        if !self.filter_fully_pushable() {
             return false;
         }
         self.limit = Some(cap);
@@ -5756,7 +5772,7 @@ impl crate::table_access::TableAccess for TableScanExec {
         self.meta = meta;
         self.filter = remapped_filter;
         if let Some(filter) = &self.filter {
-            self.pushed = filter.predicates().to_vec();
+            self.pushed = filter.conditions().to_vec();
         }
         // `keep` indexes the CURRENT output, which a previous prune may
         // already have narrowed, so the table offsets compose rather than
@@ -5987,7 +6003,6 @@ mod remote_cursor_tests {
 
     #[test]
     fn index_selection_remaps_pruned_columns_before_handle_projection() {
-        use crate::predicate_pushdown::{ScanComparison, ScanComparisonOp};
         let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
         let mut table = KvTable::with_storage(
             91,
@@ -6018,15 +6033,14 @@ mod remote_cursor_tests {
             },
             false,
         );
-        let predicate = ScanPredicate::Compare(ScanComparison {
-            column_offset: 1,
-            column_type: table.columns[1].field_type.clone(),
-            literal_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-            op: ScanComparisonOp::Gt,
-            literal: Datum::Int(6),
-            column_on_left: true,
-            collation: tidb_datatype::Collation::Utf8Mb4Bin,
-        });
+        let predicate = crate::predicate_pushdown::fixtures::compare(
+            1,
+            table.columns[1].field_type.clone(),
+            "gt",
+            Datum::Int(6),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            true,
+        );
         assert!(table
             .pushdown_index_handle_cursor(
                 7,
@@ -6053,10 +6067,13 @@ mod remote_cursor_tests {
             .unwrap()
             .clone()
             .expect("covered index Selection reaches the backend");
-        let [ScanPredicate::Compare(predicate)] = request.predicates.as_slice() else {
+        let [condition] = request.conditions.as_slice() else {
             panic!("one index comparison");
         };
-        assert_eq!(predicate.column_offset, 0);
+        assert_eq!(
+            crate::predicate_pushdown::fixtures::column_offsets(condition),
+            [0]
+        );
         assert_eq!(request.output_offsets, Some(vec![1]));
         assert_eq!(request.limit, Some(1));
     }
@@ -6090,23 +6107,21 @@ mod remote_cursor_tests {
         table
     }
 
-    fn index_selection_predicate(offset: u32, field_type: FieldType) -> ScanPredicate {
-        use crate::predicate_pushdown::{ScanComparison, ScanComparisonOp};
+    fn index_selection_predicate(offset: u32, field_type: FieldType) -> Expression {
         let collation = tidb_datatype::Collation::Utf8Mb4Bin;
         let literal = if field_type.eval_type() == tidb_datatype::EvalType::String {
             Datum::new_collation_string(b"abc".to_vec(), collation)
         } else {
             Datum::Int(7)
         };
-        ScanPredicate::Compare(ScanComparison {
-            column_offset: offset,
-            column_type: field_type.clone(),
-            literal_type: field_type,
-            op: ScanComparisonOp::Eq,
+        crate::predicate_pushdown::fixtures::compare(
+            offset as usize,
+            field_type.clone(),
+            "eq",
             literal,
-            column_on_left: true,
-            collation,
-        })
+            field_type,
+            true,
+        )
     }
 
     #[test]
@@ -6167,10 +6182,13 @@ mod remote_cursor_tests {
             let request = capture.captured.lock().unwrap().clone();
             if let Some(expected) = expected {
                 let request = request.unwrap();
-                let [ScanPredicate::Compare(comparison)] = request.predicates.as_slice() else {
+                let [condition] = request.conditions.as_slice() else {
                     panic!("one index predicate");
                 };
-                assert_eq!(comparison.column_offset, expected);
+                assert_eq!(
+                    crate::predicate_pushdown::fixtures::column_offsets(condition),
+                    [expected as usize]
+                );
                 assert_eq!(
                     request.output_offsets,
                     Some(if common { vec![1, 2] } else { vec![1] })
@@ -6205,16 +6223,16 @@ mod remote_cursor_tests {
                 // extra_slot. Neither source nor wire positions are table offsets.
                 let a_slot = usize::from(extra_slot == 0);
                 let predicates = vec![
-                    ScanPredicate::IsNull {
-                        column_offset: extra_slot as u32,
-                        column_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                        negated: true,
-                    },
-                    ScanPredicate::IsNull {
-                        column_offset: a_slot as u32,
-                        column_type: table.columns[1].field_type.clone(),
-                        negated: true,
-                    },
+                    crate::predicate_pushdown::fixtures::is_null(
+                        extra_slot,
+                        FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                        true,
+                    ),
+                    crate::predicate_pushdown::fixtures::is_null(
+                        a_slot,
+                        table.columns[1].field_type.clone(),
+                        true,
+                    ),
                 ];
                 let topn = PushdownTopN {
                     order_by: vec![crate::remote_scan::PushdownTopNOrder {
@@ -6250,14 +6268,9 @@ mod remote_cursor_tests {
                 );
                 let request = capture.captured.lock().unwrap().clone().unwrap();
                 let offsets: Vec<_> = request
-                    .predicates
+                    .conditions
                     .iter()
-                    .map(|predicate| {
-                        let ScanPredicate::IsNull { column_offset, .. } = predicate else {
-                            panic!("IS NOT NULL")
-                        };
-                        *column_offset
-                    })
+                    .flat_map(crate::predicate_pushdown::fixtures::column_offsets)
                     .collect();
                 assert_eq!(offsets, [1, 0]);
                 assert_eq!(request.topn.unwrap().order_by[0].offset, 0);
@@ -6425,28 +6438,22 @@ mod remote_cursor_tests {
 
     #[test]
     fn index_selection_allows_null_tests_on_prefixes_but_not_value_consumers() {
-        use tidb_expr::pushdown_catalog::{resolve, PbScalar};
+        use crate::predicate_pushdown::fixtures::{call, column as column_at};
         let capture = RequestCapture {
             response_predicates_applied: Some(true),
             ..RequestCapture::default()
         };
         let mut table = index_selection_table(capture.clone(), 2);
-        let column = PbScalar::Column {
-            offset: 1,
-            field_type: table.columns[1].field_type.clone(),
-        };
-        let call = |name: &str, args: Vec<PbScalar>| PbScalar::Call {
-            signature: resolve(name, &args).unwrap(),
-            args,
-            control: None,
-            ret_type: None,
-        };
+        let column = column_at(1, table.columns[1].field_type.clone());
         let null = call("isnull", vec![column.clone()]);
-        let nested = ScanPredicate::Builtin(call("not", vec![null]));
-        let predicates = vec![ScanPredicate::Or(vec![
-            nested.clone(),
-            index_selection_predicate(0, table.columns[0].field_type.clone()),
-        ])];
+        let nested = call("not", vec![null]);
+        let predicates = vec![call(
+            "or",
+            vec![
+                nested.clone(),
+                index_selection_predicate(0, table.columns[0].field_type.clone()),
+            ],
+        )];
         let mut cursor = table
             .pushdown_index_handle_cursor(
                 7,
@@ -6471,28 +6478,27 @@ mod remote_cursor_tests {
         assert_eq!(cursor.projected_indices, Some(vec![0]));
         assert!(cursor.next_projected_row().unwrap().is_none());
         let request = capture.captured.lock().unwrap().clone().unwrap();
-        let expected = ScanPredicate::Or(vec![
-            ScanPredicate::Builtin(call(
-                "not",
-                vec![call(
-                    "isnull",
-                    vec![PbScalar::Column {
-                        offset: 0,
-                        field_type: table.columns[1].field_type.clone(),
-                    }],
-                )],
-            )),
-            index_selection_predicate(1, table.columns[0].field_type.clone()),
-        ]);
-        assert_eq!(request.predicates, vec![expected]);
+        // The remap moves offsets, never plan column ids. `extract_columns`
+        // orders by id: the id-1 column (the compare) now reads slot 1 and the
+        // id-2 column (the null test) slot 0.
+        assert_eq!(
+            crate::predicate_pushdown::fixtures::column_offsets(&request.conditions[0]),
+            [1, 0],
+            "the index Selection reads the carried slots"
+        );
+        assert_eq!(request.conditions.len(), 1);
         // Null tests can ignore a direct prefix's length, but cannot observe
         // a function of truncated bytes, or sort those bytes as full values.
-        let wrong = ScanPredicate::Builtin(call("isnull", vec![call("char_length", vec![column])]));
-        assert!(wrong
-            .remapped_index_columns(&[usize::MAX, 0], &[1, 0])
-            .is_none());
+        let mut wrong = call("isnull", vec![call("char_length", vec![column])]);
+        assert!(crate::predicate_pushdown::remap_index_expression(
+            &mut wrong,
+            &[usize::MAX, 0],
+            &[1, 0]
+        )
+        .is_none());
+        let mut nested = nested;
         assert!(
-            nested.remapped_columns(&[usize::MAX, 0]).is_none(),
+            crate::predicate_pushdown::remap_expression(&mut nested, &[usize::MAX, 0]).is_none(),
             "ordinary column pruning does not relax coverage"
         );
         let topn = PushdownTopN {

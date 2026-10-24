@@ -407,12 +407,13 @@ fn a_limit_over_a_partly_lowered_predicate_returns_every_qualifying_row() {
         panic!("exactly one coprocessor request: {observations:?}");
     };
     assert_eq!(
-        observation.conditions, 1,
-        "only `id > 0` lowered; `tag = '7'` stayed behind"
+        observation.conditions, 0,
+        "`tag = '7'` cannot lower, so the Selection stays whole at the root \
+         and none of it travels"
     );
     assert_eq!(
         observation.remote_limit, None,
-        "so the cap must not have travelled with it"
+        "so the cap must not have travelled"
     );
     assert_eq!(observation.rows_sent, region_rows().len());
 }
@@ -482,12 +483,13 @@ fn a_limit_over_a_partly_lowered_builtin_predicate_returns_every_qualifying_row(
         panic!("exactly one coprocessor request: {observations:?}");
     };
     assert_eq!(
-        observation.conditions, 1,
-        "only `ROUND(id)` lowered; `tag = '7'` stayed behind"
+        observation.conditions, 0,
+        "`tag = '7'` cannot lower, so the Selection stays whole at the root \
+         and none of it travels"
     );
     assert_eq!(
         observation.remote_limit, None,
-        "so the cap must not have travelled with it"
+        "so the cap must not have travelled"
     );
     assert_eq!(observation.rows_sent, region_rows().len());
 }
@@ -616,7 +618,7 @@ fn count_star_lowers_to_count_with_one_constant_child() {
             handle_index: None,
             primary_column_ids: vec![1],
             primary_prefix_column_ids: vec![1],
-            predicates: Vec::new(),
+            conditions: Vec::new(),
             output_offsets: None,
             topn: None,
             limit: None,
@@ -709,7 +711,7 @@ fn a_descending_scan_marks_both_the_dag_and_dist_sql_request() {
         handle_index: Some(0),
         primary_column_ids: Vec::new(),
         primary_prefix_column_ids: Vec::new(),
-        predicates: Vec::new(),
+        conditions: Vec::new(),
         output_offsets: None,
         topn: None,
         limit: Some(1),

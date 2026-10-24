@@ -80,7 +80,6 @@ use crate::kv_table::{
     IndexRange, IndexRangeCursor, KvTable, RemoteIndexHandleCursor, RemoteRowCursor, RowCursor,
     TableHandle,
 };
-use crate::predicate_pushdown::ScanPredicate;
 use crate::remote_scan::{
     PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream, PushdownStatementContext,
 };
@@ -1556,7 +1555,7 @@ pub struct IndexRangeSourceExec {
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// The same conjunct descriptions, lowered into an index-side
     /// coprocessor Selection before a handle TopN or table lookup.
-    pushed: Vec<crate::predicate_pushdown::ScanPredicate>,
+    pushed: Vec<Expression>,
     /// Whether the driver proved the accepted filter is covered by this
     /// index. This is an execution hint; the ordinary row filter remains as
     /// a semantic check after the table lookup.
@@ -2412,7 +2411,7 @@ impl IndexRangeSourceExec {
                     && self
                         .filter
                         .as_ref()
-                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
                 self.lookup_chunk = batch.chunk;
                 self.lookup_chunk_row = 0;
                 if self.lookup_chunk.is_some() {
@@ -2519,7 +2518,7 @@ impl IndexRangeSourceExec {
                     && self
                         .filter
                         .as_ref()
-                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+                        .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
                 debug_assert!(
                     batch.chunk.is_none(),
                     "a dirty double read never takes the chunk path",
@@ -2864,7 +2863,7 @@ impl IndexRangeSourceExec {
         let allow_lookup_chunks = self
             .filter
             .as_ref()
-            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
         if self.partial_aggregate.is_some() {
             // A partial aggregate owns the answer end to end; the plain
             // lookup never ran for this shape.
@@ -3681,10 +3680,7 @@ impl IndexRangeSourceExec {
     /// references nothing else. Go's
     /// `addPushedDownSelection4PhysicalIndexScan` gates the index-side
     /// Selection on the same column availability.
-    fn predicates_entry_carried(
-        &self,
-        predicates: &[crate::predicate_pushdown::ScanPredicate],
-    ) -> bool {
+    fn predicates_entry_carried(&self, predicates: &[Expression]) -> bool {
         let Some(index) = self
             .table
             .indexes()
@@ -3712,7 +3708,7 @@ impl IndexRangeSourceExec {
             .collect();
         predicates.iter().all(|predicate| {
             let mut probe = predicate.clone();
-            crate::predicate_pushdown::remap_scan_predicate(&mut probe, &carried_slots).is_some()
+            crate::predicate_pushdown::remap_expression(&mut probe, &carried_slots).is_some()
         })
     }
 
@@ -3822,7 +3818,7 @@ impl Executor for IndexRangeSourceExec {
         // `corColInFilter`, for the table-side and the index-side conditions.
         if let Some(filter) = self.filter.as_mut() {
             if filter.redescribe_correlated() {
-                self.pushed = filter.predicates().to_vec();
+                self.pushed = filter.conditions().to_vec();
             }
         }
         if let Some(index_probe) = self.index_probe.as_mut() {
@@ -3899,7 +3895,7 @@ impl Executor for IndexRangeSourceExec {
         let index_predicates = self
             .index_probe
             .as_ref()
-            .map_or(&[][..], |filter| filter.predicates());
+            .map_or(&[][..], |filter| filter.conditions());
         // Both the physical index Selection and any later accepted index
         // filter must travel before a remote Limit or TopN counts rows.
         let legacy_index_filter = self.index_filter || self.top_n.is_some();
@@ -3934,12 +3930,12 @@ impl Executor for IndexRangeSourceExec {
         let index_filter_described = self
             .index_probe
             .as_ref()
-            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described)
+            .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable)
             && (!legacy_index_filter
                 || self
                     .filter
                     .as_ref()
-                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described));
+                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable));
         if let Some(aggregate) = self
             .partial_aggregate
             .as_ref()
@@ -3947,7 +3943,7 @@ impl Executor for IndexRangeSourceExec {
         {
             let mut aggregate_predicates = self.pushed.clone();
             if let Some(filter) = &self.index_probe {
-                aggregate_predicates.extend_from_slice(filter.predicates());
+                aggregate_predicates.extend_from_slice(filter.conditions());
             }
             let context = self
                 .partial_context
@@ -4131,7 +4127,7 @@ impl Executor for IndexRangeSourceExec {
                 && self
                     .filter
                     .as_ref()
-                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_described);
+                    .is_none_or(crate::predicate_pushdown::ScanFilterProbe::fully_pushable);
             while req.num_rows() < cap {
                 if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                     self.retain_remote_index_stats();
@@ -4535,7 +4531,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         self.pushed = self
             .filter
             .as_ref()
-            .map_or(Vec::new(), |filter| filter.predicates().to_vec());
+            .map_or(Vec::new(), |filter| filter.conditions().to_vec());
         self.keep = keep.iter().map(|offset| self.keep[*offset]).collect();
         true
     }
@@ -4548,7 +4544,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         if self
             .filter
             .as_ref()
-            .is_some_and(|filter| !filter.fully_described())
+            .is_some_and(|filter| !filter.fully_pushable())
         {
             return false;
         }
@@ -4617,9 +4613,9 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         // them, exactly as Go's planner keeps a residual above the reader.
         let mut candidate = Vec::new();
         if let Some(existing) = self.filter.as_ref() {
-            candidate.extend_from_slice(existing.predicates());
+            candidate.extend_from_slice(existing.conditions());
         }
-        candidate.extend_from_slice(filter.predicates());
+        candidate.extend_from_slice(filter.conditions());
         if self.covering && !self.predicates_entry_carried(&candidate) {
             return false;
         }
@@ -4641,7 +4637,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
         self.pushed = self
             .filter
             .as_ref()
-            .map_or_else(Vec::new, |filter| filter.predicates().to_vec());
+            .map_or_else(Vec::new, |filter| filter.conditions().to_vec());
         true
     }
 
@@ -5201,7 +5197,7 @@ impl IndexJoinLookupExec {
         } else {
             expression_column_offsets(filters)
         };
-        let predicates = scan_predicates_for_filters(filters, &keep, self.filter_context.as_ref());
+        let predicates = scan_conditions_for_filters(filters, &keep, self.filter_context.as_ref());
         // A handle-only response cannot recheck missing index predicates.
         if !self.covering && predicates.len() != filters.len() {
             self.next_probe = first_probe;
@@ -5827,7 +5823,7 @@ impl IndexJoinLookupExec {
             .clone()
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
         let remote_predicates =
-            scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
+            scan_conditions_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         self.remote_filters_complete = remote_predicates.len() == self.filters.len();
         let remote_cursor = self
             .table
@@ -5998,7 +5994,7 @@ impl IndexJoinLookupExec {
             .clone()
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
         let remote_predicates =
-            scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
+            scan_conditions_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         self.remote_filters_complete = remote_predicates.len() == self.filters.len();
         let remote_cursor = self
             .table
@@ -6091,7 +6087,7 @@ impl IndexJoinLookupExec {
             .clone()
             .unwrap_or_else(|| (0..self.table.visible_column_count()).collect::<Vec<_>>());
         let predicates =
-            scan_predicates_for_filters(&self.filters, &keep, self.filter_context.as_ref());
+            scan_conditions_for_filters(&self.filters, &keep, self.filter_context.as_ref());
         let Some(staged) = self
             .table
             .build_table_reader_from_routed_handles(
@@ -6311,28 +6307,31 @@ pub(crate) fn expression_column_offsets(expressions: &[Expression]) -> Vec<usize
     offsets.into_iter().collect()
 }
 
-/// Go ExprToPB evaluates execution-bound leaves; descriptor offsets alone
-/// are remapped to the scan projection. A refused description remains in
-/// the complete local filter, as does a constant whose PB evaluation fails.
-fn scan_predicates_for_filters(
+/// The complete Selection an index-join lookup reads through: Go ExprToPB
+/// converts the conditions under the statement's own context, with offsets
+/// remapped to the scan projection. A condition that cannot be remapped or has
+/// no TiPB form keeps the whole list local (an empty answer), never a subset:
+/// the complete local filter applies either way.
+fn scan_conditions_for_filters(
     filters: &[Expression],
     keep: &[usize],
     context: Option<&crate::StmtContext>,
-) -> Vec<ScanPredicate> {
+) -> Vec<Expression> {
     let Some(context) = context else {
         return Vec::new();
     };
-    filters
-        .iter()
-        .filter_map(|filter| {
-            let mut predicate =
-                crate::predicate_pushdown::describe_execution_condition(filter, context).ok()?;
-            if crate::predicate_pushdown::remap_scan_predicate(&mut predicate, keep).is_none() {
-                return None;
-            }
-            Some(predicate)
-        })
-        .collect()
+    let mut remapped = Vec::with_capacity(filters.len());
+    for filter in filters {
+        let mut condition = filter.clone();
+        if crate::predicate_pushdown::pb_condition_exists(&condition, context)
+            && crate::predicate_pushdown::remap_expression(&mut condition, keep).is_some()
+        {
+            remapped.push(condition);
+        } else {
+            return Vec::new();
+        }
+    }
+    remapped
 }
 
 /// The clustered integer handle a probe value names, or `None` when no row
@@ -7366,7 +7365,7 @@ mod tests {
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
         let captured = request.lock().unwrap().clone().unwrap();
-        assert_eq!(captured.predicates.len(), 1);
+        assert_eq!(captured.conditions.len(), 1);
         assert_eq!(captured.output_offsets, Some(vec![1]));
         assert_eq!(gets.load(Ordering::Relaxed), 1);
         source.close().unwrap();
@@ -7715,7 +7714,7 @@ mod tests {
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
         let first_request = request.lock().unwrap().clone().unwrap();
-        assert_eq!(first_request.predicates.len(), 1);
+        assert_eq!(first_request.conditions.len(), 1);
         assert_eq!(first_request.output_offsets, Some(vec![1]));
         assert_eq!(first_request.limit, Some(1));
         source.close().unwrap();
@@ -7731,7 +7730,7 @@ mod tests {
         assert_eq!(chunk.num_rows(), 1);
         assert_eq!(chunk.get_row(0).get_int64(0), 42);
         assert_eq!(
-            request.lock().unwrap().as_ref().unwrap().predicates.len(),
+            request.lock().unwrap().as_ref().unwrap().conditions.len(),
             2,
             "later accepted index conditions must not replace the physical Selection"
         );

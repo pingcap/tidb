@@ -65,8 +65,6 @@ use tidb_distsql::WarningCollector;
 use tidb_expr::expression::Expression;
 use tidb_txnkv::Key;
 
-use crate::predicate_pushdown::ScanPredicate;
-
 /// Go `kv.StoreType` narrowed to the engines a pushdown scan names.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum PushdownReadEngine {
@@ -481,9 +479,13 @@ pub struct PushdownScanRequest {
     pub primary_column_ids: Vec<i64>,
     /// Common-handle columns stored as prefixes rather than whole values.
     pub primary_prefix_column_ids: Vec<i64>,
-    /// The conjuncts the caller would like evaluated remotely. Best-effort:
-    /// see the module doc.
-    pub predicates: Vec<ScanPredicate>,
+    /// The scan's complete Selection, as the planner's own physical
+    /// conditions: the backend converts all of them to TiPB (Go `ExprToPB`)
+    /// or none of them, and reports which through
+    /// [`PushdownRowStream::predicates_applied`]. Never a subset: an operator
+    /// above the Selection (a limit, a TopN, an aggregate, a narrowed output)
+    /// is only sent when the whole list was.
+    pub conditions: Vec<Expression>,
     /// Final output offsets into `columns`, after every predicate has been
     /// evaluated. `None` returns every requested scan column.
     ///
@@ -554,6 +556,16 @@ pub struct PushdownScanRequest {
     pub statement: PushdownStatementContext,
 }
 
+/// The statement context a request converts its conditions under.
+#[derive(Clone)]
+pub struct StatementEval(pub crate::StmtContext);
+
+impl fmt::Debug for StatementEval {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("StatementEval")
+    }
+}
+
 /// What a coprocessor request must be told about the STATEMENT that issued it,
 /// as opposed to the relation it reads.
 ///
@@ -618,6 +630,11 @@ pub struct PushdownStatementContext {
     /// The `Default` is UTC, which is the zone a caller with no session behind
     /// it evaluates in.
     pub time_zone: SessionTimeZone,
+    /// The statement's evaluation context, which `ExprToPB` reads constants,
+    /// parameters and correlated bindings from and the expression pushdown
+    /// blacklist is consulted under. `None` for a caller with no statement
+    /// behind it: conditions then convert from their strict literals alone.
+    pub eval_context: Option<StatementEval>,
     /// Go `StmtCtx.ResourceGroupName`, copied to every DistSQL request.
     pub resource_group_name: String,
     /// Go `SessionVars.GetReplicaRead()` copied to every DistSQL request.
@@ -683,6 +700,7 @@ impl Default for PushdownStatementContext {
             cop_lite_worker: Arc::default(),
             warnings: WarningCollector::default(),
             time_zone: SessionTimeZone::default(),
+            eval_context: None,
             resource_group_name: "default".to_owned(),
             replica_read: tidb_distsql::ReplicaReadType::Leader,
             read_replica_scope: "global".into(),
@@ -727,6 +745,7 @@ impl PushdownStatementContext {
             cop_lite_worker: ctx.cop_lite_worker(),
             warnings: ctx.cop_warning_sink(),
             time_zone: ctx.session_zone(),
+            eval_context: Some(StatementEval(ctx.clone())),
             resource_group_name: ctx.resource_group_name().to_owned(),
             replica_read: ctx.replica_read(),
             read_replica_scope: ctx.read_replica_scope(),
@@ -1271,12 +1290,28 @@ mod tests {
                     &crate::RowDecodeContext::for_test_query_utc(),
                 )
                 .unwrap();
+            // The Selection converts whole or not at all, as the real backend's
+            // `ExprToPB` does.
+            let described: Option<Vec<ScanPredicate>> = request
+                .conditions
+                .iter()
+                .flat_map(tidb_expr::expr_util::split_cnf_items)
+                .map(|condition| {
+                    crate::predicate_pushdown::describe_request_condition(
+                        &condition,
+                        request.statement.eval_context.as_ref().map(|eval| &eval.0),
+                    )
+                    .ok()
+                })
+                .collect();
+            let lowerable = self.lower_predicates.load(Ordering::Relaxed) && described.is_some();
+            let predicates = described.unwrap_or_default();
             // Whether every pushed predicate was actually evaluated, not just
             // syntactically accepted: `admits` answers "did not filter" for a
             // shape outside its domain regardless of the row, so that check
             // is per-predicate rather than per-row.
-            let predicates_confidently_applied = self.lower_predicates.load(Ordering::Relaxed)
-                && !request.predicates.iter().any(|predicate| {
+            let predicates_confidently_applied = lowerable
+                && !predicates.iter().any(|predicate| {
                     matches!(
                         predicate,
                         ScanPredicate::Builtin(_) | ScanPredicate::ScalarIn { .. }
@@ -1285,9 +1320,8 @@ mod tests {
             let mut rows = Vec::new();
             while let Some((handle, mut row)) = cursor.next_row().unwrap() {
                 self.scanned.fetch_add(1, Ordering::Relaxed);
-                if self.lower_predicates.load(Ordering::Relaxed)
-                    && !request
-                        .predicates
+                if lowerable
+                    && !predicates
                         .iter()
                         .all(|predicate| admits(predicate, &row) == Some(true))
                 {

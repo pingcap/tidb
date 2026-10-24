@@ -14,10 +14,15 @@
 
 //! Coprocessor Selection lowering for planner-owned physical conditions.
 //!
-//! Go decides predicate placement before `executorBuilder.build`. This module
-//! converts those retained expressions into the bounded scan description used
-//! by local/staged-row evaluation and TiKV request construction; it does not
-//! perform a second AST predicate-pushdown decision.
+//! Go decides predicate placement before `executorBuilder.build`: the
+//! conditions `PushDownExprs` admitted ride the reader's cop Selection, and
+//! `PbConverter.ExprToPB` converts each of them. This module keeps exactly
+//! those retained expressions (never a subset of them) for in-process
+//! evaluation of local/staged rows and for the request builder, which
+//! converts all of them or, when one has no TiPB form, none -- so what a
+//! coprocessor receipt covers is always the complete condition list.
+//! [`ScanPredicate`] is the converter's parse of one condition, produced at
+//! conversion time and never retained by a scan.
 use std::collections::HashSet;
 
 use tidb_chunk::chunk::Chunk;
@@ -161,28 +166,6 @@ pub enum ScanPredicate {
     Not(Box<ScanPredicate>),
 }
 
-impl ScanPredicate {
-    /// Remaps this predicate from an input schema into the projected schema
-    /// described by `keep`. The returned predicate is otherwise identical.
-    pub(crate) fn remapped_columns(&self, keep: &[usize]) -> Option<Self> {
-        let mut predicate = self.clone();
-        remap_scan_predicate(&mut predicate, keep)?;
-        Some(predicate)
-    }
-
-    /// Remaps an index predicate; only direct IS NULL column arguments may
-    /// use the prefix-only layout, matching IsIndexCoveringCondition.
-    pub(crate) fn remapped_index_columns(
-        &self,
-        full: &[usize],
-        null_only: &[usize],
-    ) -> Option<Self> {
-        let mut predicate = self.clone();
-        remap_index_predicate(&mut predicate, full, null_only)?;
-        Some(predicate)
-    }
-}
-
 /// A column-versus-constant comparison.
 ///
 /// This names the scan input offset, the operator, the constant, and which
@@ -235,9 +218,12 @@ pub struct ScanColumnComparison {
 /// lowering reads and the expressions an in-process source evaluates.
 #[derive(Clone, Debug)]
 pub struct PushedScanFilter {
-    predicates: Vec<ScanPredicate>,
     filters: Vec<Expression>,
     fast_paths: Vec<Option<FastScanFilter>>,
+    /// Whether every condition converts to TiPB under the statement's
+    /// context (Go `ExprsToPBList` succeeding): only then may a request carry
+    /// the Selection and the operators above it.
+    pushable: bool,
 }
 
 /// A pushed predicate whose per-row work can be reduced without changing the
@@ -279,34 +265,33 @@ impl PushedScanFilter {
         filters
             .iter_mut()
             .for_each(tidb_expr::scalar_function::into_coprocessor_form);
-        let predicates = filters
-            .iter()
-            .filter_map(|filter| describe_execution_condition(filter, ctx).ok())
-            .collect();
+        let pushable = all_describable(&filters, ctx);
         let fast_paths = filters
             .iter()
             .map(FastScanFilter::from_expression)
             .collect();
         Self {
-            predicates,
             filters,
             fast_paths,
+            pushable,
         }
     }
 
-    /// Whether every locally evaluated physical condition also has a remote
-    /// description. A backend can only report on the descriptions it was
-    /// sent; this receipt prevents an un-described condition from being
-    /// mistaken for one the coprocessor applied.
+    /// Whether every locally evaluated physical condition converts to TiPB,
+    /// so a coprocessor Selection built from them is the complete condition
+    /// list. A backend can only report on the conditions it was sent; this is
+    /// what keeps a condition without a TiPB form from being mistaken for one
+    /// the coprocessor applied.
     #[must_use]
-    pub(crate) fn fully_described(&self) -> bool {
-        self.predicates.len() == self.filters.len()
+    pub(crate) fn fully_pushable(&self) -> bool {
+        self.pushable
     }
 
-    /// The pushed conjuncts in `WHERE` order, for a coprocessor lowering.
+    /// The physical conditions in `WHERE` order -- all of them -- for the
+    /// request builder's `ExprToPB` conversion.
     #[must_use]
-    pub fn predicates(&self) -> &[ScanPredicate] {
-        &self.predicates
+    pub fn conditions(&self) -> &[Expression] {
+        &self.filters
     }
 
     /// Go `corColInDistPlan` over these conditions: whether one reads a
@@ -318,16 +303,13 @@ impl PushedScanFilter {
             .any(|filter| !tidb_expr::simple_expr::extract_cor_columns(filter).is_empty())
     }
 
-    /// Go `corColInFilter`: a reader re-describes its conditions on every
-    /// `Open` (`ConstructListBasedDistExec`), so a correlated column is
-    /// written to the request with the value bound for this iteration
-    /// rather than the one it held when the executor was built.
+    /// Go `corColInFilter`: a reader converts its conditions on every `Open`
+    /// (`ConstructListBasedDistExec`), so a correlated column is written to
+    /// the request with the value bound for this iteration rather than the
+    /// one it held when the executor was built. The conditions share the
+    /// correlated binding, so only the conversion verdict is refreshed.
     pub(crate) fn redescribe(&mut self, ctx: &crate::StmtContext) {
-        self.predicates = self
-            .filters
-            .iter()
-            .filter_map(|filter| describe_execution_condition(filter, ctx).ok())
-            .collect();
+        self.pushable = all_describable(&self.filters, ctx);
     }
 
     /// The built expressions the accepting source evaluates.
@@ -348,9 +330,8 @@ impl PushedScanFilter {
             .collect()
     }
 
-    /// Adds predicates from a later offer using Go `RemoveDupExprs` identity
-    /// and mutable-effect rules. Descriptions contain planning values, which
-    /// cannot distinguish parameters or deferred expressions.
+    /// Adds conditions from a later offer using Go `RemoveDupExprs` identity
+    /// and mutable-effect rules.
     fn conjoin(&mut self, additional: &Self) {
         let mut existing: HashSet<Vec<u8>> = self
             .filters
@@ -367,16 +348,12 @@ impl PushedScanFilter {
             }
             self.fast_paths
                 .push(FastScanFilter::from_expression(&filter));
-            // Only a description the later offer itself admitted: it was
-            // built under the statement context, where Go's
-            // `expr_pushdown_blacklist` refused what TiKV must not see.
-            if let Some(predicate) = scan_predicate_from_expression(&filter)
-                .filter(|predicate| additional.predicates.contains(predicate))
-            {
-                self.predicates.push(predicate);
-            }
             self.filters.push(filter);
         }
+        // The later offer was judged under its own statement context, where
+        // Go's `expr_pushdown_blacklist` refused what TiKV must not see: one
+        // refused condition keeps the whole Selection local.
+        self.pushable &= additional.pushable;
     }
 
     /// Whether anything was pushed at all.
@@ -413,10 +390,6 @@ impl PushedScanFilter {
     }
 
     fn remapped_columns(&self, keep: &[usize]) -> Option<Self> {
-        let mut predicates = self.predicates.clone();
-        for predicate in &mut predicates {
-            remap_scan_predicate(predicate, keep)?;
-        }
         let mut filters = self.filters.clone();
         for filter in &mut filters {
             remap_expression(filter, keep)?;
@@ -426,10 +399,39 @@ impl PushedScanFilter {
                 .iter()
                 .map(FastScanFilter::from_expression)
                 .collect(),
-            predicates,
             filters,
+            pushable: self.pushable,
         })
     }
+}
+
+/// Go `PbConverter.ExprToPB` over one retained condition, first stage: the
+/// converter's parse of it under the statement's context (blacklist,
+/// parameters, correlated bindings) or, for a caller with no statement, from
+/// its strict literals alone. The request builder encodes the result against
+/// the scan's column descriptors and keeps none of it.
+pub fn describe_request_condition(
+    expression: &Expression,
+    context: Option<&crate::StmtContext>,
+) -> Result<ScanPredicate, ExecError> {
+    match context {
+        Some(context) => describe_execution_condition(expression, context),
+        None => describe_compiled_condition(expression)
+            .ok_or_else(|| ExecError::unsupported("cop predicate lowering")),
+    }
+}
+
+/// Whether `expression` converts to TiPB under `context` (Go `ExprToPB`
+/// answering a condition rather than nil).
+pub(crate) fn pb_condition_exists(expression: &Expression, context: &crate::StmtContext) -> bool {
+    describe_execution_condition(expression, context).is_ok()
+}
+
+fn all_describable(filters: &[Expression], ctx: &crate::StmtContext) -> bool {
+    filters
+        .iter()
+        .flat_map(tidb_expr::expr_util::split_cnf_items)
+        .all(|filter| describe_execution_condition(&filter, ctx).is_ok())
 }
 
 fn immutable_scan_constants(expression: &Expression) -> bool {
@@ -613,16 +615,19 @@ fn describe_condition(
             if let Some((offset, field_type)) = column(left).or_else(|| column(right)) {
                 let column_on_left = column(left).is_some();
                 let constant = if column_on_left { right } else { left };
-                let (literal, literal_type) = literal(constant, context)?;
-                return Ok(ScanPredicate::Compare(ScanComparison {
-                    column_offset: offset,
-                    column_type: field_type,
-                    literal_type,
-                    op,
-                    literal,
-                    column_on_left,
-                    collation,
-                }));
+                // The other side is a literal, or a call that the generic
+                // catalog conversion below describes whole (`b * 2 = c`).
+                if let Ok((literal, literal_type)) = literal(constant, context) {
+                    return Ok(ScanPredicate::Compare(ScanComparison {
+                        column_offset: offset,
+                        column_type: field_type,
+                        literal_type,
+                        op,
+                        literal,
+                        column_on_left,
+                        collation,
+                    }));
+                }
             }
             // Neither operand is a bare column (an arithmetic or builtin side,
             // as in `sbig + 1 > 999`). Go pushes the comparison expression
@@ -754,89 +759,32 @@ impl FastScanFilter {
     }
 }
 
-fn remapped_offset(offset: u32, keep: &[usize]) -> Option<u32> {
-    keep.iter()
-        .position(|kept| *kept == offset as usize)
-        .and_then(|offset| u32::try_from(offset).ok())
-}
-
-pub(crate) fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]) -> Option<()> {
-    remap_index_predicate(predicate, keep, keep)
-}
-
-fn remap_index_predicate(
-    predicate: &mut ScanPredicate,
+/// [`remap_expression`] for an index Selection: only a direct `IS NULL`
+/// column argument may use the prefix-only layout `null_only`, matching Go's
+/// `IsIndexCoveringCondition`; every other column reads the `keep` layout.
+pub(crate) fn remap_index_expression(
+    expression: &mut Expression,
     keep: &[usize],
     null_only: &[usize],
 ) -> Option<()> {
-    match predicate {
-        ScanPredicate::Compare(comparison) => {
-            comparison.column_offset = remapped_offset(comparison.column_offset, keep)?;
-        }
-        ScanPredicate::ColumnCompare(comparison) => {
-            comparison.left_offset = remapped_offset(comparison.left_offset, keep)?;
-            comparison.right_offset = remapped_offset(comparison.right_offset, keep)?;
-        }
-        ScanPredicate::IsNull { column_offset, .. } => {
-            *column_offset = remapped_offset(*column_offset, null_only)?;
-        }
-        ScanPredicate::In { column_offset, .. } => {
-            *column_offset = remapped_offset(*column_offset, keep)?;
-        }
-        ScanPredicate::ScalarIn { tested, .. } => remap_pb_scalar(tested, keep, null_only)?,
-        ScanPredicate::Like { column_offset, .. } => {
-            *column_offset = remapped_offset(*column_offset, keep)?;
-        }
-        ScanPredicate::Builtin(scalar) => remap_pb_scalar(scalar, keep, null_only)?,
-        ScanPredicate::And(branches) | ScanPredicate::Or(branches) => {
-            for branch in branches {
-                remap_index_predicate(branch, keep, null_only)?;
-            }
-        }
-        ScanPredicate::Not(inner) => remap_index_predicate(inner, keep, null_only)?,
-    }
-    Some(())
-}
-
-fn remap_pb_scalar(
-    scalar: &mut tidb_expr::pushdown_catalog::PbScalar,
-    keep: &[usize],
-    null_only: &[usize],
-) -> Option<()> {
-    match scalar {
-        tidb_expr::pushdown_catalog::PbScalar::Column { offset, .. } => {
-            *offset = remapped_offset(*offset, keep)?;
-        }
-        tidb_expr::pushdown_catalog::PbScalar::Call { signature, args, .. } => {
-            if signature.name == "isnull" {
-                if let [tidb_expr::pushdown_catalog::PbScalar::Column { offset, .. }] =
-                    args.as_mut_slice()
-                {
-                    *offset = remapped_offset(*offset, null_only)?;
-                    return Some(());
+    let position = |column: &mut tidb_expr::column::Column, layout: &[usize]| -> Option<()> {
+        let old = usize::try_from(column.index).ok()?;
+        column.index = i64::try_from(layout.iter().position(|kept| *kept == old)?).ok()?;
+        Some(())
+    };
+    match expression {
+        Expression::Column(column) => position(column, keep)?,
+        Expression::ScalarFunction(function) => {
+            if function.func_name.lowercase() == "isnull" {
+                if let [Expression::Column(column)] = function.args.as_mut_slice() {
+                    return position(column, null_only);
                 }
             }
-            for argument in args {
-                remap_pb_scalar(argument, keep, null_only)?;
+            for argument in &mut function.args {
+                remap_index_expression(argument, keep, null_only)?;
             }
         }
-        tidb_expr::pushdown_catalog::PbScalar::Cast { arg, .. } => {
-            remap_pb_scalar(arg, keep, null_only)?;
-        }
-        tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_)
-        | tidb_expr::pushdown_catalog::PbScalar::NullLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::UIntLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::DecimalLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::RealLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::Float32Literal { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::StringLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::BytesLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::BitLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::EnumLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::TimeLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::DurationLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::JsonLiteral { .. }
-        | tidb_expr::pushdown_catalog::PbScalar::VectorLiteral { .. } => {}
+        Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
     }
     Some(())
 }
@@ -919,25 +867,91 @@ impl ScanFilterProbe {
         })
     }
 
-    pub(crate) fn predicates(&self) -> &[ScanPredicate] {
-        self.filter.predicates()
+    pub(crate) fn conditions(&self) -> &[Expression] {
+        self.filter.conditions()
     }
 
-    pub(crate) fn fully_described(&self) -> bool {
-        self.filter.fully_described()
+    pub(crate) fn fully_pushable(&self) -> bool {
+        self.filter.fully_pushable()
     }
 }
 
-/// Describes one already-resolved physical condition for TiKV.
-///
-/// Go performs this conversion after `findBestTask` has selected the reader;
-/// the executor receives that exact `expression.Expression`, not the original
-/// SQL AST. Keep comparisons in the explicit scan representation used by the
-/// local fakes, and use the shared scalar-signature catalog for every other
-/// expression family. A refusal leaves the physical expression in the local
-/// filter and is therefore semantic, not heuristic.
-pub(crate) fn scan_predicate_from_expression(expression: &Expression) -> Option<ScanPredicate> {
-    describe_compiled_condition(expression)
+/// Builders of the retained physical conditions the scan tests offer.
+#[cfg(test)]
+pub(crate) mod fixtures {
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_expr::expression::{Expression, ScalarFunction};
+
+    /// A scan-output column at `offset`.
+    pub(crate) fn column(offset: usize, field_type: FieldType) -> Expression {
+        column_with_id(offset, offset as i64 + 1, field_type)
+    }
+
+    /// A scan-output column at `offset` with the given plan column id, which
+    /// survives a remap of the offset.
+    pub(crate) fn column_with_id(
+        offset: usize,
+        unique_id: i64,
+        field_type: FieldType,
+    ) -> Expression {
+        let mut column = tidb_expr::column::Column::new(unique_id, field_type);
+        column.index = offset as i64;
+        Expression::Column(column)
+    }
+
+    /// A strict literal.
+    pub(crate) fn literal(value: Datum, field_type: FieldType) -> Expression {
+        Expression::Constant(tidb_expr::constant::Constant::new(value, field_type))
+    }
+
+    /// A call of the builtin `name`.
+    pub(crate) fn call(name: &str, args: Vec<Expression>) -> Expression {
+        Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new(name),
+            FieldType::new(FieldTypeCode::LongLong),
+            args,
+        ))
+    }
+
+    /// `column OP literal` (or `literal OP column`), `name` one of `eq`,
+    /// `ne`, `lt`, `le`, `gt`, `ge`.
+    pub(crate) fn compare(
+        offset: usize,
+        column_type: FieldType,
+        name: &str,
+        value: Datum,
+        literal_type: FieldType,
+        column_on_left: bool,
+    ) -> Expression {
+        let column = column(offset, column_type);
+        let literal = literal(value, literal_type);
+        call(
+            name,
+            if column_on_left {
+                vec![column, literal]
+            } else {
+                vec![literal, column]
+            },
+        )
+    }
+
+    /// `column IS NULL`, or `column IS NOT NULL` when `negated`.
+    pub(crate) fn is_null(offset: usize, field_type: FieldType, negated: bool) -> Expression {
+        let test = call("isnull", vec![column(offset, field_type)]);
+        if negated {
+            call("not", vec![test])
+        } else {
+            test
+        }
+    }
+
+    /// The scan-output offsets `expression` reads, in traversal order.
+    pub(crate) fn column_offsets(expression: &Expression) -> Vec<usize> {
+        tidb_expr::simple_expr::extract_columns(expression)
+            .into_iter()
+            .map(|column| usize::try_from(column.index).expect("a scan offset"))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -1042,17 +1056,20 @@ mod tests {
             .with_pushdown_blacklists((Arc::new(blacklist), Arc::default()));
         let open = crate::StmtContext::for_query();
         let mut first = super::PushedScanFilter::from_physical_conditions(vec![gt(1, 0, 5)], &open);
-        assert_eq!(first.predicates.len(), 1);
+        assert!(first.fully_pushable());
         let later = super::PushedScanFilter::from_physical_conditions(vec![gt(2, 1, 6)], &blocked);
-        assert!(later.predicates.is_empty(), "the blacklist refuses `gt`");
+        assert!(!later.fully_pushable(), "the blacklist refuses `gt`");
         first.conjoin(&later);
         assert_eq!(first.filters().len(), 2, "both conditions still filter");
         assert_eq!(
-            first.predicates.len(),
-            1,
-            "the refused one is not described"
+            first.conditions().len(),
+            2,
+            "the request builder is offered every condition, never a subset"
         );
-        assert!(!first.fully_described());
+        assert!(
+            !first.fully_pushable(),
+            "one refused condition keeps the whole Selection local"
+        );
     }
 
     /// A pushed predicate must filter the transaction's own staged rows too.
@@ -1404,5 +1421,131 @@ mod tests {
                 "{sql}"
             );
         }
+    }
+
+    /// The planner splits a Selection per conjunct (Go `PushDownExprs`); the
+    /// request builder then converts the planner's pushed list whole. The two
+    /// must agree: a condition the planner admits for TiKV is one `ExprToPB`
+    /// converts, or the executor would silently keep a Selection the plan says
+    /// the coprocessor evaluates.
+    #[test]
+    fn the_converter_expresses_every_condition_the_planner_admits() {
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        let int = FieldType::new(FieldTypeCode::LongLong);
+        let text = FieldType::new(FieldTypeCode::Varchar).with_flen(10);
+        let columns = vec![
+            ("a".to_owned(), int.clone()),
+            ("b".to_owned(), int.clone()),
+            ("c".to_owned(), int.clone()),
+            ("s".to_owned(), text),
+            (
+                "u".to_owned(),
+                FieldType::new(FieldTypeCode::LongLong)
+                    .with_flags(tidb_datatype::FieldTypeFlags::UNSIGNED),
+            ),
+            (
+                "d".to_owned(),
+                FieldType::new(FieldTypeCode::Datetime).with_decimal(0),
+            ),
+        ];
+        let context = crate::StmtContext::for_query();
+        let resolver = crate::driver::TableResolver {
+            database: Some("test"),
+            table_name: "t",
+            columns: &columns,
+            constant_context: context.clone(),
+            zone: context.session_zone(),
+            no_unsigned_subtraction: false,
+            div_precision_increment: 4,
+            clause_message: "expression",
+            subquery_constants: &[],
+        };
+        const PREDICATES: &[&str] = &[
+            "a > 5",
+            "5 < a",
+            "a = b",
+            "a <> c",
+            "a IS NULL",
+            "a IS NOT NULL",
+            "a IN (1, 2, 3)",
+            "a NOT IN (1, 2)",
+            "s = 'x'",
+            "s IN ('x', 'y')",
+            "s LIKE 'x%'",
+            "s NOT LIKE '%y'",
+            "a BETWEEN 1 AND 9",
+            "a > 1 AND b < 3",
+            "a = 1 OR b = 2",
+            "NOT (a > 1)",
+            "a + b > 3",
+            "b * 2 = c",
+            "a - 1 = 0",
+            "ABS(a - b) = 1",
+            "COALESCE(b, 0) > 0",
+            "IF(b > 0, a, c) > 2",
+            "CASE WHEN b > 0 THEN a > 1 ELSE FALSE END",
+            "a IN (b, 1)",
+            "b IS TRUE",
+            "b IS NOT TRUE",
+            "u > 2",
+            "u >= 9223372036854775808",
+            "d > '2024-01-01'",
+            "a = '5'",
+            "a > 1.5",
+            "s > 'u' AND a > 1",
+            "UPPER(s) = 'X'",
+            "LENGTH(s) > 2",
+            "SUBSTRING(s, 1, 2) = 'ab'",
+            "a % 3 = 0",
+            "a DIV 2 = 1",
+            "IFNULL(a, 0) = 0",
+            "LEAST(a, b) > 1",
+            "a IN (1, 2) AND s LIKE 'a%'",
+        ];
+        let mut refused = Vec::new();
+        for sql in PREDICATES {
+            let select = tidb_parser::parse(&format!("SELECT {sql}")).expect("parses");
+            let tidb_ast::Stmt::Query(query) = select else {
+                panic!("not a query");
+            };
+            let tidb_ast::QueryStmt::Select(select) = &*query else {
+                panic!("not a select");
+            };
+            let Some(tidb_ast::SelectField::Expr { expr, .. }) = select.fields.fields().first()
+            else {
+                panic!("no field");
+            };
+            let Ok(mut condition) = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver)
+            else {
+                continue;
+            };
+            tidb_expr::scalar_function::into_coprocessor_form(&mut condition);
+            if !tidb_planner::pushdown::can_exprs_push_down_tikv(std::slice::from_ref(&condition)) {
+                continue;
+            }
+            if super::describe_request_condition(&condition, Some(&context)).is_err() {
+                refused.push(*sql);
+            }
+        }
+        // The planner's admission is Go's name whitelist; the catalog holds
+        // the signatures converted so far. These are the admitted shapes it
+        // does not hold yet: their Selection is evaluated locally, whole (never
+        // a subset), while EXPLAIN keeps Go's cop Selection. The list may only
+        // shrink -- a new entry is a planner/converter disagreement.
+        const NOT_CONVERTED_YET: &[&str] = &[
+            "b * 2 = c",
+            "a - 1 = 0",
+            "ABS(a - b) = 1",
+            "COALESCE(b, 0) > 0",
+            "a IN (b, 1)",
+            "b IS TRUE",
+            "b IS NOT TRUE",
+            "LENGTH(s) > 2",
+            "a DIV 2 = 1",
+        ];
+        assert_eq!(
+            refused, NOT_CONVERTED_YET,
+            "the planner admits for TiKV what ExprToPB refuses"
+        );
     }
 }

@@ -218,7 +218,7 @@ impl<S: tikv_client::PdClient> TiFlashMppScanSource<S> {
         // operator is refused BY NAME rather than served from row storage:
         // the caller asked for the columnar engine, and a silent TiKV
         // fallback would be the wrong answer, not a slower one.
-        if !request.predicates.is_empty() {
+        if !request.conditions.is_empty() {
             return Err(refuse("pushed Selection is not lowered yet".to_owned()));
         }
         if request.topn.is_some() {
@@ -2190,7 +2190,7 @@ mod mpp_read_batch_tests {
                     handle_index: None,
                     primary_column_ids: vec![],
                     primary_prefix_column_ids: vec![],
-                    predicates: vec![],
+                    conditions: vec![],
                     output_offsets: None,
                     topn: None,
                     limit: None,

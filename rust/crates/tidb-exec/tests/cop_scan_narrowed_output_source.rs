@@ -26,10 +26,10 @@ use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResult
 use tidb_distsql::{QueryDispatch, QueryTransport, TransportRequest};
 use tidb_exec::cop_scan::CopScanSource;
 use tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory;
-use tidb_executor::predicate_pushdown::{ScanComparison, ScanComparisonOp, ScanPredicate};
 use tidb_executor::remote_scan::{
     PushdownScanColumn, PushdownScanRequest, PushdownScanner, PushdownStatementContext,
 };
+use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_proto::tipb::{Chunk, DagRequest, ExecType, Expr, SelectResponse};
 use tidb_txnkv::Key;
 
@@ -232,16 +232,25 @@ fn column(id: i64) -> PushdownScanColumn {
 }
 
 /// The lowered conjunct: `id > 0` over offset 0.
-fn lowered_conjunct() -> ScanPredicate {
-    ScanPredicate::Compare(ScanComparison {
-        collation: tidb_datatype::Collation::Utf8Mb4Bin,
-        column_offset: 0,
-        column_type: bigint(),
-        literal_type: bigint(),
-        op: ScanComparisonOp::Gt,
-        literal: Datum::Int(0),
-        column_on_left: true,
-    })
+fn lowered_conjunct() -> Expression {
+    greater_than(0)
+}
+
+/// `column0 > value`, as the planner retains it for the Selection.
+fn greater_than(value: i64) -> Expression {
+    let mut column = tidb_expr::column::Column::new(1, bigint());
+    column.index = 0;
+    Expression::ScalarFunction(ScalarFunction::new(
+        tidb_ast::CiString::new("gt"),
+        bigint(),
+        vec![
+            Expression::Column(column),
+            Expression::Constant(tidb_expr::constant::Constant::new(
+                Datum::Int(value),
+                bigint(),
+            )),
+        ],
+    ))
 }
 
 fn scanner(region: &Arc<FakeRegion>) -> CopScanSource<FakeFactory> {
@@ -250,16 +259,13 @@ fn scanner(region: &Arc<FakeRegion>) -> CopScanSource<FakeFactory> {
     }))
 }
 
-fn request(
-    predicates: Vec<ScanPredicate>,
-    output_offsets: Option<Vec<usize>>,
-) -> PushdownScanRequest {
+fn request(predicates: Vec<Expression>, output_offsets: Option<Vec<usize>>) -> PushdownScanRequest {
     request_over(vec![column(1), column(2)], predicates, output_offsets)
 }
 
 fn request_over(
     columns: Vec<PushdownScanColumn>,
-    predicates: Vec<ScanPredicate>,
+    predicates: Vec<Expression>,
     output_offsets: Option<Vec<usize>>,
 ) -> PushdownScanRequest {
     PushdownScanRequest {
@@ -271,7 +277,7 @@ fn request_over(
         handle_index: None,
         primary_column_ids: vec![1],
         primary_prefix_column_ids: vec![1],
-        predicates,
+        conditions: predicates,
         output_offsets,
         topn: None,
         limit: None,
@@ -392,12 +398,7 @@ fn prefix_limit_wire_key_uses_the_input_schema_before_output_projection() {
 fn index_topn_filters_and_orders_input_columns_before_returning_only_handles() {
     use tidb_executor::remote_scan::{PushdownIndexScan, PushdownTopN, PushdownTopNOrder};
     let region = Arc::new(FakeRegion::default());
-    let mut predicate = lowered_conjunct();
-    let ScanPredicate::Compare(comparison) = &mut predicate else {
-        unreachable!()
-    };
-    comparison.literal = Datum::Int(3);
-    let mut scan = request(vec![predicate], Some(vec![1]));
+    let mut scan = request(vec![greater_than(3)], Some(vec![1]));
     scan.index = Some(PushdownIndexScan {
         index_id: 7,
         declared_unique: false,

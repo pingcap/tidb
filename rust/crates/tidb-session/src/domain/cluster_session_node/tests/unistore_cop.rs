@@ -24022,3 +24022,127 @@ fn gc_worker_sessions_run_gos_system_table_statements() {
     assert!(!session.is_raft_kv2().unwrap());
     assert!(session.history_job(1).unwrap().is_none());
 }
+
+/// A conjunct the cop predicate description cannot express must never change
+/// an answer. Go pushes down exactly the conditions `CanExprsPushDown` admits
+/// and the coprocessor Selection applies all of them; a condition this port's
+/// second description IR (`ScanPredicate`) cannot hold used to be dropped from
+/// the request while the source believed the Selection carried it. Every shape
+/// below is compared with the same predicate evaluated as a plain expression
+/// over the same rows.
+#[test]
+fn a_conjunct_the_cop_description_cannot_express_never_changes_an_answer() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(61))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.dropped (id int primary key, a int, b int, c int, \
+         s varchar(10), KEY iab (a, b), KEY iabc (a, b, c))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.dropped VALUES \
+         (1, 1, 0, 5, 'x'), (2, 1, 1, 6, 'y'), (3, 2, 0, 7, 'z'), (4, 2, 1, NULL, NULL), \
+         (5, 3, NULL, 9, 'w'), (6, 3, 2, 1, ''), (7, NULL, 1, 2, 'v'), (8, 4, 4, 4, 'u'), \
+         (9, 5, 0, 0, 'x'), (10, 5, 7, 3, 'q')",
+    );
+    const PREDICATES: &[&str] = &[
+        // A bare column and its negation: no comparison to describe.
+        "b",
+        "NOT b",
+        "a AND b",
+        "a OR b",
+        // Arithmetic and conditional shapes.
+        "a + b > 3",
+        "b * 2 = c",
+        "CASE WHEN b > 0 THEN a > 1 ELSE FALSE END",
+        "COALESCE(b, 0) > 0",
+        "IF(b > 0, a, c) > 2",
+        "a IN (b, 1)",
+        "b IS TRUE",
+        "(b IS NOT TRUE)",
+        // A column against a column and a function of a column.
+        "a = b",
+        "a < c",
+        "ABS(a - b) = 1",
+        "s > 'u' AND b",
+        // Mixed: one describable conjunct beside one that is not.
+        "a >= 2 AND b",
+        "a >= 2 AND a + b > 3",
+        "a < 5 AND COALESCE(b, 0) > 0",
+    ];
+    for predicate in PREDICATES {
+        // The reference keeps every row's verdict, evaluated by the root
+        // projection over the very same rows.
+        let verdicts = displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT id, a, b, c, ({predicate}) IS TRUE FROM test.dropped \
+                 USE INDEX() ORDER BY id"
+            ),
+        ));
+        let kept: Vec<&Vec<String>> = verdicts.iter().filter(|row| row[4] == "1").collect();
+
+        // 1. A pushed partial aggregate.
+        let pushed_count = displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM test.dropped WHERE {predicate}"),
+        ));
+        assert_eq!(
+            pushed_count,
+            vec![vec![kept.len().to_string()]],
+            "`{predicate}`: count(*)"
+        );
+
+        // 2. A covering index read, the filter riding the index Selection.
+        let covering = displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT a, b, c FROM test.dropped USE INDEX (iabc) WHERE {predicate} \
+                 ORDER BY id"
+            ),
+        ));
+        let mut expected: Vec<Vec<String>> = kept
+            .iter()
+            .map(|row| vec![row[1].clone(), row[2].clone(), row[3].clone()])
+            .collect();
+        let mut got = covering;
+        expected.sort();
+        got.sort();
+        assert_eq!(got, expected, "`{predicate}`: the covering index read");
+
+        // 3. A pushed limit counts rows after the Selection.
+        let limited = displayed(rows(
+            &mut session,
+            &format!("SELECT id FROM test.dropped WHERE {predicate} ORDER BY id LIMIT 2"),
+        ));
+        let expected_limit: Vec<Vec<String>> = kept
+            .iter()
+            .take(2)
+            .map(|row| vec![row[0].clone()])
+            .collect();
+        assert_eq!(limited, expected_limit, "`{predicate}`: the pushed limit");
+
+        // 4. A pushed TopN.
+        let topn = displayed(rows(
+            &mut session,
+            &format!("SELECT id FROM test.dropped WHERE {predicate} ORDER BY c, id LIMIT 3"),
+        ));
+        let mut by_c: Vec<&&Vec<String>> = kept.iter().collect();
+        by_c.sort_by_key(|row| {
+            (
+                row[3].parse::<i64>().map_or((0, 0), |c| (1, c)),
+                row[0].parse::<i64>().unwrap(),
+            )
+        });
+        let expected_topn: Vec<Vec<String>> = by_c
+            .iter()
+            .take(3)
+            .map(|row| vec![row[0].clone()])
+            .collect();
+        assert_eq!(topn, expected_topn, "`{predicate}`: the pushed TopN");
+    }
+}

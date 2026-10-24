@@ -175,7 +175,6 @@ pub struct CopScanSource<F> {
 struct SelectionCache {
     columns: Vec<ScanColumnInfo>,
     predicates: Vec<ScanPredicate>,
-    lowered: Vec<ScanPredicate>,
     conditions: Vec<Expr>,
 }
 
@@ -274,43 +273,64 @@ where
         // tree across those opens; the cache key includes the full descriptors
         // and source predicates, so it cannot cross a schema or statement
         // boundary.
-        let cached = self
-            .selection_cache
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .as_ref()
-            .filter(|cache| cache.columns == columns && cache.predicates == request.predicates)
-            .cloned();
-        let (lowered, conditions) = if let Some(cache) = cached {
-            (cache.lowered, cache.conditions)
-        } else {
-            let lowered: Vec<ScanPredicate> = request
-                .predicates
+        // Go `ExprToPB` over the scan's COMPLETE Selection: every condition
+        // converts or the request carries none of them. A subset would let an
+        // operator above the Selection (a limit, a TopN, an aggregate) count
+        // rows against a weaker filter than the one the statement states.
+        let eval_context = request.statement.eval_context.as_ref().map(|eval| &eval.0);
+        let described: Option<Vec<ScanPredicate>> = request
+            .conditions
+            .iter()
+            .flat_map(tidb_expr::expr_util::split_cnf_items)
+            .map(|condition| {
+                tidb_executor::predicate_pushdown::describe_request_condition(
+                    &condition,
+                    eval_context,
+                )
+                .ok()
+            })
+            .collect();
+        let described = described.filter(|predicates| {
+            predicates
                 .iter()
-                .filter(|predicate| accepts_in(predicate, &columns, &request.statement.time_zone))
+                .all(|predicate| accepts_in(predicate, &columns, &request.statement.time_zone))
+        });
+        let cached = described.as_ref().and_then(|predicates| {
+            self.selection_cache
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .as_ref()
+                .filter(|cache| cache.columns == columns && cache.predicates == *predicates)
                 .cloned()
-                .collect();
-            let conditions: Vec<Expr> = if lowered.is_empty() {
-                Vec::new()
-            } else {
-                wide_scan_selection_conditions_in(&lowered, &columns, &request.statement.time_zone)
+        });
+        let (predicates_applied, conditions) = match (described, cached) {
+            (None, _) => (false, Vec::new()),
+            (Some(_), Some(cache)) => (true, cache.conditions),
+            (Some(predicates), None) => {
+                let conditions: Vec<Expr> = if predicates.is_empty() {
+                    Vec::new()
+                } else {
+                    wide_scan_selection_conditions_in(
+                        &predicates,
+                        &columns,
+                        &request.statement.time_zone,
+                    )
                     .map_err(|error| {
                         PushdownScannerError::Backend(StorageError::Backend(error.to_string()))
                     })?
-            };
-            let mut slot = self
-                .selection_cache
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            *slot = Some(SelectionCache {
-                columns: columns.clone(),
-                predicates: request.predicates.clone(),
-                lowered: lowered.clone(),
-                conditions: conditions.clone(),
-            });
-            (lowered, conditions)
+                };
+                let mut slot = self
+                    .selection_cache
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                *slot = Some(SelectionCache {
+                    columns: columns.clone(),
+                    predicates,
+                    conditions: conditions.clone(),
+                });
+                (true, conditions)
+            }
         };
-        let predicates_applied = lowered.len() == request.predicates.len();
 
         // Go's `ConstructDAGReq` narrows a projected scan by sending
         // `DAGRequest.output_offsets`, so TiKV encodes only the projected
@@ -349,7 +369,7 @@ where
         // This is the same hazard the staged buffer already guards against by
         // dropping the cap whenever rows are merged in locally.
         if let Some(prefix) = &request.prefix_limit {
-            if lowered.len() != request.predicates.len()
+            if !predicates_applied
                 || request.aggregate.is_some()
                 || request.topn.is_some()
                 || request.limit.is_some()
@@ -363,18 +383,16 @@ where
                 ));
             }
         }
-        let remote_limit = if lowered.len() == request.predicates.len()
-            && request.aggregate.is_none()
-            && request.topn.is_none()
-        {
-            request
-                .prefix_limit
-                .as_ref()
-                .map(|limit| limit.count)
-                .or(request.limit)
-        } else {
-            None
-        };
+        let remote_limit =
+            if predicates_applied && request.aggregate.is_none() && request.topn.is_none() {
+                request
+                    .prefix_limit
+                    .as_ref()
+                    .map(|limit| limit.count)
+                    .or(request.limit)
+            } else {
+                None
+            };
 
         let aggregate = match request.aggregate.as_ref() {
             None => None,
@@ -382,7 +400,7 @@ where
                 functions,
                 streamed,
             }) => {
-                if lowered.len() != request.predicates.len()
+                if !predicates_applied
                     || request.limit.is_some()
                     || request.topn.is_some()
                     || request.output_offsets.is_some()
@@ -411,7 +429,7 @@ where
                 functions,
                 streamed,
             }) => {
-                if lowered.len() != request.predicates.len()
+                if !predicates_applied
                     || request.limit.is_some()
                     || request.topn.is_some()
                     || request.output_offsets.is_some()
