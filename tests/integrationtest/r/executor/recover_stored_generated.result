@@ -1,0 +1,22 @@
+use test;
+drop table if exists recover_generated;
+create table recover_generated (id int primary key, a int, b int, g int as (a+b) stored, e int as (a+b) virtual, key idx_g(g), key idx_e(e), key idx_mix(g,e));
+admin recover index recover_generated idx_g;
+ADDED_COUNT	SCAN_COUNT
+0	0
+insert into recover_generated(id,a,b) values (1,1,1),(2,null,2);
+admin recover index recover_generated idx_g;
+ADDED_COUNT	SCAN_COUNT
+0	2
+admin recover index recover_generated idx_e;
+ADDED_COUNT	SCAN_COUNT
+0	2
+admin recover index recover_generated idx_mix;
+ADDED_COUNT	SCAN_COUNT
+0	2
+select id,g,e from recover_generated order by id;
+id	g	e
+1	2	2
+2	NULL	NULL
+admin check table recover_generated;
+drop table recover_generated;
