@@ -40,6 +40,7 @@ package packetio
 import (
 	"bufio"
 	"bytes"
+	goerrors "errors"
 	"io"
 	"sync"
 	"time"
@@ -505,7 +506,7 @@ func init() {
 
 // DecodeAll is safe for concurrent use and the decoder keeps little state, so one is shared.
 var sharedZstdDecoder = sync.OnceValues(func() (*zstd.Decoder, error) {
-	return zstd.NewReader(nil, zstd.WithDecoderMaxMemory(mysql.MaxPayloadLen))
+	return zstd.NewReader(nil, zstd.WithDecoderMaxMemory(mysql.MaxPayloadLen), zstd.WithDecodeAllCapLimit(true))
 })
 
 type compressorBuffer struct {
@@ -614,6 +615,9 @@ func readZstdPayload(r io.Reader, compressedLength, uncompressedLength int) ([]b
 		return nil, errors.Trace(err)
 	}
 	data, err := decoder.DecodeAll(compressed, make([]byte, 0, uncompressedLength))
+	if goerrors.Is(err, zstd.ErrDecoderSizeExceeded) {
+		return nil, errors.Errorf("zstd payload is larger than the header says %d", uncompressedLength)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

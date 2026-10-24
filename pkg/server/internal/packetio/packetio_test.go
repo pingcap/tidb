@@ -20,6 +20,7 @@ import (
 	"compress/zlib"
 	"fmt"
 	"io"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -611,6 +612,36 @@ func TestCompressedReaderZstdRejectsWrongLength(t *testing.T) {
 	cr := newCompressedReader(&in, mysql.CompressionZstd, &seq)
 	_, err = cr.Read(make([]byte, 4))
 	require.ErrorContains(t, err, "the header says 16")
+}
+
+func TestCompressedReaderZstdStopsAtTheHeaderLength(t *testing.T) {
+	payload := bytes.Repeat([]byte{'a'}, 4<<20)
+	withSize, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	var withoutSize bytes.Buffer
+	streaming, err := zstd.NewWriter(&withoutSize)
+	require.NoError(t, err)
+	_, err = streaming.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, streaming.Close())
+	for name, compressed := range map[string][]byte{
+		"content size in the frame": withSize.EncodeAll(payload, nil),
+		"no content size":           withoutSize.Bytes(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			var in bytes.Buffer
+			in.Write([]byte{byte(len(compressed)), byte(len(compressed) >> 8), byte(len(compressed) >> 16), 0x00, 0x10, 0x00, 0x00})
+			in.Write(compressed)
+			seq := uint8(0)
+			cr := newCompressedReader(&in, mysql.CompressionZstd, &seq)
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			_, err := cr.Read(make([]byte, 4))
+			runtime.ReadMemStats(&after)
+			require.ErrorContains(t, err, "the header says 16")
+			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(1<<20))
+		})
+	}
 }
 
 func BenchmarkCompressedReaderZstd(b *testing.B) {
