@@ -2314,6 +2314,17 @@ drop table t_no_backslash_escapes;
 
 # TestIssue68360
 drop table if exists t_gc;
+
+# Issue 65961: FLOAT constants retain their type after coprocessor decoding.
+create table float_default_cast(f float default 0.9);
+insert into float_default_cast values(1);
+create view float_default_cast_v(a,b) as select null,default(f) from float_default_cast;
+select count(*) from float_default_cast_v where not(char(a)) and reverse(b)>='833943570';
+select count(*) from (select not(char(a)) and reverse(b)>='833943570' as p from float_default_cast_v) s where p;
+select count(*) from (select reverse(b)>='833943570' as p from float_default_cast_v) s where p;
+select reverse(default(f)),reverse(default(f))>='833943570' from float_default_cast;
+drop view float_default_cast_v;
+drop table float_default_cast;
 create table t_gc (
   id int primary key,
   first_name varchar(20) collate utf8mb4_0900_ai_ci,

@@ -1355,9 +1355,10 @@ func convertFloat(val []byte, f32 bool) (*Constant, error) {
 	}
 	if f32 {
 		d.SetFloat32(float32(f))
-	} else {
-		d.SetFloat64(f)
+		// Preserve FLOAT semantics for subsequent casts, including string formatting.
+		return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeFloat)}, nil
 	}
+	d.SetFloat64(f)
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDouble)}, nil
 }
 
