@@ -63,6 +63,19 @@ type PlanCacheKeyEnableInstancePlanCache struct{}
 
 const planCacheHintOnlyNoHintReason = "plan cache strategy is hint_only and use_plan_cache hint is absent"
 
+func hasNegativeZeroFloatParam(params []types.Datum) bool {
+	for _, param := range params {
+		if param.Kind() != types.KindFloat32 && param.Kind() != types.KindFloat64 {
+			continue
+		}
+		value := param.GetFloat64()
+		if value == 0 && math.Signbit(value) {
+			return true
+		}
+	}
+	return false
+}
+
 func containUsePlanCacheHintInPreparedSQLOrBinding(stmt *PlanCacheStmt, matchedBinding *bindinfo.Binding, bindingMatched bool) bool {
 	if stmt.HasUsePlanCacheHint {
 		return true
@@ -233,6 +246,11 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			cacheEnabled = false
 			stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
 		}
+	}
+	if cacheEnabled && hasNegativeZeroFloatParam(sessVars.PlanCacheParams.AllParamValues()) {
+		// Pushdown encoding loses the sign of -0, so a plan cached with another value may no longer be valid.
+		cacheEnabled = false
+		stmtCtx.WarnSkipPlanCache("negative-zero float parameter cannot use a cached pushdown plan")
 	}
 	if stmt.StmtCacheable && cacheEnabled {
 		stmtCtx.EnablePlanCache()
