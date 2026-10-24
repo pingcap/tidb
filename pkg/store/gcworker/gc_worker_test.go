@@ -1848,55 +1848,47 @@ func TestResolveLocksNearTxnSafePoint(t *testing.T) {
 	err = s.gcWorker.resolveLocks(gcContext(), txnSafePoint, 1)
 	require.NoError(t, err)
 
-	// Prevent amending lock behavior by making new write to the keys.
-	otherTxns := make([]kv.Transaction, 0, 3)
-	resCh := make(chan error, 3)
-	for i := range 3 {
+	cleanupTxns := make([]kv.Transaction, 0, 1)
+	defer func() {
+		for _, txn := range cleanupTxns {
+			if txn.Valid() {
+				require.NoError(t, txn.Rollback())
+			}
+		}
+	}()
+	beginPessimisticTxn := func() kv.Transaction {
 		txn, err := s.store.Begin()
 		require.NoError(t, err)
 		txn.SetOption(kv.Pessimistic, true)
-		key := []byte(fmt.Sprintf("k%d", i+1))
-		go func() {
-			lockCtx := &kv.LockCtx{ForUpdateTS: txn.StartTS(), WaitStartTime: time.Now()}
-			err := txn.LockKeys(context.Background(), lockCtx, key)
-			resCh <- err
-		}()
-		otherTxns = append(otherTxns, txn)
+		cleanupTxns = append(cleanupTxns, txn)
+		return txn
 	}
 
-	// It's expected that only the first transaction in `txns` should be rolled back by GC, so that one of `otherTxns`
-	// should proceed while the other two should be blocked.
-	select {
-	case err = <-resCh:
-		require.NoError(t, err)
-	case <-time.After(time.Millisecond * 200):
-		require.Fail(t, "no transaction is resolved, which is not expected")
-	}
+	// The lock before txnSafePoint should be resolved, so another transaction can lock k1 immediately.
+	// Hold that new lock until txns[0] commits to prevent pessimistic-lock amendment from hiding the rollback.
+	resolvedTxn := beginPessimisticTxn()
+	lockCtx := kv2.NewLockCtx(resolvedTxn.StartTS(), kv2.LockNoWait, time.Now())
+	err = resolvedTxn.LockKeys(context.Background(), lockCtx, []byte("k1"))
+	require.NoError(t, err)
 
-	select {
-	case err = <-resCh:
-		require.Fail(t, "more than one transaction is resolved, which is not expected")
-	case <-time.After(time.Millisecond * 50):
+	// The locks at and above txnSafePoint should remain unresolved before their owners commit.
+	locks, _, err := s.gcWorker.regionLockResolver.ScanLocksInOneRegion(
+		tikv.NewBackoffer(context.Background(), 10000),
+		[]byte("k1"), []byte("k4"), txnSafePoint+1, 10,
+	)
+	require.NoError(t, err)
+	lockStartTSByKey := make(map[string]uint64, len(locks))
+	for _, lock := range locks {
+		lockStartTSByKey[string(lock.Key)] = lock.TxnID
 	}
+	require.Equal(t, map[string]uint64{
+		"k2": txnSafePoint,
+		"k3": txnSafePoint + 1,
+	}, lockStartTSByKey)
 
 	require.Error(t, txns[0].Commit(context.Background()))
 	require.NoError(t, txns[1].Commit(context.Background()))
 	require.NoError(t, txns[2].Commit(context.Background()))
-
-	for range 2 {
-		select {
-		case err = <-resCh:
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "Write conflict")
-		case <-time.After(time.Millisecond * 200):
-			require.Fail(t, "not all transactions are finished")
-		}
-	}
-
-	// Clear unfinished transactions.
-	for _, txn := range otherTxns {
-		require.NoError(t, txn.Rollback())
-	}
 }
 
 func TestRunGCJob(t *testing.T) {
