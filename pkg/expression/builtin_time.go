@@ -3203,6 +3203,10 @@ func (du *baseDateArithmetical) addDate(ctx EvalContext, date types.Time, year, 
 
 	// fix https://github.com/pingcap/tidb/issues/11329
 	if goTime.Year() == 0 {
+		if year != 0 || month != 0 {
+			date.SetCoreTime(types.FromGoTime(goTime))
+			return date, false, nil
+		}
 		hour, minute, second := goTime.Clock()
 		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, goTime.Nanosecond()/1000))
 		return date, false, nil
