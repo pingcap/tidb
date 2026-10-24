@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -725,4 +726,19 @@ func TestBatchDownloadSSTParallelizesFileGroupsPerPeer(t *testing.T) {
 	}()
 	waitForConcurrentDownloads(t, importClient, errCh)
 	unblocked = true
+}
+
+func TestSnapImporterCloseReturnsCallbackError(t *testing.T) {
+	ctx := context.Background()
+	opt := snapclient.NewSnapFileImporterOptions(nil, nil, newFakeImporterClient(), nil,
+		snapclient.RewriteModeKeyspace, generateStores(), 10, 0, false, nil,
+		[]func(*snapclient.SnapFileImporter) error{func(*snapclient.SnapFileImporter) error {
+			return errors.New("injected PiTR metadata commit failure")
+		}})
+	importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, snapclient.TiDBFull, opt)
+	require.NoError(t, err)
+
+	client := snapclient.NewRestoreClient(nil, nil, nil, split.DefaultTestKeepaliveCfg)
+	client.SetRestorerForTest(restore.NewSimpleSstRestorer(ctx, importer, nil, nil))
+	require.ErrorContains(t, client.Close(), "injected PiTR metadata commit failure")
 }

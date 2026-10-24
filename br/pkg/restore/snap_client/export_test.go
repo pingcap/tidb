@@ -200,3 +200,7 @@ func NewSnapFileImporterOptionsForTest(
 func (importer *SnapFileImporter) PaginateScanRegionForTest(ctx context.Context, startKey, endKey []byte) ([]*split.RegionInfo, error) {
 	return importer.paginateScanRegion(ctx, startKey, endKey)
 }
+
+func (rc *SnapClient) SetRestorerForTest(restorer restore.SstRestorer) {
+	rc.restorer = restorer
+}
