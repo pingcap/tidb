@@ -39,7 +39,24 @@ pub struct SqlQueryError {
     /// plain error. Go's `err.Error()` -- `@@tidb_last_query_info`, logs --
     /// prints it as `[class:code]message`; the wire carries only the message.
     pub identity: Option<tidb_error::terror::TerrorIdentity>,
+    /// The driver error this was rendered from, when one was (Go keeps the
+    /// typed error under its wrapping, `errors.Cause`).
+    pub cause: Option<DriverErrorCause>,
 }
+
+/// The typed driver error under a [`SqlQueryError`]. It is provenance, not
+/// identity: two failures with the same client-visible triple are equal
+/// whether or not either remembers its cause.
+#[derive(Clone, Debug)]
+pub struct DriverErrorCause(pub std::sync::Arc<tidb_executor::DriverError>);
+
+impl PartialEq for DriverErrorCause {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for DriverErrorCause {}
 
 impl SqlQueryError {
     /// Creates one explicit client-visible query failure.
@@ -51,7 +68,25 @@ impl SqlQueryError {
             message: message.into(),
             write_conflict: None,
             identity: None,
+            cause: None,
         }
+    }
+
+    /// Remembers the driver error this failure was rendered from.
+    #[must_use]
+    pub fn with_cause(mut self, cause: tidb_executor::DriverError) -> Self {
+        self.cause = Some(DriverErrorCause(std::sync::Arc::new(cause)));
+        self
+    }
+
+    /// The driver error this failure was rendered from, when its
+    /// client-visible code and message are still that error's own (a caller
+    /// that reworded the message has made the cause stale).
+    #[must_use]
+    pub fn driver_cause(&self) -> Option<&tidb_executor::DriverError> {
+        let cause = self.cause.as_ref()?.0.as_ref();
+        let rendered = cause.clone().to_mysql_error();
+        (rendered.code == self.code && rendered.message == self.message).then_some(cause)
     }
 
     /// Labels the failure with the Go identity it was raised as.

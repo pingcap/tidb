@@ -230,9 +230,7 @@ pub(crate) fn interval_session() -> Session {
 /// fresh catalog. Root is bootstrapped with every privilege, matching
 /// what `PipelineSessionFactory` gives every connection.
 pub(crate) fn session_with_privileges() -> Session {
-    let mut session = Session::new();
-    session.attach_privileges(privilege::PrivilegeRegistry::default());
-    session
+    Session::on_accounts(&privilege::PrivilegeRegistry::default())
 }
 
 /// A session on `registry` with NO authenticated identity, and therefore
@@ -244,9 +242,7 @@ pub(crate) fn session_with_privileges() -> Session {
 /// under test, exactly as a real deployment provisions them before anybody
 /// logs in.
 pub(crate) fn bootstrap_session(registry: &privilege::PrivilegeRegistry) -> Session {
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
-    session
+    Session::on_accounts(registry)
 }
 
 /// A connection to `registry` authenticated as `user`@`host`, over a fresh
@@ -256,7 +252,7 @@ pub(crate) fn authenticated_session(
     user: &str,
     host: &str,
 ) -> Session {
-    let mut session = Session::new();
+    let mut session = Session::on_accounts(registry);
     session.set_user(format!("{user}@{host}"), format!("{user}@{host}"));
     session.attach_privileges(registry.clone());
     session

@@ -1178,6 +1178,16 @@ impl Session {
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
+        // Between statements a node session's tables are bound to no
+        // snapshot; a look at them reads the committed rows.
+        if self.node.is_some() {
+            let mut node = self.node.take().expect("a node-backed session");
+            let result = node.with_read_snapshot(self, |session| {
+                session.with_catalog_scope(true, body)
+            });
+            self.node = Some(node);
+            return result?;
+        }
         self.with_catalog_scope(true, body)
     }
 

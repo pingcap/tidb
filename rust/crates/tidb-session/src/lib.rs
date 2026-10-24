@@ -1013,6 +1013,10 @@ pub struct Session {
     /// shared with every statement context built for it and finished into
     /// the store's DDL history when the statement completes.
     ddl_job_sink: tidb_executor::ddl::job_history::DdlJobSink,
+    /// The node connection a session built over a booted domain runs its
+    /// statements through (Go testkit's session on `CreateMockStore`'s
+    /// domain); `None` for a session that IS the node connection's own.
+    pub(crate) node: Option<Box<crate::domain::mock_store::MockStoreConnection>>,
 }
 
 #[cfg(test)]
@@ -1200,6 +1204,7 @@ impl Session {
             found_in_binding: false,
             prev_found_in_binding: false,
             ddl_job_sink: tidb_executor::ddl::job_history::DdlJobSink::default(),
+            node: None,
         }
     }
 
@@ -1308,6 +1313,11 @@ impl Default for Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // A session over a booted domain closes inside its node connection,
+        // which owns the transaction, pins and locks that close releases.
+        if let Some(node) = self.node.take() {
+            node.close(self);
+        }
         // Go `session.Close` releases the table locks first.
         self.release_table_locks_on_close();
         self.statement_stats.set_finished();
@@ -1981,9 +1991,59 @@ impl Session {
     }
 
     /// A fresh session with its own empty catalog.
+    ///
+    /// With `TIDB_SESSION_MOCK_STORE=1` the session is instead built over a
+    /// freshly booted embedded store, as [`Session::new_on_mock_store`].
     #[must_use]
     pub fn new() -> Self {
+        if Session::mock_store_enabled() {
+            return Session::new_on_mock_store();
+        }
         Session::default()
+    }
+
+    /// Whether [`Session::new`] builds over a booted embedded store.
+    pub(crate) fn mock_store_enabled() -> bool {
+        std::env::var_os("TIDB_SESSION_MOCK_STORE").is_some_and(|value| value == "1")
+    }
+
+    /// A session on the store whose node keeps its accounts in `accounts`
+    /// (booting one over that table when none does yet), with `accounts`
+    /// attached: Go testkit's session on the store whose privilege tables a
+    /// test provisioned.
+    pub(crate) fn on_accounts(accounts: &privilege::PrivilegeRegistry) -> Self {
+        if !Session::mock_store_enabled() {
+            let mut session = Session::default();
+            session.attach_privileges(accounts.clone());
+            return session;
+        }
+        let domain = match crate::domain::mock_store::domain_of_accounts(accounts) {
+            Some(domain) => domain,
+            None => crate::domain::mock_store::MockStoreDomain::create_with_accounts(Some(
+                accounts.clone(),
+            ))
+            .unwrap_or_else(|error| panic!("boot the mock store: {error}")),
+        };
+        domain
+            .new_session()
+            .unwrap_or_else(|error| panic!("open a mock store session: {error}"))
+    }
+
+    /// Go testkit's `CreateMockStore` + `NewTestKit`: a session over a
+    /// freshly booted embedded store, whose statements run through the
+    /// node's connection path (DDL as persisted jobs, writes committed
+    /// through the store).
+    ///
+    /// # Panics
+    ///
+    /// When the embedded store cannot boot, as Go's testkit fails the test.
+    #[must_use]
+    pub fn new_on_mock_store() -> Self {
+        let domain = crate::domain::mock_store::MockStoreDomain::create()
+            .unwrap_or_else(|error| panic!("boot the mock store: {error}"));
+        domain
+            .new_session()
+            .unwrap_or_else(|error| panic!("open a mock store session: {error}"))
     }
 
     /// Go `SessionVars.CurrentDB`. Empty when no database is selected.
@@ -2231,6 +2291,13 @@ impl Session {
     /// A session sharing `catalog` with its peers.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
+        // A node session's catalog names its domain: the peer is another
+        // connection to that store, as Go's `testkit.NewTestKit(t, store)`.
+        if let Some(domain) = crate::domain::mock_store::domain_of_catalog(&catalog) {
+            return domain
+                .new_session()
+                .unwrap_or_else(|error| panic!("open a mock store session: {error}"));
+        }
         Session::unbootstrapped(catalog)
     }
 
@@ -2476,6 +2543,9 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
+        if self.node.is_some() {
+            return self.run_on_node(sql);
+        }
         self.run_with_columns_using(sql, false, move |session| {
             session.execute_statement_owned(stmt, sql)
         })
@@ -2642,8 +2712,19 @@ impl Session {
     /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
     /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        if self.node.is_some() {
+            return self.run_on_node(sql);
+        }
         self.run_with_columns_internal(sql, false)
             .map(|(output, _)| output)
+    }
+
+    /// One statement through this session's node connection.
+    fn run_on_node(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        let mut node = self.node.take().expect("a node-backed session");
+        let result = node.run(self, sql);
+        self.node = Some(node);
+        result
     }
 
     fn run_with_columns_internal(

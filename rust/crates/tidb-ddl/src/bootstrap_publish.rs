@@ -89,6 +89,31 @@ pub fn publish_bootstrap_with_splits<S: StoreClient>(
     opener: &RealOptimisticTransactionOpener<S>,
     timeout: Duration,
 ) -> Result<(OptimisticCommitOutcome, i64, BootstrapSplits), String> {
+    publish_bootstrap_with_effects(opener, timeout)
+        .map(|published| (published.outcome, published.schema_version, published.splits))
+}
+
+/// What a published bootstrap left outside its own transaction: the region
+/// splits its tables owe and the resource manager write it made. A
+/// bootstrapped store image (Go testkit's) replays both over a store that
+/// starts from the image's data.
+pub struct PublishedBootstrap {
+    /// The bootstrap transaction's commit.
+    pub outcome: OptimisticCommitOutcome,
+    /// The schema version the bootstrap published.
+    pub schema_version: i64,
+    /// See [`publish_bootstrap_with_splits`].
+    pub splits: BootstrapSplits,
+    /// The resource manager write made before the commit.
+    pub resource_group_update: tidb_exec::cluster_ddl::ResourceGroupUpdate,
+}
+
+/// [`publish_bootstrap_with_splits`], also returning the resource manager
+/// write it made.
+pub fn publish_bootstrap_with_effects<S: StoreClient>(
+    opener: &RealOptimisticTransactionOpener<S>,
+    timeout: Duration,
+) -> Result<PublishedBootstrap, String> {
     let mut environment = BootstrapEnvironment {
         system_tz: infer_system_tz(),
         // Go's `new_collations_enabled_on_first_bootstrap` default, which this
@@ -120,10 +145,16 @@ pub fn publish_bootstrap_with_splits<S: StoreClient>(
         let _ = transaction.rollback(&call);
         return Err(format!("update resource group failed: {error}"));
     }
+    let resource_group_update = write.resource_group_update.clone();
     let outcome = transaction
         .commit(write.mutations, &call)
         .map_err(|error| error.to_string())?;
-    Ok((outcome, schema_version, splits))
+    Ok(PublishedBootstrap {
+        outcome,
+        schema_version,
+        splits,
+        resource_group_update,
+    })
 }
 
 /// Refuses every bootstrap side effect unless the commit really landed, then

@@ -60,22 +60,37 @@ pub struct InProcessStack {
     /// The store's RPC client, whose send hook is Go's
     /// `UnistoreRPCClientSendHook`: a test's look at every request.
     pub rpc: tidb_unistore::rpc::RpcClient,
+    /// The store's request handler, whose committed data a bootstrapped
+    /// store image is taken from.
+    pub handler: Arc<std::sync::Mutex<KvHandler>>,
 }
 
 /// Builds [`InProcessStack`]; TiDB requests to peers use `security`, as Go's
 /// mock store dials them with the cluster security.
 pub fn in_process_stack(security: &ClusterSecurity) -> Result<InProcessStack, SqlQueryError> {
+    in_process_stack_from_image(security, None)
+}
+
+/// [`in_process_stack`] over a store that starts from `image`, a
+/// [`MvccStore::data_image`] of an earlier store (Go testkit's
+/// bootstrapped store image), or empty without one.
+pub fn in_process_stack_from_image(
+    security: &ClusterSecurity,
+    image: Option<&[u8]>,
+) -> Result<InProcessStack, SqlQueryError> {
     let pd = InProcessPd::new();
     let regions = Arc::new(tidb_unistore::region_manager::InProcessRegionManager::new());
     // Go's unistore store holds THE cluster's mock PD client
     // (`mock_region.go`), so its async-commit/1PC `minCommitTS` draws from
     // the same oracle start timestamps do. The embedded store mirrors that:
     // one shared oracle, both faster protocols available.
-    let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(
-        MvccStore::with_pd(pd.oracle()),
-        Arc::clone(&regions),
-    )));
-    let (tikv_store, rpc) = embedded_tikv_store(handler, Arc::clone(&regions), &pd, security)?;
+    let mut store = MvccStore::with_pd(pd.oracle());
+    if let Some(image) = image {
+        store.load_data_image(image).map_err(SqlQueryError::unknown)?;
+    }
+    let handler = Arc::new(std::sync::Mutex::new(KvHandler::new(store, Arc::clone(&regions))));
+    let (tikv_store, rpc) =
+        embedded_tikv_store(Arc::clone(&handler), Arc::clone(&regions), &pd, security)?;
     // The bootstrapped cluster protocol -- async commit and 1PC are both ON
     // on TiKV (`session_commit_protocol`) -- and the shared-oracle store can
     // answer both, exactly as Go's unistore does under its mock PD.
@@ -89,6 +104,7 @@ pub fn in_process_stack(security: &ClusterSecurity) -> Result<InProcessStack, Sq
         regions,
         tikv_store: Arc::new(tikv_store),
         rpc,
+        handler,
     })
 }
 

@@ -339,6 +339,7 @@ mod ru_stats_writer;
 pub mod schema_lease;
 pub mod schema_sync;
 mod statistics;
+mod test_session;
 pub mod stats_maintenance;
 use crate::cluster_transactions as transactions;
 
@@ -7785,8 +7786,10 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
 }
 
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
-    let mapped = error.to_mysql_error();
-    SqlQueryError::new(mapped.code, mapped.state, mapped.message).with_identity(mapped.identity)
+    let mapped = error.clone().to_mysql_error();
+    SqlQueryError::new(mapped.code, mapped.state, mapped.message)
+        .with_identity(mapped.identity)
+        .with_cause(error)
 }
 
 /// Storage bound to no snapshot, used only to decide which tables a catalog

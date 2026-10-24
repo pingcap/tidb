@@ -259,6 +259,13 @@ impl Default for PrivilegeRegistry {
 }
 
 impl PrivilegeRegistry {
+    /// Whether `other` is a handle to this same table (both clones of one
+    /// registry), not merely an equal one.
+    #[must_use]
+    pub fn is_same_table(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.users, &other.users)
+    }
+
     /// Bootstraps a table holding EXACTLY the given
     /// `(user, host, authentication_string)` accounts.
     ///

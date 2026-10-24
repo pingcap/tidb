@@ -39,18 +39,24 @@ use crate::{Session, StmtResult};
 /// IMAGE (see [`Session`]'s savepoint doc), so a statement inside `BEGIN` is
 /// invisible here until `COMMIT` -- which is what
 /// [`an_uncommitted_delete_is_invisible_in_the_committed_key_set`] pins.
-fn key_shapes(session: &Session, table: &str) -> Vec<&'static str> {
-    let catalog = session.shared_catalog();
-    let mut guard = catalog.lock().unwrap();
-    let entry = guard
-        .table_mut_in("test", table)
-        .unwrap_or_else(|| panic!("table `{table}` is in the catalog"));
-    let TableEntry::Kv(kv) = entry else {
-        panic!("table `{table}` is stored as KV bytes");
+fn key_shapes(session: &mut Session, table: &str) -> Vec<&'static str> {
+    let read = |catalog: &mut tidb_executor::Catalog| {
+        let entry = catalog
+            .table_mut_in("test", table)
+            .unwrap_or_else(|| panic!("table `{table}` is in the catalog"));
+        let TableEntry::Kv(kv) = entry else {
+            panic!("table `{table}` is stored as KV bytes");
+        };
+        Ok(std::sync::Arc::make_mut(kv).stored_keys().unwrap())
     };
-    std::sync::Arc::make_mut(kv)
-        .stored_keys()
-        .unwrap()
+    // A node session reads the committed keys through a fresh snapshot; the
+    // in-process tier's committed keys are the shared catalog's.
+    let keys = if session.node.is_some() {
+        session.with_catalog_mut(read).unwrap()
+    } else {
+        read(&mut session.shared_catalog().lock().unwrap()).unwrap()
+    };
+    keys
         .into_iter()
         .map(|key| {
             if is_record_key(&key) {
@@ -100,15 +106,15 @@ fn delete_through_a_unique_index_removes_the_index_key_with_the_record() {
         .unwrap();
     session.run("INSERT INTO t1 VALUES (1, 2, 3)").unwrap();
     // Clustered composite PK: one record key plus the `val` unique index.
-    assert_eq!(key_shapes(&session, "t1"), ["index", "record"]);
+    assert_eq!(key_shapes(&mut session, "t1"), ["index", "record"]);
 
     assert_eq!(affected(&mut session, "DELETE FROM t1 WHERE val = 3"), 1);
     // A leftover `index` here is the lost-write bug the Go test guards: the
     // row is gone but `val = 3` still looks taken.
     assert!(
-        key_shapes(&session, "t1").is_empty(),
+        key_shapes(&mut session, "t1").is_empty(),
         "the DELETE left keys behind: {:?}",
-        key_shapes(&session, "t1")
+        key_shapes(&mut session, "t1")
     );
     // Go's tk2 statement, which the freed unique key must now admit.
     assert_eq!(affected(&mut session, "INSERT INTO t1 VALUES (1, 3, 3)"), 1);
@@ -126,10 +132,10 @@ fn delete_on_a_primary_key_prefix_removes_only_the_record_key() {
         .run("CREATE TABLE t2 (k INT, kk INT, val INT, PRIMARY KEY (k, kk))")
         .unwrap();
     session.run("INSERT INTO t2 VALUES (1, 1, 1)").unwrap();
-    assert_eq!(key_shapes(&session, "t2"), ["record"]);
+    assert_eq!(key_shapes(&mut session, "t2"), ["record"]);
 
     assert_eq!(affected(&mut session, "DELETE FROM t2 WHERE k = 1"), 1);
-    assert!(key_shapes(&session, "t2").is_empty());
+    assert!(key_shapes(&mut session, "t2").is_empty());
     assert_eq!(affected(&mut session, "INSERT INTO t2 VALUES (1, 1, 2)"), 1);
     assert_eq!(rows(&mut session, "SELECT k, kk, val FROM t2"), ["1|1|2"]);
 }
@@ -148,10 +154,10 @@ fn delete_found_by_table_scan_still_removes_the_unique_index_key() {
         )
         .unwrap();
     session.run("INSERT INTO t3 VALUES (1, 2, 3, 4)").unwrap();
-    assert_eq!(key_shapes(&session, "t3"), ["index", "record"]);
+    assert_eq!(key_shapes(&mut session, "t3"), ["index", "record"]);
 
     assert_eq!(affected(&mut session, "DELETE FROM t3 WHERE vv = 4"), 1);
-    assert!(key_shapes(&session, "t3").is_empty());
+    assert!(key_shapes(&mut session, "t3").is_empty());
     // Go's tk2: same `val`, different `vv`. It can only succeed if the unique
     // index entry went with the row.
     assert_eq!(
@@ -174,7 +180,7 @@ fn delete_with_a_constant_true_predicate_removes_every_key() {
     session.run("INSERT INTO t4 VALUES (1, 2, 3, 4)").unwrap();
 
     assert_eq!(affected(&mut session, "DELETE FROM t4 WHERE 1"), 1);
-    assert!(key_shapes(&session, "t4").is_empty());
+    assert!(key_shapes(&mut session, "t4").is_empty());
     assert_eq!(
         affected(&mut session, "INSERT INTO t4 VALUES (1, 2, 3, 5)"),
         1
@@ -197,7 +203,7 @@ fn delete_by_in_list_removes_every_matched_rows_keys() {
         .run("INSERT INTO t5 VALUES (1, 2, 3, 4), (2, 3, 4, 5)")
         .unwrap();
     assert_eq!(
-        key_shapes(&session, "t5"),
+        key_shapes(&mut session, "t5"),
         ["index", "index", "record", "record"]
     );
 
@@ -205,7 +211,7 @@ fn delete_by_in_list_removes_every_matched_rows_keys() {
         affected(&mut session, "DELETE FROM t5 WHERE k IN (1, 2, 3, 4)"),
         2
     );
-    assert!(key_shapes(&session, "t5").is_empty());
+    assert!(key_shapes(&mut session, "t5").is_empty());
     assert_eq!(
         affected(&mut session, "INSERT INTO t5 VALUES (1, 2, 3, 5)"),
         1
@@ -231,7 +237,7 @@ fn delete_by_range_over_a_primary_key_column_removes_both_rows_keys() {
         affected(&mut session, "DELETE FROM t6 WHERE kk BETWEEN 0 AND 10"),
         2
     );
-    assert!(key_shapes(&session, "t6").is_empty());
+    assert!(key_shapes(&mut session, "t6").is_empty());
     assert_eq!(
         affected(
             &mut session,
@@ -258,20 +264,20 @@ fn an_uncommitted_delete_is_invisible_in_the_committed_key_set() {
     session.run("DELETE FROM tr WHERE val = 3").unwrap();
     // The DELETE is staged on the transaction's own catalog image, so the
     // committed key set is untouched while the transaction is open.
-    assert_eq!(key_shapes(&session, "tr"), ["index", "record"]);
+    assert_eq!(key_shapes(&mut session, "tr"), ["index", "record"]);
     // Inside the transaction the row IS gone, which is what the statement's
     // own reads must see.
     assert!(rows(&mut session, "SELECT k, kk, val FROM tr").is_empty());
     session.run("ROLLBACK").unwrap();
 
-    assert_eq!(key_shapes(&session, "tr"), ["index", "record"]);
+    assert_eq!(key_shapes(&mut session, "tr"), ["index", "record"]);
     assert_eq!(rows(&mut session, "SELECT k, kk, val FROM tr"), ["1|2|3"]);
 
     // Committed, both keys go -- the record and the unique-index entry.
     session.run("BEGIN").unwrap();
     session.run("DELETE FROM tr WHERE val = 3").unwrap();
     session.run("COMMIT").unwrap();
-    assert!(key_shapes(&session, "tr").is_empty());
+    assert!(key_shapes(&mut session, "tr").is_empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +311,7 @@ fn replace_of_an_identical_row_leaves_one_row_on_pk_and_on_unique_key() {
     // `replace into tpk values (1)` over the same row is 1.
     assert_eq!(affected(&mut session, "REPLACE INTO tpk VALUES (1)"), 1);
     assert_eq!(rows(&mut session, "SELECT c FROM tpk"), ["1"]);
-    assert_eq!(key_shapes(&session, "tpk"), ["record"]);
+    assert_eq!(key_shapes(&mut session, "tpk"), ["record"]);
 
     // Row 2: `create table t (c int unique key)` -- no PK, so the handle is a
     // `_tidb_rowid` and `c` is a unique index.
@@ -313,7 +319,7 @@ fn replace_of_an_identical_row_leaves_one_row_on_pk_and_on_unique_key() {
     session.run("INSERT INTO tuk VALUES (1)").unwrap();
     assert_eq!(affected(&mut session, "REPLACE INTO tuk VALUES (1)"), 1);
     assert_eq!(rows(&mut session, "SELECT c FROM tuk"), ["1"]);
-    assert_eq!(key_shapes(&session, "tuk"), ["index", "record"]);
+    assert_eq!(key_shapes(&mut session, "tuk"), ["index", "record"]);
 }
 
 /// Go rows 3 and 4: `insert ignore into t values (1)` over the duplicate.
@@ -338,7 +344,7 @@ fn insert_ignore_of_a_duplicate_leaves_one_row_on_pk_and_on_unique_key() {
         ["Warning|1062|Duplicate entry '1' for key 'ipk.PRIMARY'"]
     );
     assert_eq!(rows(&mut session, "SELECT c FROM ipk"), ["1"]);
-    assert_eq!(key_shapes(&session, "ipk"), ["record"]);
+    assert_eq!(key_shapes(&mut session, "ipk"), ["record"]);
 
     session.run("CREATE TABLE iuk (c INT UNIQUE KEY)").unwrap();
     session.run("INSERT INTO iuk VALUES (1)").unwrap();
@@ -353,7 +359,7 @@ fn insert_ignore_of_a_duplicate_leaves_one_row_on_pk_and_on_unique_key() {
         ["Warning|1062|Duplicate entry '1' for key 'iuk.c'"]
     );
     assert_eq!(rows(&mut session, "SELECT c FROM iuk"), ["1"]);
-    assert_eq!(key_shapes(&session, "iuk"), ["index", "record"]);
+    assert_eq!(key_shapes(&mut session, "iuk"), ["index", "record"]);
 }
 
 /// Go rows 5 and 6: `insert into t values (1) on duplicate key update
@@ -376,7 +382,7 @@ fn on_duplicate_update_to_the_same_value_changes_nothing_on_pk_and_on_unique_key
         0
     );
     assert_eq!(rows(&mut session, "SELECT c FROM dpk"), ["1"]);
-    assert_eq!(key_shapes(&session, "dpk"), ["record"]);
+    assert_eq!(key_shapes(&mut session, "dpk"), ["record"]);
 
     session.run("CREATE TABLE duk (c INT UNIQUE KEY)").unwrap();
     session.run("INSERT INTO duk VALUES (1)").unwrap();
@@ -388,7 +394,7 @@ fn on_duplicate_update_to_the_same_value_changes_nothing_on_pk_and_on_unique_key
         0
     );
     assert_eq!(rows(&mut session, "SELECT c FROM duk"), ["1"]);
-    assert_eq!(key_shapes(&session, "duk"), ["index", "record"]);
+    assert_eq!(key_shapes(&mut session, "duk"), ["index", "record"]);
 }
 
 /// Go's default and session assignment remain observable independently of

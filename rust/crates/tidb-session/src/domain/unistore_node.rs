@@ -321,6 +321,173 @@ pub fn unistore_cluster_session_stack(
     spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
+    unistore_cluster_session_stack_from(config, users, spill_storage, memory_arbitrator, None)
+}
+
+/// Go testkit's bootstrapped store image (`tryMakeImage`): a store's
+/// committed data right after `session.BootstrapSession`, plus what the
+/// bootstrap did outside the store, so a later store starts bootstrapped
+/// instead of running the bootstrap again.
+#[derive(Clone, Debug)]
+pub struct BootstrapImage {
+    /// [`tidb_unistore::mvcc_store::MvccStore::data_image`] of the store.
+    pub data: Vec<u8>,
+    /// The schema version the bootstrap published.
+    pub schema_version: i64,
+    /// The region splits the bootstrap's tables owe.
+    pub splits: tidb_exec::mysql_bootstrap::BootstrapSplits,
+    /// The resource manager write the bootstrap made.
+    pub resource_group_update: tidb_exec::cluster_ddl::ResourceGroupUpdate,
+}
+
+const BOOTSTRAP_IMAGE_MAGIC: &[u8; 8] = b"TIDBIMG1";
+
+impl BootstrapImage {
+    /// Bootstraps a fresh embedded store and takes its image.
+    pub fn make(security: &tidb_pd_client::ClusterSecurity) -> Result<Self, String> {
+        let stack = in_process_stack(security).map_err(|error| error.message)?;
+        // The bootstrap's resource group write lands in the mock resource
+        // manager, as the stack's own boot initializes it.
+        tidb_domain::resource_manager_client::init_resource_manager_client(None);
+        let published = tidb_ddl::bootstrap_publish::publish_bootstrap_with_effects(
+            &stack.opener,
+            IN_PROCESS_TIMEOUT,
+        )?;
+        tidb_ddl::bootstrap_publish::notify_committed_bootstrap(
+            &published.outcome,
+            published.schema_version,
+            None,
+        )?;
+        let data = stack
+            .handler
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .store
+            .data_image();
+        Ok(Self {
+            data,
+            schema_version: published.schema_version,
+            splits: published.splits,
+            resource_group_update: published.resource_group_update,
+        })
+    }
+
+    /// The image as bytes, for a file other processes start from.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        use prost::Message as _;
+        use tidb_exec::cluster_ddl::ResourceGroupUpdate;
+        fn put(out: &mut Vec<u8>, bytes: &[u8]) {
+            out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+            out.extend_from_slice(bytes);
+        }
+        fn put_ids(out: &mut Vec<u8>, ids: &[i64]) {
+            out.extend_from_slice(&(ids.len() as u64).to_le_bytes());
+            for id in ids {
+                out.extend_from_slice(&id.to_le_bytes());
+            }
+        }
+        let mut out = BOOTSTRAP_IMAGE_MAGIC.to_vec();
+        out.extend_from_slice(&self.schema_version.to_le_bytes());
+        out.extend_from_slice(&(self.splits.global_batches.len() as u64).to_le_bytes());
+        for batch in &self.splits.global_batches {
+            put_ids(&mut out, batch);
+        }
+        put_ids(&mut out, &self.splits.table_ids);
+        match &self.resource_group_update {
+            ResourceGroupUpdate::Add(group) => {
+                out.push(0);
+                put(&mut out, &group.encode_to_vec());
+            }
+            ResourceGroupUpdate::Modify(group) => {
+                out.push(1);
+                put(&mut out, &group.encode_to_vec());
+            }
+            ResourceGroupUpdate::Delete(name) => {
+                out.push(2);
+                put(&mut out, name.as_bytes());
+            }
+        }
+        put(&mut out, &self.data);
+        out
+    }
+
+    /// Reads [`Self::to_bytes`] back.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        use prost::Message as _;
+        use tidb_exec::cluster_ddl::ResourceGroupUpdate;
+        struct Reader<'a>(&'a [u8]);
+        impl<'a> Reader<'a> {
+            fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+                if self.0.len() < n {
+                    return Err("truncated bootstrap image".to_owned());
+                }
+                let (head, rest) = self.0.split_at(n);
+                self.0 = rest;
+                Ok(head)
+            }
+            fn u64(&mut self) -> Result<u64, String> {
+                Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("8 bytes")))
+            }
+            fn len(&mut self) -> Result<usize, String> {
+                usize::try_from(self.u64()?).map_err(|error| error.to_string())
+            }
+            fn bytes(&mut self) -> Result<&'a [u8], String> {
+                let len = self.len()?;
+                self.take(len)
+            }
+            fn ids(&mut self) -> Result<Vec<i64>, String> {
+                let len = self.len()?;
+                (0..len).map(|_| self.u64().map(|id| id as i64)).collect()
+            }
+        }
+        let mut reader = Reader(bytes);
+        if reader.take(BOOTSTRAP_IMAGE_MAGIC.len())? != BOOTSTRAP_IMAGE_MAGIC {
+            return Err("not a bootstrap image".to_owned());
+        }
+        let schema_version = reader.u64()? as i64;
+        let batches = reader.len()?;
+        let global_batches = (0..batches)
+            .map(|_| reader.ids())
+            .collect::<Result<Vec<_>, _>>()?;
+        let table_ids = reader.ids()?;
+        let tag = reader.take(1)?[0];
+        let payload = reader.bytes()?;
+        let decode = |payload: &[u8]| {
+            tidb_proto::resource_manager::ResourceGroup::decode(payload)
+                .map(Box::new)
+                .map_err(|error| error.to_string())
+        };
+        let resource_group_update = match tag {
+            0 => ResourceGroupUpdate::Add(decode(payload)?),
+            1 => ResourceGroupUpdate::Modify(decode(payload)?),
+            2 => ResourceGroupUpdate::Delete(
+                String::from_utf8(payload.to_vec()).map_err(|error| error.to_string())?,
+            ),
+            other => return Err(format!("unknown resource group update {other}")),
+        };
+        let data = reader.bytes()?.to_vec();
+        Ok(Self {
+            data,
+            schema_version,
+            splits: tidb_exec::mysql_bootstrap::BootstrapSplits {
+                global_batches,
+                table_ids,
+            },
+            resource_group_update,
+        })
+    }
+}
+
+/// [`unistore_cluster_session_stack`] over a store that starts from `image`
+/// when one is given, skipping the bootstrap it already holds.
+pub fn unistore_cluster_session_stack_from(
+    config: &crate::domain::node_config::NodeConfig,
+    users: &Arc<crate::domain::configured_user_store::ConfiguredUserStore>,
+    spill_storage: Option<Arc<tidb_util::spill_storage::SpillStorage>>,
+    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    image: Option<&BootstrapImage>,
+) -> Result<UnistoreClusterStack, crate::domain::real_tikv_node::RunConfiguredNodeError> {
     use crate::domain::cluster_session_node::{
         ClusterSessionFactory, RealClusterDdl, RealClusterTransactions,
     };
@@ -333,7 +500,12 @@ pub fn unistore_cluster_session_stack(
         regions: _regions,
         tikv_store,
         rpc,
-    } = in_process_stack(&config.cluster_security).map_err(engine)?;
+        handler: _handler,
+    } = tidb_ddl::embedded_store::in_process_stack_from_image(
+        &config.cluster_security,
+        image.map(|image| image.data.as_slice()),
+    )
+    .map_err(engine)?;
     // The store's regions as `SPLIT`, `SHOW TABLE ... REGIONS` and
     // `TABLESAMPLE REGIONS()` reach them: client-go's `SplitRegions` and
     // `LoadRegionsInKeyRange` over the store, as Go's mockstore runs them.
@@ -348,15 +520,35 @@ pub fn unistore_cluster_session_stack(
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
     tidb_domain::resource_manager_client::init_resource_manager_client(None);
 
-    // The bootstrap: every boot, because the store is empty every boot.
-    let bootstrap_started = std::time::Instant::now();
-    let (outcome, schema_version, bootstrap_splits) =
-        tidb_ddl::bootstrap_publish::publish_bootstrap_with_splits(&opener, IN_PROCESS_TIMEOUT)
+    // The bootstrap: every boot, because the store is empty every boot --
+    // unless it starts from a bootstrapped image, whose resource manager
+    // write is replayed instead.
+    let (schema_version, bootstrap_splits) = match image {
+        None => {
+            let bootstrap_started = std::time::Instant::now();
+            let (outcome, schema_version, bootstrap_splits) =
+                tidb_ddl::bootstrap_publish::publish_bootstrap_with_splits(
+                    &opener,
+                    IN_PROCESS_TIMEOUT,
+                )
+                .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+            let schema_version = tidb_ddl::bootstrap_publish::notify_committed_bootstrap(
+                &outcome,
+                schema_version,
+                None,
+            )
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    let schema_version =
-        tidb_ddl::bootstrap_publish::notify_committed_bootstrap(&outcome, schema_version, None)
-            .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
-    tidb_ddl::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
+            tidb_ddl::bootstrap_publish::log_bootstrap_successful(bootstrap_started);
+            (schema_version, bootstrap_splits)
+        }
+        Some(image) => {
+            image
+                .resource_group_update
+                .apply()
+                .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+            (image.schema_version, image.splits.clone())
+        }
+    };
     // Go `EnableSplitTableRegion` (config `split-table`): the bootstrap cut
     // every system table's region on the fresh store.
     if tidb_config::config_tree::config::get_global_config().split_table {

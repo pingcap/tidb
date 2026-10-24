@@ -410,6 +410,80 @@ impl MvccStore {
         }
     }
 
+    /// The store as a byte image, for a later store to start from (Go
+    /// testkit's bootstrapped store image, which copies the store's
+    /// directory): the committed versions badger holds, then the lock store
+    /// Go writes beside them on close (`dumpMemLocks`) -- an async-commit
+    /// transaction's secondaries are still locks when its commit returns.
+    #[must_use]
+    pub fn data_image(&self) -> Vec<u8> {
+        fn put(image: &mut Vec<u8>, bytes: &[u8]) {
+            let len = u32::try_from(bytes.len()).expect("an image entry fits u32");
+            image.extend_from_slice(&len.to_le_bytes());
+            image.extend_from_slice(bytes);
+        }
+        let mut image = Vec::new();
+        image.extend_from_slice(&self.latest_ts.to_le_bytes());
+        image.extend_from_slice(&(self.engine.entries.len() as u64).to_le_bytes());
+        for ((key, inverted_version), (value, meta)) in &self.engine.entries {
+            put(&mut image, key);
+            image.extend_from_slice(&inverted_version.to_le_bytes());
+            put(&mut image, value);
+            put(&mut image, &meta.0);
+        }
+        // Go `dumpMemLocks`.
+        let mut locks = self.lock_store.new_iterator();
+        locks.seek_to_first();
+        while locks.valid() {
+            put(&mut image, locks.key());
+            put(&mut image, locks.value());
+            locks.next();
+        }
+        image
+    }
+
+    /// Loads a [`Self::data_image`] into this fresh store.
+    pub fn load_data_image(&mut self, image: &[u8]) -> Result<(), String> {
+        struct Reader<'a>(&'a [u8]);
+        impl<'a> Reader<'a> {
+            fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+                if self.0.len() < n {
+                    return Err("truncated store image".to_owned());
+                }
+                let (head, rest) = self.0.split_at(n);
+                self.0 = rest;
+                Ok(head)
+            }
+            fn u64(&mut self) -> Result<u64, String> {
+                Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("8 bytes")))
+            }
+            fn bytes(&mut self) -> Result<&'a [u8], String> {
+                let len = u32::from_le_bytes(self.take(4)?.try_into().expect("4 bytes"));
+                self.take(len as usize)
+            }
+        }
+        let mut reader = Reader(image);
+        let latest_ts = reader.u64()?;
+        let count = reader.u64()?;
+        let mut entries = BTreeMap::new();
+        for _ in 0..count {
+            let key = reader.bytes()?.to_vec();
+            let inverted_version = reader.u64()?;
+            let value = reader.bytes()?.to_vec();
+            let meta = DbUserMeta(reader.bytes()?.to_vec());
+            entries.insert((key, inverted_version), (value, meta));
+        }
+        self.engine.entries = entries;
+        // Go `loadLocks`.
+        while !reader.0.is_empty() {
+            let key = reader.bytes()?;
+            let value = reader.bytes()?;
+            self.lock_store.put(key, value);
+        }
+        self.update_latest_ts(latest_ts);
+        Ok(())
+    }
+
     /// A store with Go's `pdClient` seam filled: async-commit prewrites can
     /// draw their `minCommitTS` from this oracle.
     #[must_use]

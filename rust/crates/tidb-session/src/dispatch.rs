@@ -1591,6 +1591,9 @@ impl Session {
         stmt: Stmt,
         sql: &str,
     ) -> Result<crate::StatementExecution<'a>, DriverError> {
+        if self.node.is_some() {
+            return self.run_with_columns_parsed(stmt, sql).map(crate::StatementExecution::Complete);
+        }
         Ok(self.open_record_set_parsed(stmt, sql)?.attach(self))
     }
 

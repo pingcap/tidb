@@ -53,6 +53,7 @@ pub mod node_config;
 pub mod main_flags;
 pub mod real_tikv_node;
 pub mod unistore_node;
+pub mod mock_store;
 
 // Tests of process-global sysvar hooks must not share those hooks with other
 // simulated nodes. Run the original test body in its own harness process;
