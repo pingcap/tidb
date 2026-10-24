@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -108,6 +109,17 @@ func TestEngineManager(t *testing.T) {
 
 	require.True(t, isEmptyDir(backendConfig.LocalStoreDir))
 	em.close()
+}
+
+func TestOpenDuplicateDBCleansUpAfterFailure(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	storeDir := path.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(storeDir, []byte("x"), 0o600))
+
+	db, err := openDuplicateDB(storeDir)
+	require.Error(t, err)
+	require.Nil(t, db)
 }
 
 func TestGetExternalEngineKVStatistics(t *testing.T) {
