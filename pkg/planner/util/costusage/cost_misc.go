@@ -200,3 +200,29 @@ func (op *PlanCostOption) WithCostFlag(flag uint64) *PlanCostOption {
 	op.CostFlag = flag
 	return op
 }
+
+// NewRequestPenaltyVer2 prices quantity * factor * g(copPressureNum/capacity).
+// g(x) = x^2/(1+x^2) discounts small lookup populations.
+// Capacity must be positive. Local pressure is fixed here; parent operators
+// account for repeated work using ordinary cost multiplication.
+func NewRequestPenaltyVer2(option *PlanCostOption, quantity, copPressureNum, capacity float64, factor CostVer2Factor) CostVer2 {
+	if capacity <= 0 {
+		panic("request capacity must be positive")
+	}
+	penalty := 0.0
+	if quantity > 0 && copPressureNum > 0 {
+		// Square a ratio at most one to avoid overflow at large pressure.
+		var g float64
+		if copPressureNum < capacity {
+			x := copPressureNum / capacity
+			g = x * x / (1 + x*x)
+		} else {
+			x := capacity / copPressureNum
+			g = 1 / (1 + x*x)
+		}
+		penalty = quantity * factor.Value * g
+	}
+	return NewCostVer2(option, factor, penalty, func() string {
+		return fmt.Sprintf("requestPenalty(quantity(%v)*%v*g(copPressureNum(%v)/capacity(%v)))", quantity, factor, copPressureNum, capacity)
+	})
+}

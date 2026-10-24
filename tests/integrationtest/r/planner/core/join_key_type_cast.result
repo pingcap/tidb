@@ -8,14 +8,14 @@ analyze table t_varchar;
 explain format = 'brief' select * from t_int join t_varchar on t_int.id = t_varchar.id;
 id	estRows	task	access object	operator info
 Projection	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v
-└─HashJoin	5.00	root		inner join, equal:[eq(Column#1, Column#12)]
-  ├─Projection(Build)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#1
-  │ └─TableReader	5.00	root		data:TableFullScan
-  │   └─TableFullScan	5.00	cop[tikv]	table:t_int	keep order:false
-  └─Projection(Probe)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
-    └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
-      └─TableReader	7.00	root		data:TableFullScan
-        └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+└─IndexJoin	5.00	root		inner join, inner:Projection, outer key:Column#12, inner key:Column#1, equal cond:eq(Column#12, Column#1)
+  ├─Projection(Build)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
+  │ └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
+  │   └─TableReader	7.00	root		data:TableFullScan
+  │     └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+  └─Projection(Probe)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#1
+    └─TableReader	5.00	root		data:TableRangeScan
+      └─TableRangeScan	5.00	cop[tikv]	table:t_int	range: decided by [Column#12], keep order:false
 select * from t_int join t_varchar on t_int.id = t_varchar.id order by t_int.id;
 id	v	id	v
 0	0	abc	99
@@ -104,14 +104,14 @@ NULL	20	NULL	NULL
 explain format = 'brief' select * from t_varchar join t_int on t_varchar.id = t_int.id;
 id	estRows	task	access object	operator info
 Projection	5.00	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v
-└─HashJoin	5.00	root		inner join, equal:[eq(Column#5, Column#12)]
-  ├─Projection(Build)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#5
-  │ └─TableReader	5.00	root		data:TableFullScan
-  │   └─TableFullScan	5.00	cop[tikv]	table:t_int	keep order:false
-  └─Projection(Probe)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
-    └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
-      └─TableReader	7.00	root		data:TableFullScan
-        └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+└─IndexJoin	5.00	root		inner join, inner:Projection, outer key:Column#12, inner key:Column#5, equal cond:eq(Column#12, Column#5)
+  ├─Projection(Build)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
+  │ └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
+  │   └─TableReader	7.00	root		data:TableFullScan
+  │     └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+  └─Projection(Probe)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#5
+    └─TableReader	5.00	root		data:TableRangeScan
+      └─TableRangeScan	5.00	cop[tikv]	table:t_int	range: decided by [Column#12], keep order:false
 select * from t_varchar join t_int on t_varchar.id = t_int.id order by t_int.id;
 id	v	id	v
 abc	99	0	0
@@ -194,25 +194,25 @@ id	v	id	v
 explain format = 'brief' select /*+ INL_JOIN(t_idx_str) */ * from t_idx_int join t_idx_str on t_idx_int.id = t_idx_str.id;
 id	estRows	task	access object	operator info
 Projection	2.40	root		planner__core__join_key_type_cast.t_idx_int.id, planner__core__join_key_type_cast.t_idx_int.v, planner__core__join_key_type_cast.t_idx_str.id, planner__core__join_key_type_cast.t_idx_str.v
-└─HashJoin	2.40	root		inner join, equal:[eq(Column#1, Column#12)]
-  ├─Projection(Build)	3.00	root		planner__core__join_key_type_cast.t_idx_int.id, planner__core__join_key_type_cast.t_idx_int.v, planner__core__join_key_type_cast.t_idx_int.id->Column#1
-  │ └─TableReader	3.00	root		data:TableFullScan
-  │   └─TableFullScan	3.00	cop[tikv]	table:t_idx_int	keep order:false
-  └─Projection(Probe)	2.40	root		planner__core__join_key_type_cast.t_idx_str.id, planner__core__join_key_type_cast.t_idx_str.v, cast(planner__core__join_key_type_cast.t_idx_str.id, bigint BINARY)->Column#12
-    └─Selection	2.40	root		eq(cast(cast(planner__core__join_key_type_cast.t_idx_str.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_idx_str.id, double BINARY))
-      └─TableReader	3.00	root		data:TableFullScan
-        └─TableFullScan	3.00	cop[tikv]	table:t_idx_str	keep order:false
+└─IndexJoin	2.40	root		inner join, inner:Projection, outer key:Column#12, inner key:Column#1, equal cond:eq(Column#12, Column#1)
+  ├─Projection(Build)	2.40	root		planner__core__join_key_type_cast.t_idx_str.id, planner__core__join_key_type_cast.t_idx_str.v, cast(planner__core__join_key_type_cast.t_idx_str.id, bigint BINARY)->Column#12
+  │ └─Selection	2.40	root		eq(cast(cast(planner__core__join_key_type_cast.t_idx_str.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_idx_str.id, double BINARY))
+  │   └─TableReader	3.00	root		data:TableFullScan
+  │     └─TableFullScan	3.00	cop[tikv]	table:t_idx_str	keep order:false
+  └─Projection(Probe)	2.40	root		planner__core__join_key_type_cast.t_idx_int.id, planner__core__join_key_type_cast.t_idx_int.v, planner__core__join_key_type_cast.t_idx_int.id->Column#1
+    └─TableReader	2.40	root		data:TableRangeScan
+      └─TableRangeScan	2.40	cop[tikv]	table:t_idx_int	range: decided by [Column#12], keep order:false
 explain format = 'brief' select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double);
 id	estRows	task	access object	operator info
 Projection	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v
-└─HashJoin	5.00	root		inner join, equal:[eq(Column#1, Column#12)]
-  ├─Projection(Build)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#1
-  │ └─TableReader	5.00	root		data:TableFullScan
-  │   └─TableFullScan	5.00	cop[tikv]	table:t_int	keep order:false
-  └─Projection(Probe)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
-    └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
-      └─TableReader	7.00	root		data:TableFullScan
-        └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+└─IndexJoin	5.00	root		inner join, inner:Projection, outer key:Column#12, inner key:Column#1, equal cond:eq(Column#12, Column#1)
+  ├─Projection(Build)	5.60	root		planner__core__join_key_type_cast.t_varchar.id, planner__core__join_key_type_cast.t_varchar.v, cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY)->Column#12
+  │ └─Selection	5.60	root		eq(cast(cast(planner__core__join_key_type_cast.t_varchar.id, bigint BINARY), double BINARY), cast(planner__core__join_key_type_cast.t_varchar.id, double BINARY))
+  │   └─TableReader	7.00	root		data:TableFullScan
+  │     └─TableFullScan	7.00	cop[tikv]	table:t_varchar	keep order:false
+  └─Projection(Probe)	5.00	root		planner__core__join_key_type_cast.t_int.id, planner__core__join_key_type_cast.t_int.v, planner__core__join_key_type_cast.t_int.id->Column#1
+    └─TableReader	5.00	root		data:TableRangeScan
+      └─TableRangeScan	5.00	cop[tikv]	table:t_int	range: decided by [Column#12], keep order:false
 select * from t_int join t_varchar on cast(t_int.id as double) = cast(t_varchar.id as double) order by t_int.id;
 id	v	id	v
 0	0	abc	99
