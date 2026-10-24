@@ -16,6 +16,7 @@ package snapclient_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -31,12 +32,15 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -242,6 +246,76 @@ func TestSnapImporterRaw(t *testing.T) {
 	}
 	err = importer.Close()
 	require.NoError(t, err)
+}
+
+type memoryPressureImporterClient struct {
+	*fakeImporterClient
+	injected atomic.Bool
+	storeID  atomic.Uint64
+}
+
+// DownloadSST rejects exactly one concurrent request with an explicit memory
+// guard response, then delegates to the successful fake to exercise retry retention.
+func (client *memoryPressureImporterClient) DownloadSST(
+	ctx context.Context,
+	storeID uint64,
+	req *import_sstpb.DownloadRequest,
+) (*import_sstpb.DownloadResponse, error) {
+	if client.injected.CompareAndSwap(false, true) {
+		client.storeID.Store(storeID)
+		return &import_sstpb.DownloadResponse{Error: &import_sstpb.Error{
+			Message: "resource is not enough Memory usage too high, usage: 512 bytes, mem limit 256 bytes",
+		}}, nil
+	}
+	return client.fakeImporterClient.DownloadSST(ctx, storeID, req)
+}
+
+func TestSnapImporterRetainsRetriedMemoryPressure(t *testing.T) {
+	for name, mode := range map[string]snapclient.KvMode{"full": snapclient.TiDBFull, "raw": snapclient.Raw} {
+		t.Run(name, func(t *testing.T) {
+			summary.InitCollector(false)
+			t.Cleanup(func() { summary.InitCollector(false) })
+			ctx := context.Background()
+			splitClient := split.NewFakeSplitClient()
+			for _, region := range generateRegions() {
+				splitClient.AppendPdRegion(region)
+			}
+			client := &memoryPressureImporterClient{fakeImporterClient: newFakeImporterClient()}
+			opt := snapclient.NewSnapFileImporterOptionsForTest(splitClient, client, generateStores(), snapclient.RewriteModeKeyspace, 10)
+			importer, err := snapclient.NewSnapFileImporter(ctx, kvrpcpb.APIVersion_V1, mode, opt)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, importer.Close()) })
+			if mode == snapclient.Raw {
+				require.NoError(t, importer.SetRawRange(nil, nil))
+			}
+			files, rules := generateFiles()
+			file := files[0]
+			// The shared fixture has empty ranges; use a nonempty range so the
+			// full importer actually downloads a file instead of skipping it.
+			file.EndKey = append(append([]byte(nil), file.StartKey...), 0)
+			file.Name, file.Cf = "diagnostic_write.sst", "write"
+			importer.PauseForBackpressure()
+			require.NoError(t, importer.Import(ctx, restore.BackupFileSet{SSTFiles: []*backuppb.File{file}, RewriteRules: rules}))
+			require.True(t, client.injected.Load())
+
+			encoder := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
+			buffer, err := encoder.EncodeEntry(zapcore.Entry{}, summary.FailureFields(context.Canceled, func(text string) string { return text }))
+			require.NoError(t, err)
+			defer buffer.Free()
+			var report map[string]any
+			require.NoError(t, json.Unmarshal(buffer.Bytes(), &report))
+			require.Equal(t, "canceled", report["error-category"])
+			observations := report["observed-errors"].([]any)
+			require.Len(t, observations, 1)
+			observation := observations[0].(map[string]any)
+			require.Equal(t, "tikv_memory_pressure", observation["category"])
+			require.Equal(t, "tikv", observation["component"])
+			require.Equal(t, "download_sst", observation["operation"])
+			require.Equal(t, float64(client.storeID.Load()), observation["store-id"])
+			require.Equal(t, "BR:KV:ErrKVDownloadFailed", observation["error-code"])
+			require.Equal(t, float64(1), observation["count"])
+		})
+	}
 }
 
 type flowControlSplitClient struct {
