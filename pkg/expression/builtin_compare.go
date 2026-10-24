@@ -1609,6 +1609,22 @@ func RefineComparedConstant(ctx BuildContext, targetFieldType types.FieldType, c
 			SubqueryRefID: con.SubqueryRefID,
 		}, false
 	}
+	if targetFieldType.GetType() == mysql.TypeYear &&
+		(op == opcode.LT || op == opcode.LE || op == opcode.GT || op == opcode.GE) {
+		// Converting a rounded fractional value to YEAR can apply two-digit-year adjustment
+		// and move the comparison boundary, so keep fractional YEAR bounds numeric.
+		switch con.GetType(evalCtx).EvalType() {
+		case types.ETReal:
+			value := dt.GetFloat64()
+			if value != math.Trunc(value) {
+				return con, false
+			}
+		case types.ETDecimal:
+			if _, decimalErr := dt.GetMysqlDecimal().ToInt(); decimalErr == types.ErrTruncated {
+				return con, false
+			}
+		}
+	}
 	switch op {
 	case opcode.LT, opcode.GE:
 		resultExpr := NewFunctionInternal(ctx, ast.Ceil, types.NewFieldType(mysql.TypeUnspecified), con)
