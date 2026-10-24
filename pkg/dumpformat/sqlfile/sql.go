@@ -16,7 +16,7 @@ package sqlfile
 
 import (
 	"bytes"
-	"fmt"
+	"encoding/hex"
 
 	"github.com/pingcap/tidb/pkg/dumpformat"
 )
@@ -33,16 +33,33 @@ func AppendValue(dst, val []byte, isNull bool, kind dumpformat.FieldKind, escape
 	if isNull {
 		return append(dst, nullToken...)
 	}
-	switch kind {
-	case dumpformat.KindNumber:
+	if kind == dumpformat.KindNumber {
 		return append(dst, val...)
-	case dumpformat.KindBytes:
-		return fmt.Appendf(dst, "x'%x'", val)
-	default: // dumpformat.KindString
-		dst = append(dst, '\'')
-		dst = appendEscaped(dst, val, escapeBackslash)
-		return append(dst, '\'')
 	}
+	dst = appendOpenQuote(dst, kind)
+	dst, _ = appendQuotedBody(dst, val, len(val), kind, escapeBackslash)
+	return append(dst, '\'')
+}
+
+// appendOpenQuote appends the opening of a quoted value: x' for binary values
+// and ' for strings. Both are closed by a single quote.
+func appendOpenQuote(dst []byte, kind dumpformat.FieldKind) []byte {
+	if kind == dumpformat.KindBytes {
+		dst = append(dst, 'x')
+	}
+	return append(dst, '\'')
+}
+
+// appendQuotedBody appends the part of a quoted value between its quotes (hex
+// digits for binary values, the escaped text for strings) for the first
+// min(len(val), limit) bytes of val, and returns how many bytes it encoded.
+// Every input byte is encoded on its own, so any split yields the same bytes.
+func appendQuotedBody(dst, val []byte, limit int, kind dumpformat.FieldKind, escapeBackslash bool) ([]byte, int) {
+	n := min(len(val), limit)
+	if kind == dumpformat.KindBytes {
+		return hex.AppendEncode(dst, val[:n]), n
+	}
+	return appendEscaped(dst, val[:n], escapeBackslash), n
 }
 
 // appendEscaped writes s to dst, escaping per escapeBackslash.
