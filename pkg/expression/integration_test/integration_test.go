@@ -141,6 +141,26 @@ func skipIfNotStarterForFTS(t *testing.T) {
 	}
 }
 
+func TestSoundex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustQuery("select soundex('Hello'), soundex('Quadratically'), soundex('Tymczak'), soundex('a'), soundex('')").Check(
+		testkit.Rows("H400 Q36324 T520 A000 "))
+	tk.MustQuery("select soundex(null), soundex(12345), soundex('日本語')").Check(testkit.Rows("<nil>  日000"))
+	tk.MustQuery("select soundex(_binary 'Hello'), hex(soundex(_binary 0xE9616263))").Check(testkit.Rows("H400 41313230"))
+	tk.MustQuery("select charset(soundex('a')), charset(soundex(_binary 'a'))").Check(testkit.Rows("utf8mb4 binary"))
+
+	tk.MustExec("create table t (id int primary key, a varchar(100) character set utf8 collate utf8_unicode_ci)")
+	tk.MustExec("insert into t values (1, 'Test'), (2, 'Text'), (3, 'Other'), (4, null)")
+	tk.MustQuery("select id from t where soundex(a) = soundex('Test') order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select id, soundex(a) from t order by id").Check(testkit.Rows("1 T230", "2 T230", "3 O360", "4 <nil>"))
+
+	tk.MustGetErrCode("select soundex()", errno.ErrWrongParamcountToNativeFct)
+	tk.MustGetErrCode("select soundex('a', 'b')", errno.ErrWrongParamcountToNativeFct)
+}
+
 func TestFTSParser(t *testing.T) {
 	skipIfNotStarterForFTS(t)
 

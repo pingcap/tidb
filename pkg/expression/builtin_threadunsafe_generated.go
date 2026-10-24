@@ -357,6 +357,11 @@ func (s *builtinRepeatSig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
+func (s *builtinSoundexSig) SafeToShareAcrossSession() bool {
+	return false
+}
+
+// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinSpaceSig) SafeToShareAcrossSession() bool {
 	return false
 }
