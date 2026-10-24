@@ -43,6 +43,22 @@ func appendBytesField(dst []byte, fieldNumber protowire.Number, v []byte) []byte
 	return dst
 }
 
+func TestReceiveBatchTerminalError(t *testing.T) {
+	// Both terminal events are ready before receiving. Success must not depend
+	// on which select case wins.
+	for range 128 {
+		errCh := make(chan error, 1)
+		errCh <- context.DeadlineExceeded
+		results := make(chan any)
+		close(results)
+		err := receiveBatch(context.Background(), errCh, results, MaxBatchSize, func(any) error {
+			t.Fatal("unexpected result")
+			return nil
+		})
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	}
+}
+
 func TestWalkMetaFileEmpty(t *testing.T) {
 	var mu sync.Mutex
 	files := []*backuppb.MetaFile{}
