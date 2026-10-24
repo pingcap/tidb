@@ -75,6 +75,31 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, test.result, f.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
+	unsignedTable := newTestTableBuilder("").add("a", mysql.TypeTiny, mysql.UnsignedFlag|mysql.NotNullFlag).build()
+	for _, tc := range []struct{ sql, result string }{
+		{"tan(-0.15) < a", "1"},
+		{"tan(-0.15) <= a", "1"},
+		{"tan(-0.15) > a", "0"},
+		{"tan(-0.15) >= a", "0"},
+		{"a > tan(-0.15)", "1"},
+		{"a >= tan(-0.15)", "1"},
+		{"a < tan(-0.15)", "0"},
+		{"a <= tan(-0.15)", "0"},
+	} {
+		f, err := ParseSimpleExpr(ctx, tc.sql, WithTableInfo("", unsignedTable))
+		require.NoError(t, err)
+		var expected int64
+		if tc.result == "1" {
+			expected = 1
+		}
+		for _, v := range []uint64{0, 1, 255} {
+			row := chunk.MutRowFromDatums([]types.Datum{types.NewUintDatum(v)}).ToRow()
+			result, isNull, err := f.EvalInt(ctx.GetEvalCtx(), row)
+			require.NoError(t, err)
+			require.False(t, isNull)
+			require.Equal(t, expected, result, tc.sql)
+		}
+	}
 }
 
 func TestCompare(t *testing.T) {
