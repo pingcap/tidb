@@ -1,8 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "gcutil",
-    srcs = ["gcutil.go"],
+    srcs = [
+        "gc_barrier.go",
+        "gcutil.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/gcutil",
     visibility = ["//visibility:public"],
     deps = [
@@ -14,5 +17,24 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//clients/gc",
+    ],
+)
+
+go_test(
+    name = "gcutil_test",
+    timeout = "short",
+    srcs = [
+        "gc_barrier_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        ":gcutil",
+        "//pkg/kv",
+        "//pkg/store/mockstore",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )
