@@ -4079,6 +4079,23 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustExec("drop table t2")
 }
 
+func TestUnixTimestampDSTOverlap(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = 'Europe/Vilnius'")
+
+	tk.MustQuery("select unix_timestamp('2020-10-25 03:45:00'), unix_timestamp('2020-10-25 03:45:00.123456')").
+		Check(testkit.Rows("1603586700 1603586700.123456"))
+
+	tk.MustExec("create table t_dst_overlap(dt datetime, dt6 datetime(6))")
+	tk.MustExec("insert into t_dst_overlap values ('2020-10-25 03:45:00', '2020-10-25 03:45:00.123456'), ('2020-10-25 04:45:00', '2020-10-25 04:45:00.123456')")
+	tk.MustQuery("select unix_timestamp(dt), unix_timestamp(dt6) from t_dst_overlap order by dt").Check(testkit.Rows(
+		"1603586700 1603586700.123456",
+		"1603593900 1603593900.123456",
+	))
+}
+
 func TestSetVariables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
