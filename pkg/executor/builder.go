@@ -4230,6 +4230,7 @@ func buildNoRangeTableReader(b *executorBuilder, v *physicalop.PhysicalTableRead
 		tablePlan:                  v.GetTablePlan(),
 		storeType:                  v.StoreType,
 		batchCop:                   v.ReadReqType == physicalop.BatchCop,
+		firstRowPerRange:           v.FirstRowPerRange,
 	}
 	e.buildVirtualColumnInfo()
 
@@ -4753,6 +4754,7 @@ func buildNoRangeIndexReader(b *executorBuilder, v *physicalop.PhysicalIndexRead
 		columns:                    is.Columns,
 		byItems:                    is.ByItems,
 		paging:                     paging,
+		firstRowPerRange:           v.FirstRowPerRange,
 		corColInFilter:             b.corColInDistPlan(v.IndexPlans),
 		corColInAccess:             b.corColInAccess(v.IndexPlans[0]),
 		idxCols:                    is.IdxCols,
@@ -5653,18 +5655,21 @@ func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *T
 		SetDAGRequest(e.dagPB).
 		SetStartTS(startTS).
 		SetDesc(e.desc).
-		SetKeepOrder(e.keepOrder).
+		SetKeepOrder(e.keepOrder && !e.firstRowPerRange).
 		SetTxnScope(e.txnScope).
 		SetReadReplicaScope(e.readReplicaScope).
 		SetIsStaleness(e.isStaleness).
 		SetFromSessionVars(e.dctx).
 		SetFromInfoSchema(e.GetInfoSchema()).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilderWithRange.Request, e.netDataSize)).
-		SetPaging(e.paging).
+		SetPaging(e.paging && !e.firstRowPerRange).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
 		Build()
 	if err != nil {
 		return nil, err
+	}
+	if e.firstRowPerRange {
+		adjustFirstRowPerRangeRequest(kvReq, e.dctx)
 	}
 	e.kvRanges = kvReq.KeyRanges.AppendSelfTo(e.kvRanges)
 	e.resultHandler = &tableResultHandler{}
@@ -5697,7 +5702,11 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 
 func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange) (exec.Executor, error) {
 	var b distsql.RequestBuilder
-	b.SetKeyRanges(ranges)
+	if e.firstRowPerRange {
+		setFirstRowPerRangeKeyRanges(&b, ranges)
+	} else {
+		b.SetKeyRanges(ranges)
+	}
 	return builder.buildTableReaderBase(ctx, e, b)
 }
 

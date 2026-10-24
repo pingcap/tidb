@@ -261,6 +261,10 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			p = join
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
+		} else if newInner, ok := limitOneToMinMax(apply, innerPlan); ok {
+			apply.SetChildren(outerPlan, newInner)
+			np, _, err := s.optimize(ctx, p, groupByColumn)
+			return np, true, err
 		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.

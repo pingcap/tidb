@@ -81,6 +81,12 @@ type PhysicalTableReader struct {
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []TableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+
+	// FirstRowPerRange is set on the inner reader of an index join when each
+	// lookup range only needs its first row. The executor sends every range as
+	// its own coprocessor task, batched per store, so the pushed-down Limit 1
+	// applies to each range.
+	FirstRowPerRange bool
 }
 
 // Init initializes PhysicalTableReader.
@@ -231,6 +237,7 @@ func (p *PhysicalTableReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 	cloned.StoreType = p.StoreType
 	cloned.ReadReqType = p.ReadReqType
 	cloned.IsCommonHandle = p.IsCommonHandle
+	cloned.FirstRowPerRange = p.FirstRowPerRange
 	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	if cloned.TablePlan, err = p.TablePlan.Clone(newCtx); err != nil {
 		return nil, err
@@ -261,7 +268,9 @@ func (p *PhysicalTableReader) ExplainInfo() string {
 	if p.ReadReqType == MPP {
 		return fmt.Sprintf("MppVersion: %d, %s", p.SCtx().GetSessionVars().ChooseMppVersion(), tablePlanInfo)
 	}
-
+	if p.FirstRowPerRange {
+		tablePlanInfo += firstRowPerRangeExplainInfo
+	}
 	return tablePlanInfo
 }
 
@@ -272,7 +281,11 @@ func (*PhysicalTableReader) ExplainNormalizedInfo() string {
 
 // OperatorInfo return other operator information to be explained.
 func (p *PhysicalTableReader) OperatorInfo(_ bool) string {
-	return "data:" + p.TablePlan.ExplainID().String()
+	info := "data:" + p.TablePlan.ExplainID().String()
+	if p.FirstRowPerRange {
+		info += firstRowPerRangeExplainInfo
+	}
+	return info
 }
 
 // ResolveIndices implements Plan interface.
