@@ -218,7 +218,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -399,7 +399,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -589,7 +589,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -796,7 +796,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 	fnDeleteKeyCount := atomic.NewInt32(0)
 	pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 	err = em.ReplaceConflictKeys(
-		ctx, tbl, "a", pool,
+		ctx, tbl, "a", &sessionOpts, pool,
 		func(ctx context.Context, key []byte) ([]byte, error) {
 			fnGetLatestCount.Add(1)
 			switch {
@@ -850,13 +850,33 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 }
 
 func TestReplaceConflictOneUniqueKeyOnVirtualColumn(t *testing.T) {
-	for _, createSQL := range []string{
-		"create table a (id int primary key clustered, email varchar(64) not null, unique key uk((lower(email))));",
-		"create table a (id int primary key clustered, email varchar(64) not null, v varchar(64) as (lower(email)) virtual, unique key uk(v));",
+	ts := types.NewTimeDatum(types.NewTime(types.FromDate(2026, 1, 1, 0, 0, 0, 0), mysql.TypeTimestamp, 0))
+	for _, tc := range []struct {
+		createSQL string
+		sysVars   map[string]string
+		row1      types.Datum
+		row2      types.Datum
+	}{
+		{
+			createSQL: "create table a (id int primary key clustered, email varchar(64) not null, unique key uk((lower(email))));",
+			row1:      types.NewStringDatum("Alice@example.com"),
+			row2:      types.NewStringDatum("alice@example.com"),
+		},
+		{
+			createSQL: "create table a (id int primary key clustered, email varchar(64) not null, v varchar(64) as (lower(email)) virtual, unique key uk(v));",
+			row1:      types.NewStringDatum("Alice@example.com"),
+			row2:      types.NewStringDatum("alice@example.com"),
+		},
+		{
+			createSQL: "create table a (id int primary key clustered, ts timestamp not null, v varchar(32) as (cast(ts as char)) virtual, unique key uk(v));",
+			sysVars:   map[string]string{"time_zone": "-11:00"},
+			row1:      ts,
+			row2:      ts,
+		},
 	} {
-		t.Run(createSQL, func(t *testing.T) {
+		t.Run(tc.createSQL, func(t *testing.T) {
 			p := parser.New()
-			node, _, err := p.ParseSQL(createSQL)
+			node, _, err := p.ParseSQL(tc.createSQL)
 			require.NoError(t, err)
 			info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 109)
 			require.NoError(t, err)
@@ -867,23 +887,28 @@ func TestReplaceConflictOneUniqueKeyOnVirtualColumn(t *testing.T) {
 			require.Len(t, tbl.Cols(), 3)
 			require.True(t, tbl.Cols()[2].IsVirtualGenerated())
 
+			sessionOpts := encode.SessionOptions{
+				SQLMode:   mysql.ModeStrictAllTables,
+				Timestamp: 1234567890,
+				SysVars:   tc.sysVars,
+			}
 			encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
-				Table: tbl,
-				SessionOptions: encode.SessionOptions{
-					SQLMode:   mysql.ModeStrictAllTables,
-					Timestamp: 1234567890,
-				},
-				Logger: log.L(),
+				Table:          tbl,
+				SessionOptions: sessionOpts,
+				Logger:         log.L(),
 			})
 			require.NoError(t, err)
 			encoder.SessionCtx.GetTableCtx().GetRowEncodingConfig().RowEncoder.Enable = true
 
-			encodeRow := func(id int64, email string) (rowKey, rowValue, indexKey, indexValue []byte) {
-				_, err := encoder.AddRecord([]types.Datum{
+			encodeRow := func(id int64, base types.Datum) (rowKey, rowValue, indexKey, indexValue []byte) {
+				record := []types.Datum{
 					types.NewIntDatum(id),
-					types.NewStringDatum(email),
-					types.NewStringDatum("alice@example.com"),
-				})
+					base,
+					types.GetMinValue(&tbl.Cols()[2].FieldType),
+				}
+				_, err := encoder.EvalGeneratedColumns(record, encoder.Columns)
+				require.NoError(t, err)
+				_, err = encoder.AddRecord(record)
 				require.NoError(t, err)
 				pairs := encoder.SessionCtx.TakeKvPairs().Pairs
 				require.Len(t, pairs, 2)
@@ -896,8 +921,8 @@ func TestReplaceConflictOneUniqueKeyOnVirtualColumn(t *testing.T) {
 				}
 				return
 			}
-			row1Key, row1Value, indexKey, index1Value := encodeRow(1, "Alice@example.com")
-			row2Key, row2Value, indexKey2, index2Value := encodeRow(2, "alice@example.com")
+			row1Key, row1Value, indexKey, index1Value := encodeRow(1, tc.row1)
+			row2Key, row2Value, indexKey2, index2Value := encodeRow(2, tc.row2)
 			require.Equal(t, indexKey, indexKey2)
 
 			db, mockDB, err := sqlmock.New()
@@ -944,7 +969,7 @@ func TestReplaceConflictOneUniqueKeyOnVirtualColumn(t *testing.T) {
 			var deletedKeys [][]byte
 			pool := util.NewWorkerPool(16, "resolve duplicate rows by replace")
 			err = em.ReplaceConflictKeys(
-				ctx, tbl, "a", pool,
+				ctx, tbl, "a", &sessionOpts, pool,
 				func(ctx context.Context, key []byte) ([]byte, error) {
 					switch {
 					case bytes.Equal(key, indexKey):

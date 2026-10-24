@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbtbl "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -510,10 +509,13 @@ func (em *ErrorManager) RecordIndexConflictError(
 // ReplaceConflictKeys query all conflicting rows (handle and their
 // values) from the current error report and resolve them
 // by replacing the necessary rows and reserving the others.
+// sessionOpts must be the session options the rows were encoded with, so
+// that the rows are encoded again into the same KV pairs.
 func (em *ErrorManager) ReplaceConflictKeys(
 	ctx context.Context,
 	tbl tidbtbl.Table,
 	tableName string,
+	sessionOpts *encode.SessionOptions,
 	pool *util.WorkerPool,
 	fnGetLatest func(ctx context.Context, key []byte) ([]byte, error),
 	fnDeleteKeys func(ctx context.Context, key [][]byte) error,
@@ -550,13 +552,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		pool.ApplyOnErrorGroup(indexG, func() error {
 			defer indexTaskWg.Done()
 
-			sessionOpts := encode.SessionOptions{
-				// TODO: need to find the correct value for SQLMode
-				SQLMode: mysql.ModeStrictAllTables,
-			}
 			encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
 				Table:          tbl,
-				SessionOptions: sessionOpts,
+				SessionOptions: *sessionOpts,
 				Logger:         em.logger,
 			})
 			if err != nil {
@@ -738,13 +736,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		pool.ApplyOnErrorGroup(dataG, func() error {
 			defer dataTaskWg.Done()
 
-			sessionOpts := encode.SessionOptions{
-				// TODO: need to find the correct value for SQLMode
-				SQLMode: mysql.ModeStrictAllTables,
-			}
 			encoder, err := kv.NewBaseKVEncoder(&encode.EncodingConfig{
 				Table:          tbl,
-				SessionOptions: sessionOpts,
+				SessionOptions: *sessionOpts,
 				Logger:         em.logger,
 			})
 			if err != nil {
