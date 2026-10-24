@@ -333,6 +333,18 @@ func TestCastValue(t *testing.T) {
 	require.ErrorContains(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 
+	colInfoD := model.ColumnInfo{
+		FieldType: *types.NewFieldType(mysql.TypeDuration),
+		State:     model.StatePublic,
+	}
+	val, err = CastValue(ctx, types.NewDatum([]byte{}), &colInfoD, false, false)
+	require.NoError(t, err)
+	require.Equal(t, "00:00:00", val.GetMysqlDuration().String())
+	colInfoD.SetDecimal(3)
+	val, err = CastValue(ctx, types.NewDatum(""), &colInfoD, false, false)
+	require.NoError(t, err)
+	require.Equal(t, "00:00:00.000", val.GetMysqlDuration().String())
+
 	for _, tc := range []struct {
 		name                string
 		globalNewCollation  bool
