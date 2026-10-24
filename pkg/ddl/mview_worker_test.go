@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parser_types "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -37,21 +38,59 @@ func TestInitCreateMaterializedViewBuildSessionAppliesDefinitionDivPrecisionIncr
 	sessVars.CurrentDB = "before"
 	job := &model.Job{
 		ReorgMeta: &model.DDLReorgMeta{
-			Location: &model.TimeZoneLocation{Name: "UTC"},
+			SQLMode:           mysql.ModePadCharToFullLength,
+			Location:          &model.TimeZoneLocation{Name: "UTC"},
+			ResourceGroupName: "rg1",
 		},
 	}
 	mviewTableInfo := &model.TableInfo{
 		MaterializedView: &model.MaterializedViewInfo{DefinitionDivPrecisionIncrement: 9},
 	}
+	sessionVar := func(name string) string {
+		value, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		require.NoError(t, err)
+		return value
+	}
+
+	names := []string{vardef.DivPrecisionIncrement, vardef.SQLModeVar, vardef.TimeZone}
+	before := make(map[string]string, len(names))
+	for _, name := range names {
+		before[name] = sessionVar(name)
+	}
+	sqlMode := sessVars.SQLMode
 
 	restore, err := initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
 	require.NoError(t, err)
 	require.Equal(t, 9, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "test", sessVars.CurrentDB)
+	require.Equal(t, "9", sessionVar(vardef.DivPrecisionIncrement))
+	require.Equal(t, "PAD_CHAR_TO_FULL_LENGTH", sessionVar(vardef.SQLModeVar))
+	require.Equal(t, "UTC", sessionVar(vardef.TimeZone))
+	require.Equal(t, "rg1", sessVars.ResourceGroupName)
 
 	restore()
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 	require.Equal(t, "before", sessVars.CurrentDB)
+	require.Equal(t, sqlMode, sessVars.SQLMode)
+	require.Equal(t, "default", sessVars.ResourceGroupName)
+	for _, name := range names {
+		require.Equal(t, before[name], sessionVar(name))
+	}
+
+	// The variables are restored even if the session has not read them before.
+	sessCtx = mock.NewContext()
+	sessVars = sessCtx.GetSessionVars()
+	restore, err = initCreateMaterializedViewBuildSession(sessCtx, job, mviewTableInfo, "test")
+	require.NoError(t, err)
+	restore()
+	defaultVars := mock.NewContext().GetSessionVars()
+	for _, name := range names {
+		value, err := defaultVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		require.NoError(t, err)
+		require.Equal(t, value, sessionVar(name))
+	}
+	require.Equal(t, defaultVars.SQLMode, sessVars.SQLMode)
+	require.Equal(t, defaultVars.DivPrecisionIncrement, sessVars.DivPrecisionIncrement)
 }
 
 func TestAnalyzeMVColumnUsageGroupByAlias(t *testing.T) {

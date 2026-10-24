@@ -22,12 +22,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -41,7 +43,9 @@ import (
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"go.uber.org/zap"
 )
 
 // backfillExecutor is used to manage the lifetime of backfill workers.
@@ -205,13 +209,17 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != vardef.DefTiDBRowFormatV1
 	// Simulate the sql mode environment in the worker sessionCtx.
 	sqlMode := reorgMeta.SQLMode
-	sessCtx.GetSessionVars().SQLMode = sqlMode
+	if err := sessCtx.GetSessionVars().SetSystemVar(vardef.SQLModeVar, mysql.FormatSQLMode(sqlMode)); err != nil {
+		return errors.Trace(err)
+	}
 	loc, err := reorgTimeZoneWithTzLoc(reorgMeta.Location)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sessCtx.GetSessionVars().TimeZone = loc
-	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(loc)
+	if err := sessCtx.GetSessionVars().SetSystemVar(vardef.TimeZone, timeutil.ZoneName(loc)); err != nil {
+		return errors.Trace(err)
+	}
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 
 	errLevels := reorgErrLevelsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetErrLevels(errLevels)
@@ -219,6 +227,9 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 	typeFlags := reorgTypeFlagsWithSQLMode(sqlMode)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = reorgMeta.ResourceGroupName
+	if reorgMeta.ResourceGroupName != "" {
+		sessCtx.GetSessionVars().ResourceGroupName = reorgMeta.ResourceGroupName //nolint:forbidigo
+	}
 	return nil
 }
 
@@ -226,7 +237,15 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	sv := sessCtx.GetSessionVars() //nolint:forbidigo
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
-	divPrecisionIncrement := sv.DivPrecisionIncrement
+	vars := make(map[string]string, 2)
+	for _, name := range []string{vardef.SQLModeVar, vardef.TimeZone} {
+		val, err := sv.GetSessionOrGlobalSystemVar(context.Background(), name)
+		if err != nil {
+			logutil.DDLLogger().Warn("get session variable failed", zap.String("name", name), zap.Error(err))
+			continue
+		}
+		vars[name] = val
+	}
 	var timezone *time.Location
 	if sv.TimeZone != nil {
 		// Copy the content of timezone instead of pointer because it may be changed.
@@ -236,15 +255,21 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	typeFlags := sv.StmtCtx.TypeFlags()
 	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
+	sessResGroupName := sv.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
 		uv := usedSessCtx.GetSessionVars() //nolint:forbidigo
+		for name, val := range vars {
+			if err := uv.SetSystemVar(name, val); err != nil {
+				logutil.DDLLogger().Warn("restore session variable failed", zap.String("name", name), zap.Error(err))
+			}
+		}
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
-		uv.DivPrecisionIncrement = divPrecisionIncrement
 		uv.TimeZone = timezone
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.StmtCtx.SetErrLevels(errLevels)
 		uv.StmtCtx.ResourceGroupName = resGroupName
+		uv.ResourceGroupName = sessResGroupName
 	}
 }
 
