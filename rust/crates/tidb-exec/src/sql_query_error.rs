@@ -154,6 +154,7 @@ pub const RESULT_UNDETERMINED_MESSAGE: &str = "execution result undetermined";
 pub fn lock_sql_error(error: &LockSqlError) -> SqlQueryError {
     SqlQueryError {
         write_conflict: error.write_conflict.clone(),
+        identity: error.identity,
         ..SqlQueryError::new(error.code, error.state, error.message.clone())
     }
 }

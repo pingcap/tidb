@@ -642,10 +642,14 @@ fn current_time_fn_from_string_val(val: &str) -> CurrentTimeFn {
         // Go uses `types.StrictContext`, under which a truncation is an error.
         let converted = str_to_float(&val, false);
         if converted.event.is_some() {
-            return Err(EvalCtxError::new(format!(
-                "[types:1292]Truncated incorrect DOUBLE value: '{}'",
-                tidb_datatype::float_warning_input(&val)
-            )));
+            return Err(EvalCtxError::new(
+                tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+                    .generate(format!(
+                        "Truncated incorrect DOUBLE value: '{}'",
+                        tidb_datatype::float_warning_input(&val)
+                    ))
+                    .to_string(),
+            ));
         }
 
         let seconds = converted.value.trunc();
@@ -852,9 +856,11 @@ impl SessionVarsSnapshot for StaticSessionVars {
 
 fn parse_number<T: std::str::FromStr>(name: &str, val: &str) -> Result<T, EvalCtxError> {
     val.trim().parse::<T>().map_err(|_| {
-        EvalCtxError::new(format!(
-            "[variable:1232]Incorrect argument type to variable '{name}'"
-        ))
+        EvalCtxError::new(
+            tidb_error::catalog::variable::ERR_WRONG_TYPE_FOR_VAR
+                .generate(format!("Incorrect argument type to variable '{name}'"))
+                .to_string(),
+        )
     })
 }
 
@@ -867,9 +873,7 @@ fn parse_bool(name: &str, val: &str) -> Result<bool, EvalCtxError> {
         other if other.eq_ignore_ascii_case("OFF") || other.eq_ignore_ascii_case("FALSE") => {
             Ok(false)
         }
-        other => Err(EvalCtxError::new(format!(
-            "[variable:1231]Variable '{name}' can't be set to the value of '{other}'"
-        ))),
+        other => Err(wrong_value_for_var(name, other)),
     }
 }
 
@@ -880,11 +884,18 @@ fn normalize_enum(name: &str, val: &str, values: &[&str]) -> Result<String, Eval
         .iter()
         .find(|candidate| candidate.eq_ignore_ascii_case(val.trim()))
         .map(|candidate| (*candidate).to_owned())
-        .ok_or_else(|| {
-            EvalCtxError::new(format!(
-                "[variable:1231]Variable '{name}' can't be set to the value of '{val}'"
+        .ok_or_else(|| wrong_value_for_var(name, val))
+}
+
+/// Go `variable.ErrWrongValueForVar`, as its `Error()` text.
+fn wrong_value_for_var(name: &str, value: &str) -> EvalCtxError {
+    EvalCtxError::new(
+        tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+            .generate(format!(
+                "Variable '{name}' can't be set to the value of '{value}'"
             ))
-        })
+            .to_string(),
+    )
 }
 
 /// Go `newSessionVarsWithSystemVariables`.

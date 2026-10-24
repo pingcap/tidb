@@ -31,11 +31,10 @@ const NO_ROWS: WriteOutcome = WriteOutcome {
 
 /// A cluster seam's error as the session's.
 fn into_driver_error(error: SqlQueryError) -> tidb_executor::DriverError {
-    tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-        error.code,
-        error.state,
-        error.message,
-    ))
+    tidb_executor::DriverError::Mysql(
+        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity),
+    )
 }
 
 struct PersistedAnalyzeJobs {
@@ -411,11 +410,10 @@ impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
         .map_err(|error| SqlQueryError::unknown(error.rendered_message()))
         .and_then(|result| result)
         .map_err(|error| {
-            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-                error.code,
-                error.state,
-                error.message,
-            ))
+            tidb_executor::DriverError::Mysql(
+                tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+                    .with_identity_opt(error.identity),
+            )
         })?;
         // Not log content (Go has no such per-statement summary):
         // rust/scripts/run-realtikv-analyze.sh reads this JSON line.

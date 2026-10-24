@@ -277,7 +277,7 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
     match error {
         ClusterAnalyzeError::Analyze(error) => {
             let error = tidb_executor::DriverError::from(error).to_mysql_error();
-            SqlQueryError::new(error.code, error.state, error.message)
+            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
         }
         ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
@@ -300,7 +300,7 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
         ClusterAnalyzeError::PartitionManagementOnNonpartitioned => {
             let error =
                 tidb_executor::DriverError::PartitionManagementOnNonpartitioned.to_mysql_error();
-            SqlQueryError::new(error.code, error.state, error.message)
+            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
         }
     }
 }
@@ -619,6 +619,17 @@ pub enum PreparedStatement {
 }
 
 impl PreparedStatement {
+    /// The statement text as PREPAREd (Go `PreparedAst.Stmt.Text()`).
+    #[must_use]
+    pub fn sql_text(&self) -> &str {
+        match self {
+            Self::PointRead(read) => read.sql(),
+            Self::Write(write) => write.sql(),
+            Self::General(general) => general.sql(),
+            Self::TransactionControl(sql) => sql,
+        }
+    }
+
     /// Positional markers the execute packet must supply.
     #[must_use]
     pub fn parameter_count(&self) -> usize {

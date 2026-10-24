@@ -39,11 +39,10 @@ fn coordinator_catalog_error(error: OptimisticCoordinatorError) -> ClusterCatalo
         | OptimisticCoordinatorError::Storage(_)
         | OptimisticCoordinatorError::Visibility(_) => {
             let sql = crate::cluster_table_storage::coordinator_sql_error(error);
-            ClusterCatalogError::Sql(tidb_executor::MysqlError::from_parts(
-                sql.code,
-                sql.state,
-                sql.message,
-            ))
+            ClusterCatalogError::Sql(
+                tidb_executor::MysqlError::from_parts(sql.code, sql.state, sql.message)
+                    .with_identity_opt(sql.identity),
+            )
         }
         other => ClusterCatalogError::Snapshot(other.to_string()),
     }

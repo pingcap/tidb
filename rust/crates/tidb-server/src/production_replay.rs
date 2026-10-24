@@ -60,11 +60,10 @@ struct UnistoreSession {
 }
 
 fn driver_error(error: SqlQueryError) -> DriverError {
-    let mut mapped = MysqlError::from_parts(error.code, error.state, error.message);
-    if let Some(identity) = error.identity {
-        mapped = mapped.with_identity(identity);
-    }
-    DriverError::Mysql(mapped)
+    DriverError::Mysql(
+        MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity),
+    )
 }
 
 fn source_error(error: MysqlError) -> DriverError {

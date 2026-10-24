@@ -236,6 +236,24 @@ impl WireFraming {
     }
 }
 
+thread_local! {
+    /// The query failure the running command wrote to its client. A
+    /// connection's commands run on one thread, so the slot is the
+    /// connection's; the command loop takes it for Go's `command dispatched
+    /// failed` log once the command ends.
+    static QUERY_FAILURE: std::cell::RefCell<Option<SqlQueryError>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+fn record_query_failure(error: &SqlQueryError) {
+    QUERY_FAILURE.with(|slot| *slot.borrow_mut() = Some(error.clone()));
+}
+
+/// Takes the failure the current command wrote, if any.
+pub(crate) fn take_query_failure() -> Option<SqlQueryError> {
+    QUERY_FAILURE.with(|slot| slot.borrow_mut().take())
+}
+
 pub(crate) fn write_query_error<O: ConnectionPacketOutput + ?Sized>(
     output: &mut O,
     error: &SqlQueryError,
@@ -260,15 +278,15 @@ pub(crate) fn write_query_error_at<O: ConnectionPacketOutput + ?Sized>(
         ));
     }
     // Go `conn.go:1302`: every dispatch error written to the client also
-    // counts under `execute_error_total`, labeled by the error's identity,
-    // the database, and the resource group. The wire error carries the
-    // MySQL code only, so the identity label narrows to that code until
-    // `SqlQueryError` carries its terror RFC identity like Go's
-    // `ExecuteErrorToLabel`; the db label matches Go's disabled
-    // `RecordDBLabel` default (empty).
+    // counts under `execute_error_total`, labeled by the error's identity
+    // (`metrics.ExecuteErrorToLabel`: a `*terror.Error`'s RFC code, else
+    // "unknown"), the database, and the resource group; the db label matches
+    // Go's disabled `RecordDBLabel` default (empty).
+    record_query_failure(error);
+    let identity_label = crate::server_metrics::execute_error_to_label(error.identity);
     crate::server_metrics::EXECUTE_ERROR_TOTAL
         .with_label_values(&[
-            &error.code.to_string(),
+            &identity_label,
             "",
             &crate::query_metrics::current_connection_resource_group(),
         ])

@@ -1926,7 +1926,11 @@ fn go_atoi(value: &str) -> GcResult<i64> {
 
 fn ddl_job_not_found(job_id: i64) -> GcError {
     // Go `dbterror.ErrDDLJobNotFound`: 8223, "DDL Job:%v not found".
-    GcError::new(format!("[ddl:8223]DDL Job:{job_id} not found"))
+    GcError::new(
+        tidb_util::dbterror::ERR_DDL_JOB_NOT_FOUND
+            .generate(format!("DDL Job:{job_id} not found"))
+            .to_string(),
+    )
 }
 
 /// Runs `work` on every item with at most `concurrency` running at once, as

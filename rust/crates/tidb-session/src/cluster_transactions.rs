@@ -90,6 +90,7 @@ use tidb_exec::sql_query_error::SqlQueryError;
 pub fn sql_error(error: LockSqlError) -> SqlQueryError {
     SqlQueryError {
         write_conflict: error.write_conflict,
+        identity: error.identity,
         ..SqlQueryError::new(error.code, error.state, error.message)
     }
 }
@@ -323,7 +324,8 @@ pub trait ClusterTransactions: Send + Sync {
         options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
         let buffer = mutation_buffer_from_mutations(mutations).map_err(|error| match error {
-            StorageError::Sql(error) => SqlQueryError::new(error.code, error.state, error.message),
+            StorageError::Sql(error) => SqlQueryError::new(error.code, error.state, error.message)
+                .with_identity(error.identity),
             error => SqlQueryError::unknown(error.to_string()),
         })?;
         self.commit(&buffer, Some(read_ts), resource_group, options)
@@ -978,11 +980,10 @@ impl DeferredSnapshot {
 /// A pessimistic lock's SQL error as the storage seam reports it, keeping
 /// Go's code and SQLSTATE (1205, 1213, 3572, ...).
 fn lock_storage_error(error: tidb_exec::pessimistic_lock_error::LockSqlError) -> StorageError {
-    StorageError::Sql(tidb_executor::MysqlError::from_parts(
-        error.code,
-        error.state,
-        error.message,
-    ))
+    StorageError::Sql(
+        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity),
+    )
 }
 
 /// The transaction owner a write statement transfers after its snapshot handle

@@ -338,23 +338,15 @@ impl Session {
         // `SELECT /*+ WRONG_HINT_SYNTAX(xyz) */ ...` warns 8061).
         let parse_warnings_start = self.warnings.len();
         for diagnostic in parse_warnings {
-            let message = diagnostic.message;
-            let decoded = message
-                .strip_prefix("[parser:")
-                .and_then(|rest| rest.split_once(']'))
-                .and_then(|(code, remainder)| {
-                    code.parse::<u16>()
-                        .ok()
-                        .map(|code| (code, remainder.to_owned()))
-                });
-            match decoded {
-                Some((code, remainder)) => {
-                    self.append_warning(crate::WarningLevel::Warning, code, remainder);
-                }
-                None => {
-                    self.append_warning(crate::WarningLevel::Warning, 8061, message);
-                }
-            }
+            // A class-less diagnostic is Go's hint refusal (8061).
+            let code = diagnostic.terror.map_or(8061, |proto| {
+                u16::try_from(proto.code().value()).unwrap_or(8061)
+            });
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                code,
+                diagnostic.body().to_owned(),
+            );
         }
         for message in decimal_literal_warnings(sql, &mut stmt) {
             self.append_warning(crate::WarningLevel::Warning, 1292, message);

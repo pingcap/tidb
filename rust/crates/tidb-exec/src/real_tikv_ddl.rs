@@ -435,6 +435,7 @@ pub trait IndexBackfiller {
             state: *b"HY000",
             message: "this path cannot validate an exchanged partition's rows".to_owned(),
             write_conflict: None,
+            identity: None,
         })
     }
 
@@ -466,6 +467,7 @@ pub trait IndexBackfiller {
             state: *b"HY000",
             message: "this path cannot read a table's rows".to_owned(),
             write_conflict: None,
+            identity: None,
         })
     }
 
@@ -481,6 +483,7 @@ pub trait IndexBackfiller {
             state: *b"HY000",
             message: "this path cannot reorganize an index".to_owned(),
             write_conflict: None,
+            identity: None,
         })
     }
 
@@ -574,6 +577,7 @@ fn cache_table_check_unavailable() -> LockSqlError {
         state: *b"HY000",
         message: "this path cannot measure a table for ALTER TABLE ... CACHE".to_owned(),
         write_conflict: None,
+        identity: None,
     }
 }
 
@@ -584,6 +588,7 @@ fn foreign_key_check_unavailable() -> LockSqlError {
         state: *b"HY000",
         message: "this path cannot check a foreign key's existing rows".to_owned(),
         write_conflict: None,
+        identity: None,
     }
 }
 
@@ -1525,11 +1530,14 @@ pub fn submit_persisted_job_with_retry<S: StoreClient>(
             backfiller
                 .has_null_value(table, column_id, Arc::clone(&null_snapshot), &null_buffer)
                 .map_err(|error| {
-                    DdlPlanError::from_mysql_error(tidb_executor::MysqlError::from_parts(
-                        error.code,
-                        error.state,
-                        error.message,
-                    ))
+                    DdlPlanError::from_mysql_error(
+                        tidb_executor::MysqlError::from_parts(
+                            error.code,
+                            error.state,
+                            error.message,
+                        )
+                        .with_identity_opt(error.identity),
+                    )
                 })
         };
         prepare_persisted_job_submission(
@@ -2234,6 +2242,7 @@ mod tests {
             state: *b"HY000",
             message: "write conflict at schema version key".to_owned(),
             write_conflict: None,
+            identity: None,
         };
         assert!(matches!(
             classify_session_ddl_commit_error(61, conflict),
@@ -2248,6 +2257,7 @@ mod tests {
             state: *b"HY000",
             message: "prewrite transport failed definitively".to_owned(),
             write_conflict: None,
+            identity: None,
         };
         assert!(matches!(
             classify_session_ddl_commit_error(61, ordinary),

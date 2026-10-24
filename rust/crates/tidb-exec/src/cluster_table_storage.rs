@@ -1097,6 +1097,7 @@ impl<S: StoreClient> SessionTransaction<S> {
                     state: *b"HY000",
                     message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
                     write_conflict: None,
+                    identity: None,
                 })
             }
             SessionTransactionState::Finished => {
@@ -2148,11 +2149,10 @@ fn classify(error: OptimisticCoordinatorError) -> StorageError {
             | OptimisticCoordinatorError::Visibility(_)
     ) {
         let sql = coordinator_sql_error(error);
-        return StorageError::Sql(tidb_executor::MysqlError::from_parts(
-            sql.code,
-            sql.state,
-            sql.message,
-        ));
+        return StorageError::Sql(
+            tidb_executor::MysqlError::from_parts(sql.code, sql.state, sql.message)
+                .with_identity_opt(sql.identity),
+        );
     }
     let message = error.to_string();
     let lowered = message.go_to_lower();
@@ -2309,6 +2309,7 @@ pub(crate) fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSq
             state: *b"HY000",
             message: error.to_string(),
             write_conflict: None,
+            identity: None,
         },
         OptimisticCoordinatorError::SnapshotBackoff { kind, detail } => {
             transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted { kind, detail })
@@ -2323,6 +2324,7 @@ pub(crate) fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSq
                     state: *b"HY000",
                     message: converted.message().to_owned(),
                     write_conflict: None,
+                    identity: None,
                 },
                 other => engine_sql_error(other.to_string()),
             }
@@ -2338,6 +2340,7 @@ fn storage_sql_error(error: StorageError) -> LockSqlError {
             state: error.state,
             message: error.message,
             write_conflict: None,
+            identity: None,
         },
         other => engine_sql_error(other.to_string()),
     }
@@ -2349,6 +2352,7 @@ fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
         state: *b"HY000",
         message: format!("transaction failed: {detail}"),
         write_conflict: None,
+        identity: None,
     }
 }
 

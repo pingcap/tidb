@@ -1018,7 +1018,13 @@ impl Parser {
             strict_mode: sql_mode.strict_mode,
             warnings: lexer_warnings
                 .into_iter()
-                .map(|message| HintDiagnostic { message })
+                .map(|message| match message.strip_prefix("[parser:8066]") {
+                    Some(body) => HintDiagnostic::classed(
+                        &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_WRONG_POS,
+                        body,
+                    ),
+                    None => HintDiagnostic::plain(message),
+                })
                 .collect(),
             paren_depth_error,
             recursive_ast_depth_error,
@@ -1109,9 +1115,10 @@ impl Parser {
                         TransformOp::DECODE_REPLACE,
                     );
                     if let Some(error) = converted.error() {
-                        self.warnings.push(HintDiagnostic {
-                            message: format!("[parser:1300]{error}"),
-                        });
+                        self.warnings.push(HintDiagnostic::classed(
+                            &tidb_error::catalog::charset::ERR_INVALID_CHARACTER_STRING,
+                            error.to_string(),
+                        ));
                     }
                     self.toks[index].text = raw_bytes::bytes_to_str(converted.bytes()).into_owned();
                 }
@@ -1127,9 +1134,10 @@ impl Parser {
                         continue;
                     };
                     if !conversion.refused {
-                        self.warnings.push(HintDiagnostic {
-                            message: format!("[parser:1300]{}", conversion.error),
-                        });
+                        self.warnings.push(HintDiagnostic::classed(
+                            &tidb_error::catalog::charset::ERR_INVALID_CHARACTER_STRING,
+                            conversion.error.to_string(),
+                        ));
                     } else if self.scanner_error.is_none() {
                         let error = ParseError {
                             message: conversion.error.to_string(),
@@ -1250,22 +1258,21 @@ impl Parser {
             near_end -= 1;
         }
         let near = &self.source[offset..near_end];
-        self.warnings.push(HintDiagnostic {
-            message: format!(
-                "[parser:1064]You have an error in your SQL syntax; check the manual that \
+        self.warnings.push(HintDiagnostic::classed(
+            &tidb_error::catalog::parser::ERR_PARSE,
+            format!(
+                "You have an error in your SQL syntax; check the manual that \
                  corresponds to your TiDB version for the right syntax to use line {line} \
                  column {column} near \"{near}\"{message} "
             ),
-        });
+        ));
     }
 
     /// A terror-coded parser warning (`p.warns = append(p.warns,
     /// ErrX.FastGenByArgs(...))`), which `util.SyntaxWarn` passes through
     /// with its own code.
-    fn warn_coded(&mut self, code: u16, message: &str) {
-        self.warnings.push(HintDiagnostic {
-            message: format!("[parser:{code}]{message}"),
-        });
+    fn warn_coded(&mut self, proto: &'static tidb_error::terror::TerrorError, message: &str) {
+        self.warnings.push(HintDiagnostic::classed(proto, message));
     }
 
     fn next_param_marker_position(&mut self) -> usize {

@@ -186,9 +186,13 @@ fn plan_index_split<'a>(
         .indexes()
         .iter()
         .find(|index| index.name.go_lower_eq(index_name))
-        .ok_or_else(|| DriverError::KeyNotExists {
-            key: index_name.to_owned(),
-            table: table_name.to_owned(),
+        .ok_or_else(|| {
+            // Go `buildSplitIndexRegion`: `plannererrors.ErrKeyDoesNotExist`.
+            DriverError::KeyNotExists {
+                key: index_name.to_owned(),
+                table: table_name.to_owned(),
+            }
+            .in_class(&tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST)
         })?;
     let convert_tuple = |values: &[tidb_ast::Expr]| {
         values

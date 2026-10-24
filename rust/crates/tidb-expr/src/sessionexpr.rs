@@ -1525,9 +1525,11 @@ mod tests {
             db: &str,
             name: &str,
         ) -> Result<Arc<dyn SequenceTable>, ExprOptError> {
-            Err(ExprOptError::new(format!(
-                "[schema:1146]Table '{db}.{name}' doesn't exist"
-            )))
+            Err(ExprOptError::new(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate(format!("Table '{db}.{name}' doesn't exist"))
+                    .to_string(),
+            ))
         }
 
         fn is_readonly_user_var(&self, name: &str) -> bool {

@@ -3449,11 +3449,14 @@ impl tidb_executor::driver::LocalTemporaryTableIdAllocator for ClusterLocalTempo
                 }
                 result => {
                     return result.map_err(|error| {
-                        tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-                            error.code,
-                            error.state,
-                            error.message,
-                        ))
+                        tidb_executor::DriverError::Mysql(
+                            tidb_executor::MysqlError::from_parts(
+                                error.code,
+                                error.state,
+                                error.message,
+                            )
+                            .with_identity_opt(error.identity),
+                        )
                     })
                 }
             }
@@ -4817,11 +4820,10 @@ impl crate::binding::GlobalBindingWriter for InternalBindingWriter {
         operation: &mut dyn FnMut(&mut Session) -> Result<u64, tidb_executor::DriverError>,
     ) -> Result<u64, tidb_executor::DriverError> {
         let to_driver = |error: SqlQueryError| {
-            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-                error.code,
-                error.state,
-                error.message,
-            ))
+            tidb_executor::DriverError::Mysql(
+                tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+                    .with_identity_opt(error.identity),
+            )
         };
         let factory = self.factory.upgrade().ok_or_else(|| {
             tidb_executor::DriverError::unsupported("global binding session factory is stopped")
@@ -5685,6 +5687,7 @@ impl ClusterServerSession {
                             )
                             .map_err(|error| {
                                 SqlQueryError::new(error.code, error.sql_state(), error.to_string())
+                                    .with_identity(error.identity)
                             })?
                             .ok_or_else(|| {
                                 SqlQueryError::unknown(
@@ -7729,11 +7732,10 @@ impl crate::stored_state_service::PendingSysvarChange for ClusterPendingSysvarCh
 }
 
 fn sql_query_error_to_driver(error: SqlQueryError) -> tidb_executor::DriverError {
-    tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-        error.code,
-        error.state,
-        error.message,
-    ))
+    tidb_executor::DriverError::Mysql(
+        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity),
+    )
 }
 
 struct ClusterDdlService {
@@ -7759,11 +7761,10 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
         job_context: &tidb_executor::StmtContext,
     ) -> Result<tidb_exec::real_tikv_ddl::ClusterDdlReport, tidb_executor::DriverError> {
         let report = self.ddl.execute(statement, job_context).map_err(|error| {
-            tidb_executor::DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-                error.code,
-                error.state,
-                error.message,
-            ))
+            tidb_executor::DriverError::Mysql(
+                tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+                    .with_identity_opt(error.identity),
+            )
         })?;
         if let (
             DdlStatement::CreateTable { .. }

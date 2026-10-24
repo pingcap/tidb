@@ -1482,6 +1482,22 @@ impl DriverError {
         DriverError::Unsupported(reason.into())
     }
 
+    /// Re-raises this failure as another Go definition with the same wire
+    /// code: one `DriverError` variant serves raise sites whose Go errors
+    /// differ only by class (`infoschema.ErrKeyNotExists` from DDL,
+    /// `plannererrors.ErrKeyDoesNotExist` from the planner), and the site
+    /// knows which Go function it transcribes.
+    #[must_use]
+    pub fn in_class(self, proto: &'static TerrorError) -> Self {
+        let error = self.to_mysql_error();
+        debug_assert_eq!(
+            error.code,
+            proto.to_sql_error().code,
+            "a class change keeps the code"
+        );
+        DriverError::Mysql(error.with_identity(proto.identity()))
+    }
+
     /// Go `err.Error()` for this failure: `[<class>:<code>]<message>` for a
     /// `*terror.Error`, the bare message for a plain error. What
     /// `@@tidb_last_query_info`, the logs and every embedded `err.Error()`

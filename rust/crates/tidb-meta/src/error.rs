@@ -140,7 +140,7 @@ impl fmt::Display for MetaError {
             Self::UnexpectedTypeFlag(flag) => {
                 write!(formatter, "invalid encoded key flag {}", *flag as char)
             }
-            Self::InvalidFieldPrefix(message) => write!(formatter, "[meta:1300]{message}"),
+            Self::InvalidFieldPrefix(message) => classed(formatter, self, message),
             Self::InvalidFieldInteger { value, failure, .. } => write!(
                 formatter,
                 "strconv.Atoi: parsing {}: {}",
@@ -150,15 +150,13 @@ impl fmt::Display for MetaError {
                     IntegerParseFailure::Range => "value out of range",
                 }
             ),
-            Self::WriteOnSnapshot => formatter.write_str("[structure:8220]write on snapshot"),
+            Self::WriteOnSnapshot => classed(formatter, self, "write on snapshot"),
             Self::InvalidListIndex(index) => {
-                write!(formatter, "[structure:8218]invalid list index {index}")
+                classed(formatter, self, format_args!("invalid list index {index}"))
             }
-            Self::InvalidListMetaData => {
-                formatter.write_str("[structure:8219]invalid list meta data")
-            }
-            Self::CannotSetNilValue => formatter.write_str("[kv:8023]can not set nil value"),
-            Self::KeyNotExist => formatter.write_str("[kv:8021]Error: key not exist"),
+            Self::InvalidListMetaData => classed(formatter, self, "invalid list meta data"),
+            Self::CannotSetNilValue => classed(formatter, self, "can not set nil value"),
+            Self::KeyNotExist => classed(formatter, self, "Error: key not exist"),
             Self::InvalidIntValue => formatter.write_str("invalid meta integer value"),
             Self::InvalidUnsignedIntValue => {
                 formatter.write_str("invalid meta unsigned integer value")
@@ -174,40 +172,43 @@ impl fmt::Display for MetaError {
             Self::NoSchemaVersionWrite => {
                 formatter.write_str("There is no Write MVCC info for the schema version key")
             }
-            Self::DatabaseExists => formatter.write_str("[meta:1007]database already exists"),
-            Self::DatabaseNotExists => formatter.write_str("[meta:1049]database doesn't exist"),
-            Self::TableExists => formatter.write_str("[meta:1050]table already exists"),
-            Self::TableNotExists => formatter.write_str("[meta:1146]table doesn't exist"),
+            Self::DatabaseExists => classed(formatter, self, "database already exists"),
+            Self::DatabaseNotExists => classed(formatter, self, "database doesn't exist"),
+            Self::TableExists => classed(formatter, self, "table already exists"),
+            Self::TableNotExists => classed(formatter, self, "table doesn't exist"),
             Self::DdlReorgElementNotExist => {
-                formatter.write_str("[meta:8235]DDL reorg element does not exist")
+                classed(formatter, self, "DDL reorg element does not exist")
             }
-            Self::PolicyExists => formatter.write_str("[meta:8238]policy already exists"),
-            Self::PolicyNotExists => formatter.write_str("[meta:8239]policy doesn't exist"),
-            Self::PolicyIdNotExists(id) => {
-                write!(formatter, "[meta:8239]policy id : {id} doesn't exist")
-            }
-            Self::MaskingPolicyExists => {
-                formatter.write_str("[meta:8268]masking policy already exists")
-            }
+            Self::PolicyExists => classed(formatter, self, "policy already exists"),
+            Self::PolicyNotExists => classed(formatter, self, "policy doesn't exist"),
+            Self::PolicyIdNotExists(id) => classed(
+                formatter,
+                self,
+                format_args!("policy id : {id} doesn't exist"),
+            ),
+            Self::MaskingPolicyExists => classed(formatter, self, "masking policy already exists"),
             Self::MaskingPolicyNotExists => {
-                formatter.write_str("[meta:8269]masking policy doesn't exist")
+                classed(formatter, self, "masking policy doesn't exist")
             }
-            Self::MaskingPolicyIdExists(id) => write!(
+            Self::MaskingPolicyIdExists(id) => {
+                write!(formatter, "masking policy id : {id} already exists: ")?;
+                classed(formatter, self, "masking policy already exists")
+            }
+            Self::MaskingPolicyIdNotExists(id) => {
+                write!(formatter, "masking policy id : {id} doesn't exist: ")?;
+                classed(formatter, self, "masking policy doesn't exist")
+            }
+            Self::MaskingPolicyExpressionInvalidColumn => classed(
                 formatter,
-                "masking policy id : {id} already exists: [meta:8268]masking policy already exists"
+                self,
+                "masking policy expression can only reference the target column '%-.64s'",
             ),
-            Self::MaskingPolicyIdNotExists(id) => write!(
+            Self::ResourceGroupExists => classed(formatter, self, "group already exists"),
+            Self::ResourceGroupNotExists => classed(formatter, self, "group doesn't exist"),
+            Self::ResourceGroupIdNotExists(id) => classed(
                 formatter,
-                "masking policy id : {id} doesn't exist: [meta:8269]masking policy doesn't exist"
-            ),
-            Self::MaskingPolicyExpressionInvalidColumn => formatter.write_str(
-                "[meta:8275]masking policy expression can only reference the target column '%-.64s'",
-            ),
-            Self::ResourceGroupExists => formatter.write_str("[meta:8248]group already exists"),
-            Self::ResourceGroupNotExists => formatter.write_str("[meta:8249]group doesn't exist"),
-            Self::ResourceGroupIdNotExists(id) => write!(
-                formatter,
-                "[meta:8249]resource group id : {id} doesn't exist"
+                self,
+                format_args!("resource group id : {id} doesn't exist"),
             ),
             Self::InvalidObjectId(object) => write!(formatter, "{object}.ID is invalid"),
             Self::GlobalIdExceedsLimit { generated, limit } => {
@@ -219,33 +220,62 @@ impl fmt::Display for MetaError {
 
 impl std::error::Error for MetaError {}
 
+/// Go `*terror.Error`'s `Error()`: `[<class>:<code>]<message>`.
+fn classed(
+    formatter: &mut fmt::Formatter<'_>,
+    error: &MetaError,
+    message: impl fmt::Display,
+) -> fmt::Result {
+    match error.proto() {
+        Some(proto) => write!(formatter, "{}", proto.generate(message.to_string())),
+        None => write!(formatter, "{message}"),
+    }
+}
+
 impl MetaError {
-    /// TiDB/MySQL error number for source errors declared in `meta.go`,
-    /// `pkg/structure/structure.go`, and the `pkg/kv` errors they propagate.
+    /// The Go definition this error is raised as (`pkg/meta/meta.go`,
+    /// `pkg/structure/structure.go`, and the `pkg/kv` errors they propagate):
+    /// class and code travel with the value.
     #[must_use]
-    pub const fn code(&self) -> Option<u16> {
-        match self {
-            Self::InvalidFieldPrefix(_) => Some(1300),
-            Self::UnexpectedTypeFlag(_) => Some(8217),
-            Self::InvalidListIndex(_) => Some(8218),
-            Self::InvalidListMetaData => Some(8219),
-            Self::WriteOnSnapshot => Some(8220),
-            Self::KeyNotExist => Some(8021),
-            Self::CannotSetNilValue => Some(8023),
-            Self::DatabaseExists => Some(1007),
-            Self::DatabaseNotExists => Some(1049),
-            Self::TableExists => Some(1050),
-            Self::TableNotExists => Some(1146),
-            Self::DdlReorgElementNotExist => Some(8235),
-            Self::PolicyExists => Some(8238),
-            Self::PolicyNotExists | Self::PolicyIdNotExists(_) => Some(8239),
-            Self::ResourceGroupExists => Some(8248),
-            Self::ResourceGroupNotExists | Self::ResourceGroupIdNotExists(_) => Some(8249),
-            Self::MaskingPolicyExists | Self::MaskingPolicyIdExists(_) => Some(8268),
-            Self::MaskingPolicyNotExists | Self::MaskingPolicyIdNotExists(_) => Some(8269),
-            Self::MaskingPolicyExpressionInvalidColumn => Some(8275),
-            _ => None,
-        }
+    pub fn proto(&self) -> Option<&'static tidb_error::terror::TerrorError> {
+        use tidb_error::catalog::{kv, meta, structure};
+        Some(match self {
+            Self::InvalidFieldPrefix(_) => &meta::ERR_INVALID_STRING,
+            Self::UnexpectedTypeFlag(_) => &structure::ERR_INVALID_HASH_KEY_FLAG,
+            Self::InvalidListIndex(_) => &structure::ERR_INVALID_LIST_INDEX,
+            Self::InvalidListMetaData => &structure::ERR_INVALID_LIST_META_DATA,
+            Self::WriteOnSnapshot => &structure::ERR_WRITE_ON_SNAPSHOT,
+            Self::KeyNotExist => &kv::ERR_NOT_EXIST,
+            Self::CannotSetNilValue => &kv::ERR_CANNOT_SET_NIL_VALUE,
+            Self::DatabaseExists => &meta::ERR_DB_EXISTS,
+            Self::DatabaseNotExists => &meta::ERR_DB_NOT_EXISTS,
+            Self::TableExists => &meta::ERR_TABLE_EXISTS,
+            Self::TableNotExists => &meta::ERR_TABLE_NOT_EXISTS,
+            Self::DdlReorgElementNotExist => &meta::ERR_DDL_REORG_ELEMENT_NOT_EXIST,
+            Self::PolicyExists => &meta::ERR_POLICY_EXISTS,
+            Self::PolicyNotExists | Self::PolicyIdNotExists(_) => &meta::ERR_POLICY_NOT_EXISTS,
+            Self::ResourceGroupExists => &meta::ERR_RESOURCE_GROUP_EXISTS,
+            Self::ResourceGroupNotExists | Self::ResourceGroupIdNotExists(_) => {
+                &meta::ERR_RESOURCE_GROUP_NOT_EXISTS
+            }
+            Self::MaskingPolicyExists | Self::MaskingPolicyIdExists(_) => {
+                &meta::ERR_MASKING_POLICY_EXISTS
+            }
+            Self::MaskingPolicyNotExists | Self::MaskingPolicyIdNotExists(_) => {
+                &meta::ERR_MASKING_POLICY_NOT_EXISTS
+            }
+            Self::MaskingPolicyExpressionInvalidColumn => {
+                &meta::ERR_MASKING_POLICY_EXPR_INVALID_COLUMN
+            }
+            _ => return None,
+        })
+    }
+
+    /// TiDB/MySQL error number of [`Self::proto`].
+    #[must_use]
+    pub fn code(&self) -> Option<u16> {
+        self.proto()
+            .and_then(|proto| u16::try_from(proto.code().value()).ok())
     }
 }
 

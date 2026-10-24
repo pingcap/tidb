@@ -1231,7 +1231,8 @@ impl Session {
                 }
             }
             Err(error) => {
-                let reason = error.to_string();
+                // Go `finishAnalyzeJob`: `analyzeErr.Error()`, class prefix included.
+                let reason = error.error_string();
                 for (_, job) in &jobs {
                     self.record_analyze_job(job, 0, Some(&reason));
                 }

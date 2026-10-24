@@ -57,10 +57,10 @@ impl CursorState {
     /// unrelated quota or spill directory.
     pub(crate) fn materialize_result(result: &mut QueryResult<'_>) -> Result<Self, SqlQueryError> {
         let Some(authority) = result.take_cursor_materialization() else {
-            let close = result
-                .source()
-                .close()
-                .map_err(|error| SqlQueryError::new(error.code, error.state, error.message));
+            let close = result.source().close().map_err(|error| {
+                SqlQueryError::new(error.code, error.state, error.message)
+                    .with_identity(error.identity)
+            });
             return match close {
                 Ok(()) => Err(SqlQueryError::unknown(
                     "prepared cursor result is missing its materialization authority",
@@ -120,10 +120,9 @@ impl CursorState {
         };
 
         let materialized = cursor.materialize_source(result);
-        let closed = result
-            .source()
-            .close()
-            .map_err(|error| SqlQueryError::new(error.code, error.state, error.message));
+        let closed = result.source().close().map_err(|error| {
+            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
+        });
         materialized?;
         closed?;
 
@@ -153,10 +152,10 @@ impl CursorState {
         let mut native = result.source().new_chunk();
         loop {
             if let Some(chunk) = &mut native {
-                result
-                    .source()
-                    .next_chunk(chunk)
-                    .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
+                result.source().next_chunk(chunk).map_err(|error| {
+                    SqlQueryError::new(error.code, error.state, error.message)
+                        .with_identity(error.identity)
+                })?;
                 self.retain_activated_snapshot();
                 if chunk.num_rows() == 0 {
                     break;
@@ -172,7 +171,10 @@ impl CursorState {
             let batch = result
                 .source()
                 .next_batch(self.max_chunk_size)
-                .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
+                .map_err(|error| {
+                    SqlQueryError::new(error.code, error.state, error.message)
+                        .with_identity(error.identity)
+                })?;
             self.retain_activated_snapshot();
             if batch.is_empty() {
                 break;
@@ -195,10 +197,9 @@ impl CursorState {
             self.rows.add(chunk).map_err(cursor_disk_error)?;
             self.memory.check().map_err(cursor_exec_error)?;
         }
-        self.columns = result
-            .source()
-            .columns()
-            .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))?;
+        self.columns = result.source().columns().map_err(|error| {
+            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
+        })?;
         if self.columns.len() != self.field_types.len() {
             return Err(SqlQueryError::unknown(format!(
                 "cursor metadata has {} columns for {} field types",
@@ -206,10 +207,9 @@ impl CursorState {
                 self.field_types.len()
             )));
         }
-        result
-            .source()
-            .finish()
-            .map_err(|error| SqlQueryError::new(error.code, error.state, error.message))
+        result.source().finish().map_err(|error| {
+            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
+        })
     }
 
     pub(crate) fn columns(&self) -> &[tidb_protocol::ColumnInfo] {
@@ -310,7 +310,7 @@ impl Drop for CursorState {
 
 fn cursor_exec_error(error: tidb_executor::ExecError) -> SqlQueryError {
     let mapped = tidb_executor::DriverError::Exec(error).to_mysql_error();
-    SqlQueryError::new(mapped.code, mapped.state, mapped.message)
+    SqlQueryError::new(mapped.code, mapped.state, mapped.message).with_identity(mapped.identity)
 }
 
 fn cursor_disk_error(error: DiskError) -> SqlQueryError {

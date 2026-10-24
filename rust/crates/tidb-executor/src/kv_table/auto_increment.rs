@@ -206,10 +206,15 @@ impl KvTable {
             .auto_increment_offset
             .and_then(|offset| self.columns.get(offset))
             .is_some_and(|column| column.field_type.is_unsigned());
+        // Go wraps the allocator's `autoid.ErrAutoincReadFailed` into a plain
+        // error through its `Error()` text, so the class prefix is part of the
+        // 1105 message.
         let message = if unsigned {
-            "[autoid:1467]Failed to read auto-increment value from storage engine"
+            tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                .generate("Failed to read auto-increment value from storage engine")
+                .to_string()
         } else {
-            "auto increment action failed"
+            "auto increment action failed".to_owned()
         };
         crate::DriverError::Mysql(crate::driver::MysqlError::unknown(message))
     }

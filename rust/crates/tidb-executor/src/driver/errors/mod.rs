@@ -238,6 +238,14 @@ impl MysqlError {
         }
     }
 
+    /// Keeps the Go identity a wire-level carrier (`SqlQueryError`,
+    /// `LockSqlError`) brought across a crate boundary.
+    #[must_use]
+    pub fn with_identity_opt(mut self, identity: Option<TerrorIdentity>) -> Self {
+        self.identity = identity;
+        self
+    }
+
     /// Re-labels this failure with a different Go identity, keeping its wire
     /// code, state and message: `ClassTiKV.Synthesize(code, msg)` answers a
     /// coprocessor error under class `tikv` whatever number reaches the wire.
@@ -371,7 +379,15 @@ impl DriverError {
         // `` `%s` is unsupported on temporary tables. `` -- the backquotes
         // are part of the FORMAT, not decoration added here.
         DriverError::OptOnTemporaryTable(operation) => MysqlError::terror(
-            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE,
+            // The DDL executor (`pkg/ddl/executor.go`, `create_table.go`)
+            // raises its own `dbterror` definition for these operations; the
+            // planner's `preprocess` raises `plannererrors`'.
+            match operation {
+                "placement" | "pre split regions" | "set TiFlash replica" | "masking policy" => {
+                    &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE
+                }
+                _ => &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE,
+            },
             format!("`{operation}` is unsupported on temporary tables."),
         ),
         DriverError::UnsupportedOnCommitPreserve => MysqlError::terror(
@@ -501,7 +517,17 @@ impl DriverError {
             "The used SELECT statements have a different number of columns".to_owned(),
         ),
         DriverError::WrongUsage { first, second } => MysqlError::terror(
-            &tidb_error::plannererrors::ERR_WRONG_USAGE,
+            // Go raises `ErrWrongUsage` from three packages: the grants
+            // (`exeerrors`), the DDL executor's OR REPLACE / IF NOT EXISTS
+            // pairing (`dbterror`) and the planner (UNION ... INTO / LIMIT /
+            // ORDER BY, `plannererrors`); the first operand names which.
+            match first {
+                "COLUMN GRANT" | "DB GRANT" | "GLOBAL GRANT" => {
+                    &tidb_util::dbterror::exeerrors::ERR_WRONG_USAGE
+                }
+                "OR REPLACE" => &tidb_util::dbterror::ERR_WRONG_USAGE,
+                _ => &tidb_error::plannererrors::ERR_WRONG_USAGE,
+            },
             format!("Incorrect usage of {first} and {second}"),
         ),
         // Go: "Incorrect table definition; there can be only one auto column
@@ -576,7 +602,7 @@ impl DriverError {
         // Go: "Cannot add or update a child row: a foreign key constraint
         // fails (%.192s)".
         DriverError::ForeignKeyNoReferencedRow { table, constraint } => MysqlError::terror(
-            &tidb_util::dbterror::ERR_NO_REFERENCED_ROW2,
+            &tidb_error::plannererrors::ERR_NO_REFERENCED_ROW2,
             format!(
                 "Cannot add or update a child row: a foreign key constraint fails ({table}, {constraint})"
             ),

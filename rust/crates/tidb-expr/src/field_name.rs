@@ -41,8 +41,8 @@ impl fmt::Display for NonUniqueFieldName {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "[expression:{}]{}",
-            self.sql_error.code, self.sql_error.message
+            "{}",
+            tidb_error::catalog::expression::ERR_NON_UNIQ.generate(&self.sql_error.message)
         )
     }
 }

@@ -176,6 +176,14 @@ pub struct TruncatedWrongValue {
     pub value: String,
 }
 
+impl TruncatedWrongValue {
+    /// Go `variable.ErrTruncatedWrongValue` (class `variable`, 1292).
+    #[must_use]
+    pub fn proto(&self) -> &'static tidb_error::terror::TerrorError {
+        &tidb_error::catalog::variable::ERR_TRUNCATED_WRONG_VALUE
+    }
+}
+
 impl std::fmt::Display for TruncatedWrongValue {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Go's template truncates the name to 64 and the value to 128 chars.
@@ -183,7 +191,9 @@ impl std::fmt::Display for TruncatedWrongValue {
         let value: String = self.value.chars().take(128).collect();
         write!(
             formatter,
-            "[variable:1292]Truncated incorrect {name} value: '{value}'"
+            "{}",
+            self.proto()
+                .generate(format!("Truncated incorrect {name} value: '{value}'"))
         )
     }
 }

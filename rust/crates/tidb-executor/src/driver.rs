@@ -473,6 +473,7 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
                 key: key.clone(),
                 table: table.clone(),
             }
+            .in_class(&tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST)
         }
         tidb_planner::plan_base::PlanErrorKind::Internal => {
             DriverError::unsupported(error.to_string())

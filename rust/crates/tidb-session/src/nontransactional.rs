@@ -37,9 +37,6 @@ use crate::{Session, StmtOutput};
 /// Go `model.ExtraHandleName`.
 const EXTRA_HANDLE_NAME: &str = "_tidb_rowid";
 
-/// Go `ErrNonTransactionalJobFailure`.
-const ERR_NON_TRANSACTIONAL_JOB_FAILURE: u16 = 8143;
-
 /// The flags Go restores both the condition of the shard SELECT and every
 /// split statement with.
 fn restore_flags() -> RestoreFlags {

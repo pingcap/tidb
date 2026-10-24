@@ -413,6 +413,7 @@ impl PreparedStatementRegistry {
             .map_err(|error| {
                 let error = error.to_mysql_error();
                 SqlQueryError::new(error.code, error.state, error.message)
+                    .with_identity(error.identity)
             })?;
         let records: std::collections::BTreeMap<u32, PreparedStmtInfo> = serde_json::from_value(
             state
@@ -1623,6 +1624,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // directly, with no statement. A pymysql client's utf8mb4 handshake
     // therefore governs connection comparisons with utf8mb4_general_ci, not
     // this server's bin default. An id Go does not know fails the connection.
+    let handshake_collation = response.collation;
     if let Err(error) = engine.set_collation(response.collation) {
         write_query_error_at(&mut output, response_sequence, &error, protocol_41)?;
         return Ok(ConnectionReport {
@@ -1722,6 +1724,11 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         framing,
         cancellation,
         stream_for_watch,
+        conn_info: ConnInfo {
+            addr: peer_addr.to_string(),
+            collation: handshake_collation,
+            user: response_user.clone(),
+        },
     })
 }
 
@@ -1744,6 +1751,134 @@ struct CommandContext<'a> {
     framing: WireFraming,
     cancellation: ConnectionCancellation,
     stream_for_watch: TcpStream,
+    conn_info: ConnInfo,
+}
+
+/// The handshake facts Go's `clientConn.String()` prints.
+struct ConnInfo {
+    /// `bufReadConn.RemoteAddr()`.
+    addr: String,
+    /// The handshake's collation id (`cc.collation`).
+    collation: u8,
+    /// The handshake's user (`cc.user`).
+    user: String,
+}
+
+/// Go `clientConn.Run`'s log for a dispatch that answered an error
+/// (`pkg/server/conn.go:1305-1337`): NOWAIT's expected refusal and the
+/// MySQL client's `select $$` probe at debug level, every other failure as a
+/// `command dispatched failed` warning carrying `errStrForLog(err)` -- the
+/// error's `Error()` text, class prefix included.
+fn log_dispatch_failure<S: QuerySession>(
+    engine: &mut S,
+    connection_id: u64,
+    conn_info: &ConnInfo,
+    payload: &[u8],
+    prepared: &PreparedStatementRegistry,
+    error: &SqlQueryError,
+) {
+    if error.identity
+        == Some(tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity())
+    {
+        tidb_log::debug(
+            "Expected error for FOR UPDATE NOWAIT",
+            &[crate::zap_error(error.error_string())],
+        );
+        return;
+    }
+    let status = engine.wire_status().bits();
+    let command = payload.first().copied().unwrap_or(0);
+    let command_name = tidb_mysql::consts::COMMAND_NAMES
+        .iter()
+        .find(|(code, _)| *code == command)
+        .map(|(_, name)| *name);
+    let data = payload.get(1..).unwrap_or_default();
+    let session = engine.migration_session();
+    let session = session.as_deref();
+    // Go `getLastStmtInConn.String`. A session-less engine (the protocol
+    // tests' fakes) has no redaction or length settings to apply.
+    let statement_text = |sql: &str, prepared: bool| match session {
+        Some(session) if prepared => session.dispatch_failure_prepared_sql(sql),
+        Some(session) => session.dispatch_failure_sql(sql),
+        None => tidb_session::slow_log::query_replacer(sql),
+    };
+    let statement_id = || {
+        data.get(..4)
+            .map(|id| u32::from_le_bytes([id[0], id[1], id[2], id[3]]))
+            .unwrap_or(0)
+    };
+    let sql = match command {
+        tidb_mysql::consts::ComInitDB => format!("Use {}", String::from_utf8_lossy(data)),
+        tidb_mysql::consts::ComFieldList => {
+            format!("ListFields {}", String::from_utf8_lossy(data))
+        }
+        tidb_mysql::consts::ComQuery | tidb_mysql::consts::ComStmtPrepare => {
+            statement_text(&String::from_utf8_lossy(data), false)
+        }
+        tidb_mysql::consts::ComStmtExecute | tidb_mysql::consts::ComStmtFetch => {
+            let id = statement_id();
+            let text = match prepared.statements.get(&id) {
+                Some(statement) => statement.statement.sql_text().to_owned(),
+                None => format!("prepared statement not found, ID: {id}"),
+            };
+            statement_text(&text, true)
+        }
+        tidb_mysql::consts::ComStmtClose | tidb_mysql::consts::ComStmtReset => {
+            format!("{} {}", command_name.unwrap_or_default(), statement_id())
+        }
+        _ => command_name.map_or_else(|| String::from_utf8_lossy(data).into_owned(), str::to_owned),
+    };
+    if sql == "select $$" {
+        tidb_log::debug(
+            "command dispatched failed for `select $$`, this is expected",
+            &[],
+        );
+        return;
+    }
+    // Go `mysql.Collations[uint16(cc.collation)]`.
+    let collation =
+        tidb_mysql::charset::collation_name(u16::from(conn_info.collation)).unwrap_or_default();
+    let fields = [
+        tidb_log::Field::new(
+            "connInfo",
+            tidb_log::Value::Str(format!(
+                "id:{connection_id}, addr:{} status:{status:b}, collation:{collation}, user:{}",
+                conn_info.addr, conn_info.user
+            )),
+        ),
+        tidb_log::Field::new(
+            "command",
+            tidb_log::Value::Str(command_name.unwrap_or_default().to_owned()),
+        ),
+        tidb_log::Field::new(
+            "status",
+            tidb_log::Value::Str(format!(
+                "inTxn:{}, autocommit:{}",
+                u8::from(status & crate::wire_status::SERVER_STATUS_IN_TRANS != 0),
+                u8::from(status & crate::wire_status::SERVER_STATUS_AUTOCOMMIT != 0),
+            )),
+        ),
+        tidb_log::Field::new("sql", tidb_log::Value::Str(sql)),
+        tidb_log::Field::new(
+            "txn_mode",
+            tidb_log::Value::Str(session.map_or_else(
+                || "OPTIMISTIC".to_owned(),
+                |session| session.readable_txn_mode(),
+            )),
+        ),
+        tidb_log::Field::new(
+            "timestamp",
+            tidb_log::Value::U64(session.map_or(0, |session| session.dispatch_failure_timestamp())),
+        ),
+        tidb_log::Field::new(
+            "err",
+            tidb_log::Value::Str(session.map_or_else(
+                || error.error_string(),
+                |session| session.err_str_for_log(&error.error_string(), error.identity),
+            )),
+        ),
+    ];
+    tidb_log::warn("command dispatched failed", &fields);
 }
 
 impl<S: QuerySession> CommandConnection<S> {
@@ -1827,6 +1962,7 @@ fn run_connection_commands<S: QuerySession>(
         framing,
         cancellation,
         stream_for_watch,
+        conn_info,
     } = context;
     let protocol_41 = framing.protocol_41;
     let mut queries = 0_u64;
@@ -1927,6 +2063,7 @@ fn run_connection_commands<S: QuerySession>(
                 .observe(idle);
         }
         let _command_token = command_limiter.acquire();
+        let _ = crate::connection_writers::take_query_failure();
         let dispatch_result = (|| -> Result<Option<ConnectionReport>, MysqlConnectionError> {
             let command = match decode_command(&payload) {
                 Ok(command) => command,
@@ -3184,6 +3321,16 @@ fn run_connection_commands<S: QuerySession>(
         if dispatch_result.is_err() {
             crate::query_metrics::record_error();
         }
+        if let Some(error) = crate::connection_writers::take_query_failure() {
+            log_dispatch_failure(
+                engine,
+                connection_id,
+                &conn_info,
+                &payload,
+                prepared,
+                &error,
+            );
+        }
         last_active = std::time::Instant::now();
         if let Some(report) = dispatch_result? {
             return Ok(report);
@@ -3584,5 +3731,86 @@ mod capability_tests {
         // Go's `defaultCapability` includes ClientTransactions, so a client
         // must be able to negotiate transaction-aware status and commands.
         assert_ne!(SERVER_CAPABILITIES & CLIENT_TRANSACTIONS, 0);
+    }
+}
+
+#[cfg(test)]
+mod dispatch_failure_log_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    struct NoSession;
+
+    impl QuerySession for NoSession {
+        fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+            panic!("the log reads no statement")
+        }
+    }
+
+    fn conn_info() -> ConnInfo {
+        ConnInfo {
+            addr: "127.0.0.1:50000".to_owned(),
+            collation: 45,
+            user: "root".to_owned(),
+        }
+    }
+
+    /// Go `clientConn.Run` (`pkg/server/conn.go:1327`) warns `command
+    /// dispatched failed` with `errStrForLog(err)`: the error's `Error()`
+    /// text, class prefix included, and the statement `getLastStmtInConn`
+    /// renders; NOWAIT's expected refusal is a debug line, not the warning.
+    #[test]
+    fn a_dispatch_failure_logs_the_error_text_go_prints() {
+        let sink = Arc::new(tidb_log::MemorySink::default());
+        let config = tidb_log::Config {
+            level: "info".into(),
+            disable_timestamp: true,
+            ..tidb_log::Config::default()
+        };
+        let (logger, _) = tidb_log::init_test_logger(sink.clone(), &config).unwrap();
+        let restore = tidb_log::replace_globals(logger);
+
+        let duplicate =
+            SqlQueryError::new(1062, *b"23000", "Duplicate entry '1' for key 't.PRIMARY'")
+                .with_identity(Some(tidb_error::catalog::kv::ERR_KEY_EXISTS.identity()));
+        let mut payload = vec![tidb_mysql::consts::ComQuery];
+        payload.extend_from_slice(b"insert into t values (1)");
+        let registry = PreparedStatementRegistry::default();
+        log_dispatch_failure(
+            &mut NoSession,
+            7,
+            &conn_info(),
+            &payload,
+            &registry,
+            &duplicate,
+        );
+        let line = sink.last_line().expect("one warning");
+        assert!(line.contains("command dispatched failed"), "{line}");
+        assert!(
+            line.contains("[kv:1062]Duplicate entry '1' for key 't.PRIMARY'"),
+            "{line}"
+        );
+        assert!(line.contains("insert into t values (1)"), "{line}");
+        assert!(line.contains("id:7, addr:127.0.0.1:50000"), "{line}");
+        assert!(line.contains("user:root"), "{line}");
+
+        let nowait = SqlQueryError::new(3572, *b"HY000", "NOWAIT").with_identity(Some(
+            tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity(),
+        ));
+        let before = sink.string().len();
+        log_dispatch_failure(
+            &mut NoSession,
+            7,
+            &conn_info(),
+            &payload,
+            &registry,
+            &nowait,
+        );
+        assert_eq!(
+            sink.string().len(),
+            before,
+            "a NOWAIT refusal is below info"
+        );
+        restore.restore();
     }
 }

@@ -909,20 +909,12 @@ impl Session {
         {
             return Ok(());
         }
-        let decoded = warning
-            .message
-            .strip_prefix("[parser:")
-            .and_then(|rest| rest.split_once(']'))
-            .and_then(|(code, message)| code.parse::<u16>().ok().map(|code| (code, message)));
-        Err(match decoded {
-            Some((errno, message)) => DriverError::ParseCoded {
-                proto: parser_hint_terror(errno),
-                message: message.to_owned(),
-            },
-            None => DriverError::ParseCoded {
-                proto: &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
-                message: warning.message,
-            },
+        let message = warning.body().to_owned();
+        Err(DriverError::ParseCoded {
+            proto: warning
+                .terror
+                .unwrap_or(&tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT),
+            message,
         })
     }
 
@@ -1048,22 +1040,5 @@ impl Session {
             }
         }
         Ok(loaded)
-    }
-}
-
-/// The `parser` class prototype behind a `[parser:<code>]` hint diagnostic.
-/// Every hint refusal the parser raises is one of these six
-/// (`pkg/parser/hintparser.go:1066-1071`); the code names which.
-fn parser_hint_terror(code: u16) -> &'static tidb_error::terror::TerrorError {
-    use tidb_error::catalog::parser as hint;
-    match code {
-        1064 => &tidb_error::catalog::parser::ERR_PARSE,
-        8061 => &hint::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
-        8062 => &hint::ERR_WARN_OPTIMIZER_HINT_INVALID_TOKEN,
-        8063 => &hint::ERR_WARN_MEMORY_QUOTA_OVERFLOW,
-        8064 => &hint::ERR_WARN_OPTIMIZER_HINT_PARSE_ERROR,
-        8065 => &hint::ERR_WARN_OPTIMIZER_HINT_INVALID_INTEGER,
-        8066 => &hint::ERR_WARN_OPTIMIZER_HINT_WRONG_POS,
-        _ => &hint::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
     }
 }

@@ -256,8 +256,12 @@ fn install_check_constraint_infos(
 
 pub(super) fn check_constraint_table_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
+        // ADD CONSTRAINT's validation is the DDL executor's
+        // `dbterror.ErrCheckConstraintIsViolated`; an INSERT / UPDATE of a
+        // violating row is `table.ErrCheckConstraintViolated`.
         crate::kv_table::KvTableError::CheckConstraintViolated(name) => {
             DriverError::CheckConstraintViolated(name)
+                .in_class(&tidb_util::dbterror::ERR_CHECK_CONSTRAINT_IS_VIOLATED)
         }
         error => DriverError::unsupported(format!("{error:?}")),
     }

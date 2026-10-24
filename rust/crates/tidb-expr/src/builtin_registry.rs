@@ -433,9 +433,13 @@ pub fn verify_args_by_count(name: &str, count: usize) -> Result<(), crate::EvalE
     // the verification failure in `ErrRegexp`; the other regexp classes
     // return it bare.
     if matches!(key, "regexp_instr" | "regexp_replace") {
-        return Err(crate::regexp::err_regexp_wrapping_error(&format!(
-            "[expression:1582]Incorrect parameter count in the call to native function '{key}'"
-        )));
+        return Err(crate::regexp::err_regexp_wrapping_error(
+            &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                .generate(format!(
+                    "Incorrect parameter count in the call to native function '{key}'"
+                ))
+                .to_string(),
+        ));
     }
     Err(crate::EvalError::WrongParameterCount(key))
 }

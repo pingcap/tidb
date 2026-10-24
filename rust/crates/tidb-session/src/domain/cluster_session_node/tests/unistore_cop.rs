@@ -12597,9 +12597,17 @@ fn deferred_uniqueness_batch_terminal_dml_error_aborts_prior_writes() {
         .execute_write("INSERT INTO t VALUES (1)")
         .unwrap_err();
     assert_eq!(error.code, 8147, "{error:?}");
-    assert!(error.message.starts_with(
-        "transaction aborted because lazy uniqueness check is enabled and an error occurred:"
-    ));
+    // Captured on a Go tidb-server: the wrapper embeds the inner `Error()`
+    // text, class prefix included.
+    assert_eq!(
+        error.message,
+        "transaction aborted because lazy uniqueness check is enabled and an error occurred: \
+         [kv:1062]Duplicate entry '1' for key 't.PRIMARY'"
+    );
+    assert_eq!(
+        error.identity,
+        Some(tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity())
+    );
     assert!(!session.store.session.in_transaction());
     assert!(session.store.txn.explicit.is_none());
     assert!(session.buffer.is_empty());

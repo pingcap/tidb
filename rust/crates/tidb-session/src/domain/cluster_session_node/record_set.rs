@@ -100,7 +100,8 @@ impl ClusterServerSession {
                                 error.code,
                                 error.state,
                                 error.message.clone(),
-                            ),
+                            )
+                            .with_identity_opt(error.identity),
                         ));
                         let _ = state.close(&mut self.store.session);
                     }
@@ -222,6 +223,7 @@ impl ResultSetSource for ClusterRecordSet<'_> {
                 .end_read_statement(snapshot, !self.failed)
                 .map_err(|error| {
                     tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+                        .with_identity_opt(error.identity)
                 })
         });
         if let Err(error) = &ended {

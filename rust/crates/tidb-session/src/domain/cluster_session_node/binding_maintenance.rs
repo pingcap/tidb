@@ -103,11 +103,10 @@ struct BindingRunner {
     session: ClusterServerSession,
 }
 fn driver_error(error: crate::domain::session_api::SqlQueryError) -> DriverError {
-    DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-        error.code,
-        error.state,
-        error.message,
-    ))
+    DriverError::Mysql(
+        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity),
+    )
 }
 impl BindingRunner {
     fn render(&self, sql: &str, args: &[Datum]) -> Result<String, DriverError> {

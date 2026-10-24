@@ -139,10 +139,10 @@ fn pd_response_handler(
 
 // Go `ErrHTTPServiceError.FastGen("%s", body)`'s text before the body.
 fn http_service_error_prefix() -> String {
-    format!(
-        "[domain:{}]",
-        tidb_error::tidb::errcode::ErrHTTPServiceError
-    )
+    // `[<class>:<code>]` of the definition, with an empty message.
+    tidb_error::catalog::infosync::ERR_HTTP_SERVICE_ERROR
+        .generate("")
+        .to_string()
 }
 
 /// Whether `message` is the info syncer's `ErrHTTPServiceError` (see

@@ -101,6 +101,10 @@ pub(crate) struct PreparedStatement {
     /// `@neg = -1` are both `[planner:1210]Incorrect arguments to LIMIT`,
     /// while `@l = 2` runs.
     limit_markers: Vec<usize>,
+    /// Go `PlanCacheStmt.SchemaVersion`: the schema version the statement was
+    /// last preprocessed against. An EXECUTE under another version
+    /// re-preprocesses, and a failure there is `ErrSchemaChanged`.
+    schema_version: u64,
 }
 
 /// SQL names retain their shared connection-wide prepared statement ID.
@@ -392,6 +396,7 @@ impl Session {
         // PREPARE itself is refused without the statement's privileges.
         self.check_table_privilege_requests(&privilege_requests)?;
         let id = self.allocate_prepared_statement_id();
+        let schema_version = self.with_catalog_mut(|catalog| Ok(catalog.schema_version()))?;
         self.prepared_statements.insert(
             name.to_owned(),
             PreparedStatement {
@@ -406,6 +411,7 @@ impl Session {
                 cacheable,
                 select_plan,
                 dml_plan,
+                schema_version,
             },
         );
         Ok(())
@@ -428,6 +434,48 @@ impl Session {
     /// Go `ExecuteExec`: looks the statement up, binds the `USING` variables'
     /// current values to its markers, and runs the result.
     pub(crate) fn execute_prepared_statement(
+        &mut self,
+        name: &str,
+        using: &[Expr],
+    ) -> Result<PendingExecution, DriverError> {
+        // Go `planCachePreprocess` step 4: under a new schema version the
+        // statement is preprocessed again, and if that fails "the real reason
+        // for the error is schema changed" -- `ErrSchemaChanged` over the inner
+        // error's `Error()` text, class prefix included. The table-resolution
+        // failure is the preprocess failure this tier can see.
+        let current = self.with_catalog_mut(|catalog| Ok(catalog.schema_version()))?;
+        let stale = self
+            .prepared_statements
+            .get(name)
+            .is_some_and(|prepared| prepared.schema_version != current);
+        let result = self.execute_prepared_statement_inner(name, using);
+        if !stale {
+            return result;
+        }
+        match result {
+            Ok(pending) => {
+                if let Some(prepared) = self.prepared_statements.get_mut(name) {
+                    prepared.schema_version = current;
+                }
+                Ok(pending)
+            }
+            Err(error) => {
+                let inner = error.clone().to_mysql_error();
+                let table_gone = inner.identity
+                    == Some(tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.identity());
+                if table_gone {
+                    Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
+                        &tidb_error::plannererrors::ERR_SCHEMA_CHANGED,
+                        format!("Schema change caused error: {}", inner.error_string()),
+                    )))
+                } else {
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    fn execute_prepared_statement_inner(
         &mut self,
         name: &str,
         using: &[Expr],

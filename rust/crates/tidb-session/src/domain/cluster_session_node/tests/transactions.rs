@@ -1358,3 +1358,41 @@ fn transaction_observation_batch_text_prepared_and_failed_commit_share_history()
         }
     }
 }
+
+/// Go `recordLastQueryInfo` stores `err.Error()`: a lock failure keeps its Go
+/// class, `ClassTiKV` for client-go's lock errors. Captured from the oracle
+/// (two sessions, the second's locking read against the first's lock):
+/// `[tikv:3572]Statement aborted because lock(s) could not be acquired
+/// immediately and NOWAIT is set.` and `[tikv:1205]Lock wait timeout exceeded;
+/// try restarting transaction`.
+#[test]
+fn a_failed_locking_read_records_its_go_class_in_last_query_info() {
+    use tidb_txnkv::transaction::PessimisticLockFailure;
+    for (failure, expected) in [
+        (
+            PessimisticLockFailure::LockAcquireFailAndNoWaitSet { key: b"k".to_vec() },
+            "[tikv:3572]Statement aborted because lock(s) could not be acquired immediately \
+             and NOWAIT is set.",
+        ),
+        (
+            PessimisticLockFailure::LockWaitTimeout { key: b"k".to_vec() },
+            "[tikv:1205]Lock wait timeout exceeded; try restarting transaction",
+        ),
+    ] {
+        let (mut session, cluster) = open_session();
+        session
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+        session.control_transaction("BEGIN PESSIMISTIC").unwrap();
+        *cluster.fail_next_lock.lock().unwrap() = Some(failure);
+        assert!(session
+            .execute("SELECT v FROM t WHERE id = 1 FOR UPDATE")
+            .is_err());
+        let info = match &rows(&mut session, "SELECT @@tidb_last_query_info")[0][0] {
+            Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+            other => panic!("a system variable reads as text, got {other:?}"),
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&info).unwrap();
+        assert_eq!(parsed["error"], expected, "{info}");
+    }
+}

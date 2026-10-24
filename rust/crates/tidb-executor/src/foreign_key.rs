@@ -983,10 +983,12 @@ pub(crate) fn check_modify_column(
                 // parent exists, a stale referenced column is reported as
                 // 1054 rather than silently skipping this constraint.
                 if matches!(parent, TableEntry::Kv(_)) {
+                    // Go `executor/foreign_key.go`: `table.ErrUnknownColumn`.
                     return Err(DriverError::UnknownColumnInTable {
                         column: referenced.clone(),
                         table: foreign_key.ref_table.clone(),
-                    });
+                    }
+                    .in_class(&tidb_error::catalog::table::ERR_UNKNOWN_COLUMN));
                 }
                 continue;
             };

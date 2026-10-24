@@ -131,3 +131,59 @@ fn non_transactional_job_failure_embeds_the_inner_error_class() {
         "{message}"
     );
 }
+
+/// Go `planCachePreprocess` step 4: a prepared statement whose table vanished
+/// re-preprocesses against the new schema and wraps the failure in
+/// `plannererrors.ErrSchemaChanged` ("Schema change caused error: %s") over
+/// the inner error's `Error()`, class prefix included. Captured:
+/// `8113 Schema change caused error: [schema:1146]Table 'err_cls.pc1' doesn't exist`.
+#[test]
+fn prepared_statement_schema_change_wraps_the_inner_error_text() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE pc1 (a INT PRIMARY KEY, b INT)")
+        .unwrap();
+    session
+        .run("PREPARE s1 FROM 'SELECT * FROM pc1 WHERE a = ?'")
+        .unwrap();
+    session.run("SET @a = 1").unwrap();
+    session.run("EXECUTE s1 USING @a").unwrap();
+    session.run("DROP TABLE pc1").unwrap();
+    let error = session
+        .run("EXECUTE s1 USING @a")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8113, "{error:?}");
+    assert_eq!(
+        error.message,
+        "Schema change caused error: [schema:1146]Table 'test.pc1' doesn't exist"
+    );
+}
+
+/// Go's foreign-key checks run in the executor but raise the PLANNER's
+/// definitions (`plannererrors.ErrNoReferencedRow2` /
+/// `ErrRowIsReferenced2`). Captured from the oracle's `last_query_info`:
+/// `[planner:1452]Cannot add or update a child row: ...` and
+/// `[planner:1451]Cannot delete or update a parent row: ...`.
+#[test]
+fn foreign_key_check_failures_carry_the_planner_class() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p2 (id INT PRIMARY KEY)").unwrap();
+    session
+        .run("CREATE TABLE c2 (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES p2(id))")
+        .unwrap();
+    session.run("INSERT INTO p2 VALUES (1)").unwrap();
+    assert!(session.run("INSERT INTO c2 VALUES (1, 99)").is_err());
+    let child = last_error(&mut session).unwrap();
+    assert!(
+        child.starts_with("[planner:1452]Cannot add or update a child row"),
+        "{child}"
+    );
+    session.run("INSERT INTO c2 VALUES (2, 1)").unwrap();
+    assert!(session.run("DELETE FROM p2 WHERE id = 1").is_err());
+    let parent = last_error(&mut session).unwrap();
+    assert!(
+        parent.starts_with("[planner:1451]Cannot delete or update a parent row"),
+        "{parent}"
+    );
+}

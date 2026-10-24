@@ -484,9 +484,9 @@ pub static MEMORY_USAGE: LazyLock<IntGaugeVec> = LazyLock::new(|| {
 
 /// Go `ExecuteErrorToLabel` (`pkg/metrics/server.go:483`): the label is the
 /// error's RFC code string (`"<pkg>:<code>"`), or `unknown` for a plain
-/// error. The Rust error tree carries the same `(scope, code)` pair.
-pub fn execute_error_to_label(scope: &str, code: u16) -> String {
-    format!("{scope}:{code}")
+/// error. The Go identity travels on the error (`SqlQueryError::identity`).
+pub fn execute_error_to_label(identity: Option<tidb_error::terror::TerrorIdentity>) -> String {
+    identity.map_or_else(|| "unknown".to_owned(), |identity| identity.rfc_code())
 }
 
 /// Go `pkg/server/metrics` disconnect bindings, as label values.
@@ -861,8 +861,11 @@ mod tests {
             .with_label_values(&[disconnect::NORMAL])
             .inc();
         EVENT_TOTAL.with_label_values(&["server-start"]).inc();
+        let label = execute_error_to_label(Some(
+            tidb_error::plannererrors::ERR_STMT_NOT_FOUND.identity(),
+        ));
         EXECUTE_ERROR_TOTAL
-            .with_label_values(&[&execute_error_to_label("executor", 8111), "", "default"])
+            .with_label_values(&[&label, "", "default"])
             .inc();
         PREPARED_STMTS.set(3);
         let mut body = prometheus::TextEncoder::new()

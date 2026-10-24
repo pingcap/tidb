@@ -122,6 +122,7 @@ impl TransactionStatementError {
             state: *b"HY000",
             message: error.to_string(),
             write_conflict: None,
+            identity: None,
         })
     }
 
@@ -132,6 +133,7 @@ impl TransactionStatementError {
             state: *b"HY000",
             message: message.into(),
             write_conflict: None,
+            identity: None,
         })
     }
 
@@ -321,6 +323,7 @@ where
                 state: *b"HY000",
                 message: tidb_error::tidb::errname::ErrLockExpire.raw.to_owned(),
                 write_conflict: None,
+                identity: None,
             }));
         }
         Ok(())

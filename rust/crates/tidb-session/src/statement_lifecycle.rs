@@ -330,10 +330,21 @@ impl StatementLifecycle<'_> {
             // End the SQL and native owners after releasing the statement stage.
             let _ = self.session.control_transaction("ROLLBACK");
             let _ = self.discard_explicit();
-            return outcome.map_err(|error| SqlQueryError::new(
-                8147, *b"HY000",
-                format!("transaction aborted because lazy uniqueness check is enabled and an error occurred: {}", error.message),
-            ));
+            // `exeerrors.ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())`:
+            // the inner error's text keeps its `[class:code]` prefix.
+            return outcome.map_err(|error| {
+                SqlQueryError::new(
+                    8147,
+                    *b"HY000",
+                    format!(
+                        "transaction aborted because lazy uniqueness check is enabled and an error occurred: {}",
+                        error.error_string()
+                    ),
+                )
+                .with_identity(Some(
+                    tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity(),
+                ))
+            });
         }
         outcome
     }
@@ -648,7 +659,12 @@ impl StatementLifecycle<'_> {
                         Some(
                             StatementLockFailure::Statement(error)
                             | StatementLockFailure::Transaction(error),
-                        ) => break Err(transactions::sql_error(error)),
+                        ) => {
+                            let error = transactions::sql_error(error);
+                            self.session
+                                .rerecord_last_query_error(&error.error_string());
+                            break Err(error);
+                        }
                     }
                 }
             }

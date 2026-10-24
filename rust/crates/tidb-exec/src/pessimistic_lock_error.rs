@@ -74,6 +74,10 @@ pub struct LockSqlError {
     /// session's commit can name the tables in them (Go
     /// `tryReplaceWriteConflictError`).
     pub write_conflict: Option<Box<WriteConflictArgs>>,
+    /// The Go `*terror.Error` identity the failure is raised as (`[kv:9007]`,
+    /// `[tikv:1205]`, ...), `None` for a plain error. The wire drops it;
+    /// `err.Error()` -- `@@tidb_last_query_info`, logs -- prints it.
+    pub identity: Option<tidb_error::terror::TerrorIdentity>,
 }
 
 impl LockSqlError {
@@ -106,6 +110,7 @@ impl PessimisticStatementRetry {
                 state: DEFAULT_SQL_STATE,
                 message: "pessimistic lock retry limit reached".to_owned(),
                 write_conflict: None,
+                identity: None,
             });
         }
         self.count += 1;
@@ -133,6 +138,9 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
             message: "Deadlock found when trying to get lock; try restarting transaction"
                 .to_owned(),
             write_conflict: None,
+            // Go `ExecStmt.handlePessimisticLockError`: client-go's deadlock
+            // becomes `exeerrors.ErrDeadlock`.
+            identity: Some(tidb_util::dbterror::exeerrors::ERR_DEADLOCK.identity()),
         },
         PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => LockSqlError {
             code: ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET,
@@ -141,12 +149,16 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
                       NOWAIT is set."
                 .to_owned(),
             write_conflict: None,
+            identity: Some(
+                tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity(),
+            ),
         },
         PessimisticLockFailure::LockWaitTimeout { .. } => LockSqlError {
             code: ERR_LOCK_WAIT_TIMEOUT,
             state: DEFAULT_SQL_STATE,
             message: "Lock wait timeout exceeded; try restarting transaction".to_owned(),
             write_conflict: None,
+            identity: Some(tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT.identity()),
         },
         // Go retries or aborts the statement; only a commit's conflict is
         // rewritten with table names, so the arguments stop here.
@@ -155,6 +167,7 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
             state: DEFAULT_SQL_STATE,
             message: format!("Write conflict, {detail} [try again later]"),
             write_conflict: None,
+            identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
         },
         PessimisticLockFailure::Transaction(cause @ TransactionCause::BackoffExhausted { .. }) => {
             transaction_cause_to_sql_error(cause)
@@ -168,6 +181,7 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
             state: DEFAULT_SQL_STATE,
             message: format!("pessimistic transaction aborted: {cause}"),
             write_conflict: None,
+            identity: None,
         },
     }
 }
@@ -219,6 +233,7 @@ pub fn commit_outcome_to_sql_error_with_hint(
             state: DEFAULT_SQL_STATE,
             message: ERR_RESULT_UNDETERMINED.message().to_owned(),
             write_conflict: None,
+            identity: Some(ERR_RESULT_UNDETERMINED.identity()),
         }),
     }
 }
@@ -229,6 +244,7 @@ pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
         state: *b"23000",
         message: format!("Duplicate entry '{}' for key '{}'", hint.value, hint.key),
         write_conflict: None,
+        identity: Some(tidb_error::catalog::kv::ERR_KEY_EXISTS.identity()),
     }
 }
 
@@ -249,6 +265,7 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             state: DEFAULT_SQL_STATE,
             message: format!("Write conflict, {detail} [try again later]"),
             write_conflict: args.clone(),
+            identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
         },
         TransactionCause::BackoffExhausted { kind, detail } => {
             backoff_exhausted_to_sql_error(*kind, detail)
@@ -263,6 +280,15 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             state: DEFAULT_SQL_STATE,
             message: message.clone(),
             write_conflict: None,
+            identity: match *code {
+                tidb_error::tidb::errcode::ErrInfoSchemaChanged => {
+                    Some(tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED.identity())
+                }
+                tidb_error::tidb::errcode::ErrInfoSchemaExpired => {
+                    Some(tidb_error::catalog::domain::ERR_INFO_SCHEMA_EXPIRED.identity())
+                }
+                _ => None,
+            },
         },
         TransactionCause::AssertionFailed {
             key,
@@ -301,6 +327,7 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
                     .expect("five-byte SQLSTATE"),
                 message: error.message,
                 write_conflict: None,
+                identity: Some(txnkv_identity(prototype)),
             }
         }
         other => LockSqlError {
@@ -308,8 +335,17 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             state: DEFAULT_SQL_STATE,
             message: format!("transaction failed: {other}"),
             write_conflict: None,
+            identity: None,
         },
     }
+}
+
+/// The identity a registered `pkg/kv` / `ClassTiKV` error carries.
+fn txnkv_identity(error: &tidb_txnkv::KvError) -> tidb_error::terror::TerrorIdentity {
+    tidb_error::terror::TerrorIdentity::new(
+        tidb_error::terror::TerrorClass::from_value(isize::from(error.class().as_u8())),
+        tidb_error::terror::TerrorCode::new(error.mysql_code().as_u16() as isize),
+    )
 }
 
 /// Only client-go ErrKeyExist consumes the table's duplicate-entry hint.
@@ -331,6 +367,7 @@ fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
         state: DEFAULT_SQL_STATE,
         message: error.to_string(),
         write_conflict: None,
+        identity: Some(txnkv_identity(&error)),
     }
 }
 
@@ -343,12 +380,14 @@ fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> Lock
             state: DEFAULT_SQL_STATE,
             message: converted.message().to_owned(),
             write_conflict: None,
+            identity: Some(converted.identity()),
         },
         ConvertedDriverError::Passthrough(source) => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
             message: source.to_string(),
             write_conflict: None,
+            identity: None,
         },
         ConvertedDriverError::Kv(_) | ConvertedDriverError::Transaction(_) => {
             unreachable!("backoff source table has no kv or transaction conversion rows")
@@ -383,6 +422,7 @@ pub fn locked_with_conflict_error(
              reason=LockedWithConflict [try again later]"
         ),
         write_conflict: None,
+        identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
     }
 }
 

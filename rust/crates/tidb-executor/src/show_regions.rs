@@ -413,7 +413,8 @@ pub fn show_table_regions(
                 return Err(DriverError::KeyNotExists {
                     key: name.to_owned(),
                     table: target.name.clone(),
-                });
+                }
+                .in_class(&tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST));
             };
             if found.global {
                 physical_ids = vec![target.id];

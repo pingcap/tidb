@@ -27,11 +27,10 @@ use tidb_executor::DriverError;
 use crate::{NonTransactionalInput, NonTransactionalStep, StmtOutput};
 
 fn driver_error(error: SqlQueryError) -> DriverError {
-    DriverError::Mysql(tidb_executor::MysqlError::from_parts(
-        error.code,
-        error.state,
-        error.message,
-    ))
+    DriverError::Mysql(
+        tidb_executor::MysqlError::from_parts(error.code, error.state, error.message)
+            .with_identity_opt(error.identity),
+    )
 }
 
 impl ClusterServerSession {

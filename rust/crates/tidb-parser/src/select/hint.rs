@@ -796,8 +796,47 @@ impl Parser {
 /// One warning or syntax error produced while parsing an optimizer-hint list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HintDiagnostic {
-    /// Source-compatible diagnostic text.
+    /// Source-compatible diagnostic text: `[<class>:<code>]<message>` for a
+    /// `*terror.Error` (Go's `Error()`), the bare message otherwise.
     pub message: String,
+    /// The Go definition the diagnostic is raised as, `None` for a plain one.
+    pub terror: Option<&'static tidb_error::terror::TerrorError>,
+}
+
+impl HintDiagnostic {
+    /// A diagnostic raised as the Go error `proto` (`ErrX.FastGenByArgs`).
+    #[must_use]
+    pub fn classed(
+        proto: &'static tidb_error::terror::TerrorError,
+        body: impl Into<String>,
+    ) -> Self {
+        Self {
+            message: proto.generate(body).to_string(),
+            terror: Some(proto),
+        }
+    }
+
+    /// A diagnostic that has no Go class.
+    #[must_use]
+    pub fn plain(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            terror: None,
+        }
+    }
+
+    /// The message without its `[class:code]` prefix: the text a warning row
+    /// carries.
+    #[must_use]
+    pub fn body(&self) -> &str {
+        match self.terror {
+            Some(proto) => self
+                .message
+                .strip_prefix(&format!("[{}]", proto.rfc_code()))
+                .unwrap_or(&self.message),
+            None => &self.message,
+        }
+    }
 }
 
 /// Complete result of the standalone optimizer-hint parser.
@@ -836,9 +875,7 @@ pub fn parse_hint(
     if let Some(error) = &parser.paren_depth_error {
         return HintParseResult {
             hints: Vec::new(),
-            diagnostics: vec![HintDiagnostic {
-                message: error.message.clone(),
-            }],
+            diagnostics: vec![HintDiagnostic::plain(error.message.clone())],
         };
     }
     let mut hints = Vec::new();
@@ -854,11 +891,10 @@ pub fn parse_hint(
             if unsupported {
                 parser.bump();
                 parser.skip_hint_args();
-                diagnostics.push(HintDiagnostic {
-                    message: format!(
-                        "[parser:8061]Optimizer hint {source_name} is not supported by TiDB and is ignored"
-                    ),
-                });
+                diagnostics.push(HintDiagnostic::classed(
+                    &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
+                    format!("Optimizer hint {source_name} is not supported by TiDB and is ignored"),
+                ));
             } else if !is_recognized_hint_token_name(name) {
                 parser.bump();
                 if parser.is_op("(") && parser.peek_n(1).text == ")" {
@@ -873,11 +909,12 @@ pub fn parse_hint(
                     diagnostics.push(hint_1064_diagnostic(initial_line, column, &near));
                 } else {
                     parser.skip_hint_args();
-                    diagnostics.push(HintDiagnostic {
-                        message: format!(
-                            "[parser:8061]Optimizer hint {source_name} is not supported by TiDB and is ignored"
+                    diagnostics.push(HintDiagnostic::classed(
+                        &tidb_error::catalog::parser::ERR_WARN_OPTIMIZER_HINT_UNSUPPORTED_HINT,
+                        format!(
+                            "Optimizer hint {source_name} is not supported by TiDB and is ignored"
                         ),
-                    });
+                    ));
                 }
             } else {
                 parse_standalone_hint_occurrence(
@@ -950,9 +987,7 @@ fn parse_standalone_hint_occurrence(
                     | "Cannot use hexadecimal literal"
                     | "integer value is out of range"
             ) {
-                diagnostics.push(HintDiagnostic {
-                    message: error.message,
-                });
+                diagnostics.push(HintDiagnostic::plain(error.message));
             }
             // go's yacc anchors the hint syntax error at the token it cannot
             // reduce -- for a parenthesized hint, the first argument token or
@@ -997,23 +1032,23 @@ fn parse_standalone_hint_occurrence(
 const DROPPED_HINT: &str = "\u{0}dropped optimizer hint";
 
 fn hint_syntax_diagnostic(initial_line: usize) -> HintDiagnostic {
-    HintDiagnostic {
-        message: format!("Optimizer hint syntax error at line {initial_line} "),
-    }
+    HintDiagnostic::plain(format!(
+        "Optimizer hint syntax error at line {initial_line} "
+    ))
 }
 
 /// go's 1064 rendering for a hint the yacc cannot reduce: anchored at the
 /// failing token with the remaining hint input (the [parser:1064] prefix is
 /// what the session's warning decoder splits the class code off).
 fn hint_1064_diagnostic(initial_line: usize, column: usize, near: &str) -> HintDiagnostic {
-    HintDiagnostic {
-        // go's own rendering carries a trailing space after the quoted near
-        // (oracle g-hint: `... near ") */" ` with the space before the row
-        // end).
-        message: format!(
-            "[parser:1064]Optimizer hint syntax error at line {initial_line} column {column} near \"{near}\" "
+    // go's own rendering carries a trailing space after the quoted near
+    // (oracle g-hint: `... near ") */" ` with the space before the row end).
+    HintDiagnostic::classed(
+        &tidb_error::catalog::parser::ERR_PARSE,
+        format!(
+            "Optimizer hint syntax error at line {initial_line} column {column} near \"{near}\" "
         ),
-    }
+    )
 }
 
 /// Parses a `/*+ ... */` hint comment token's own raw text (INCLUDING the

@@ -90,7 +90,11 @@ impl From<&str> for TopologyError {
 impl std::fmt::Display for TopologyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.code == 1815 {
-            write!(f, "[util:1815]{}", self.message)
+            write!(
+                f,
+                "{}",
+                tidb_error::catalog::tiflashcompute::ERR_TOPO_FETCHER.generate(&self.message)
+            )
         } else {
             f.write_str(&self.message)
         }

@@ -1075,6 +1075,78 @@ impl Session {
         }
     }
 
+    /// Go `parser.Normalize(sql, EnableRedactLog)` then
+    /// `executor.FormatSQL(sql).String()`: the statement text the connection's
+    /// dispatch-failure log carries (`getLastStmtInConn` for `COM_QUERY` /
+    /// `COM_STMT_PREPARE`).
+    #[must_use]
+    pub fn dispatch_failure_sql(&self, sql: &str) -> String {
+        crate::slow_log::format_sql(
+            &tidb_parser::normalize(sql, self.redact_mode()),
+            self.query_log_max_len(),
+        )
+    }
+
+    /// Go `clientConn.preparedStmt2String` under `FormatSQL`: the prepared
+    /// text normalized, plus the execution's arguments unless redaction is
+    /// fully on.
+    #[must_use]
+    pub fn dispatch_failure_prepared_sql(&self, sql: &str) -> String {
+        let mode = self.redact_log_mode();
+        let mut text = tidb_parser::normalize(sql, self.redact_mode());
+        if mode != "ON" {
+            text.push_str(&tidb_util::redact::string(
+                &mode,
+                &self.plan_cache_params_string(),
+            ));
+        }
+        crate::slow_log::format_sql(&text, self.query_log_max_len())
+    }
+
+    /// Go `SessionVars.GetReadableTxnMode`: `@@tidb_txn_mode`, `OPTIMISTIC`
+    /// when empty.
+    #[must_use]
+    pub fn readable_txn_mode(&self) -> String {
+        match self.vars.get_system("tidb_txn_mode") {
+            Ok(mode) if !mode.is_empty() => mode,
+            _ => "OPTIMISTIC".to_owned(),
+        }
+    }
+
+    /// The `timestamp` of the dispatch-failure log: `TxnCtx.StartTS`.
+    #[must_use]
+    pub fn dispatch_failure_timestamp(&self) -> u64 {
+        self.txn_start_and_for_update_ts().0
+    }
+
+    /// Go `errStrForLog`: with log redaction on, a parse error is replaced by
+    /// a fixed sentence because its text may carry secrets; otherwise the
+    /// error's `Error()` text. (Go appends the stack for every error but
+    /// `ErrKeyExists` / `ErrParse` / `ErrTableNotExists`; this tier has no
+    /// error stacks to append.)
+    #[must_use]
+    pub fn err_str_for_log(
+        &self,
+        error_string: &str,
+        identity: Option<tidb_error::terror::TerrorIdentity>,
+    ) -> String {
+        if self.redact_log_mode() != "OFF"
+            && identity == Some(tidb_error::catalog::parser::ERR_PARSE.identity())
+        {
+            return "fail to parse SQL, and must redact the whole error when enable log redaction"
+                .to_owned();
+        }
+        error_string.to_owned()
+    }
+
+    fn redact_mode(&self) -> tidb_parser::RedactMode {
+        match self.redact_log_mode().as_str() {
+            "ON" => tidb_parser::RedactMode::Enabled,
+            "MARKER" => tidb_parser::RedactMode::Marker,
+            _ => tidb_parser::RedactMode::Disabled,
+        }
+    }
+
     /// Go `PlanCacheParamList.String`: the prepared execution's arguments,
     /// empty without any.
     fn plan_cache_params_string(&self) -> String {
@@ -1454,6 +1526,22 @@ impl Session {
     /// `COMMIT` prints as `Prev_stmt` (`FormatSQL(GetTextToLog(false))`).
     fn update_prev_stmt(&mut self, observation: &StatementObservation) {
         self.prev_stmt_text = Some(self.text_to_log(observation, false));
+    }
+
+    /// Go `handlePessimisticLockError` replaces the statement's error before
+    /// `recordLastQueryInfo` reads it: the storage error a lock raised is the
+    /// statement owner's to consume, and what is recorded is the lock's
+    /// outcome. This tier recorded the storage error already, so the owner
+    /// rewrites the recorded `error` once it knows the outcome.
+    pub(crate) fn rerecord_last_query_error(&mut self, error: &str) {
+        let mut info = self.last_query_info.borrow_mut();
+        let Some(position) = info.find(",\"error\":") else {
+            return;
+        };
+        let mut quoted = String::new();
+        crate::slow_log::go_json_string(&mut quoted, error);
+        let rebuilt = format!("{},\"error\":{quoted}}}", &info[..position]);
+        *info = rebuilt;
     }
 
     /// Go `ExecStmt.recordLastQueryInfo`: after a `SHOW` (but not `SHOW
