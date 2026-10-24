@@ -200,6 +200,23 @@ fn single_statement(schema: &str, table: &str, action: &AlterColumnAction) -> Dd
             definition,
             context,
         },
+        AlterColumnAction::DropCheck { name, context } => DdlStatement::DropCheckConstraint {
+            schema,
+            table,
+            name,
+            context,
+        },
+        AlterColumnAction::AlterCheck {
+            name,
+            enforced,
+            context,
+        } => DdlStatement::AlterCheckConstraint {
+            schema,
+            table,
+            name,
+            enforced,
+            context,
+        },
         AlterColumnAction::RenameIndex { from, to } => DdlStatement::RenameIndex {
             schema,
             table,
@@ -323,6 +340,22 @@ pub fn prepare_multi_schema_job_submission<S: MetaSnapshot>(
                 )?;
                 return Err(run_multi_schema_changes(
                     ActionType::ACTION_ADD_CHECK_CONSTRAINT,
+                ));
+            }
+            AlterColumnAction::DropCheck { .. } | AlterColumnAction::AlterCheck { .. } => {
+                prepare_check_constraint_job_submission(
+                    snapshot,
+                    &single_statement(schema, table, action),
+                    start_ts,
+                    upgrading,
+                    min_job_id,
+                )?;
+                return Err(run_multi_schema_changes(
+                    if matches!(action, AlterColumnAction::DropCheck { .. }) {
+                        ActionType::ACTION_DROP_CHECK_CONSTRAINT
+                    } else {
+                        ActionType::ACTION_ALTER_CHECK_CONSTRAINT
+                    },
                 ));
             }
             AlterColumnAction::Add { .. } => add_column::build_add_column_job(

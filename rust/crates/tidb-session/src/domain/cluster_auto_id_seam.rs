@@ -175,6 +175,24 @@ where
     fn sequence_allocator_for(&self, db_id: i64, table: &TableInfo) -> Option<SequenceDef> {
         Some(self.sequence(db_id, table))
     }
+
+    fn rebuild_rebased_allocators(&self, table_id: i64, action: tidb_model::ActionType) {
+        let kinds: &[AutoIdKind] =
+            if action == tidb_model::ActionType::ACTION_REBASE_AUTO_RANDOM_BASE {
+                &[AutoIdKind::AutoRandom]
+            } else {
+                &[AutoIdKind::AutoIncrement, AutoIdKind::RowId]
+            };
+        let allocators = self
+            .allocators
+            .lock()
+            .expect("cluster auto id registry poisoned");
+        for kind in kinds {
+            if let Some((_, allocator)) = allocators.get(&(table_id, *kind)) {
+                allocator.forget_reservation();
+            }
+        }
+    }
 }
 
 impl<S> ClusterTableAutoIds<S>

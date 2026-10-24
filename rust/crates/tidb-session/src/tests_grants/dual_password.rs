@@ -22,8 +22,7 @@ use crate::*;
 
 fn root_session() -> (privilege::PrivilegeRegistry, Session) {
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
     (registry, session)
 }

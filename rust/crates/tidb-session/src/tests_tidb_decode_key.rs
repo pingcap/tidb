@@ -41,16 +41,18 @@ fn wrapped_hex(key: &[u8]) -> String {
     uppercase_hex(&encoded)
 }
 
-fn table_ids(session: &Session, name: &str) -> (i64, Vec<i64>) {
-    let catalog = session.shared_catalog();
-    let catalog = catalog.lock().unwrap();
-    let TableEntry::Kv(table) = catalog.table_in("test", name).unwrap() else {
-        panic!("{name} must be a KV table");
-    };
-    (
-        table.table_id,
-        table.indexes().iter().map(|index| index.id).collect(),
-    )
+fn table_ids(session: &mut Session, name: &str) -> (i64, Vec<i64>) {
+    session
+        .with_catalog_mut(|catalog| {
+            let TableEntry::Kv(table) = catalog.table_in("test", name).unwrap() else {
+                panic!("{name} must be a KV table");
+            };
+            Ok((
+                table.table_id,
+                table.indexes().iter().map(|index| index.id).collect(),
+            ))
+        })
+        .unwrap()
 }
 
 #[test]
@@ -111,24 +113,24 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
     session
         .run("CREATE TABLE t (a VARCHAR(255), b INT, c DATETIME, PRIMARY KEY (a,b,c))")
         .unwrap();
-    let (table_id, _) = table_ids(&session, "t");
+    let (table_id, _) = table_ids(&mut session, "t");
     session
         .run("INSERT INTO t VALUES ('bbbb', 10, '2020-01-01 00:00:00')")
         .unwrap();
-    let key = {
-        let catalog = session.shared_catalog();
-        let mut catalog = catalog.lock().unwrap();
-        let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
-            panic!("t must be a KV table");
-        };
-        let table = std::sync::Arc::make_mut(table);
-        table
-            .stored_keys()
-            .unwrap()
-            .into_iter()
-            .find(|key| tidb_tablecodec::is_record_key(key))
-            .unwrap()
-    };
+    let key = session
+        .with_catalog_mut(|catalog| {
+            let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
+                panic!("t must be a KV table");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            Ok(table
+                .stored_keys()
+                .unwrap()
+                .into_iter()
+                .find(|key| tidb_tablecodec::is_record_key(key))
+                .unwrap())
+        })
+        .unwrap();
     assert_eq!(
         one(
             &mut session,
@@ -159,24 +161,24 @@ fn tidb_decode_key_uses_table_column_and_index_metadata() {
     session
         .run("CREATE TABLE t (a VARCHAR(255), b INT, c DATETIME, INDEX idx(a,b,c))")
         .unwrap();
-    let (table_id, _) = table_ids(&session, "t");
+    let (table_id, _) = table_ids(&mut session, "t");
     session
         .run("INSERT INTO t VALUES ('aaaaa', 100, '2000-01-01 00:00:00')")
         .unwrap();
-    let key = {
-        let catalog = session.shared_catalog();
-        let mut catalog = catalog.lock().unwrap();
-        let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
-            panic!("t must be a KV table");
-        };
-        let table = std::sync::Arc::make_mut(table);
-        table
-            .stored_keys()
-            .unwrap()
-            .into_iter()
-            .find(|key| tidb_tablecodec::is_index_key(key))
-            .unwrap()
-    };
+    let key = session
+        .with_catalog_mut(|catalog| {
+            let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
+                panic!("t must be a KV table");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            Ok(table
+                .stored_keys()
+                .unwrap()
+                .into_iter()
+                .find(|key| tidb_tablecodec::is_index_key(key))
+                .unwrap())
+        })
+        .unwrap();
     assert_eq!(
         one(
             &mut session,
@@ -195,41 +197,32 @@ fn tidb_decode_key_distinguishes_clustered_and_partition_handles() {
         .run("CREATE TABLE t (a INT PRIMARY KEY CLUSTERED, b INT, KEY bk(b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (20))")
         .unwrap();
     session.run("INSERT INTO t VALUES (7, 100)").unwrap();
-    let (table_id, indexes, partition_id) = {
-        let catalog = session.shared_catalog();
-        let catalog = catalog.lock().unwrap();
-        let TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
-            panic!("t must be a KV table");
-        };
-        (
-            table.table_id,
-            table
-                .indexes()
-                .iter()
-                .map(|index| index.id)
-                .collect::<Vec<_>>(),
-            table.partition().unwrap().definitions[0].id,
-        )
-    };
-    let (record, index) = {
-        let catalog = session.shared_catalog();
-        let mut catalog = catalog.lock().unwrap();
-        let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
-            panic!("t must be a KV table");
-        };
-        let table = std::sync::Arc::make_mut(table);
-        let keys = table.stored_keys().unwrap();
-        (
-            keys.iter()
-                .find(|key| tidb_tablecodec::is_record_key(key))
-                .unwrap()
-                .clone(),
-            keys.iter()
-                .find(|key| tidb_tablecodec::is_index_key(key))
-                .unwrap()
-                .clone(),
-        )
-    };
+    let (table_id, indexes, partition_id, record, index) = session
+        .with_catalog_mut(|catalog| {
+            let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
+                panic!("t must be a KV table");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            let keys = table.stored_keys().unwrap();
+            Ok((
+                table.table_id,
+                table
+                    .indexes()
+                    .iter()
+                    .map(|index| index.id)
+                    .collect::<Vec<_>>(),
+                table.partition().unwrap().definitions[0].id,
+                keys.iter()
+                    .find(|key| tidb_tablecodec::is_record_key(key))
+                    .unwrap()
+                    .clone(),
+                keys.iter()
+                    .find(|key| tidb_tablecodec::is_index_key(key))
+                    .unwrap()
+                    .clone(),
+            ))
+        })
+        .unwrap();
     assert_eq!(
         one(
             &mut session,

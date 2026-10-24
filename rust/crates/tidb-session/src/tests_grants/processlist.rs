@@ -111,6 +111,11 @@ fn process_admin_batch_connection_id_expression_bypasses_numeric_parser() {
 
 #[test]
 fn process_admin_batch_no_manager_skips_numeric_parser() {
+    // Go `executeKillStmt` returns at once with no session manager; a
+    // session on the store always has one (the node's process list).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     for sql in ["KILL 7", "KILL 9223372036854775808", "KILL CONNECTION_ID()"] {
         session.run(sql).unwrap();
@@ -329,10 +334,12 @@ fn show_processlist_lists_this_session() {
                 .collect()
         })
         .collect();
+    // Go's testkit gives each session its own connection ID
+    // (`testKitIDGenerator.Inc()`), which the row reports.
     assert_eq!(
         text,
         vec![vec![
-            "0".to_owned(),
+            session.connection_id().to_string(),
             String::new(),
             String::new(),
             "test".to_owned(),

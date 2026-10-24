@@ -380,7 +380,6 @@ impl Rbt {
         if !self.is_staging() {
             self.dirty = true;
         }
-        let existed_before = self.entries.contains_key(key);
         let old = self.entries.get(key).map(|entry| entry.value.clone());
         let old_history_len = self.entries.get(key).map_or(0, |entry| entry.history.len());
         let old_value_len = old.as_ref().and_then(Option::as_ref).map_or(0, Vec::len);

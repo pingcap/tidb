@@ -587,12 +587,10 @@ fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
         )),
         [["12"]]
     );
-    let error = session
-        .run("SELECT SUM((SELECT id FROM emp WHERE emp.dept_id = dept.id)) FROM dept")
-        .unwrap_err();
-    assert!(
-        matches!(&error, DriverError::SubqueryReturnsMoreThanOneRow),
-        "unexpected error: {error:?}"
+    crate::tests_support::assert_err(
+        session.run("SELECT SUM((SELECT id FROM emp WHERE emp.dept_id = dept.id)) FROM dept"),
+        1242,
+        "Subquery returns more than 1 row",
     );
 
     // GROUP BY runs the Apply per SOURCE row, not per group. A second `eng`
@@ -610,15 +608,13 @@ fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
     );
     // ... and the row-time `1242` fires from inside a group, too: `dept.id = 1`
     // has two employees.
-    let error = session
-        .run(
+    crate::tests_support::assert_err(
+        session.run(
             "SELECT dept.name, COUNT((SELECT id FROM emp WHERE emp.dept_id = dept.id)) \
              FROM dept GROUP BY dept.name",
-        )
-        .unwrap_err();
-    assert!(
-        matches!(&error, DriverError::SubqueryReturnsMoreThanOneRow),
-        "unexpected error: {error:?}"
+        ),
+        1242,
+        "Subquery returns more than 1 row",
     );
 }
 

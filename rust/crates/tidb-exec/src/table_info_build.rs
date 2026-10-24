@@ -426,12 +426,14 @@ pub fn build_table_info_in_schema(
             TableOption::Compression(value) => compression = value.clone(),
             // Go parses `FORCE AUTO_INCREMENT` into the same
             // `TableOptionAutoIncrement`, and CREATE TABLE reads only its value.
+            // `tbInfo.AutoIncID = int64(op.UintValue)`: a value past i64::MAX
+            // wraps, as Go's conversion does.
             TableOption::AutoIncrement(value) | TableOption::ForceAutoIncrement(value) => {
-                auto_inc_id = value.parse().map_err(|_| {
+                auto_inc_id = value.parse::<u64>().map_err(|_| {
                     DdlAdmissionError::plain(format!(
                         "CREATE TABLE AUTO_INCREMENT = {value} is not an integer this node can store"
                     ))
-                })?;
+                })? as i64;
             }
             TableOption::AutoRandomBase(value) | TableOption::ForceAutoRandomBase(value) => {
                 auto_rand_id = value.parse::<u64>().map_err(|_| {
@@ -1779,6 +1781,50 @@ fn expression_default_origin(
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
+/// The statement's timestamp as Go's `generateOriginDefaultValue` renders
+/// it for a `CURRENT_TIMESTAMP` origin default: UTC for TIMESTAMP, the
+/// session zone's wall clock for DATETIME. A context without a statement
+/// clock reads the wall clock, as Go's `ctx == nil` arm does.
+fn statement_instant_text(
+    context: &tidb_executor::StmtContext,
+    time_type: tidb_datatype::TimeType,
+    decimal: i64,
+) -> String {
+    use chrono::{Datelike, Timelike};
+    let (seconds, nanos, offset) = tidb_executor::Columns::now(context).unwrap_or_else(|| {
+        let now = chrono::Local::now();
+        (
+            now.timestamp(),
+            now.timestamp_subsec_nanos(),
+            now.offset().local_minus_utc(),
+        )
+    });
+    let utc = chrono::DateTime::from_timestamp(seconds, nanos).unwrap_or_default();
+    let wall = if time_type == tidb_datatype::TimeType::Timestamp {
+        utc.naive_utc()
+    } else {
+        utc.naive_utc() + chrono::Duration::seconds(i64::from(offset))
+    };
+    let fsp = decimal.clamp(0, 6);
+    tidb_datatype::Time::from_date_checked(
+        wall.year(),
+        i32::try_from(wall.month()).expect("a month fits in i32"),
+        i32::try_from(wall.day()).expect("a day fits in i32"),
+        i32::try_from(wall.hour()).expect("an hour fits in i32"),
+        i32::try_from(wall.minute()).expect("a minute fits in i32"),
+        i32::try_from(wall.second()).expect("a second fits in i32"),
+        if fsp == 0 {
+            0
+        } else {
+            i32::try_from(wall.nanosecond() / 1_000).expect("microseconds fit in i32")
+        },
+        time_type,
+        fsp,
+    )
+    .expect("the statement's calendar date is a valid time")
+    .to_string()
+}
+
 /// Go `generateOriginDefaultValue` over a column just built, under the
 /// statement's context; `check_unsafe_func` is ADD COLUMN's, which refuses an
 /// expression default whose value would differ on a replica.
@@ -1807,37 +1853,28 @@ fn stamp_origin_default(
             }
         };
         if text.eq_ignore_ascii_case("CURRENT_TIMESTAMP") {
-            // Go `generateOriginDefaultValue` stamps time.Now() once, at DDL
-            // time: existing rows report the moment the column was added,
-            // while the DECLARED default stays the word CURRENT_TIMESTAMP for
-            // every later INSERT to evaluate. TIMESTAMP stamps the UTC wall
-            // clock, DATETIME the local one — Go's exact split.
-            Some(match info.field_type.code() {
-                FieldTypeCode::Timestamp => crate::mysql_bootstrap::utc_now_timestamp().to_string(),
-                FieldTypeCode::Datetime => {
-                    use chrono::{Datelike, Timelike};
-                    let now = chrono::Local::now();
-                    tidb_datatype::Time::from_date_checked(
-                        now.year(),
-                        i32::try_from(now.month()).expect("a month fits in i32"),
-                        i32::try_from(now.day()).expect("a day fits in i32"),
-                        i32::try_from(now.hour()).expect("an hour fits in i32"),
-                        i32::try_from(now.minute()).expect("a minute fits in i32"),
-                        i32::try_from(now.second()).expect("a second fits in i32"),
-                        0,
-                        tidb_datatype::TimeType::DateTime,
-                        0,
-                    )
-                    .expect("the current local calendar date is a valid datetime")
-                    .to_string()
-                }
+            // Go `generateOriginDefaultValue` stamps the statement's
+            // timestamp once, at DDL time (`GetStmtTimestamp`, so a session
+            // `@@timestamp` applies): existing rows report the moment the
+            // column was added, while the DECLARED default stays the word
+            // CURRENT_TIMESTAMP for every later INSERT to evaluate. TIMESTAMP
+            // stores the UTC wall clock, DATETIME the session zone's, at the
+            // column's fsp (`types.NewTime(FromGoTime(t), tp, decimal)`).
+            let time_type = match info.field_type.code() {
+                FieldTypeCode::Timestamp => tidb_datatype::TimeType::Timestamp,
+                FieldTypeCode::Datetime => tidb_datatype::TimeType::DateTime,
                 other => {
                     return Err(DdlAdmissionError::unsupported(format!(
                         "a CURRENT_TIMESTAMP default on a {other:?} column is not a shape \
                          Go's DDL stamps"
                     )))
                 }
-            })
+            };
+            Some(statement_instant_text(
+                context,
+                time_type,
+                info.field_type.decimal(),
+            ))
         } else if info.default_is_expr {
             Some(expression_default_origin(
                 info,
@@ -1846,6 +1883,15 @@ fn stamp_origin_default(
                 check_unsafe_func,
             )?)
         } else {
+            // Go stores the declared value itself: a BIT literal's bytes are
+            // not UTF-8, and decoding them lossily corrupted the backfill.
+            if let Some(tidb_model::GoAnyView::String(bytes)) = declared.view() {
+                info.set_origin_default_value(ColumnDefaultValue::string_bytes(
+                    bytes.as_bytes().to_vec(),
+                ))
+                .map_err(|error| DdlAdmissionError::plain(error.to_string()))?;
+                return Ok(());
+            }
             Some(text)
         }
     } else if info.field_type.has_flag(FieldTypeFlags::NOT_NULL) {

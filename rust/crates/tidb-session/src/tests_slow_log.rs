@@ -97,11 +97,14 @@ fn slow_query_reads_back_the_nodes_own_slow_log() {
         .filter_map(|line| line.strip_prefix("# "))
         .map(|line| line.split(':').next().unwrap_or_default())
         .collect();
-    // Go `SlowLogFormat`'s order for a statement with no user, connection,
-    // cop task or plan text.
-    let expected_prefix = [
-        "Time",
-        "Txn_start_ts",
+    // Go `SlowLogFormat`'s order for a statement with no user, cop task or
+    // plan text; `Conn_ID` follows `Txn_start_ts` when the session has one,
+    // as a Go testkit session and a session on the store do.
+    let mut expected_prefix = vec!["Time", "Txn_start_ts"];
+    if session.connection_id() != 0 {
+        expected_prefix.push("Conn_ID");
+    }
+    expected_prefix.extend([
         "Query_time",
         "Parse_time",
         "Compile_time",
@@ -109,7 +112,7 @@ fn slow_query_reads_back_the_nodes_own_slow_log() {
         "Optimize_time",
         "Wait_TS",
         "DB",
-    ];
+    ]);
     assert_eq!(&fields[..expected_prefix.len()], expected_prefix, "{entry}");
     assert!(entry.contains("# Is_internal: false\n"), "{entry}");
     assert!(entry.contains("# Succ: true\n"), "{entry}");

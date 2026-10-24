@@ -267,6 +267,20 @@ fn apply_diff_range<S: MetaSnapshot>(
             Ok(ids) => ids,
             Err(reason) => return Ok(Err(reason)),
         };
+        // Go `applyCreateTable` recreates the table's allocators for a
+        // rebase, a multi-schema change's sub-action included.
+        if let Some(row_ids) = snapshot.row_ids() {
+            for action in
+                std::iter::once(diff.action_type).chain(diff.sub_action_types.iter().copied())
+            {
+                if matches!(
+                    action,
+                    ActionType::ACTION_REBASE_AUTO_ID | ActionType::ACTION_REBASE_AUTO_RANDOM_BASE
+                ) {
+                    row_ids.rebuild_rebased_allocators(diff.table_id, action);
+                }
+            }
+        }
         // Go `Builder.SetSchemaVersion(diff.Version)`; the stored diff's own
         // version field and its key agree, and the key is authoritative.
         catalog.schema_version = version;

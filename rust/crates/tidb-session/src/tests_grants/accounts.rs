@@ -7,9 +7,13 @@ use crate::*;
 
 #[test]
 fn delegated_account_storage_restores_local_mirrors_after_success_and_error() {
+    // A front end's scratch-registry hook; a session on the store persists
+    // its own account writes.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
     session
         .run_with_delegated_account_storage("CREATE USER 'delegated'@'%'")
@@ -61,8 +65,7 @@ fn account_authentication_strings_follow_go_encode_password() {
     assert_eq!(privilege::encode_password(""), "");
 
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
 
     session
@@ -116,8 +119,7 @@ fn account_authentication_strings_follow_go_encode_password() {
 #[test]
 fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
 
     // `BY` hashes the caching_sha2 way and is a real 70-byte `$A$...` shape,
@@ -192,8 +194,7 @@ fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
 #[test]
 fn rename_user_moves_the_whole_account_row() {
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.run("CREATE TABLE test.t (a int)").unwrap();
     session
         .run("CREATE USER 'bob'@'%' IDENTIFIED BY 'bobpw'")
@@ -234,8 +235,7 @@ fn rename_user_moves_the_whole_account_row() {
 #[test]
 fn rename_user_is_one_transaction() {
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.run("CREATE USER ru3, ru4, ru6@localhost").unwrap();
 
     match session.run("RENAME USER ru3 TO ru5@localhost, nosuch TO ru7") {
@@ -260,8 +260,7 @@ fn rename_user_is_one_transaction() {
 #[test]
 fn revoke_from_current_user_names_the_session_account() {
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.run("CREATE USER u4").unwrap();
     session
         .run("GRANT ALL ON *.* TO u4 WITH GRANT OPTION")

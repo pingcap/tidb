@@ -506,8 +506,7 @@ fn table_scope_grant_revoke_and_show_grants_round_trip() {
 #[test]
 fn tls_owner_grant_require_shares_account_policy_at_every_scope() {
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
-    session.attach_privileges(registry.clone());
+    let mut session = Session::on_accounts(&registry);
     session.run("CREATE DATABASE tls_grant").unwrap();
     session.run("CREATE TABLE tls_grant.t(a INT)").unwrap();
     session.run("CREATE USER tls_grantee, tls_peer").unwrap();

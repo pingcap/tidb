@@ -211,11 +211,15 @@ fn a_sort_past_the_quota_reaches_the_client_as_go_s_8175() {
     let wire = error.to_mysql_error();
     assert_eq!(wire.code, 8175);
     assert_eq!(&wire.state, b"HY000");
+    // Go appends the session's own connection ID (`[conn=%d]`).
     assert_eq!(
         wire.message,
-        "Your query has been cancelled due to exceeding the allowed memory limit for a single \
-         SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query \
-         limit and try again.[conn=0]"
+        format!(
+            "Your query has been cancelled due to exceeding the allowed memory limit for a \
+             single SQL query. Please try narrowing your query scope or increase the \
+             tidb_mem_quota_query limit and try again.[conn={}]",
+            session.connection_id()
+        )
     );
 }
 

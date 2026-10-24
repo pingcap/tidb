@@ -1368,11 +1368,14 @@ fn show_status() {
     );
     // The server provider's Uptime (`stat.go:87`, pinned by `TestUptime`'s
     // shape): absent until the hosting server pushes its start timestamp,
-    // then a non-negative seconds count in both scope views.
-    assert_eq!(
-        row_text(session.run("SHOW STATUS LIKE 'Uptime'")),
-        [[""; 2]; 0]
-    );
+    // then a non-negative seconds count in both scope views. A session on
+    // the store is hosted by its node, which pushed it at boot.
+    if crate::tests_support::in_process_tier() {
+        assert_eq!(
+            row_text(session.run("SHOW STATUS LIKE 'Uptime'")),
+            [[""; 2]; 0]
+        );
+    }
     session.set_server_start_timestamp(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

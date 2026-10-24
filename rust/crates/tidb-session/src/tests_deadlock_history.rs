@@ -124,22 +124,22 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         .run("CREATE TABLE t (id BIGINT PRIMARY KEY, v VARCHAR(10), KEY idx_v (v))")
         .unwrap();
     session.run("INSERT INTO t VALUES (1, 'abc')").unwrap();
-    let (table_id, index_key, db_id) = {
-        let catalog = session.shared_catalog();
-        let mut catalog = catalog.lock().unwrap();
-        let db_id = catalog.database_id("test").expect("the test database");
-        let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
-            panic!("t must be a KV table");
-        };
-        let table = std::sync::Arc::make_mut(table);
-        let index_key = table
-            .stored_keys()
-            .unwrap()
-            .into_iter()
-            .find(|key| is_index_key(key))
-            .expect("the inserted row must have one secondary-index key");
-        (table.table_id, index_key, db_id)
-    };
+    let (table_id, index_key, db_id) = session
+        .with_catalog_mut(|catalog| {
+            let db_id = catalog.database_id("test").expect("the test database");
+            let TableEntry::Kv(table) = catalog.table_mut_in("test", "t").unwrap() else {
+                panic!("t must be a KV table");
+            };
+            let table = std::sync::Arc::make_mut(table);
+            let index_key = table
+                .stored_keys()
+                .unwrap()
+                .into_iter()
+                .find(|key| is_index_key(key))
+                .expect("the inserted row must have one secondary-index key");
+            Ok((table.table_id, index_key, db_id))
+        })
+        .unwrap();
     let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(1));
     let row_key_hex = key
         .iter()
@@ -204,10 +204,10 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
     session.set_user("bob@%".to_owned(), "bob@127.0.0.1".to_owned());
     let error = session
         .run_with_columns("SELECT * FROM information_schema.DEADLOCKS")
-        .unwrap_err();
-    assert!(
-        matches!(error, DriverError::SpecificAccessDenied(privilege) if privilege == "PROCESS")
-    );
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1227, "{}", error.message);
+    assert!(error.message.contains("PROCESS"), "{}", error.message);
 
     session.set_process_privilege(true);
     let StmtOutput::Rows { columns, rows } = session

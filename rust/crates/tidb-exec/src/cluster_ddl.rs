@@ -265,6 +265,25 @@ pub enum AlterColumnAction {
         /// The statement context used to resolve and validate it.
         context: DdlStatementContext,
     },
+    /// `DROP CHECK name` beside another specification: Go's
+    /// `DropCheckConstraint` looks the constraint up before
+    /// `fillMultiSchemaInfo` refuses its job.
+    DropCheck {
+        /// The constraint name as written.
+        name: String,
+        /// The issuing statement's context.
+        context: DdlStatementContext,
+    },
+    /// `ALTER CHECK name [NOT] ENFORCED` beside another specification; see
+    /// [`Self::DropCheck`].
+    AlterCheck {
+        /// The constraint name as written.
+        name: String,
+        /// The requested enforcement.
+        enforced: bool,
+        /// The issuing statement's context.
+        context: DdlStatementContext,
+    },
     /// `DROP PRIMARY KEY` (Go `ActionDropPrimaryKey`).
     DropPrimaryKey,
     /// `RENAME INDEX from TO to` (Go `ActionRenameIndex`).
@@ -335,6 +354,8 @@ impl AlterColumnAction {
             | Self::AddIndex { context, .. }
             | Self::AddForeignKey { context, .. }
             | Self::AddCheck { context, .. }
+            | Self::DropCheck { context, .. }
+            | Self::AlterCheck { context, .. }
             | Self::SetDefault { context, .. } => Some(&context.0),
             _ => None,
         }
@@ -2039,13 +2060,13 @@ fn lower_alter_table_catalog(
                 // off, else `CreateCheckConstraint`'s job.
                 tidb_ast::AlterTableAction::AddCheck(definition) => {
                     // With the switch off Go only warns and builds nothing.
-                    // On, it builds an `add check constraint` job, which
-                    // `fillMultiSchemaInfo` has no sub-job for beside another
-                    // real specification.
+                    // On, `CreateCheckConstraint` admits the constraint
+                    // against the table as it stands (1054 for a column a
+                    // sibling specification adds) before `fillMultiSchemaInfo`
+                    // refuses its job beside another specification; the
+                    // multi-schema planner reads the table to do both.
                     if !context.enable_check_constraint() {
                         context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
-                    } else if valid_specs > 1 {
-                        return Err(go_unsupported_multi_schema_change("add check constraint"));
                     } else {
                         actions.push(AlterColumnAction::AddCheck {
                             definition: Box::new(definition.clone()),
@@ -2099,6 +2120,25 @@ fn lower_alter_table_catalog(
                             continue;
                         }
                     };
+                }
+                // Go `AlterTable`: `DropCheckConstraint` always runs; ALTER
+                // CHECK warns while CHECK is off.
+                tidb_ast::AlterTableAction::DropCheck(drop) if valid_specs > 1 => {
+                    actions.push(AlterColumnAction::DropCheck {
+                        name: drop.name.clone(),
+                        context: DdlStatementContext(context.clone()),
+                    });
+                }
+                tidb_ast::AlterTableAction::AlterCheck(alter_check) if valid_specs > 1 => {
+                    if !context.enable_check_constraint() {
+                        context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+                    } else {
+                        actions.push(AlterColumnAction::AlterCheck {
+                            name: alter_check.name.clone(),
+                            enforced: alter_check.enforced,
+                            context: DdlStatementContext(context.clone()),
+                        });
+                    }
                 }
                 other => {
                     if let Some(job) = go_multi_schema_job_without_sub_job(other)
