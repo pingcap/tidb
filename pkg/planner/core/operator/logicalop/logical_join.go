@@ -109,6 +109,9 @@ type LogicalJoin struct {
 	// allJoinLeaf is used to identify the table where the column is located during constant propagation.
 	allJoinLeaf []*expression.Schema
 
+	// innerJoinRegionCovered is set on descendants when an ancestor processes their region.
+	innerJoinRegionCovered bool
+
 	// FromDecorrelatedApply marks joins that come from decorrelating an Apply in the
 	// first logical round. It is only used to decide whether an equivalent same-order
 	// PhysicalIndexJoin candidate has already been generated.
@@ -169,6 +172,8 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	innerJoinRegionCovered := p.innerJoinRegionCovered
+	p.innerJoinRegionCovered = false
 	switch p.JoinType {
 	case base.AntiLeftOuterSemiJoin, base.LeftOuterSemiJoin, base.AntiSemiJoin:
 		// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we can actually generate
@@ -252,14 +257,28 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		tempCond = append(tempCond, expression.ScalarFuncs2Exprs(p.EqualConditions)...)
 		tempCond = append(tempCond, p.OtherConditions...)
 		tempCond = append(tempCond, predicates...)
+		// LogicalApply embeds LogicalJoin but must not borrow across its correlated boundary.
+		var borrowed []expression.Expression
+		if _, isPlainJoin := p.Self().(*LogicalJoin); isPlainJoin && p.JoinType == base.InnerJoin && !innerJoinRegionCovered {
+			evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+			for _, child := range p.Children() {
+				borrowed, _ = appendRegionConditions(evalCtx, borrowed, child, false)
+			}
+			tempCond = append(tempCond, borrowed...)
+		}
 		tempCond = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), tempCond)
 		tempCond = ruleutil.ApplyPredicateSimplificationForJoin(p.SCtx(), tempCond,
 			p.Children()[0].Schema(), p.Children()[1].Schema(),
 			true, p.isVaildConstantPropagationExpressionWithInnerJoinOrSemiJoin)
-		// Return table dual when filter is constant false or null.
+		// Return table dual when filter is constant false or null. The borrowed
+		// conditions are still present, so a contradiction anywhere in the region
+		// collapses the join here.
 		dual := Conds2TableDual(p, tempCond)
 		if dual != nil {
 			return ret, dual, nil
+		}
+		if len(borrowed) > 0 {
+			tempCond = removeBorrowedConditions(p.SCtx().GetExprCtx().GetEvalCtx(), tempCond, borrowed)
 		}
 		equalCond, leftPushCond, rightPushCond, otherCond = p.extractOnCondition(tempCond, true, true)
 		p.LeftConditions = nil
@@ -311,6 +330,91 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
 	return ret, newnChild, err
+}
+
+// appendRegionConditions collects comparisons from a contiguous inner-join region.
+// The root sees every descendant leaf, so one solver pass covers the region.
+func appendRegionConditions(
+	evalCtx expression.EvalContext,
+	conditions []expression.Expression,
+	plan base.LogicalPlan,
+	insideInnerJoinRegion bool,
+) ([]expression.Expression, bool) {
+	if selection, ok := plan.(*LogicalSelection); ok {
+		start := len(conditions)
+		conditions = appendSafeConditions(evalCtx, conditions, selection.Conditions, selection.Schema())
+		conditions, foundInnerJoin := appendRegionConditions(
+			evalCtx, conditions, selection.Children()[0], insideInnerJoinRegion,
+		)
+		if !insideInnerJoinRegion && !foundInnerJoin {
+			conditions = conditions[:start]
+		}
+		return conditions, foundInnerJoin
+	}
+	join, ok := plan.(*LogicalJoin)
+	if !ok || join.JoinType != base.InnerJoin {
+		return conditions, false
+	}
+	if _, isPlainJoin := join.Self().(*LogicalJoin); !isPlainJoin {
+		return conditions, false
+	}
+	join.innerJoinRegionCovered = true
+	conditions = appendSafeConditions(evalCtx, conditions, expression.ScalarFuncs2Exprs(join.EqualConditions), join.Schema())
+	conditions = appendSafeConditions(evalCtx, conditions, join.OtherConditions, join.Schema())
+	for _, child := range join.Children() {
+		conditions, _ = appendRegionConditions(evalCtx, conditions, child, true)
+	}
+	return conditions, true
+}
+
+// appendSafeConditions keeps the comparisons the constant solver can use: a
+// column-to-column equality, or a column compared against a constant. Empty-aware
+// equalities from IN are excluded because they do not imply plain equality.
+func appendSafeConditions(
+	evalCtx expression.EvalContext,
+	conditions, candidates []expression.Expression,
+	schema *expression.Schema,
+) []expression.Expression {
+	for _, condition := range candidates {
+		sf, ok := condition.(*expression.ScalarFunction)
+		if !ok || expression.IsEQCondFromIn(sf) {
+			continue
+		}
+		if left, right, isColOpCol := expression.IsColOpCol(sf); isColOpCol {
+			if sf.FuncName.L == ast.EQ && schema.Contains(left) && schema.Contains(right) {
+				conditions = append(conditions, sf)
+			}
+			continue
+		}
+		if len(sf.GetArgs()) != 2 {
+			continue
+		}
+		if column, _ := expression.ValidCompareConstantPredicateHelper(
+			evalCtx, sf, true); column != nil && schema.Contains(column) {
+			conditions = append(conditions, sf)
+			continue
+		}
+		if column, _ := expression.ValidCompareConstantPredicateHelper(
+			evalCtx, sf, false); column != nil && schema.Contains(column) {
+			conditions = append(conditions, sf)
+		}
+	}
+	return conditions
+}
+
+// removeBorrowedConditions drops the conditions borrowed from the region so this
+// join keeps only its own, leaving the predicates the solver newly derived.
+func removeBorrowedConditions(
+	evalCtx expression.EvalContext,
+	conditions, borrowed []expression.Expression,
+) []expression.Expression {
+	kept := conditions[:0]
+	for _, condition := range conditions {
+		if !expression.Contains(evalCtx, borrowed, condition) {
+			kept = append(kept, condition)
+		}
+	}
+	return kept
 }
 
 // simplifyOuterJoin transforms outer joins to simpler join types when predicates are null-rejected.
