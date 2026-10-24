@@ -175,6 +175,7 @@ mod dml_targets;
 pub mod update_targets;
 mod update_build;
 mod dml_visits;
+pub mod insert_values;
 pub mod ordered_list;
 pub mod expand;
 pub mod field_name;
@@ -702,6 +703,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `evalFieldDefaultValue`, installed by the executor. `None` keeps a
     /// query's `DEFAULT(column)` unsupported, as Go's is without a plan.
     pub default_evaluator: Option<DefaultEvaluator<'a>>,
+    /// Go `getDefaultValueForInsert`: the default an INSERT's own `DEFAULT`
+    /// takes, which differs from `DEFAULT(col)` inside an expression.
+    pub insert_default_evaluator: Option<DefaultEvaluator<'a>>,
     /// The constants `MarkerKind::Constant` markers select, in insertion
     /// order. Go pushes them straight onto `ctxStack`; this port stores them
     /// here because the marker tail can only carry column paths.
@@ -1549,6 +1553,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             handle_helper: HandleColHelper::new(),
             subquery_evaluator: None,
             default_evaluator: None,
+            insert_default_evaluator: None,
             subquery_constants: Vec::new(),
             all_names: Vec::new(),
             correlated_agg_columns: Vec::new(),
@@ -1661,6 +1666,14 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     #[must_use]
     pub const fn with_default_evaluator(mut self, evaluator: DefaultEvaluator<'a>) -> Self {
         self.default_evaluator = Some(evaluator);
+        self
+    }
+
+    /// Installs the evaluator of an INSERT's own `DEFAULT`
+    /// ([`Self::insert_default_evaluator`]).
+    #[must_use]
+    pub const fn with_insert_default_evaluator(mut self, evaluator: DefaultEvaluator<'a>) -> Self {
+        self.insert_default_evaluator = Some(evaluator);
         self
     }
 

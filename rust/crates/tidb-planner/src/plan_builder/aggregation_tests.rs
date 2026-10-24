@@ -1577,3 +1577,62 @@ fn write_visits_follow_the_targets_the_builder_resolved() {
     let error = harness.builder().delete_write_visits(&delete).err().unwrap();
     assert_eq!(error.message(), "The target table c of the DELETE is not updatable");
 }
+
+#[test]
+fn insert_values_are_expressions_over_the_target() {
+    // Go `buildInsert`: `getAffectCols` names the columns written and
+    // `buildValuesListOfInsert` rewrites each value over `mockTablePlan`; a
+    // generated column accepts only DEFAULT, which leaves it no expression.
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    let parse = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the INSERT parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        let tidb_ast::DmlStmt::Insert(insert) = (*dml).clone() else {
+            panic!("not an INSERT");
+        };
+        insert
+    };
+    let default = |_: &str, _: &str, _: &str| {
+        Ok(tidb_expr::expression::Expression::Constant(
+            tidb_expr::constant::Constant::new(Datum::Int(7), FieldType::new(FieldTypeCode::LongLong)),
+        ))
+    };
+    let build = |harness: &Harness, sql: &str| {
+        let insert = parse(sql);
+        let mut builder = harness.builder().with_insert_default_evaluator(&default);
+        let target = builder.resolve_insert_target(&insert)?;
+        let values = builder.build_insert_values(&insert, &target)?;
+        Ok::<_, crate::plan_base::PlanError>((target, values))
+    };
+    let harness = Harness::new();
+    let (target, values) = build(&harness, "INSERT INTO t (c, a) VALUES (1 + 1, DEFAULT), (3, 4)").unwrap();
+    assert_eq!(target.offsets, vec![2, 0]);
+    assert_eq!(values.lists.len(), 2);
+    assert!(values.lists.iter().flatten().all(Option::is_some));
+    let (target, values) = build(&harness, "INSERT INTO t VALUES (1, a + 1, DEFAULT)").unwrap();
+    assert_eq!(target.offsets, vec![0, 1, 2]);
+    let reads = tidb_expr::simple_expr::extract_columns(values.lists[0][1].as_ref().unwrap());
+    assert_eq!(reads.len(), 1, "`a + 1` reads the row's `a`");
+
+    let error = build(&harness, "INSERT INTO t VALUES (1, 2, 3), (1)").err().unwrap();
+    assert_eq!(error.message(), "Column count doesn't match value count at row 2");
+    let error = build(&harness, "INSERT INTO t (nope) VALUES (1)").err().unwrap();
+    assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
+
+    let mut generated = Harness::new();
+    generated.catalog.tables[0].columns[2].is_generated = true;
+    let (_, values) = build(&generated, "INSERT INTO t VALUES (1, 2, DEFAULT)").unwrap();
+    assert!(values.lists[0][2].is_none(), "a generated column's own DEFAULT");
+    let error = build(&generated, "INSERT INTO t VALUES (1, 2, 3)").err().unwrap();
+    assert_eq!(
+        error.message(),
+        "The value specified for generated column 'c' in table 't' is not allowed."
+    );
+    let error = build(&generated, "INSERT INTO t VALUES (DEFAULT(c), 2, 3)").err().unwrap();
+    assert_eq!(
+        error.message(),
+        "The value specified for generated column 'a' in table 't' is not allowed."
+    );
+}

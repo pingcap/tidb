@@ -166,7 +166,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     let (physical_source, fk_triggers, _, _) = dml_execution_parts(physical_plan, "Insert")?;
     run_insert_with_physical(
         insert,
-        planned.as_ref(),
+        Some(&planned),
         catalog,
         current_db,
         ctx,
@@ -599,72 +599,34 @@ fn resolve_insert_target(
     if table.is_sequence() {
         return Err(DriverError::InsertIntoSequenceUnsupported(table_name));
     }
-    let TableEntry::Kv(kv) = table else {
+    let TableEntry::Kv(_) = table else {
         return Err(DriverError::Mysql(MysqlError::terror(
             &tidb_error::catalog::table::ERR_UNSUPPORTED_OP,
             "operation not supported",
         )));
     };
-    let mut column_list = table.column_list();
-    let stored_width = column_list.len();
-    let named_columns: Vec<String> = if insert.set_syntax {
-        insert
-            .set_columns
-            .iter()
-            .map(|path| path.last().cloned().unwrap_or_default())
-            .collect()
-    } else {
-        insert.columns.clone()
-    };
-    // Go `initInsertColumns`: `_tidb_rowid` among the named columns is the
-    // extra handle, which only `tidb_opt_write_row_id` admits writing. A
-    // table with a real handle has no such column at all, so the name falls
-    // through to the ordinary 1054 there -- which is what TiDB answers for
-    // `insert s (a, _tidb_rowid) values (1, 2)` on a table with a primary
-    // key.
-    let extra_handle_offset = ((insert.set_syntax || insert.columns_specified)
-        && crate::driver::from::extra_handle_column(table).is_some()
-        && named_columns
-            .iter()
-            .any(|name| name.go_lower_eq(tidb_model::column::EXTRA_HANDLE_NAME)))
-    .then(|| {
-        column_list.push((
-            tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
-            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-        ));
-        stored_width
-    });
+    // Go `getAffectCols` (`buildInsert`): the columns the statement writes,
+    // `_tidb_rowid` among them for a heap table that names it.
+    let planned = super::planner_bridge::insert_target(insert, catalog, current_db, ctx)
+        .map_err(super::planner_error_to_driver)?;
+    let tidb_planner::plan_builder::insert_values::InsertTarget {
+        columns: column_list,
+        generated: generated_targets,
+        offsets: target_offsets,
+        extra_handle_offset,
+        ..
+    } = planned;
+    // Go `initInsertColumns`: `_tidb_rowid` is writable only under
+    // `tidb_opt_write_row_id`.
     if extra_handle_offset.is_some() && !ctx.allow_write_row_id() {
         return Err(DriverError::unsupported(WRITE_ROW_ID_REFUSED));
     }
-    let target_offsets = if insert.set_syntax || insert.columns_specified {
-        named_columns
-            .iter()
-            .map(|name| {
-                column_list
-                    .iter()
-                    .position(|(candidate, _)| candidate.go_lower_eq(name))
-                    .ok_or_else(|| DriverError::UnknownColumnInClause {
-                        column: name.clone(),
-                        clause: "field list".to_owned(),
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        (0..column_list.len()).collect()
-    };
-    let mut generated_targets: Vec<bool> = kv
-        .visible_columns()
-        .iter()
-        .map(|column| column.generated.is_some())
-        .collect();
     let mut column_meta = column_metadata(table);
     // The pseudo-column carries the same shape as a stored one so every
     // per-target lookup below stays indexed the same way. It is never
     // generated, and its "default" is the NULL that means "allocate a
     // handle" (Go `adjustImplicitRowID`'s `!hasValue` branch).
     if extra_handle_offset.is_some() {
-        generated_targets.push(false);
         column_meta.push(ColumnDefaultMeta {
             default_value: None,
             not_null: false,
@@ -752,6 +714,10 @@ pub(crate) struct PlannedInsertSubqueries {
     /// One slot per ON DUPLICATE KEY UPDATE assignment; see
     /// [`plan_insert_subqueries`].
     lazy_errors: Vec<Option<DriverError>>,
+    /// Go `Insert.Lists`: each VALUES list as the planner's expressions over
+    /// the target, in the order of the statement's columns; a generated
+    /// column's own DEFAULT has none.
+    lists: Vec<Vec<Option<Expression>>>,
 }
 
 /// Go evaluates an uncorrelated scalar subquery in a VALUES list or an ON
@@ -773,70 +739,26 @@ fn plan_insert_subqueries(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<Option<PlannedInsertSubqueries>, DriverError> {
+) -> Result<PlannedInsertSubqueries, DriverError> {
     use super::planner_bridge::InsertValueRewrite;
     use super::subquery::expr_has_subquery;
-    let has_subquery = insert
-        .rows
-        .iter()
-        .flatten()
-        .chain(
-            insert
-                .on_duplicate
-                .iter()
-                .map(|assignment| &assignment.value),
-        )
-        .any(expr_has_subquery);
-    if !has_subquery {
-        return Ok(None);
-    }
     let complex = || {
         DriverError::unsupported(
             "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now",
         )
     };
+    // Go `buildValuesListOfInsert`: the arity checks and every value, each
+    // list checked before its own subqueries run.
+    let lists = if insert.source.is_none() {
+        super::planner_bridge::insert_value_lists(insert, catalog, current_db, ctx)
+            .map_err(super::planner_error_to_driver)?
+            .1
+            .lists
+    } else {
+        Vec::new()
+    };
     let mut folded = insert.clone();
     let mut constants = Vec::new();
-    // Go `buildValuesListOfInsert` checks each list's width before it
-    // builds that list's values (row 1 against the columns, every later
-    // row against the one before), so a list of the wrong width fails
-    // before its own subqueries run but after the earlier lists' did.
-    let names_a_column = insert.set_syntax || insert.columns_specified;
-    let mut previous_width = layout.target_offsets.len();
-    for (index, row) in folded.rows.iter_mut().enumerate() {
-        let width = row.len();
-        if (index > 0 || names_a_column || width > 0) && width != previous_width {
-            return Err(DriverError::WrongValueCountOnRow { row: index + 1 });
-        }
-        previous_width = width;
-        let mut values = Vec::new();
-        for value in row.iter_mut() {
-            if expr_has_subquery(value) {
-                let is_subquery = matches!(value, tidb_ast::Expr::Subquery(_));
-                values.push(InsertValueRewrite { value, is_subquery });
-            }
-        }
-        if values.is_empty() {
-            continue;
-        }
-        let (dual_only, more) = super::planner_bridge::lower_insert_value_subqueries(
-            values,
-            &layout.database,
-            &layout.table_name,
-            &layout.column_list,
-            catalog,
-            current_db,
-            ctx,
-        )
-        .map_err(super::planner_error_to_driver)?;
-        if dual_only.contains(&false) {
-            return Err(complex());
-        }
-        for value in row.iter_mut() {
-            shift_constant_markers(value, constants.len());
-        }
-        constants.extend(more);
-    }
     // Go resolves ON DUPLICATE after every VALUES list, each assignment
     // over the same `mockTablePlan`.
     let assignments = folded
@@ -884,11 +806,12 @@ fn plan_insert_subqueries(
         }
         lazy_errors.push(lazy_error);
     }
-    Ok(Some(PlannedInsertSubqueries {
+    Ok(PlannedInsertSubqueries {
         insert: folded,
         constants,
         lazy_errors,
-    }))
+        lists,
+    })
 }
 
 /// Renumbers every `#const#N` marker in `expr` to `#const#(N + by)`.
@@ -1061,13 +984,14 @@ fn run_insert_rows(
     // Go `checkRefColumn` sees the values as written: a subquery's own
     // columns never count, so the reference test reads the unfolded values.
     let written_insert = insert;
-    let (insert, lazy_errors, subquery_constants) = match planned {
+    let (insert, lazy_errors, subquery_constants, planned_lists) = match planned {
         Some(planned) => (
             &planned.insert,
             planned.lazy_errors.as_slice(),
             planned.constants.as_slice(),
+            planned.lists.as_slice(),
         ),
-        None => (insert, &[][..], &[][..]),
+        None => (insert, &[][..], &[][..], &[][..]),
     };
     let eval_chunk = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
@@ -1270,149 +1194,16 @@ fn run_insert_rows(
         }
     });
 
-    enum PreparedInsertValue {
-        Generated,
-        Expression(Box<Expression>),
-    }
-
-    // Go lowers every explicit VALUES default while building the insert plan,
-    // row-major and before an ordinary VALUES expression is evaluated. This
-    // ordering is observable for computed defaults such as RAND(), and is
-    // deliberately distinct from omitted columns, whose defaults are filled
-    // later while each runtime row is built.
-    let mut prepared_value_rows: Vec<Vec<PreparedInsertValue>> = Vec::new();
-    let names_a_column = insert.set_syntax || insert.columns_specified;
+    // Go builds every VALUES list in the planner (`buildValuesListOfInsert`,
+    // row-major and before execution), so the expressions -- explicit
+    // DEFAULTs included -- arrive already lowered over the target.
+    let prepared_value_rows: &[Vec<Option<Expression>>] = planned_lists;
     let mut previous_width = target_offsets.len();
     if source_rows.is_none() {
-        let resolver = TableResolver {
-            database: Some(&database),
-            table_name: &table_name,
-            columns: &column_list,
-            constant_context: ctx.clone(),
-            zone: ctx.session_zone(),
-            no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-            div_precision_increment: ctx.div_precision_increment(),
-            clause_message: "field list",
-            subquery_constants,
-        };
-        for (index, values) in insert.rows.iter().enumerate() {
-            let width = values.len();
-            let expected = if index == 0 {
-                target_offsets.len()
-            } else {
-                previous_width
-            };
-            let arity_is_checked = index > 0 || names_a_column || width > 0;
-            if arity_is_checked && width != expected {
-                // Go's planner check (planbuilder.go:4349/:4361): row 1 answers
-                // to the column list, later rows to the first row's width --
-                // both report `ErrWrongValueCountOnRow` with the 1-based row
-                // number.
-                return Err(DriverError::WrongValueCountOnRow { row: index + 1 });
-            }
-            previous_width = width;
-
-            let mut prepared = Vec::with_capacity(width);
-            for (position, value) in values.iter().enumerate() {
-                let target_offset = target_offsets[position];
-                let target = ResolvedDefaultColumn {
-                    identity: DefaultColumnIdentity {
-                        table: 0,
-                        column: target_offset,
-                    },
-                    meta: column_meta[target_offset].clone(),
-                };
-                let resolve_root_default =
-                    |path: &[String]| -> Result<ResolvedDefaultColumn, DriverError> {
-                        let name = path
-                            .last()
-                            .ok_or(DriverError::unsupported("DEFAULT() needs a column"))?;
-                        let column = column_meta
-                            .iter()
-                            .position(|meta| meta.name.go_lower_eq(name))
-                            .ok_or_else(|| DriverError::UnknownColumnInClause {
-                                column: name.clone(),
-                                clause: "field list".to_owned(),
-                            })?;
-                        Ok(ResolvedDefaultColumn {
-                            identity: DefaultColumnIdentity { table: 0, column },
-                            meta: column_meta[column].clone(),
-                        })
-                    };
-
-                let expression = match value {
-                    tidb_ast::Expr::Default(None) if target.meta.generated => {
-                        prepared.push(PreparedInsertValue::Generated);
-                        continue;
-                    }
-                    tidb_ast::Expr::Default(None) => {
-                        let datum = materialize_column_default(
-                            &target.meta,
-                            DefaultUse::Insert,
-                            ctx,
-                            eval_chunk.get_row(0),
-                        )?;
-                        Expression::Constant(tidb_expr::constant::Constant::new(
-                            datum,
-                            target.meta.field_type,
-                        ))
-                    }
-                    tidb_ast::Expr::Default(Some(path)) => {
-                        let source = resolve_root_default(path)?;
-                        if target.identity != source.identity
-                            && (target.meta.generated || source.meta.generated)
-                        {
-                            return Err(DriverError::BadGeneratedColumn {
-                                column: target.meta.name,
-                                table: table_name.clone(),
-                            });
-                        }
-                        if target.meta.generated {
-                            prepared.push(PreparedInsertValue::Generated);
-                            continue;
-                        }
-                        let datum = materialize_column_default(
-                            &source.meta,
-                            DefaultUse::Insert,
-                            ctx,
-                            eval_chunk.get_row(0),
-                        )?;
-                        Expression::Constant(tidb_expr::constant::Constant::new(
-                            datum,
-                            source.meta.field_type,
-                        ))
-                    }
-                    _ if target.meta.generated => {
-                        return Err(DriverError::BadGeneratedColumn {
-                            column: target.meta.name,
-                            table: table_name.clone(),
-                        });
-                    }
-                    _ => {
-                        let defaults = prepare_named_defaults(
-                            value,
-                            ctx,
-                            eval_chunk.get_row(0),
-                            DefaultUse::Expression,
-                            |path| {
-                                let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
-                                    DriverError::UnknownColumnInClause {
-                                        column: path.last().cloned().unwrap_or_default(),
-                                        clause: "field list".to_owned(),
-                                    }
-                                })?;
-                                Ok(ResolvedDefaultColumn {
-                                    identity: DefaultColumnIdentity { table: 0, column },
-                                    meta: column_meta[column].clone(),
-                                })
-                            },
-                        )?;
-                        rewrite_with_prepared_defaults(value, &resolver, &defaults)?
-                    }
-                };
-                prepared.push(PreparedInsertValue::Expression(Box::new(expression)));
-            }
-            prepared_value_rows.push(prepared);
+        if prepared_value_rows.len() != insert.rows.len() {
+            return Err(DriverError::unsupported(
+                "an INSERT's VALUES lists were not planned",
+            ));
         }
     } else if load_restrictive.is_none() {
         // INSERT SELECT still performs the same arity check, but has no AST
@@ -1546,8 +1337,8 @@ fn run_insert_rows(
                 Some(_) if load_row.is_some() => load_row.as_ref().unwrap()[position].clone(),
                 Some(_) => value_rows[index][position].clone(),
                 None => match &prepared_value_rows[index][position] {
-                    PreparedInsertValue::Generated => continue,
-                    PreparedInsertValue::Expression(expression) => {
+                    None => continue,
+                    Some(expression) => {
                         let input = match eval_buffer.as_ref() {
                             Some(buffer) => buffer.to_row(),
                             None => eval_chunk.get_row(0),

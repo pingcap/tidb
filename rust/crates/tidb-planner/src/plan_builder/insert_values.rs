@@ -1,0 +1,301 @@
+// Copyright 2026 PingCAP, Inc.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `buildInsert`'s target and value lists (`planbuilder.go:4111-4405`):
+//! the columns the statement names (`getAffectCols`), and each `VALUES` /
+//! `SET` expression rewritten over `mockTablePlan` (`buildValuesListOfInsert`,
+//! `getInsertColExpr`).
+
+use std::collections::BTreeMap;
+
+use tidb_ast::{Expr, InsertStmt};
+use tidb_datatype::{FieldName, FieldNameMetadata, FieldType, FieldTypeCode, IdentifierMetadata};
+use tidb_expr::column::Column;
+use tidb_expr::expression::Expression;
+use tidb_expr::schema::Schema;
+use tidb_expr::Columns;
+use tidb_hack::go_to_lower;
+
+use super::catalog::TableSource;
+use super::marker::MarkerKind;
+use super::{ClauseCode, PlanBuilder};
+use crate::logical::{LogicalPlan, LogicalTableDual};
+use crate::plan_base::PlanError;
+
+/// The columns of an INSERT's target the statement writes, resolved as Go's
+/// `getAffectCols` does over the table's visible columns.
+#[derive(Clone, Debug)]
+pub struct InsertTarget {
+    /// The target's schema.
+    pub database: String,
+    /// The target's stored name.
+    pub table: String,
+    /// The visible columns in table order, then `_tidb_rowid` when the
+    /// statement names it (Go gives that slot a synthetic `TypeLonglong`
+    /// column, `NewExtraHandleColInfo`).
+    pub columns: Vec<(String, FieldType)>,
+    /// Whether each of [`Self::columns`] is a generated column.
+    pub generated: Vec<bool>,
+    /// For each column the statement lists (all of them when it lists none),
+    /// its position in [`Self::columns`].
+    pub offsets: Vec<usize>,
+    /// Where `_tidb_rowid` sits in [`Self::columns`], when the statement
+    /// named it.
+    pub extra_handle_offset: Option<usize>,
+}
+
+/// Go `Insert.Lists`: the expressions of each `VALUES` list, in the order of
+/// [`InsertTarget::offsets`]; a generated column's own `DEFAULT` has none.
+#[derive(Clone, Debug, Default)]
+pub struct InsertValues {
+    /// One entry per `VALUES` list.
+    pub lists: Vec<Vec<Option<Expression>>>,
+}
+
+impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
+    /// Go `getAffectCols` over `buildInsert`'s target: the columns a
+    /// statement writes, by the names it lists or all visible ones.
+    ///
+    /// `_tidb_rowid` among the named columns is the extra handle, which a
+    /// heap table alone has: a table with a real handle has no such column,
+    /// so the name falls through to the ordinary `ErrUnknownColumn`.
+    pub fn resolve_insert_target(&self, insert: &InsertStmt) -> Result<InsertTarget, PlanError> {
+        let (database, name) = match insert.table.as_slice() {
+            [_] if self.source.current_database().is_empty() => return Err(PlanError::no_db()),
+            [name] => (self.source.current_database(), name.as_str()),
+            [database, name] => (database.as_str(), name.as_str()),
+            _ => return Err(PlanError::internal("an INSERT target has no name")),
+        };
+        let table = self
+            .source
+            .find_table(database, name)
+            .ok_or_else(|| PlanError::unknown_table(format!("{database}.{name}")))?;
+        let mut columns: Vec<(String, FieldType)> = Vec::new();
+        let mut generated = Vec::new();
+        for column in table
+            .columns
+            .iter()
+            .filter(|column| !column.is_hidden && column.is_public)
+        {
+            columns.push((column.name.clone(), column.ret_type.clone()));
+            generated.push(column.is_generated);
+        }
+        let named: Vec<String> = if insert.set_syntax {
+            insert
+                .set_columns
+                .iter()
+                .map(|path| path.last().cloned().unwrap_or_default())
+                .collect()
+        } else {
+            insert.columns.clone()
+        };
+        let names_a_column = insert.set_syntax || insert.columns_specified;
+        let heap = !table.pk_is_handle && !table.is_common_handle;
+        let extra_handle_offset = (names_a_column
+            && heap
+            && !table.is_memory_table
+            && named
+                .iter()
+                .any(|name| go_to_lower(name) == tidb_model::column::EXTRA_HANDLE_NAME))
+        .then(|| {
+            columns.push((
+                tidb_model::column::EXTRA_HANDLE_NAME.to_owned(),
+                FieldType::new(FieldTypeCode::LongLong),
+            ));
+            generated.push(false);
+            columns.len() - 1
+        });
+        let offsets = if names_a_column {
+            named
+                .iter()
+                .map(|name| {
+                    columns
+                        .iter()
+                        .position(|(candidate, _)| go_to_lower(candidate) == go_to_lower(name))
+                        .ok_or_else(|| PlanError::unknown_column_in_clause(name.clone(), "field list"))
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            (0..columns.len()).collect()
+        };
+        Ok(InsertTarget {
+            database: table.db_name.clone(),
+            table: table.table_name.clone(),
+            columns,
+            generated,
+            offsets,
+            extra_handle_offset,
+        })
+    }
+
+    /// Go `buildValuesListOfInsert`: the arity checks and every value
+    /// rewritten as `getInsertColExpr` does. An uncorrelated scalar subquery
+    /// is evaluated here, while the INSERT is planned.
+    pub fn build_insert_values(
+        &mut self,
+        insert: &InsertStmt,
+        target: &InsertTarget,
+    ) -> Result<InsertValues, PlanError> {
+        let names_a_column = insert.set_syntax || insert.columns_specified;
+        let table = self
+            .source
+            .find_table(&target.database, &target.table)
+            .ok_or_else(|| {
+                PlanError::unknown_table(format!("{}.{}", target.database, target.table))
+            })?
+            .clone();
+        let (schema, names) = self.insert_mock_schema(target);
+        let mut values = InsertValues::default();
+        let mut previous_width = target.offsets.len();
+        for (index, row) in insert.rows.iter().enumerate() {
+            // The first list answers to the column list, every later one to
+            // the list before it; the first check is skipped when both the
+            // column list and the first list are empty (`INSERT t VALUES ()`).
+            let width = row.len();
+            if (index > 0 || names_a_column || width > 0) && width != previous_width {
+                return Err(PlanError::wrong_value_count_on_row(index + 1));
+            }
+            previous_width = width;
+            let mut list = Vec::with_capacity(width);
+            for (position, value) in row.iter().enumerate() {
+                let offset = target.offsets[position];
+                list.push(self.get_insert_col_expr(
+                    target,
+                    &table,
+                    offset,
+                    value,
+                    &schema,
+                    &names,
+                )?);
+            }
+            values.lists.push(list);
+        }
+        Ok(values)
+    }
+
+    /// Go `TableInfo2SchemaAndNames`, as `mockTablePlan` carries it.
+    fn insert_mock_schema(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
+        let mut schema = Schema::default();
+        let mut names = Vec::with_capacity(target.columns.len());
+        for (name, field_type) in &target.columns {
+            let mut column = Column::new(self.column_ids.alloc(), field_type.clone());
+            column.orig_name = format!("{}.{}.{name}", target.database, target.table);
+            schema.columns.push(column);
+            names.push(FieldName::new(FieldNameMetadata {
+                original_table: IdentifierMetadata::new(target.table.as_str()),
+                original_column: IdentifierMetadata::new(name.as_str()),
+                database: IdentifierMetadata::new(target.database.as_str()),
+                table: IdentifierMetadata::new(target.table.as_str()),
+                column: IdentifierMetadata::new(name.as_str()),
+            }));
+        }
+        (schema, names)
+    }
+
+    /// Go `getInsertColExpr`.
+    fn get_insert_col_expr(
+        &mut self,
+        target: &InsertTarget,
+        table: &super::catalog::SourceTable,
+        offset: usize,
+        value: &Expr,
+        schema: &Schema,
+        names: &[FieldName],
+    ) -> Result<Option<Expression>, PlanError> {
+        let (column_name, _) = &target.columns[offset];
+        let generated = target.generated[offset];
+        let expression = match value {
+            Expr::Default(path) => {
+                let mut reference = column_name.clone();
+                if let Some(path) = path {
+                    let written = path
+                        .last()
+                        .ok_or_else(|| PlanError::internal("DEFAULT() needs a column"))?;
+                    let found = table
+                        .columns
+                        .iter()
+                        .find(|column| go_to_lower(&column.name) == go_to_lower(written))
+                        .ok_or_else(|| {
+                            PlanError::unknown_column_in_clause(written.clone(), "field list")
+                        })?;
+                    // `DEFAULT(generated column)` only for the same column.
+                    let same = go_to_lower(&found.name) == go_to_lower(column_name);
+                    if !same && (generated || found.is_generated) {
+                        return Err(PlanError::bad_generated_column(
+                            column_name.clone(),
+                            target.table.clone(),
+                        ));
+                    }
+                    if same && generated {
+                        return Ok(None);
+                    }
+                    reference = found.name.clone();
+                } else if generated {
+                    // Only DEFAULT for a generated column is accepted: its
+                    // expression fills the value.
+                    return Ok(None);
+                }
+                let evaluator = self.insert_default_evaluator.ok_or_else(|| {
+                    PlanError::internal("an INSERT default needs the default evaluator")
+                })?;
+                evaluator(&target.database, &target.table, &reference).map_err(PlanError::eval)?
+            }
+            _ => {
+                let saved_clause = self.cur_clause;
+                self.cur_clause = ClauseCode::FieldList;
+                let result = self.rewrite_insert_value(value, schema, names);
+                self.cur_clause = saved_clause;
+                result?
+            }
+        };
+        // Go: a generated column written explicitly accepts only DEFAULT.
+        if generated {
+            return Err(PlanError::bad_generated_column(
+                column_name.clone(),
+                target.table.clone(),
+            ));
+        }
+        Ok(Some(expression))
+    }
+
+    /// The default arm of `getInsertColExpr`: the value rewritten over
+    /// `mockTablePlan` -- or over a fresh, column-less dual when the value IS
+    /// a subquery ("subquery in insert values should not reference upper
+    /// scope") -- and refused when the rewrite built anything but the dual.
+    fn rewrite_insert_value(
+        &mut self,
+        value: &Expr,
+        schema: &Schema,
+        names: &[FieldName],
+    ) -> Result<Expression, PlanError> {
+        let mut dual = LogicalTableDual::new(self.base(LogicalTableDual::TYPE), 0);
+        let (dual_schema, dual_names) = if matches!(value, Expr::Subquery(_)) {
+            (Schema::default(), Vec::new())
+        } else {
+            (schema.clone(), names.to_vec())
+        };
+        dual.base.base.set_schema(Some(dual_schema));
+        dual.base.base.set_output_names(dual_names);
+        let mut scratch = Self::clause_scratch(value);
+        let (plan, _) = self.lower_scalar_subqueries(LogicalPlan::TableDual(dual), &mut scratch)?;
+        if !matches!(plan, LogicalPlan::TableDual(_)) {
+            return Err(PlanError::internal(
+                "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now",
+            ));
+        }
+        let (plan_schema, plan_names) = super::snapshot_schema_and_names(&plan);
+        let mut markers = BTreeMap::new();
+        markers.insert(MarkerKind::Column, plan_schema.columns.clone());
+        let rewritten = self.rewrite_scalar(&scratch, &plan_schema, &plan_names, &markers)?;
+        super::check_not_multi_column_row(&rewritten)?;
+        Ok(rewritten)
+    }
+}

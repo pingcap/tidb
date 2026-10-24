@@ -384,6 +384,8 @@ pub enum PlanErrorKind {
     /// Go `plannererrors.ErrBadGeneratedColumn` (3105): the generated column
     /// and its table.
     BadGeneratedColumn(String, String),
+    /// Go `plannererrors.ErrWrongValueCountOnRow` (1136): the 1-based row.
+    WrongValueCountOnRow(usize),
     /// Go `table.ErrUnknownPartition` (1735).
     UnknownPartition {
         /// The lower-cased partition name, matching `FindPartitionByName`.
@@ -688,6 +690,14 @@ impl PlanError {
         Self {
             message: format!("Unknown table '{table}'"),
             kind: PlanErrorKind::BadTable(table),
+        }
+    }
+
+    /// Go `plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(row)`.
+    pub fn wrong_value_count_on_row(row: usize) -> Self {
+        Self {
+            message: format!("Column count doesn't match value count at row {row}"),
+            kind: PlanErrorKind::WrongValueCountOnRow(row),
         }
     }
 

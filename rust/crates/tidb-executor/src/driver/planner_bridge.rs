@@ -1886,6 +1886,17 @@ fn default_evaluator<'a>(
     catalog: &'a Catalog,
     ctx: &'a crate::StmtContext,
 ) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_expr::EvalError> + 'a {
+    default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Expression)
+}
+
+/// [`default_evaluator`] for a given use of the default: an INSERT's own
+/// `DEFAULT` (Go `getDefaultValueForInsert`) answers differently from
+/// `DEFAULT(col)` inside an expression.
+fn default_evaluator_using<'a>(
+    catalog: &'a Catalog,
+    ctx: &'a crate::StmtContext,
+    default_use: super::dml::DefaultUse,
+) -> impl Fn(&str, &str, &str) -> Result<Expression, tidb_expr::EvalError> + 'a {
     move |database, table, column| {
         let entry = catalog.table_in(database, table).ok_or_else(|| {
             // Go `is.TableByName` failing.
@@ -1905,7 +1916,7 @@ fn default_evaluator<'a>(
         chunk.set_num_virtual_rows(1);
         let value = super::dml::materialize_column_default(
             &meta,
-            super::dml::DefaultUse::Expression,
+            default_use,
             ctx,
             chunk.get_row(0),
         )
@@ -1919,9 +1930,12 @@ fn default_evaluator<'a>(
                     format!("Field '{name}' doesn't have a default value"),
                 ),
             ),
+            // Any other refusal (a default whose own conversion truncates, for
+            // instance) keeps the code the client would have seen.
             error => {
                 let error = error.to_mysql_error();
-                tidb_expr::EvalError::Conversion(tidb_error::terror::TerrorError::compatible(
+                tidb_expr::EvalError::Conversion(tidb_error::terror::TerrorError::registered(
+                    tidb_error::terror::TerrorClass::Types,
                     tidb_error::terror::TerrorCode::new(error.code as isize),
                     error.message,
                 ))
@@ -2564,6 +2578,81 @@ pub(crate) fn lower_insert_value_subqueries(
     }
     let constants = builder.subquery_constants.clone();
     Ok((dual_only, constants))
+}
+
+/// Go `buildInsert`'s target and `VALUES` lists: the columns the statement
+/// writes and each value as an expression over the target's schema, with every
+/// uncorrelated scalar subquery evaluated now (`handleScalarSubquery`'s
+/// `EvalSubqueryFirstRow`).
+pub(crate) fn insert_value_lists(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    (
+        tidb_planner::plan_builder::insert_values::InsertTarget,
+        tidb_planner::plan_builder::insert_values::InsertValues,
+    ),
+    tidb_planner::plan_base::PlanError,
+> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
+    let session_zone = ctx.session_zone();
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let evaluator = subquery_evaluator(
+        catalog,
+        ctx,
+        &plan_ids,
+        &column_ids,
+        false,
+        &session_zone,
+        &registry,
+    );
+    let defaults = default_evaluator(catalog, ctx);
+    let insert_defaults = default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Insert);
+    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone())
+        .with_subquery_evaluator(&evaluator)
+        .with_default_evaluator(&defaults)
+        .with_insert_default_evaluator(&insert_defaults);
+    builder.only_full_group_by = ctx.only_full_group_by();
+    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
+    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
+    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
+    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
+    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
+    // Go `PlanBuilder.Build`'s `b.optFlag |= FlagPruneColumns`, which every
+    // statement's build starts from; `DoOptimize` of each subquery reads it.
+    builder.add_opt_flag(tidb_planner::logical::rule::flags::PRUNE_COLUMNS);
+    let target = builder.resolve_insert_target(insert)?;
+    let values = builder.build_insert_values(insert, &target)?;
+    Ok((target, values))
+}
+
+/// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.
+pub(crate) fn insert_target(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<
+    tidb_planner::plan_builder::insert_values::InsertTarget,
+    tidb_planner::plan_base::PlanError,
+> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .resolve_insert_target(insert)
 }
 
 /// The shared DML-source build, following Go's allocation order:

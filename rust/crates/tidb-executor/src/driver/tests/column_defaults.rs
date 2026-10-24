@@ -533,14 +533,17 @@ fn explicit_no_default_and_not_null_enum_follow_go_order() {
     )
     .unwrap();
     let strict = crate::StmtContext::for_dml(false, true, false);
-    assert!(matches!(
-        run_insert_on(
-            "INSERT INTO nil_default (id, n, e) VALUES (1, DEFAULT, DEFAULT)",
-            &mut catalog,
-            &strict,
-        ),
-        Err(DriverError::NoDefaultForField(name)) if name == "n"
-    ));
+    // The planner builds the value (Go `getDefaultValueForInsert`), so the
+    // refusal reaches the client as ErrNoDefaultValue (1364).
+    let error = run_insert_on(
+        "INSERT INTO nil_default (id, n, e) VALUES (1, DEFAULT, DEFAULT)",
+        &mut catalog,
+        &strict,
+    )
+    .unwrap_err()
+    .to_mysql_error();
+    assert_eq!(error.code, 1364);
+    assert_eq!(error.message, "Field 'n' doesn't have a default value");
 
     let lenient = crate::StmtContext::for_dml(false, false, false);
     run_insert_on(
