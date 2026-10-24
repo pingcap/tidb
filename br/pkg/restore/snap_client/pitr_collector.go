@@ -443,6 +443,12 @@ func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
 }
 
 func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
+	// A restore resumed from a checkpoint may have nothing left to ingest. Its
+	// metadata must still be added to a migration, because the finished one
+	// marks the SSTs ingested by the earlier runs of the same restore as usable.
+	if err := c.prepareMigIfNeeded(ctx); err != nil {
+		return 0, err
+	}
 	c.ingestedSSTMeta.msg.Finished = true
 	ts, err := c.tso(ctx)
 	if err != nil {
