@@ -487,22 +487,22 @@ func (helper extractHelper) extractLikePattern(
 			return true, datums[0].GetString(), false
 		}
 		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
-		// ILIKE matches case-insensitively while the pattern above is
-		// case-sensitive. Callers that fold case (toLower) lower both the pattern
-		// and the scanned value, so it stays equivalent there. Callers that do
-		// not -- the cluster log path sends the pattern verbatim in
-		// SearchLogRequest.Patterns -- get a case-insensitive group instead, so
-		// an "ERROR" line still matches `message ILIKE '%error%'`. The scoped
-		// (?i:...) form keeps the flag from leaking across a '|' when several
-		// patterns are combined into one disjunction. Case folding there is the
-		// regexp engine's rather than ILIKE's, so it is only a prefilter and the
-		// predicate is rechecked.
+		// Unicode lowercasing can move a literal outside its regexp case-fold
+		// class (for example, İ becomes i). Such a prefilter can lose valid
+		// LIKE/ILIKE matches before the scalar recheck, so skip extraction.
+		if toLower && !strings.EqualFold(pattern, strings.ToLower(pattern)) {
+			return false, "", false
+		}
+		// The cluster log path sends the pattern verbatim in SearchLogRequest.Patterns.
+		// Add a case-insensitive group so an "ERROR" line matches `message ILIKE '%error%'`.
+		// Scope the flag so it cannot affect other branches of a disjunction.
+		// Regexp case folding is broader than ILIKE's ASCII folding, so keep a recheck.
 		if fn.FuncName.L == ast.Ilike && !toLower {
 			return true, "(?i:" + pattern + ")", true
 		}
-		// Case-folding extractors only provide a prefilter for LIKE: its
-		// collation may require a case-sensitive match of the original value.
-		return true, pattern, fn.FuncName.L == ast.Like && toLower
+		// Case-folding extractors only provide a prefilter: LIKE may be
+		// case-sensitive, while ILIKE folds only ASCII rather than Unicode.
+		return true, pattern, toLower
 	case ast.Regexp, ast.RegexpLike:
 		return true, datums[0].GetString(), false
 	default:
