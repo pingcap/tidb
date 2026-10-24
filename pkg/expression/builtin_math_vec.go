@@ -720,11 +720,15 @@ func (b *builtinRandSig) vectorized() bool {
 }
 
 func (b *builtinRandSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	rng, err := b.getRng(ctx)
+	if err != nil {
+		return err
+	}
 	n := input.NumRows()
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
 	for i := range f64s {
-		f64s[i] = b.mysqlRng.Gen()
+		f64s[i] = rng.Gen()
 	}
 	return nil
 }
