@@ -159,6 +159,20 @@ func caseWhenHandler(ctx BuildContext, expr *ScalarFunction) (Expression, bool) 
 	return expr, isDeferredConst
 }
 
+// specialFoldDecidingArgs returns the arguments that decide which argument a special fold handler returns.
+// A parameter in any other argument does not make the folding depend on the parameter values.
+func specialFoldDecidingArgs(sf *ScalarFunction) []Expression {
+	args := sf.GetArgs()
+	if sf.FuncName.L != ast.Case {
+		return args[:1]
+	}
+	conds := make([]Expression, 0, len(args)/2)
+	for i := 0; i < len(args)-1; i += 2 {
+		conds = append(conds, args[i])
+	}
+	return conds
+}
+
 func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
@@ -169,7 +183,7 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			// we should not fold the extension function, because it may have a side effect.
 			return expr, false
 		}
-		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, expr) {
+		if function := specialFoldHandler[x.FuncName.L]; function != nil && !MaybeOverOptimized4PlanCache(ctx, specialFoldDecidingArgs(x)...) {
 			return function(ctx, x)
 		}
 
