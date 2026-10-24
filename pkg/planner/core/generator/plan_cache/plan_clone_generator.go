@@ -151,7 +151,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("}")
 		case "*physicalop.PushedDownLimit":
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
-		case "*physicalop.PhysPlanPartInfo":
+		case "*physicalop.PhysPlanPartInfo", "*physicalop.LooseScanInfo":
 			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
 		case "*physicalop.ColWithCmpFuncManager", "physicalop.InsertGeneratedColumns":
 			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
