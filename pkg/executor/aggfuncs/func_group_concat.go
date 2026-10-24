@@ -395,6 +395,7 @@ type topNRows struct {
 	// eg: 'aaa---bbb---ccc' -> 'aaa---bbb-'
 	isSepTruncated bool
 	collators      []collate.Collator
+	truncatedRow   *bytes.Buffer
 }
 
 func (h topNRows) Len() int {
@@ -428,7 +429,9 @@ func (h topNRows) Less(i, j int) bool {
 			return false
 		}
 	}
-	return false
+	// A shortened row must remain the last row among equal sort keys, both
+	// when evicting heap entries and when sorting the final concatenation.
+	return h.rows[i].buffer == h.truncatedRow && h.rows[j].buffer != h.truncatedRow
 }
 
 func (h topNRows) Swap(i, j int) {
@@ -466,8 +469,12 @@ func (h *topNRows) tryToAdd(row sortRow) (truncated bool, memDelta int64) {
 		if uint64(heapPopRow.buffer.Len()) > debt {
 			h.currSize -= debt
 			heapPopRow.buffer.Truncate(heapPopRow.buffer.Len() - int(debt))
+			h.truncatedRow = heapPopRow.buffer
 			heap.Push(h, heapPopRow)
 		} else {
+			if heapPopRow.buffer == h.truncatedRow {
+				h.truncatedRow = nil
+			}
 			h.currSize -= uint64(heapPopRow.buffer.Len()) + h.sepSize
 			memDelta -= int64(heapPopRow.buffer.Cap())
 			for _, dt := range heapPopRow.byItems {
@@ -483,6 +490,7 @@ func (h *topNRows) reset() {
 	h.rows = h.rows[:0]
 	h.err = nil
 	h.currSize = 0
+	h.truncatedRow = nil
 }
 
 func (h *topNRows) concat(sep string, _ bool) string {
