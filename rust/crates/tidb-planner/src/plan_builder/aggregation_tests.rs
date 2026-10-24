@@ -1636,3 +1636,73 @@ fn insert_values_are_expressions_over_the_target() {
         "The value specified for generated column 'a' in table 't' is not allowed."
     );
 }
+
+#[test]
+fn insert_on_duplicate_assignments_resolve_over_schema4_on_duplicate() {
+    // Go `ResolveOnDuplicate`: each assignment is built once over the target's
+    // columns; `VALUES(col)` names a target column; a generated column's own
+    // DEFAULT leaves no assignment.
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    let parse = |sql: &str| {
+        let statement = tidb_parser::parse(sql).expect("the INSERT parses");
+        let Stmt::Dml(dml) = statement else {
+            panic!("not a DML statement");
+        };
+        let tidb_ast::DmlStmt::Insert(insert) = (*dml).clone() else {
+            panic!("not an INSERT");
+        };
+        insert
+    };
+    let default = |_: &str, _: &str, _: &str| {
+        Ok(tidb_expr::expression::Expression::Constant(
+            tidb_expr::constant::Constant::new(Datum::Int(7), FieldType::new(FieldTypeCode::LongLong)),
+        ))
+    };
+    let build = |harness: &Harness, sql: &str| {
+        let insert = parse(sql);
+        let mut builder = harness.builder().with_default_evaluator(&default);
+        let target = builder.resolve_insert_target(&insert)?;
+        builder.build_on_duplicate(&insert, &target, None)
+    };
+    let harness = Harness::new();
+    let assigns = build(
+        &harness,
+        "INSERT INTO t VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = b + VALUES(c), c = DEFAULT",
+    )
+    .unwrap();
+    assert_eq!(assigns.iter().map(|assign| assign.offset).collect::<Vec<_>>(), vec![1, 2]);
+    assert!(assigns.iter().all(|assign| assign.lazy_error.is_none()));
+    let error = build(
+        &harness,
+        "INSERT INTO t VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = VALUES(nope)",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
+    let error = build(
+        &harness,
+        "INSERT INTO t VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE nope = 1",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.message(), "Unknown column 'nope' in 'field list'");
+
+    let mut generated = Harness::new();
+    generated.catalog.tables[0].columns[2].is_generated = true;
+    let assigns = build(
+        &generated,
+        "INSERT INTO t VALUES (1, 2, DEFAULT) ON DUPLICATE KEY UPDATE c = DEFAULT, b = 1",
+    )
+    .unwrap();
+    assert_eq!(assigns.len(), 1, "the generated column's own DEFAULT is dropped");
+    let error = build(
+        &generated,
+        "INSERT INTO t VALUES (1, 2, DEFAULT) ON DUPLICATE KEY UPDATE c = 1",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        error.message(),
+        "The value specified for generated column 'c' in table 't' is not allowed."
+    );
+}

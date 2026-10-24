@@ -175,6 +175,7 @@ mod dml_targets;
 pub mod update_targets;
 mod update_build;
 mod dml_visits;
+pub mod insert_on_duplicate;
 pub mod insert_values;
 pub mod ordered_list;
 pub mod expand;
@@ -706,6 +707,10 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `getDefaultValueForInsert`: the default an INSERT's own `DEFAULT`
     /// takes, which differs from `DEFAULT(col)` inside an expression.
     pub insert_default_evaluator: Option<DefaultEvaluator<'a>>,
+    /// Go `expressionRewriter.planCtx.insertPlan`: while an ON DUPLICATE
+    /// assignment is rewritten, `VALUES(col)` names one of the first `.0`
+    /// (the target's) columns of this schema and names.
+    pub values_scope: Option<(usize, Schema, Vec<FieldName>)>,
     /// The constants `MarkerKind::Constant` markers select, in insertion
     /// order. Go pushes them straight onto `ctxStack`; this port stores them
     /// here because the marker tail can only carry column paths.
@@ -1002,6 +1007,9 @@ pub struct PlanScopeResolver<'a> {
     /// Go `evalDefaultExprWithPlanCtx` for a `DEFAULT(column)` leaf, bound by
     /// the builder that owns the name scopes and the catalog hook.
     default_lookup: Option<&'a dyn Fn(&[String]) -> Result<Expression, EvalError>>,
+    /// Go `insertPlan.Schema4OnDuplicate`'s target half, which `VALUES(col)`
+    /// resolves instead of the current scope.
+    values_scope: Option<(usize, &'a Schema, &'a [FieldName])>,
 }
 
 impl<'a> PlanScopeResolver<'a> {
@@ -1037,6 +1045,7 @@ impl<'a> PlanScopeResolver<'a> {
             ambiguous_column: std::cell::RefCell::new(None),
             allow_build_cast_array: false,
             default_lookup: None,
+            values_scope: None,
         }
     }
 
@@ -1075,7 +1084,21 @@ impl<'a> PlanScopeResolver<'a> {
             ambiguous_column: std::cell::RefCell::new(None),
             allow_build_cast_array: false,
             default_lookup: None,
+            values_scope: None,
         }
+    }
+
+    /// Attach the scope `VALUES(col)` resolves in (an ON DUPLICATE KEY UPDATE
+    /// assignment): the first `target_len` names of `schema` and `names`.
+    #[must_use]
+    pub const fn with_values_scope(
+        mut self,
+        target_len: usize,
+        schema: &'a Schema,
+        names: &'a [FieldName],
+    ) -> Self {
+        self.values_scope = Some((target_len, schema, names));
+        self
     }
 
     /// Attach Go's `evalDefaultExprWithPlanCtx` for `DEFAULT(column)`.
@@ -1289,6 +1312,20 @@ pub(crate) fn field_name_ambiguity(names: &[FieldName], path: &[String]) -> Opti
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
+    fn resolve_values(&self, path: &[String]) -> Option<Expression> {
+        if let Some((target_len, schema, names)) = self.values_scope {
+            let index = find_field_name(&names[..target_len.min(names.len())], path)?;
+            let field_type = schema.columns.get(index)?.ret_type.clone()?;
+            return Some(Expression::ScalarFunction(
+                tidb_expr::scalar_function::ScalarFunction::new_values(index, field_type),
+            ));
+        }
+        let (index, field_type, _) = self.resolve(path)?;
+        Some(Expression::ScalarFunction(
+            tidb_expr::scalar_function::ScalarFunction::new_values(index, field_type),
+        ))
+    }
+
     fn resolve_default_in_query(&self, path: &[String]) -> Option<Result<Expression, EvalError>> {
         self.default_lookup.map(|lookup| lookup(path))
     }
@@ -1554,6 +1591,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             subquery_evaluator: None,
             default_evaluator: None,
             insert_default_evaluator: None,
+            values_scope: None,
             subquery_constants: Vec::new(),
             all_names: Vec::new(),
             correlated_agg_columns: Vec::new(),
@@ -2058,6 +2096,12 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         resolver.block_expand = self.current_block_expand.as_ref();
         let default_lookup = |path: &[String]| self.eval_default_expr(path, names);
         let resolver = resolver.with_default_lookup(&default_lookup);
+        let resolver = match &self.values_scope {
+            Some((target_len, schema, names)) => {
+                resolver.with_values_scope(*target_len, schema, names)
+            }
+            None => resolver,
+        };
         let resolver = match (full_schema, full_names) {
             (Some(schema), Some(names)) => resolver.with_full_scope(schema, names),
             _ => resolver,

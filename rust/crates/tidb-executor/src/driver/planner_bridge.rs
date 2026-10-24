@@ -2494,105 +2494,23 @@ pub fn dml_visit_info(
     }
 }
 
-/// One INSERT value Go's `getInsertColExpr` rewrites through the planner, and
-/// whether it IS a subquery (which Go rewrites over a column-less dual).
-pub(crate) struct InsertValueRewrite<'a> {
-    pub value: &'a mut tidb_ast::Expr,
-    pub is_subquery: bool,
-}
-
-/// Go `buildValuesListOfInsert` / `resolveOnDuplicate`'s rewrite of the
-/// values that hold a subquery, during the INSERT's planning: each
-/// uncorrelated scalar subquery runs here (`EvalSubqueryFirstRow`, under
-/// `executor.EvalSubQuery`) and its place in the value becomes a marker over
-/// the returned constants. `columns` is Go's `mockTablePlan` schema: the
-/// target table's `(name, type)`s under `database`.`table`.
-///
-/// Each value's answer is `false` when its rewrite built an Apply -- Go's
-/// "complex subqueries" refusal, which the caller raises.
-pub(crate) fn lower_insert_value_subqueries(
-    values: Vec<InsertValueRewrite<'_>>,
-    database: &str,
-    table: &str,
-    columns: &[(String, tidb_datatype::FieldType)],
-    catalog: &Catalog,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<(Vec<bool>, Vec<Expression>), tidb_planner::plan_base::PlanError> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_explain_hypo_state(ctx)
-        .with_dirty_tables(ctx)
-        .with_privilege_verifier(ctx);
-    let session_zone = ctx.session_zone();
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    let registry = ScalarSubqueryRegistry::default();
-    let evaluator = subquery_evaluator(
-        catalog,
-        ctx,
-        &plan_ids,
-        &column_ids,
-        false,
-        &session_zone,
-        &registry,
-    );
-    let defaults = default_evaluator(catalog, ctx);
-    let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator)
-        .with_default_evaluator(&defaults);
-    builder.only_full_group_by = ctx.only_full_group_by();
-    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
-    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
-    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
-    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
-    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
-    // Go `PlanBuilder.Build`'s `b.optFlag |= FlagPruneColumns`, which every
-    // statement's build starts from; `DoOptimize` of each subquery reads it.
-    builder.add_opt_flag(tidb_planner::logical::rule::flags::PRUNE_COLUMNS);
-    let mut dual_only = Vec::with_capacity(values.len());
-    for InsertValueRewrite { value, is_subquery } in values {
-        // Go `mockTablePlan`: the table's columns, named as `buildInsert`
-        // names `TableColNames`; a subquery value gets a fresh empty dual.
-        let mock = (!is_subquery).then(|| {
-            let mut schema = tidb_expr::schema::Schema::default();
-            let mut names = Vec::with_capacity(columns.len());
-            for (name, field_type) in columns {
-                let mut column =
-                    tidb_expr::column::Column::new(column_ids.alloc(), field_type.clone());
-                column.orig_name = format!("{database}.{table}.{name}");
-                schema.columns.push(column);
-                names.push(tidb_datatype::FieldName::new(
-                    tidb_datatype::FieldNameMetadata {
-                        original_table: tidb_datatype::IdentifierMetadata::new(table),
-                        original_column: tidb_datatype::IdentifierMetadata::new(name.as_str()),
-                        database: tidb_datatype::IdentifierMetadata::new(database),
-                        table: tidb_datatype::IdentifierMetadata::new(table),
-                        column: tidb_datatype::IdentifierMetadata::new(name.as_str()),
-                    },
-                ));
-            }
-            (schema, names)
-        });
-        dual_only.push(builder.lower_insert_value_subqueries(value, mock)?);
-    }
-    let constants = builder.subquery_constants.clone();
-    Ok((dual_only, constants))
-}
-
-/// Go `buildInsert`'s target and `VALUES` lists: the columns the statement
-/// writes and each value as an expression over the target's schema, with every
+/// Go `buildInsert`'s expressions: the VALUES lists over the target's schema,
+/// the `INSERT ... SELECT` checks, and the ON DUPLICATE assignments, with every
 /// uncorrelated scalar subquery evaluated now (`handleScalarSubquery`'s
 /// `EvalSubqueryFirstRow`).
-pub(crate) fn insert_value_lists(
+pub(crate) fn plan_insert_expressions(
     insert: &tidb_ast::InsertStmt,
+    select: Option<(
+        &tidb_expr::schema::Schema,
+        &tidb_planner::plan_builder::insert_on_duplicate::InsertSelectOutput,
+    )>,
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
 ) -> Result<
     (
-        tidb_planner::plan_builder::insert_values::InsertTarget,
         tidb_planner::plan_builder::insert_values::InsertValues,
+        Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
     ),
     tidb_planner::plan_base::PlanError,
 > {
@@ -2630,8 +2548,66 @@ pub(crate) fn insert_value_lists(
     // statement's build starts from; `DoOptimize` of each subquery reads it.
     builder.add_opt_flag(tidb_planner::logical::rule::flags::PRUNE_COLUMNS);
     let target = builder.resolve_insert_target(insert)?;
-    let values = builder.build_insert_values(insert, &target)?;
-    Ok((target, values))
+    let values = if insert.source.is_none() {
+        builder.build_insert_values(insert, &target)?
+    } else {
+        tidb_planner::plan_builder::insert_values::InsertValues::default()
+    };
+    if let Some((schema, output)) = select {
+        // Go counts the SELECT's own outputs when it was extended.
+        builder.check_insert_select(&target, output.actual_col_len.unwrap_or(schema.len()))?;
+    }
+    let on_duplicate = builder.build_on_duplicate(insert, &target, select)?;
+    Ok((values, on_duplicate))
+}
+
+/// Go `buildSelectPlanOfInsert`'s extension of the source for the ON
+/// DUPLICATE assignments, and the width the SELECT had before it.
+pub(crate) fn insert_extended_source(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Option<(tidb_ast::QueryStmt, usize)> {
+    let source = catalog
+        .planner_catalog(current_database, ctx.latest_index_schema())
+        .with_explain_hypo_state(ctx)
+        .with_dirty_tables(ctx)
+        .with_privilege_verifier(ctx);
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone());
+    let target = builder.resolve_insert_target(insert).ok()?;
+    builder.extend_insert_select(insert, &target)
+}
+
+/// [`physical_query_plan_with_allocators`] for an `INSERT ... SELECT`'s source,
+/// also answering the names of the source's outputs (Go
+/// `selectPlan.OutputNames()`).
+pub(crate) fn physical_query_plan_and_names_with_allocators(
+    query: &tidb_ast::QueryStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+    use_plan_cache: bool,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+) -> Result<(PhysicalPlan, Vec<tidb_datatype::FieldName>), tidb_planner::plan_base::PlanError> {
+    planner_physical_query_with_allocators(
+        query,
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache,
+        plan_ids,
+        column_ids,
+    )
+    .map(|(logical, physical)| (physical_names(&logical), physical))
+    .map(|(names, physical)| (physical, names))
+}
+
+fn physical_names(logical: &LogicalPlan) -> Vec<tidb_datatype::FieldName> {
+    logical.output_names().to_vec()
 }
 
 /// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.

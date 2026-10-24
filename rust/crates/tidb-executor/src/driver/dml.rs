@@ -34,9 +34,8 @@ use update_record::UpdateRecords;
 
 
 pub(crate) use defaults::{
-    column_default, column_metadata, materialize_column_default, prepare_named_defaults,
-    rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
-    PreparedOnUpdateNow, ResolvedDefaultColumn, set_value_for_ref_column,
+    column_default, column_metadata, materialize_column_default, ColumnDefaultMeta, DefaultUse,
+    PreparedOnUpdateNow, set_value_for_ref_column,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
@@ -129,30 +128,29 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     // query: `INSERT INTO h1 (a, b) SELECT a, b FROM no_such` over a missing
     // h1 errors `Table 'fdq.h1' doesn't exist`, not the source query's own
     // 1146 (oracle m13).
-    let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
-    let extended_source = insert_plan_source(insert, catalog, current_db);
+    resolve_insert_target(insert, catalog, current_db, ctx)?;
     // Go `planner.Optimize`.
     let optimize = super::start_optimize_region();
     let mut fresh = physical_plan
         .is_none()
-        .then(|| {
-            physical_dml_plan(
-                "Insert",
-                extended_source.as_ref().or(insert.source.as_deref()),
-                None,
-                catalog,
-                current_db,
-                ctx,
-                &fk_spec_for_insert(insert, current_db)?,
-            )
-        })
+        .then(|| physical_insert_plan(insert, catalog, current_db, ctx))
         .transpose()?;
+    let mut physical_plan = physical_plan.or(fresh.as_mut());
     // Go `buildInsert` evaluates the values' uncorrelated subqueries while
     // it plans: the VALUES lists, then (after an INSERT ... SELECT's source
     // was optimized) the ON DUPLICATE assignments.
-    let planned = plan_insert_subqueries(insert, &target_layout, catalog, current_db, ctx)?;
+    let planned = {
+        let select = match physical_plan.as_deref() {
+            Some(tidb_planner::physical::PhysicalPlan::Dml(root)) => root
+                .select_plan
+                .as_deref()
+                .and_then(|plan| plan.schema())
+                .zip(root.insert_select.as_ref()),
+            _ => None,
+        };
+        plan_insert(insert, select, catalog, current_db, ctx)?
+    };
     optimize.end();
-    let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         ctx.publish_physical_process_info(plan, catalog);
@@ -176,23 +174,32 @@ pub(crate) fn run_insert_stmt_with_physical_and_stats(
     )
 }
 
-/// The query an `INSERT ... SELECT` plans: its own source, or Go's
-/// ON DUPLICATE extension of it (see [`super::on_duplicate_scope`]).
-pub(crate) fn insert_plan_source(
+/// Builds the physical plan of an INSERT: its source (Go's ON DUPLICATE
+/// extension of it for an `INSERT ... SELECT`), the foreign key triggers, and
+/// what the planner decided about the source's outputs.
+pub(crate) fn physical_insert_plan(
     insert: &tidb_ast::InsertStmt,
     catalog: &Catalog,
     current_db: &str,
-) -> Option<tidb_ast::QueryStmt> {
-    super::on_duplicate_scope::extended_source(insert, catalog, current_db).map(|(query, _)| query)
-}
-
-/// The width of the source's own columns when Go extended it for ON DUPLICATE.
-pub(crate) fn insert_plan_source_actual_width(
-    insert: &tidb_ast::InsertStmt,
-    catalog: &Catalog,
-    current_db: &str,
-) -> Option<usize> {
-    super::on_duplicate_scope::extended_source(insert, catalog, current_db).map(|(_, width)| width)
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    let extended = super::planner_bridge::insert_extended_source(insert, catalog, current_db, ctx);
+    let (source, actual_col_len) = match &extended {
+        Some((query, width)) => (Some(query), Some(*width)),
+        None => (insert.source.as_deref(), None),
+    };
+    physical_dml_plan_with_cache_mode(
+        "Insert",
+        source,
+        None,
+        catalog,
+        current_db,
+        ctx,
+        false,
+        std::slice::from_ref(&fk_spec_for_insert(insert, current_db)?),
+        DmlKeep::Auto,
+        actual_col_len,
+    )
 }
 
 fn dml_execution_parts<'a>(
@@ -246,6 +253,7 @@ pub(crate) fn physical_dml_plan(
         false,
         std::slice::from_ref(fk_spec),
         DmlKeep::Auto,
+        None,
     )
 }
 
@@ -271,6 +279,7 @@ pub(crate) fn physical_multi_dml_plan(
         false,
         fk_specs,
         keep,
+        None,
     )
 }
 
@@ -300,6 +309,7 @@ fn physical_dml_plan_with_cache_mode(
     use_plan_cache: bool,
     fk_specs: &[fk_trigger_plan::FkPlanSpec],
     keep: DmlKeep,
+    insert_actual_col_len: Option<usize>,
 ) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
     use tidb_planner::physical::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
@@ -322,6 +332,7 @@ fn physical_dml_plan_with_cache_mode(
     let mut delete_tables = Vec::new();
     let mut update_tables = Vec::new();
     let mut update_assigns = Vec::new();
+    let mut insert_select = None;
     let mut fast_update_list = false;
 
     // Go `buildInsert` builds the target's schema first
@@ -352,11 +363,12 @@ fn physical_dml_plan_with_cache_mode(
         // INSERT ... SELECT: Go's `buildSelectPlanOfInsert` builds the source
         // without a select lock (only UPDATE/DELETE lock their read), and the
         // Insert root plus its mockTablePlan filler are already allocated
-        // above, ahead of the source.
-        Some(tidb_ast::QueryStmt::Select(select)) if operator.eq_ignore_ascii_case("Insert") => {
-            Some(
-                super::planner_bridge::physical_query_plan_with_allocators(
-                    &tidb_ast::QueryStmt::Select(select.clone()),
+        // above, ahead of the source. The output names are what ON DUPLICATE
+        // assignments resolve against.
+        Some(query) if operator.eq_ignore_ascii_case("Insert") => {
+            let (physical, names) =
+                super::planner_bridge::physical_query_plan_and_names_with_allocators(
+                    query,
                     catalog,
                     current_db,
                     ctx,
@@ -364,8 +376,12 @@ fn physical_dml_plan_with_cache_mode(
                     &plan_ids,
                     &column_ids,
                 )
-                .map_err(super::planner_error_to_driver)?,
-            )
+                .map_err(super::planner_error_to_driver)?;
+            insert_select = Some(tidb_planner::plan_builder::insert_on_duplicate::InsertSelectOutput {
+                names,
+                actual_col_len: insert_actual_col_len,
+            });
+            Some(physical)
         }
         Some(tidb_ast::QueryStmt::Select(select)) => {
             let multi_update = update
@@ -488,6 +504,7 @@ fn physical_dml_plan_with_cache_mode(
         fast_update_list,
         update_tables,
         update_assigns,
+        insert_select,
     });
     super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
     Ok(plan)
@@ -705,139 +722,46 @@ pub(crate) fn validate_insert_for_explain(
     Ok(())
 }
 
-/// The INSERT a statement executes once its planning folded the subqueries
-/// of its values: each uncorrelated scalar subquery is a `#const#N` marker
-/// over `constants`.
-pub(crate) struct PlannedInsertSubqueries {
-    insert: tidb_ast::InsertStmt,
-    constants: Vec<Expression>,
-    /// One slot per ON DUPLICATE KEY UPDATE assignment; see
-    /// [`plan_insert_subqueries`].
-    lazy_errors: Vec<Option<DriverError>>,
-    /// Go `Insert.Lists`: each VALUES list as the planner's expressions over
-    /// the target, in the order of the statement's columns; a generated
-    /// column's own DEFAULT has none.
+/// What `buildInsert` plans besides the source: each VALUES list as the
+/// planner's expressions, the ON DUPLICATE KEY UPDATE assignments, and how many
+/// of an `INSERT ... SELECT`'s outputs fill the insert.
+pub(crate) struct PlannedInsert {
+    /// Go `Insert.Lists`: the planner's expressions over the target, in the
+    /// order of the statement's columns; a generated column's own DEFAULT has
+    /// none.
     lists: Vec<Vec<Option<Expression>>>,
+    /// Go `Insert.OnDuplicate`, over `Schema4OnDuplicate`.
+    on_duplicate: Vec<tidb_planner::plan_builder::insert_on_duplicate::OnDuplicateAssign>,
+    /// Go `actualColLen`.
+    actual_col_len: Option<usize>,
 }
 
-/// Go evaluates an uncorrelated scalar subquery in a VALUES list or an ON
-/// DUPLICATE KEY UPDATE assignment while it plans the INSERT
-/// (`getInsertColExpr` / `rewriteInsertOnDuplicateUpdate` ->
-/// `handleScalarSubquery`'s `EvalSubqueryFirstRow`, under
-/// `executor.EvalSubQuery`): before any executor is built, and whether or not
-/// a row conflicts. A value whose rewrite builds an Apply -- a correlated
-/// subquery, or an IN/ANY/EXISTS over the dual -- is Go's "complex
-/// subqueries" refusal (issue 30626).
-///
-/// An ON DUPLICATE assignment's `ErrSubqueryMoreThan1Row` is not raised here:
-/// Go `Insert.ResolveOnDuplicate` keeps it on the assignment (`LazyErr`) for
-/// the row that meets a duplicate (issue 29260), so it comes back beside the
-/// folded statement, one slot per assignment.
-fn plan_insert_subqueries(
+/// Go `buildInsert`: the VALUES lists, then (for an `INSERT ... SELECT`) the
+/// width and generated-target checks of `buildSelectPlanOfInsert`, then
+/// `ResolveOnDuplicate` -- all before any executor is built, with every
+/// uncorrelated scalar subquery evaluated on the way (`handleScalarSubquery`'s
+/// `EvalSubqueryFirstRow`). A value whose rewrite builds an Apply is Go's
+/// "complex subqueries" refusal (issue 30626); an ON DUPLICATE assignment's
+/// `ErrSubqueryMoreThan1Row` stays on the assignment for the row that meets a
+/// duplicate (issue 29260).
+fn plan_insert(
     insert: &tidb_ast::InsertStmt,
-    layout: &InsertTargetLayout,
+    select: Option<(
+        &tidb_expr::schema::Schema,
+        &tidb_planner::plan_builder::insert_on_duplicate::InsertSelectOutput,
+    )>,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<PlannedInsertSubqueries, DriverError> {
-    use super::planner_bridge::InsertValueRewrite;
-    use super::subquery::expr_has_subquery;
-    let complex = || {
-        DriverError::unsupported(
-            "Insert's SET operation or VALUES_LIST doesn't support complex subqueries now",
-        )
-    };
-    // Go `buildValuesListOfInsert`: the arity checks and every value, each
-    // list checked before its own subqueries run.
-    let lists = if insert.source.is_none() {
-        super::planner_bridge::insert_value_lists(insert, catalog, current_db, ctx)
-            .map_err(super::planner_error_to_driver)?
-            .1
-            .lists
-    } else {
-        Vec::new()
-    };
-    let mut folded = insert.clone();
-    let mut constants = Vec::new();
-    // Go resolves ON DUPLICATE after every VALUES list, each assignment
-    // over the same `mockTablePlan`.
-    let assignments = folded
-        .on_duplicate
-        .iter()
-        .map(|assignment| expr_has_subquery(&assignment.value))
-        .collect::<Vec<_>>();
-    let mut lazy_errors = Vec::with_capacity(folded.on_duplicate.len());
-    for (assignment, has_subquery) in folded.on_duplicate.iter_mut().zip(assignments) {
-        let mut lazy_error = None;
-        if has_subquery {
-            let mut value = assignment.value.clone();
-            let lowered = super::planner_bridge::lower_insert_value_subqueries(
-                vec![InsertValueRewrite {
-                    value: &mut value,
-                    is_subquery: false,
-                }],
-                &layout.database,
-                &layout.table_name,
-                &layout.column_list,
-                catalog,
-                current_db,
-                ctx,
-            )
-            .map_err(super::planner_error_to_driver);
-            match lowered {
-                Ok((dual_only, more)) => {
-                    if dual_only.contains(&false) {
-                        return Err(complex());
-                    }
-                    // This assignment's markers index its own build's
-                    // constants; move them past the ones already kept.
-                    shift_constant_markers(&mut value, constants.len());
-                    constants.extend(more);
-                    assignment.value = value;
-                }
-                Err(error) => {
-                    if error.clone().to_mysql_error().code != 1242 {
-                        return Err(error);
-                    }
-                    assignment.value = tidb_ast::Expr::Null;
-                    lazy_error = Some(error);
-                }
-            }
-        }
-        lazy_errors.push(lazy_error);
-    }
-    Ok(PlannedInsertSubqueries {
-        insert: folded,
-        constants,
-        lazy_errors,
-        lists,
+) -> Result<PlannedInsert, DriverError> {
+    let (values, on_duplicate) =
+        super::planner_bridge::plan_insert_expressions(insert, select, catalog, current_db, ctx)
+            .map_err(super::planner_error_to_driver)?;
+    Ok(PlannedInsert {
+        lists: values.lists,
+        on_duplicate,
+        actual_col_len: select.and_then(|(_, output)| output.actual_col_len),
     })
-}
-
-/// Renumbers every `#const#N` marker in `expr` to `#const#(N + by)`.
-fn shift_constant_markers(expr: &mut tidb_ast::Expr, by: usize) {
-    use tidb_planner::plan_builder::marker::{MarkerKind, PlanMarker};
-    struct Shifter(usize);
-    impl tidb_ast::Visitor for Shifter {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
-                return false;
-            };
-            if let Some(marker) = PlanMarker::from_expr(expr) {
-                if marker.kind == MarkerKind::Constant {
-                    *expr = PlanMarker::new(MarkerKind::Constant, marker.index + self.0).as_expr();
-                }
-                return true;
-            }
-            false
-        }
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-    if by > 0 {
-        tidb_ast::Visitable::accept(expr, &mut Shifter(by));
-    }
 }
 
 /// The subqueries `expr` contains, outermost only.
@@ -876,7 +800,7 @@ pub(crate) fn outermost_subqueries(expr: &tidb_ast::Expr) -> Vec<tidb_ast::Query
 #[allow(clippy::too_many_arguments)]
 fn run_insert_with_physical(
     insert: &tidb_ast::InsertStmt,
-    planned: Option<&PlannedInsertSubqueries>,
+    planned: Option<&PlannedInsert>,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -958,7 +882,7 @@ pub fn run_load_data_insert(
 #[allow(clippy::too_many_arguments)]
 fn run_insert_rows(
     insert: &tidb_ast::InsertStmt,
-    planned: Option<&PlannedInsertSubqueries>,
+    planned: Option<&PlannedInsert>,
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -981,89 +905,40 @@ fn run_insert_rows(
     }
 
     let target_layout = resolve_insert_target(insert, catalog, current_db, ctx)?;
-    // Go `checkRefColumn` sees the values as written: a subquery's own
-    // columns never count, so the reference test reads the unfolded values.
-    let written_insert = insert;
-    let (insert, lazy_errors, subquery_constants, planned_lists) = match planned {
+    let (planned_lists, planned_on_duplicate, actual_col_len) = match planned {
         Some(planned) => (
-            &planned.insert,
-            planned.lazy_errors.as_slice(),
-            planned.constants.as_slice(),
             planned.lists.as_slice(),
+            planned.on_duplicate.as_slice(),
+            planned.actual_col_len,
         ),
-        None => (insert, &[][..], &[][..], &[][..]),
+        None => (&[][..], &[][..], None),
     };
     let eval_chunk = {
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
         chunk.set_num_virtual_rows(1);
         chunk
     };
-    // Go `buildInsert`'s `Names4OnDuplicate` and `ResolveOnDuplicate`: the
-    // assignment values resolve at plan time, conflict or not.
-    let on_duplicate_scope = super::on_duplicate_scope::OnDuplicateScope::build(
-        insert,
-        catalog,
-        current_db,
-        &target_layout.column_list,
-        &target_layout.database,
-        &target_layout.table_name,
-        &target_layout.target_offsets,
-    );
-    on_duplicate_scope.validate(&insert.on_duplicate)?;
     // The fields Go appended to the SELECT for the assignments, typed as the
     // source plan outputs them.
-    let extra_types: Vec<FieldType> =
-        match (physical_source.as_deref(), on_duplicate_scope.actual_col_len()) {
-            (Some(physical), Some(actual)) => physical
-                .schema()
-                .map(|schema| {
-                    schema
-                        .columns
-                        .iter()
-                        .skip(actual)
-                        .map(|column| {
-                            column.ret_type.clone().unwrap_or_else(|| {
-                                FieldType::new(tidb_datatype::FieldTypeCode::Null)
-                            })
+    let extra_types: Vec<FieldType> = match (physical_source.as_deref(), actual_col_len) {
+        (Some(physical), Some(actual)) => physical
+            .schema()
+            .map(|schema| {
+                schema
+                    .columns
+                    .iter()
+                    .skip(actual)
+                    .map(|column| {
+                        column.ret_type.clone().unwrap_or_else(|| {
+                            FieldType::new(tidb_datatype::FieldTypeCode::Null)
                         })
-                        .collect()
-                })
-                .unwrap_or_default(),
-            _ => Vec::new(),
-        };
-    let select_on_duplicate = if insert.source.is_some() {
-        Some(prepare_on_duplicate_assignments(
-            &insert.on_duplicate,
-            lazy_errors,
-            subquery_constants,
-            &target_layout.column_list,
-            &target_layout.column_meta,
-            target_layout.extra_handle_offset,
-            &target_layout.table_name,
-            Some(&target_layout.database),
-            &on_duplicate_scope,
-            &extra_types,
-            ctx,
-            eval_chunk.get_row(0),
-        )?)
-    } else {
-        None
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
     };
 
-    // Go checks the select's width, then its generated targets, while it plans
-    // the INSERT -- before the source runs, and whether or not it yields rows.
-    if insert.source.is_some() {
-        let width = on_duplicate_scope.actual_col_len().or_else(|| {
-            physical_source
-                .as_deref()
-                .and_then(|source| source.schema())
-                .map(|schema| schema.columns.len())
-        });
-        if width.is_some_and(|width| width != target_layout.target_offsets.len()) {
-            return Err(DriverError::WrongValueCountOnRow { row: 1 });
-        }
-        refuse_generated_insert_select_targets(&target_layout)?;
-    }
     // Once the target is valid, `INSERT ... SELECT` runs its source over the
     // pre-insert catalog and materializes those rows before the table is
     // borrowed mutably. The size of each chunk the source returned is kept:
@@ -1101,10 +976,7 @@ fn run_insert_rows(
     };
     // The fields Go appended for ON DUPLICATE ride past the row's own values.
     let mut source_rows = source_rows;
-    let source_extras: Vec<Vec<Datum>> = match (
-        source_rows.as_mut(),
-        on_duplicate_scope.actual_col_len(),
-    ) {
+    let source_extras: Vec<Vec<Datum>> = match (source_rows.as_mut(), actual_col_len) {
         (Some(rows), Some(actual)) => rows
             .iter_mut()
             .map(|row| row.split_off(actual.min(row.len())))
@@ -1224,26 +1096,27 @@ fn run_insert_rows(
         }
     }
 
-    // Go resolves ON DUPLICATE after the VALUES lists and before execution.
-    // Keeping that placement makes generated-column and DEFAULT errors visible
-    // even when no candidate row ends up conflicting.
-    let on_duplicate_assignments = match select_on_duplicate {
-        Some(prepared) => prepared,
-        None => prepare_on_duplicate_assignments(
-            &insert.on_duplicate,
-            lazy_errors,
-            subquery_constants,
-            &column_list,
-            &column_meta,
-            extra_handle_offset,
-            &table_name,
-            Some(&database),
-            &on_duplicate_scope,
-            &extra_types,
-            ctx,
-            eval_chunk.get_row(0),
-        )?,
-    };
+    // Go resolves ON DUPLICATE after the VALUES lists and before execution
+    // (`ResolveOnDuplicate`), so generated-column and DEFAULT errors were
+    // visible at plan time even when no candidate row conflicts.
+    let on_duplicate_assignments = planned_on_duplicate
+        .iter()
+        .map(|assignment| {
+            if extra_handle_offset == Some(assignment.offset) {
+                return Err(DriverError::unsupported(
+                    "UPDATE of _tidb_rowid moves the row, which is not supported yet",
+                ));
+            }
+            Ok(PreparedOnDuplicateAssignment {
+                offset: assignment.offset,
+                value: assignment.expr.clone(),
+                lazy_error: assignment
+                    .lazy_error
+                    .clone()
+                    .map(super::planner_error_to_driver),
+            })
+        })
+        .collect::<Result<Vec<_>, DriverError>>()?;
     let table_types = column_list.iter().map(|(_, field_type)| field_type.clone());
     let prepared_on_duplicate = PreparedOnDuplicate {
         on_update_now: PreparedOnUpdateNow::new(
@@ -1274,7 +1147,7 @@ fn run_insert_rows(
     // `setValueForRefColumn` and evaluates into that buffer, so `SET a = 1,
     // b = a + 1` reads the `a` just written and `VALUES (a)` the default.
     let has_ref_cols = source_rows.is_none()
-        && written_insert
+        && insert
             .rows
             .iter()
             .flatten()
@@ -2237,8 +2110,7 @@ pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableErro
 #[derive(Clone, Debug)]
 pub(crate) struct PreparedOnDuplicateAssignment {
     offset: usize,
-    /// Built over Go's `Schema4OnDuplicate` (see
-    /// [`super::on_duplicate_scope::OnDuplicateResolver`]).
+    /// Built over Go's `Schema4OnDuplicate`.
     value: Expression,
     /// Go `Assignment.LazyErr`: a scalar subquery's 1242 raised while the
     /// assignment was built, which only a row meeting a duplicate reports.
@@ -2255,124 +2127,6 @@ struct PreparedOnDuplicate {
     /// The types of Go's `row4Update`: stored row, appended fields, would-be
     /// row.
     row_types: Vec<FieldType>,
-}
-
-/// Go `ResolveOnDuplicate`: every assignment is rewritten once, at plan
-/// time, whether or not an inserted row eventually conflicts, its DEFAULT
-/// leaves already typed statement constants.
-#[allow(clippy::too_many_arguments)]
-fn prepare_on_duplicate_assignments(
-    assignments: &[tidb_ast::Assignment],
-    lazy_errors: &[Option<DriverError>],
-    subquery_constants: &[Expression],
-    column_list: &[(String, FieldType)],
-    column_meta: &[ColumnDefaultMeta],
-    extra_handle_offset: Option<usize>,
-    table_name: &str,
-    database: Option<&str>,
-    scope: &super::on_duplicate_scope::OnDuplicateScope,
-    extra_types: &[FieldType],
-    ctx: &crate::StmtContext,
-    row: tidb_chunk::row::Row<'_>,
-) -> Result<Vec<PreparedOnDuplicateAssignment>, DriverError> {
-    let resolver = TableResolver {
-        database: database,
-        table_name,
-        columns: column_list,
-        constant_context: ctx.clone(),
-        zone: ctx.session_zone(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-        clause_message: "field list",
-        subquery_constants,
-    };
-    let value_resolver = super::on_duplicate_scope::OnDuplicateResolver {
-        base: TableResolver {
-            database: database,
-            table_name,
-            columns: column_list,
-            constant_context: ctx.clone(),
-            zone: ctx.session_zone(),
-            no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-            div_precision_increment: ctx.div_precision_increment(),
-            clause_message: "field list",
-            subquery_constants,
-        },
-        scope,
-        extra_types,
-    };
-    let mut prepared = Vec::with_capacity(assignments.len());
-    for (position, assignment) in assignments.iter().enumerate() {
-        let (offset, _, _) = resolver.resolve(&assignment.col).ok_or_else(|| {
-            DriverError::UnknownColumnInClause {
-                column: assignment.col.last().cloned().unwrap_or_default(),
-                clause: "field list".to_owned(),
-            }
-        })?;
-        if extra_handle_offset == Some(offset) {
-            return Err(DriverError::unsupported(
-                "UPDATE of _tidb_rowid moves the row, which is not supported yet",
-            ));
-        }
-        let target_identity = DefaultColumnIdentity {
-            table: 0,
-            column: offset,
-        };
-        let target_meta = &column_meta[offset];
-
-        if target_meta.generated {
-            let is_own_default = match &assignment.value {
-                tidb_ast::Expr::Default(None) => true,
-                tidb_ast::Expr::Default(Some(path)) => {
-                    resolver.resolve(path).is_some_and(|(column, _, _)| {
-                        target_identity == (DefaultColumnIdentity { table: 0, column })
-                    })
-                }
-                _ => false,
-            };
-            if is_own_default {
-                continue;
-            }
-            return Err(DriverError::BadGeneratedColumn {
-                column: target_meta.name.clone(),
-                table: table_name.to_owned(),
-            });
-        }
-
-        let lazy_error = lazy_errors.get(position).cloned().flatten();
-        let value = match &assignment.value {
-            tidb_ast::Expr::Default(None) => {
-                let datum =
-                    materialize_column_default(target_meta, DefaultUse::Expression, ctx, row)?;
-                Expression::Constant(tidb_expr::constant::Constant::new(
-                    datum,
-                    target_meta.field_type.clone(),
-                ))
-            }
-            value => {
-                let defaults =
-                    prepare_named_defaults(value, ctx, row, DefaultUse::Expression, |path| {
-                        let (column, _, _) = resolver.resolve(path).ok_or_else(|| {
-                            DriverError::UnknownColumnInClause {
-                                column: path.last().cloned().unwrap_or_default(),
-                                clause: "field list".to_owned(),
-                            }
-                        })?;
-                        Ok(ResolvedDefaultColumn {
-                            identity: DefaultColumnIdentity { table: 0, column },
-                            meta: column_meta[column].clone(),
-                        })
-                    })?;
-                rewrite_with_prepared_defaults(value, &value_resolver, &defaults)?
-            }
-        };
-        prepared.push(PreparedOnDuplicateAssignment {
-            offset,
-            value,
-            lazy_error,
-        });
-    }
-    Ok(prepared)
 }
 
 /// Go `ON DUPLICATE KEY UPDATE`: applies the assignments to the row already
@@ -3257,16 +3011,25 @@ fn cached_dml_physical_plan(
     let Stmt::Dml(dml) = statement else {
         return None;
     };
-    let (operator, source, update) = match dml.as_ref() {
+    let (operator, source, update, insert_actual_col_len) = match dml.as_ref() {
         tidb_ast::DmlStmt::Insert(insert) => {
-            let source = insert_plan_source(insert, catalog, current_database)
+            let extended =
+                super::planner_bridge::insert_extended_source(insert, catalog, current_database, ctx);
+            let actual = extended.as_ref().map(|(_, width)| *width);
+            let source = extended
+                .map(|(query, _)| query)
                 .or_else(|| insert.source.as_deref().cloned());
-            ("Insert", source, None)
+            ("Insert", source, None, actual)
         }
-        tidb_ast::DmlStmt::Update(update) => {
-            ("Update", Some(update_source_query(update)?), Some(update.as_ref()))
+        tidb_ast::DmlStmt::Update(update) => (
+            "Update",
+            Some(update_source_query(update)?),
+            Some(update.as_ref()),
+            None,
+        ),
+        tidb_ast::DmlStmt::Delete(delete) => {
+            ("Delete", Some(delete_source_query(delete)?), None, None)
         }
-        tidb_ast::DmlStmt::Delete(delete) => ("Delete", Some(delete_source_query(delete)?), None),
         _ => return None,
     };
     let fk_spec = match dml.as_ref() {
@@ -3287,6 +3050,7 @@ fn cached_dml_physical_plan(
         true,
         std::slice::from_ref(&fk_spec),
         DmlKeep::Auto,
+        insert_actual_col_len,
     )
     .ok()?;
     // Keep a cached single-row UPDATE/DELETE source as a point access path.

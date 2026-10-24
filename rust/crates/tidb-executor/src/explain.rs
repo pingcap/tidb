@@ -3985,20 +3985,14 @@ pub fn explain_insert_stmt(
     // width before it builds an INSERT ... SELECT's source.
     crate::driver::validate_insert_for_explain(insert, catalog, current_db, ctx, None)?;
     let fk_spec = crate::driver::fk_spec_for_insert(insert, current_db)?;
-    let extended_source = crate::driver::insert_plan_source(insert, catalog, current_db);
-    let physical = crate::driver::physical_dml_plan(
-        "Insert",
-        extended_source.as_ref().or(insert.source.as_deref()),
-        None,
-        catalog,
-        current_db,
-        ctx,
-        &fk_spec,
-    )?;
+    let _ = fk_spec;
+    let physical = crate::driver::physical_insert_plan(insert, catalog, current_db, ctx)?;
     // The source's own width: Go appends ON DUPLICATE fields past it.
     let select_width = match &physical {
         PhysicalPlan::Dml(root) => root.select_plan.as_deref().and_then(|select| {
-            crate::driver::insert_plan_source_actual_width(insert, catalog, current_db)
+            root.insert_select
+                .as_ref()
+                .and_then(|output| output.actual_col_len)
                 .or_else(|| select.schema().map(|schema| schema.columns.len()))
         }),
         _ => None,
@@ -4025,16 +4019,7 @@ pub fn explain_analyze_insert_stmt(
     ctx: &crate::StmtContext,
     format: ExplainFormat,
 ) -> Result<SelectMeta, DriverError> {
-    let extended_source = crate::driver::insert_plan_source(insert, catalog, current_db);
-    let mut physical = crate::driver::physical_dml_plan(
-        "Insert",
-        extended_source.as_ref().or(insert.source.as_deref()),
-        None,
-        catalog,
-        current_db,
-        ctx,
-        &crate::driver::fk_spec_for_insert(insert, current_db)?,
-    )?;
+    let mut physical = crate::driver::physical_insert_plan(insert, catalog, current_db, ctx)?;
     let root_key = crate::driver::physical_builder::runtime_plan_key(&physical);
     let mut runtime = crate::driver::physical_builder::PhysicalRuntimeStats::new();
     let (affected, _) = run_insert_stmt_with_physical_and_stats(

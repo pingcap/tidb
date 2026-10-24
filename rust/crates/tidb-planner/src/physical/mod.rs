@@ -2989,6 +2989,9 @@ pub struct PhysicalDmlRoot {
     pub update_tables: Vec<UpdateTablePos>,
     /// A multi-table UPDATE's assignments (Go `Update.OrderedList`).
     pub update_assigns: Vec<UpdateAssign>,
+    /// What the planner decided about an `INSERT ... SELECT`'s source: the
+    /// names of its outputs and how many of them fill the insert.
+    pub insert_select: Option<crate::plan_builder::insert_on_duplicate::InsertSelectOutput>,
 }
 
 /// The operation selected by Go's BuildOn{Insert,Update,Delete}FKTriggers.
@@ -5008,6 +5011,7 @@ impl PhysicalPlan {
                 fast_update_list: op.fast_update_list,
                 update_tables: op.update_tables.clone(),
                 update_assigns: op.update_assigns.clone(),
+                insert_select: op.insert_select.clone(),
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

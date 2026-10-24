@@ -136,6 +136,30 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         })
     }
 
+    /// Go `buildSelectPlanOfInsert`'s checks once the source is built: its
+    /// width must equal the number of target columns, and only then is a
+    /// generated target refused (`insert into t (b) select * from t` over a
+    /// generated `b` is a count error, `insert into t select * from t` the
+    /// generated-column one).
+    pub fn check_insert_select(
+        &self,
+        target: &InsertTarget,
+        select_width: usize,
+    ) -> Result<(), PlanError> {
+        if select_width != target.offsets.len() {
+            return Err(PlanError::wrong_value_count_on_row(1));
+        }
+        for &offset in &target.offsets {
+            if target.generated[offset] {
+                return Err(PlanError::bad_generated_column(
+                    target.columns[offset].0.clone(),
+                    target.table.clone(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Go `buildValuesListOfInsert`: the arity checks and every value
     /// rewritten as `getInsertColExpr` does. An uncorrelated scalar subquery
     /// is evaluated here, while the INSERT is planned.
@@ -182,7 +206,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `TableInfo2SchemaAndNames`, as `mockTablePlan` carries it.
-    fn insert_mock_schema(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
+    pub(super) fn insert_mock_schema(&self, target: &InsertTarget) -> (Schema, Vec<FieldName>) {
         let mut schema = Schema::default();
         let mut names = Vec::with_capacity(target.columns.len());
         for (name, field_type) in &target.columns {
