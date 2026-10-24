@@ -19,8 +19,10 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
@@ -224,7 +226,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	}
 
 	binaryPlan := ""
-	if variable.GenerateBinaryPlan.Load() {
+	if variable.GenerateBinaryPlan.Load() && atomic.LoadUint32(&config.GetGlobalConfig().Instance.RecordPlanInSlowLog) != 0 {
 		binaryPlan = getBinaryPlan(a.Ctx)
 		if len(binaryPlan) > 0 {
 			binaryPlan = variable.SlowLogBinaryPlanPrefix + binaryPlan + variable.SlowLogPlanSuffix
