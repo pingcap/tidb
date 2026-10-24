@@ -202,7 +202,7 @@ func TestAddIndexFailed(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		tableStart = s.store.GetCodec().EncodeKey(tableStart)
 	}
-	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 100)
+	s.cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
 
 	tk.MustExec("alter table t add index idx_b(b)")
 	tk.MustExec("admin check index t idx_b")
