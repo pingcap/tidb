@@ -239,6 +239,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/types/parser_driver",
+        "//pkg/udf",
         "//pkg/util",
         "//pkg/util/admin",
         "//pkg/util/breakpoint",

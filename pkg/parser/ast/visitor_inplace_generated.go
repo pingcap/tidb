@@ -814,6 +814,47 @@ func (n *AlterSequenceStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *FunctionParam) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
+func (n *CreateFunctionStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.FuncName != nil {
+		if !n.FuncName.AcceptInPlace(v) {
+			return false
+		}
+	}
+	for _, param := range n.Parameters {
+		if !param.AcceptInPlace(v) {
+			return false
+		}
+	}
+	if n.SQLBody != nil {
+		if !n.SQLBody.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *DropFunctionStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.FuncName != nil {
+		if !n.FuncName.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
 func (n *Join) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2799,6 +2840,18 @@ func (n *ProcedureWhileStmt) AcceptInPlace(v InPlaceVisitor) bool {
 	return v.Leave(n)
 }
 
+func (n *ProcedureLoopStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	for _, stmt := range n.Body {
+		if !stmt.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
 func (n *ProcedureCursor) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
@@ -2883,6 +2936,46 @@ func (n *ProcedureLabelLoop) AcceptInPlace(v InPlaceVisitor) bool {
 func (n *ProcedureJump) AcceptInPlace(v InPlaceVisitor) bool {
 	if skipChildren := v.Enter(n); skipChildren {
 		return v.Leave(n)
+	}
+	return v.Leave(n)
+}
+
+func (n *ReturnStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	if n.ReturnValue != nil {
+		if !n.ReturnValue.AcceptInPlace(v) {
+			return false
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *SignalStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	for _, item := range n.InfoItems {
+		if item.Value != nil {
+			if !item.Value.AcceptInPlace(v) {
+				return false
+			}
+		}
+	}
+	return v.Leave(n)
+}
+
+func (n *ResignalStmt) AcceptInPlace(v InPlaceVisitor) bool {
+	if skipChildren := v.Enter(n); skipChildren {
+		return v.Leave(n)
+	}
+	for _, item := range n.InfoItems {
+		if item.Value != nil {
+			if !item.Value.AcceptInPlace(v) {
+				return false
+			}
+		}
 	}
 	return v.Leave(n)
 }

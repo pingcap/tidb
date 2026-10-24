@@ -349,6 +349,11 @@ var (
 	systemTablesOfStorageClassTransitionNextGenVersion = []TableBasicInfo{
 		{ID: metadef.TiDBStorageClassTransitionHistoryTableID, Name: "tidb_storage_class_transition_history", SQL: metadef.CreateTiDBStorageClassTransitionHistoryTable},
 	}
+	// systemTablesOfSQLRoutineNextGenVersion contains SQL function and procedure metadata tables.
+	systemTablesOfSQLRoutineNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBUDFTableID, Name: "tidb_udf", SQL: metadef.CreateTiDBUDFTable},
+		{ID: metadef.TiDBStoredProcedureTableID, Name: "tidb_stored_procedure", SQL: metadef.CreateTiDBStoredProcedureTable},
+	}
 )
 
 type versionedBootstrapSchema struct {
@@ -373,6 +378,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	}, nextGenOnly: true},
 	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
+	}},
+	{ver: meta.SQLRoutineNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfSQLRoutineNextGenVersion},
 	}},
 }
 

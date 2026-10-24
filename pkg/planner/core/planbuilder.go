@@ -675,7 +675,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		*ast.GrantStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.AlterRangeStmt, *ast.RevokeStmt, *ast.KillStmt, *ast.DropStatsStmt,
 		*ast.GrantRoleStmt, *ast.RevokeRoleStmt, *ast.SetRoleStmt, *ast.SetDefaultRoleStmt, *ast.ShutdownStmt,
 		*ast.RenameUserStmt, *ast.NonTransactionalDMLStmt, *ast.SetSessionStatesStmt, *ast.SetResourceGroupStmt, *ast.CancelDistributionJobStmt,
-		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt, *ast.DropProcedureStmt:
+		*ast.ImportIntoActionStmt, *ast.CalibrateResourceStmt, *ast.AddQueryWatchStmt, *ast.DropQueryWatchStmt, *ast.DropProcedureStmt,
+		*ast.CallStmt, *ast.CreateFunctionStmt, *ast.DropFunctionStmt, *ast.ProcedureInfo:
 		return b.buildSimple(ctx, node.Node.(ast.StmtNode))
 	case ast.DDLNode:
 		if b.ctx.IsCrossKS() {
@@ -3994,6 +3995,12 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			return nil, err
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+	case *ast.CallStmt:
+		// CALL statement execution - procedure existence is checked at execution time
+	case *ast.CreateFunctionStmt:
+		// CREATE FUNCTION - UDF creation handled at execution time
+	case *ast.DropFunctionStmt:
+		// DROP FUNCTION - UDF deletion handled at execution time
 	}
 	return p, nil
 }
