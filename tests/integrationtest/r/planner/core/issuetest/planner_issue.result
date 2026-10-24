@@ -1547,3 +1547,18 @@ execute _ldbstmt;
 drop database if exists lock_db1;
 drop database if exists lock_db2;
 deallocate prepare _ldbstmt;
+drop view if exists v70362;
+drop table if exists t70362;
+create table t70362 (id bigint, k bigint);
+insert into t70362 values (1, 1), (null, 2);
+create view v70362 as select id from (select k, max(id) over (partition by k) as id from t70362) as w;
+select t2.id from v70362 as t2 right outer join v70362 as t3 on t2.id >= t3.id where (t2.id is null) < any (select 1 from t70362 as t4 where t3.id is null);
+id
+select t2.id from v70362 as t2 right outer join v70362 as t3 on t2.id >= t3.id where 0 < any (select 1 from t70362 as t4 where t3.id is null);
+id
+NULL
+select t2.id from t70362 as t2 right outer join v70362 as t3 on t2.id >= t3.id where 0 < any (select 1 from t70362 as t4 where t3.id is null);
+id
+NULL
+drop view if exists v70362;
+drop table if exists t70362;
