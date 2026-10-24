@@ -611,6 +611,17 @@ func TestColumnTable(t *testing.T) {
 	tk.MustQuery(`select count(*) from information_schema.columns
 				where TABLE_SCHEMA = 'test' and TABLE_NAME in ('tbl1', 'tbl2', 'view1');`).Check(
 		testkit.RowsWithSep("|", "9"))
+
+	tk.MustExec("create table newline_column (`a\nb` int)")
+	tk.MustQuery(`select hex(column_name), column_name like '%', column_name like 'a_b',
+			column_name like 'a%b' from information_schema.columns
+			where table_schema = 'test' and table_name = 'newline_column'`).
+		Check(testkit.Rows("610A62 1 1 1"))
+	for _, pattern := range []string{"%", "a_b", "a%b"} {
+		tk.MustQuery(fmt.Sprintf(`select count(*) from information_schema.columns
+			where table_schema = 'test' and table_name = 'newline_column'
+			and column_name like '%s'`, pattern)).Check(testkit.Rows("1"))
+	}
 }
 
 func TestIndexUsageTable(t *testing.T) {
