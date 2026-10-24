@@ -1204,8 +1204,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		}
 
 		// Close connection between txn when we are going to shutdown server.
-		// Note the current implementation when shutting down, for an idle connection, the connection may block at readPacket()
-		// consider provider a way to close the connection directly after sometime if we can not read any data.
+		// A connection that is idle in readPacket() is woken up by `Server.DrainClients`.
 		if cc.server.inShutdownMode.Load() {
 			if !sessVars.InTxn() {
 				return
