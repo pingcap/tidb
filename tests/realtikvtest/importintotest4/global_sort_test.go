@@ -161,10 +161,15 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-	ch := make(chan struct{}, 1)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
-		ch <- struct{}{}
-	})
+	waitCleanup := func(jobID int) {
+		// A cleanup attempt may fail or belong to another task. Wait for this
+		// task to reach history before checking cleanup side effects.
+		require.Eventually(s.T(), func() bool {
+			rows := s.tk.MustQuery("select id from mysql.tidb_global_task_history where task_key = ?",
+				importinto.TaskKey(int64(jobID))).Rows()
+			return len(rows) == 1
+		}, 30*time.Second, 100*time.Millisecond)
+	}
 	var counter atomic.Int32
 	tk2 := testkit.NewTestKit(s.T(), s.store)
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/syncAfterSubtaskFinish",
@@ -208,7 +213,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	))
 
 	// check all sorted data cleaned up
-	<-ch
+	waitCleanup(jobID)
 
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
@@ -233,11 +238,13 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec("truncate table t")
 	result = s.tk.MustQuery(importSQL + `, __force_merge_step`).Rows()
 	s.Len(result, 1)
+	jobID, err = strconv.Atoi(result[0][0].(string))
+	require.NoError(s.T(), err)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
-	<-ch
+	waitCleanup(jobID)
 
 	// failed task, should clean up all sorted data too.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
@@ -254,7 +261,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		return task.State == proto.TaskStateReverted
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
-	<-ch
+	waitCleanup(jobID)
 
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
