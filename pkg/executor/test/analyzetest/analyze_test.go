@@ -194,18 +194,25 @@ func TestAnalyzeRestrict(t *testing.T) {
 		if kerneltype.IsNextGen() {
 			t.Skip("analyze restrict subtests mutate mysql.analyze_jobs")
 		}
+		// Match the global connection ID to the mock server so SQL KILL reaches this session.
+		const (
+			serverID      uint64 = 1
+			analyzeConnID        = serverID<<41 | 1<<1 | 1
+		)
 		tk.MustExec("truncate table mysql.analyze_jobs")
 		dom := domain.GetDomain(tk.Session())
 		origSM := dom.InfoSyncer().GetSessionManager()
 		sm := &killQuerySessionManager{
 			MockSessionManager: &testkit.MockSessionManager{
-				Conn: make(map[uint64]sessionapi.Session),
+				SerID: serverID,
+				Conn:  make(map[uint64]sessionapi.Session),
 			},
 		}
 		dom.InfoSyncer().SetSessionManager(sm)
 		defer dom.InfoSyncer().SetSessionManager(origSM)
 
 		tkAnalyze := testkit.NewTestKit(t, store)
+		tkAnalyze.Session().SetConnectionID(analyzeConnID)
 		tkAnalyze.Session().SetSessionManager(sm)
 		sm.Conn[tkAnalyze.Session().GetSessionVars().ConnectionID] = tkAnalyze.Session()
 		tkAnalyze.MustExec("use test")
@@ -238,6 +245,7 @@ func TestAnalyzeRestrict(t *testing.T) {
 
 		connID := tkAnalyze.Session().GetSessionVars().ConnectionID
 		tkKiller.MustExec(fmt.Sprintf("kill tidb query %d", connID))
+		tkKiller.MustQuery("show warnings").Check(testkit.Rows())
 
 		select {
 		case err := <-done:
