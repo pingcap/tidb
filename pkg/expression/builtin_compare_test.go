@@ -269,6 +269,10 @@ func TestIntervalFunc(t *testing.T) {
 		{types.MakeDatums(1, nil, nil, nil), 3, false},
 		{types.MakeDatums(1, nil, nil, nil, 2), 3, false},
 		{types.MakeDatums(uint64(9223372036854775808), nil, nil, nil, 4), 4, false},
+		{types.MakeDatums(10, 30, 1, 17), 0, false},
+		{types.MakeDatums(10.5, 30, 1, 17), 0, false},
+		{types.MakeDatums(7, 17, 17, 4, 17, 1, 16, 20, 0, 19), 5, false},
+		{types.MakeDatums(7.5, 17, 17, 4, 17, 1, 16, 20, 0, 19), 5, false},
 
 		// tests for appropriate precision loss
 		{types.MakeDatums(9007199254740992, "9007199254740993"), 1, false},

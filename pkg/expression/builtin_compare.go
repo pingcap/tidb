@@ -1189,18 +1189,9 @@ func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	}
 
 	allInt := true
-	hasNullable := false
-	// if we have nullable columns in the argument list, we won't do a binary search, instead we will linearly scan the arguments.
-	// this behavior is in line with MySQL's, see MySQL's source code here:
-	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2713-L2788
-	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2632-L2686
 	for i := range args {
-		tp := args[i].GetType(ctx.GetEvalCtx())
-		if tp.EvalType() != types.ETInt {
+		if args[i].GetType(ctx.GetEvalCtx()).EvalType() != types.ETInt {
 			allInt = false
-		}
-		if !mysql.HasNotNullFlag(tp.GetFlag()) {
-			hasNullable = true
 		}
 	}
 
@@ -1215,12 +1206,21 @@ func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression)
 	if err != nil {
 		return nil, err
 	}
+	// Like MySQL, only use a binary search when there are more than 8 arguments and all the intervals are
+	// not null constants, otherwise scan the intervals linearly. See MySQL's source code here:
+	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2713-L2788
+	// https://github.com/mysql/mysql-server/blob/f8cdce86448a211511e8a039c62580ae16cb96f5/sql/item_cmpfunc.cc#L2632-L2686
+	useLinearSearch := len(args) <= 8
+	for i := 1; i < len(args) && !useLinearSearch; i++ {
+		c, ok := bf.args[i].(*Constant)
+		useLinearSearch = !ok || c.DeferredExpr != nil || c.ParamMarker != nil || c.Value.IsNull()
+	}
 	var sig builtinFunc
 	if allInt {
-		sig = &builtinIntervalIntSig{bf, hasNullable}
+		sig = &builtinIntervalIntSig{bf, useLinearSearch}
 		sig.setPbCode(tipb.ScalarFuncSig_IntervalInt)
 	} else {
-		sig = &builtinIntervalRealSig{bf, hasNullable}
+		sig = &builtinIntervalRealSig{bf, useLinearSearch}
 		sig.setPbCode(tipb.ScalarFuncSig_IntervalReal)
 	}
 	return sig, nil
@@ -1228,12 +1228,13 @@ func (c *intervalFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinIntervalIntSig struct {
 	baseBuiltinFunc
-	hasNullable bool
+	useLinearSearch bool
 }
 
 func (b *builtinIntervalIntSig) Clone() builtinFunc {
 	newSig := &builtinIntervalIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.useLinearSearch = b.useLinearSearch
 	return newSig
 }
 
@@ -1249,7 +1250,7 @@ func (b *builtinIntervalIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, 
 	}
 	isUint1 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	var idx int
-	if b.hasNullable {
+	if b.useLinearSearch {
 		idx, err = b.linearSearch(ctx, arg0, isUint1, b.args[1:], row)
 	} else {
 		idx, err = b.binSearch(ctx, arg0, isUint1, b.args[1:], row)
@@ -1290,47 +1291,60 @@ func (b *builtinIntervalIntSig) linearSearch(ctx EvalContext, target int64, isUi
 // All arguments are treated as integers.
 // It is required that arg[0] < args[1] < args[2] < ... < args[n] for this function to work correctly.
 // This is because a binary search is used (very fast).
-func (b *builtinIntervalIntSig) binSearch(ctx EvalContext, target int64, isUint1 bool, args []Expression, row chunk.Row) (_ int, err error) {
-	i, j, cmp := 0, len(args), false
-	for i < j {
-		mid := i + (j-i)/2
-		v, isNull, err1 := args[mid].EvalInt(ctx, row)
-		if err1 != nil {
-			err = err1
-			break
+// The search is the same as MySQL's, so unsorted arguments give the same result as in MySQL.
+func (b *builtinIntervalIntSig) binSearch(ctx EvalContext, target int64, isUint1 bool, args []Expression, row chunk.Row) (int, error) {
+	targetLess := func(idx int) (bool, error) {
+		v, isNull, err := args[idx].EvalInt(ctx, row)
+		if err != nil || isNull {
+			return false, err
 		}
-		if isNull {
-			v = target
-		}
-		isUint2 := mysql.HasUnsignedFlag(args[mid].GetType(ctx).GetFlag())
+		isUint2 := mysql.HasUnsignedFlag(args[idx].GetType(ctx).GetFlag())
 		switch {
 		case !isUint1 && !isUint2:
-			cmp = target < v
+			return target < v, nil
 		case isUint1 && isUint2:
-			cmp = uint64(target) < uint64(v)
+			return uint64(target) < uint64(v), nil
 		case !isUint1 && isUint2:
-			cmp = target < 0 || uint64(target) < uint64(v)
-		case isUint1 && !isUint2:
-			cmp = v > 0 && uint64(target) < uint64(v)
-		}
-		if !cmp {
-			i = mid + 1
-		} else {
-			j = mid
+			return target < 0 || uint64(target) < uint64(v), nil
+		default:
+			return v > 0 && uint64(target) < uint64(v), nil
 		}
 	}
-	return i, err
+	return intervalBinSearch(len(args), targetLess)
+}
+
+// intervalBinSearch finds the last argument that is not larger than the target, as MySQL's
+// Item_func_interval::val_int does, and returns its position, or 0 if it is larger than the target.
+func intervalBinSearch(n int, targetLess func(idx int) (bool, error)) (int, error) {
+	start, end := 0, n-1
+	for start < end {
+		mid := (start + end + 1) / 2
+		less, err := targetLess(mid)
+		if err != nil {
+			return 0, err
+		}
+		if less {
+			end = mid - 1
+		} else {
+			start = mid
+		}
+	}
+	less, err := targetLess(start)
+	if err != nil || less {
+		return 0, err
+	}
+	return start + 1, nil
 }
 
 type builtinIntervalRealSig struct {
 	baseBuiltinFunc
-	hasNullable bool
+	useLinearSearch bool
 }
 
 func (b *builtinIntervalRealSig) Clone() builtinFunc {
 	newSig := &builtinIntervalRealSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.hasNullable = b.hasNullable
+	newSig.useLinearSearch = b.useLinearSearch
 	return newSig
 }
 
@@ -1346,7 +1360,7 @@ func (b *builtinIntervalRealSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 	}
 
 	var idx int
-	if b.hasNullable {
+	if b.useLinearSearch {
 		idx, err = b.linearSearch(ctx, arg0, b.args[1:], row)
 	} else {
 		idx, err = b.binSearch(ctx, arg0, b.args[1:], row)
@@ -1368,24 +1382,14 @@ func (b *builtinIntervalRealSig) linearSearch(ctx EvalContext, target float64, a
 	return i, nil
 }
 
-func (b *builtinIntervalRealSig) binSearch(ctx EvalContext, target float64, args []Expression, row chunk.Row) (_ int, err error) {
-	i, j := 0, len(args)
-	for i < j {
-		mid := i + (j-i)/2
-		v, isNull, err1 := args[mid].EvalReal(ctx, row)
-		if err1 != nil {
-			err = err1
-			break
+func (b *builtinIntervalRealSig) binSearch(ctx EvalContext, target float64, args []Expression, row chunk.Row) (int, error) {
+	return intervalBinSearch(len(args), func(idx int) (bool, error) {
+		v, isNull, err := args[idx].EvalReal(ctx, row)
+		if err != nil || isNull {
+			return false, err
 		}
-		if isNull {
-			i = mid + 1
-		} else if cmp := target < v; !cmp {
-			i = mid + 1
-		} else {
-			j = mid
-		}
-	}
-	return i, err
+		return target < v, nil
+	})
 }
 
 type compareFunctionClass struct {
