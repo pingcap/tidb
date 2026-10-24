@@ -560,7 +560,8 @@ func TestNextGenMetering(t *testing.T) {
 			items[metering.DataKVBytesField].(int64) == 114 && items[metering.IndexKVBytesField].(int64) == 174 &&
 			items[metering.RequiredSlotsField].(int) == task.RequiredSlots &&
 			items[metering.MaxNodeCountField].(int) == task.MaxNodeCount &&
-			items[metering.DurationSecondsField].(int64) > 0
+			// Integer seconds truncate a task duration below one second to zero.
+			items[metering.DurationSecondsField].(int64) >= 0
 	}, 30*time.Second, 100*time.Millisecond)
 }
 
