@@ -71,7 +71,8 @@ type rowToEncode struct {
 type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
 
 // parserEncodeReader wraps a mydump.Parser as a encodeReaderFn.
-func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) encodeReaderFn {
+func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string, encoder *TableKVEncoder) encodeReaderFn {
+	_, isSQLParser := parser.(*mydump.ChunkParser)
 	return func(context.Context, []types.Datum) (data rowToEncode, closed bool, err error) {
 		readPos, _ := parser.Pos()
 		if readPos >= endOffset {
@@ -90,6 +91,12 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 		default:
 			err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, readPos)
 			return
+		}
+		if isSQLParser {
+			if err = encoder.UseFileColumns(parser.Columns()); err != nil {
+				err = common.ErrEncodeKV.Wrap(err).GenWithStackByArgs(filename, readPos)
+				return
+			}
 		}
 		lastRow := parser.LastRow()
 		data = rowToEncode{
@@ -457,7 +464,7 @@ func NewFileChunkProcessor(
 		deliver:    deliver,
 		enc: newChunkEncoder(
 			chunk.GetKey(),
-			parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey()),
+			parserEncodeReader(parser, chunk.EndOffset, chunk.GetKey(), encoder),
 			chunk.Offset,
 			deliver.sendEncodedData,
 			collector,

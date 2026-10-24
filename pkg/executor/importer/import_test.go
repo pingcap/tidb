@@ -38,7 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dumpformat/testutils"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	lightningkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -49,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
@@ -986,4 +990,65 @@ func TestGetDefMaxEngineSize(t *testing.T) {
 	} else {
 		require.Equal(t, config.ByteSize(100*units.GiB), getDefMaxEngineSize())
 	}
+}
+
+func TestKVEncoderUsesColumnListOfSQLFile(t *testing.T) {
+	newTable := func(createSQL string) table.Table {
+		stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
+		require.NoError(t, err)
+		tblInfo, err := ddl.MockTableInfo(mock.NewContext(), stmt.(*ast.CreateTableStmt), 1)
+		require.NoError(t, err)
+		tblInfo.State = model.StatePublic
+		tbl, err := tables.TableFromMeta(lightningkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
+		require.NoError(t, err)
+		return tbl
+	}
+	tbl := newTable("create table t (a int primary key, b int default 7, g int as (a + 1) virtual, c int)")
+
+	newEncoder := func(tbl table.Table, columnsAndUserVars []*ast.ColumnNameOrUserVar) *TableKVEncoder {
+		ctrl := &LoadDataController{
+			ASTArgs: &ASTArgs{ColumnsAndUserVars: columnsAndUserVars},
+			Plan:    &Plan{},
+			Table:   tbl,
+		}
+		require.NoError(t, ctrl.initLoadColumns(ctrl.initFieldMappings()))
+		encoder, err := NewTableKVEncoder(&encode.EncodingConfig{Table: tbl, Logger: log.L()}, ctrl)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, encoder.Close()) })
+		return encoder
+	}
+	ints := func(vals ...int64) []types.Datum {
+		row := make([]types.Datum, 0, len(vals))
+		for _, v := range vals {
+			row = append(row, types.NewIntDatum(v))
+		}
+		return row
+	}
+	checkRecord := func(encoder *TableKVEncoder, row []types.Datum, expected ...int64) {
+		record, err := encoder.parserData2TableData(row, 1)
+		require.NoError(t, err)
+		require.Equal(t, ints(expected...), record)
+	}
+
+	encoder := newEncoder(tbl, nil)
+	require.NoError(t, encoder.UseFileColumns([]string{"c", "b", "a"}))
+	checkRecord(encoder, ints(3, 2, 1), 1, 2, 2, 3)
+	require.NoError(t, encoder.UseFileColumns([]string{"a", "c"}))
+	checkRecord(encoder, ints(100, 300), 100, 7, 101, 300)
+	require.NoError(t, encoder.UseFileColumns(nil))
+	checkRecord(encoder, ints(1, 2, 0, 4), 1, 2, 2, 4)
+	require.ErrorContains(t, encoder.UseFileColumns([]string{"a", "x"}), "Unknown column 'x'")
+	checkRecord(encoder, ints(1, 2, 0, 4), 1, 2, 2, 4)
+
+	noHandleTbl := newTable("create table t (a int, b int)")
+	encoder = newEncoder(noHandleTbl, nil)
+	require.ErrorContains(t, encoder.UseFileColumns([]string{"_tidb_rowid", "a"}), "Unknown column '_tidb_rowid'")
+	checkRecord(encoder, ints(1, 2), 1, 2, 1)
+
+	encoder = newEncoder(tbl, []*ast.ColumnNameOrUserVar{
+		{ColumnName: &ast.ColumnName{Name: ast.NewCIStr("c")}},
+		{ColumnName: &ast.ColumnName{Name: ast.NewCIStr("a")}},
+	})
+	require.NoError(t, encoder.UseFileColumns([]string{"a", "c"}))
+	checkRecord(encoder, ints(300, 100), 100, 7, 101, 300)
 }
