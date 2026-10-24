@@ -2081,9 +2081,13 @@ func ParseTimeFromYear(year int64) (Time, error) {
 // ParseTimeFromNum parses a formatted int64,
 // returns the value which type is tp.
 func ParseTimeFromNum(ctx Context, num int64, tp byte, fsp int) (Time, error) {
+	fsp, err := CheckFsp(fsp)
+	if err != nil {
+		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
+	}
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
-		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
+		zt := NewTime(ZeroCoreTime, tp, fsp)
 		if !ctx.Flags().IgnoreZeroDateErr() {
 			switch tp {
 			case mysql.TypeTimestamp:
@@ -2096,11 +2100,6 @@ func ParseTimeFromNum(ctx Context, num int64, tp byte, fsp int) (Time, error) {
 		}
 		return zt, nil
 	}
-	fsp, err := CheckFsp(fsp)
-	if err != nil {
-		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
-	}
-
 	t, err := parseDateTimeFromNum(ctx, num)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
