@@ -170,6 +170,24 @@ hex(t0.c1)
 57
 674F
 drop table if exists t0;
+drop table if exists t_outer, t_inner;
+create table t_outer (id int);
+insert into t_outer values (1), (2), (3), (4);
+create table t_inner (a blob, b int);
+insert into t_inner values ('x', 1), ('y', 1), ('z', 1);
+select count(*) from t_outer where (0, 1) in (select a, b from t_inner);
+count(*)
+4
+select id from t_outer where (0, 1) in (select a, b from t_inner) order by id;
+id
+1
+2
+3
+4
+select id from t_outer where (id, 0) in (select b, a from t_inner) order by id;
+id
+1
+drop table if exists t_outer, t_inner;
 drop table if exists t1, t2;
 create table t1 (a int, key b (a));
 create table t2 (a int, key b (a));
