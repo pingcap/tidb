@@ -36,6 +36,8 @@ pub(crate) struct AccountState {
     pub(crate) login_user: Option<String>,
     pub(crate) current_user: Option<String>,
     pub(crate) active_roles: Vec<privilege::Account>,
+    /// Go `GetRestrictedSQLExecutor` for the `mysql.user` read.
+    pub(crate) restricted_sql: crate::restricted_sql::RestrictedSql,
 }
 
 impl AccountState {
@@ -175,34 +177,29 @@ impl AccountState {
     /// Go `memtableRetriever.setDataForUserAttributes`: read the metadata
     /// object from the real `mysql.user` table, then apply MySQL 8.0.22's
     /// account-visibility rules before exposing the virtual rows. The query
-    /// runs against the statement's catalog snapshot, so account DML and
-    /// `INFORMATION_SCHEMA.USER_ATTRIBUTES` cannot observe different rows.
+    /// runs as Go's restricted SQL on an internal session, reading committed
+    /// rows; its error is the table's error (`infoschema_reader.go:382`).
     pub(crate) fn user_attributes_rows(
         &self,
         catalog: &Catalog,
         ctx: &tidb_executor::StmtContext,
-    ) -> Vec<Vec<tidb_datatype::Datum>> {
-        let Ok((_columns, rows)) = tidb_executor::run_select_meta_in(
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
+        let rows = crate::restricted_sql::exec_restricted_sql_over(
+            self.restricted_sql.as_deref(),
             "SELECT User, Host, JSON_UNQUOTE(JSON_EXTRACT(User_attributes, '$.metadata')) \
              FROM mysql.user",
             catalog,
-            "mysql",
             ctx,
-        ) else {
-            // A bare in-process catalog has no bootstrapped mysql.user table.
-            // Go's restricted reader returns no rows in that shape rather than
-            // fabricating account metadata.
-            return Vec::new();
-        };
+        )?;
 
         let Some((viewer_user, viewer_host)) = self.current_identity() else {
-            return rows;
+            return Ok(rows);
         };
         let Some(registry) = self.privileges.as_ref() else {
-            return rows;
+            return Ok(rows);
         };
         if self.privilege_bypassed {
-            return rows;
+            return Ok(rows);
         }
 
         let can_read_all = registry.has_priv_mask_with_roles(
@@ -229,7 +226,7 @@ impl AccountState {
             false,
         );
 
-        rows.into_iter()
+        Ok(rows.into_iter()
             .filter(|row| {
                 if row.len() != 3 || can_read_all {
                     return row.len() == 3;
@@ -261,7 +258,7 @@ impl AccountState {
                 // so a CREATE USER caller cannot inspect a protected target.
                 !registry.has_dynamic_priv(&user, &host, "SYSTEM_USER", false)
             })
-            .collect()
+            .collect())
     }
 
 }
@@ -384,7 +381,7 @@ impl MemTableRetriever for AccountRetriever {
         Ok(if read.table_name.go_lower_eq("USER_PRIVILEGES") {
             self.account.user_privileges_rows()
         } else {
-            self.account.user_attributes_rows(catalog, ctx)
+            self.account.user_attributes_rows(catalog, ctx)?
         })
     }
 }

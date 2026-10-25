@@ -689,10 +689,7 @@ impl Session {
             crate::user_table::sql_str(user),
             crate::user_table::sql_str(&host.go_to_lower()),
         );
-        let ctx = self.statement_context(false);
-        let (_, rows) = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_select_meta_in(&sql, catalog, tidb_mysql::consts::SystemDB, &ctx)
-        })?;
+        let rows = self.exec_restricted_sql(&sql)?;
         let Some(row) = rows.into_iter().next() else {
             return Ok(None);
         };

@@ -3611,34 +3611,17 @@ impl ClusterSessionFactory {
             let auto_ids = Arc::clone(&self.auto_ids);
             let globals = self.global_vars.clone();
             let statistics_view = Arc::clone(&self.statistics_view);
+            let restricted_sql = Arc::new(NodeRestrictedSql {
+                factory: self.binding_session_factory.clone(),
+            });
+            session.set_restricted_sql_executor(Arc::clone(&restricted_sql) as _);
             session.set_snapshot_schema_provider(Arc::new(move |ts, resource_group, validate| {
                 let hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
                 let snapshot = transactions
                     .open_snapshot_at(ts, resource_group)
                     .map_err(tidb_executor::DriverError::unsupported)?;
                 if validate {
-                    // Go uses restricted SQL at current time, independent of the
-                    // user's transaction, staged writes and previous snapshot pin.
-                    let mut slot = SwappableSnapshot::new();
-                    drop(
-                        slot.bind(
-                            transactions
-                                .open_snapshot(resource_group)
-                                .map_err(tidb_executor::DriverError::unsupported)?,
-                        ),
-                    );
-                    let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::new(Mutex::new(slot));
-                    let current_storage = ClusterTableStorage::new(MutationBuffer::new(), handle);
-                    let built = cluster_session_catalog_with_templates(
-                        &catalogs.load(),
-                        &current_storage,
-                        Some(Arc::clone(&statistics_view)),
-                        auto_ids.as_ref(),
-                        &current_storage,
-                        None,
-                    );
-                    let mut restricted = Session::over_catalog(Arc::new(Mutex::new(built.catalog)));
-                    restricted.validate_snapshot_gc(ts)?;
+                    crate::gcutil::validate_snapshot(restricted_sql.as_ref(), ts)?;
                 }
                 let mut metadata = SnapshotMetaSnapshot::new(snapshot);
                 let capacity = globals
@@ -7626,6 +7609,28 @@ impl crate::stored_state_service::AccountService for ClusterAccountService {
 
 /// A system session running an account executor's SQL.
 struct AccountSystemSession(ClusterServerSession);
+
+/// Go `withRestrictedSQLExecutor` without `ExecOptionUseCurSession`: each
+/// statement takes an internal session of this node (`getInternalSession`)
+/// and runs in that session's own autocommit transaction.
+struct NodeRestrictedSql {
+    factory: Weak<ClusterSessionFactory>,
+}
+
+impl crate::restricted_sql::RestrictedSqlExecutor for NodeRestrictedSql {
+    fn exec_restricted_sql(
+        &self,
+        sql: &str,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::DriverError> {
+        let factory = self.factory.upgrade().ok_or_else(|| {
+            tidb_executor::DriverError::unsupported("cluster session factory is stopped")
+        })?;
+        let session = factory
+            .open_system_session()
+            .map_err(sql_query_error_to_driver)?;
+        crate::user_table::AccountSqlSession::execute(&mut AccountSystemSession(session), sql)
+    }
+}
 
 impl crate::user_table::AccountSqlSession for AccountSystemSession {
     fn execute(

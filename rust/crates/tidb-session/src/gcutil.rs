@@ -14,29 +14,34 @@
 
 use tidb_executor::DriverError;
 
-use crate::Session;
+use crate::restricted_sql::RestrictedSqlExecutor;
 
-impl Session {
-    /// Used by the independent restricted snapshot selected by the storage owner.
-    pub fn validate_snapshot_gc(&mut self, ts: u64) -> Result<(), DriverError> {
-        tidb_gcutil::validate_snapshot(self, ts).map_err(driver_error)
-    }
+/// Go `validateSnapshot`: the GC safe point read through restricted SQL, on
+/// an internal session at the current time, independent of the user's
+/// transaction, staged writes and snapshot pin.
+pub(crate) fn validate_snapshot(
+    executor: &dyn RestrictedSqlExecutor,
+    ts: u64,
+) -> Result<(), DriverError> {
+    tidb_gcutil::validate_snapshot(&mut RestrictedGcContext(executor), ts).map_err(driver_error)
 }
 
-impl tidb_gcutil::Context for Session {
+/// `tidb_gcutil`'s session context over a restricted SQL executor.
+struct RestrictedGcContext<'a>(&'a dyn RestrictedSqlExecutor);
+
+impl tidb_gcutil::Context for RestrictedGcContext<'_> {
     type Error = DriverError;
 
     fn get_global_sys_var(&mut self, name: &str) -> Result<String, Self::Error> {
-        self.vars
-            .get_global(name)
-            .map_err(crate::variables::var_error)
+        Err(DriverError::unsupported(format!(
+            "restricted GC context reads no global variable ({name})"
+        )))
     }
 
-    fn set_global_sys_var(&mut self, name: &str, value: &str) -> Result<(), Self::Error> {
-        self.vars
-            .set_global(name, value.to_owned())
-            .map(|_| ())
-            .map_err(crate::variables::var_error)
+    fn set_global_sys_var(&mut self, name: &str, _value: &str) -> Result<(), Self::Error> {
+        Err(DriverError::unsupported(format!(
+            "restricted GC context writes no global variable ({name})"
+        )))
     }
 
     fn exec_restricted_sql(
@@ -50,11 +55,9 @@ impl tidb_gcutil::Context for Session {
             let quoted = format!("'{}'", argument.replace('\\', "\\\\").replace('\'', "''"));
             statement = statement.replacen("%?", &quoted, 1);
         }
-        let ctx = self.statement_context(false);
-        let (_, rows) = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_select_meta_in(&statement, catalog, "mysql", &ctx)
-        })?;
-        Ok(rows
+        Ok(self
+            .0
+            .exec_restricted_sql(&statement)?
             .into_iter()
             .map(|row| {
                 row.iter()

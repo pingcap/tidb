@@ -792,6 +792,9 @@ pub struct Session {
     /// Statement-only SnapshotTS override; the ordinary transaction stays intact.
     statement_snapshot: Option<(u64, txn::HistoricalRead)>,
     restricted_sql: bool,
+    /// Go `GetRestrictedSQLExecutor`: internal sessions of the node, absent
+    /// on the in-process tier; see [`restricted_sql`].
+    restricted_sql_executor: restricted_sql::RestrictedSql,
     /// The statistics handle's persisted predicate-column usage reader.
     column_stats_usage: Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>,
     /// The persisted analyze-job reader shared by SHOW and ANALYZE_STATUS.
@@ -1145,6 +1148,7 @@ impl Session {
             snapshot_schema: None,
             statement_snapshot: None,
             restricted_sql: false,
+            restricted_sql_executor: None,
             column_stats_usage: None,
             analyze_status: None,
             table_storage_stats: None,
@@ -1361,6 +1365,7 @@ pub mod stats_statement_service;
 mod dispatch;
 mod explain_arm;
 mod gcutil;
+pub mod restricted_sql;
 mod identity;
 pub mod infoschema;
 mod inspection;

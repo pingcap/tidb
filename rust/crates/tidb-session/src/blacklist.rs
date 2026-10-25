@@ -91,15 +91,8 @@ impl Session {
     /// Go `LoadExprPushdownBlacklist`, and the `ADMIN RELOAD
     /// EXPR_PUSHDOWN_BLACKLIST` that calls it.
     pub(crate) fn reload_expr_pushdown_blacklist(&mut self) -> Result<(), DriverError> {
-        let ctx = self.statement_context(false);
-        let (_, rows) = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_select_meta_in(
-                "SELECT name, store_type FROM mysql.expr_pushdown_blacklist",
-                catalog,
-                "mysql",
-                &ctx,
-            )
-        })?;
+        let rows =
+            self.exec_restricted_sql("SELECT name, store_type FROM mysql.expr_pushdown_blacklist")?;
         let mut loaded = ExprPushDownBlacklist::new();
         for row in rows {
             let Some(name) = row.first().and_then(crate::datum_text) else {
@@ -120,15 +113,7 @@ impl Session {
     /// NOT case-folded, which is Go's behaviour: `row.GetString(0)` goes into
     /// the set as written.
     pub(crate) fn reload_opt_rule_blacklist(&mut self) -> Result<(), DriverError> {
-        let ctx = self.statement_context(false);
-        let (_, rows) = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_select_meta_in(
-                "SELECT name FROM mysql.opt_rule_blacklist",
-                catalog,
-                "mysql",
-                &ctx,
-            )
-        })?;
+        let rows = self.exec_restricted_sql("SELECT name FROM mysql.opt_rule_blacklist")?;
         let mut loaded = HashSet::new();
         for row in rows {
             if let Some(name) = row.first().and_then(crate::datum_text) {

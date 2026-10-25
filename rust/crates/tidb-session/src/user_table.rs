@@ -450,17 +450,15 @@ impl Session {
         self.run_user_table_write(&sql)
     }
 
-    /// Rows of one internal read of the `mysql` schema, as Go's privilege
-    /// executors read their tables through the system session (inside the
-    /// statement's own writes).
+    /// Rows of one internal read of the `mysql` schema: inside an account
+    /// statement, on its system session (seeing the statement's own writes,
+    /// as Go's privilege executors read through it); otherwise Go's
+    /// restricted SQL on an internal session.
     pub(crate) fn user_table_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
         if let Some(system) = self.account_sql.as_mut() {
             return system.execute(sql);
         }
-        let ctx = self.statement_context(false);
-        self.with_staged_catalog(|catalog| {
-            tidb_executor::run_select_meta_in(sql, catalog, "mysql", &ctx).map(|(_, rows)| rows)
-        })
+        self.exec_restricted_sql(sql)
     }
 
     /// Go `ctx.GetSessionVars().User.String()`: the Grantor Go records.

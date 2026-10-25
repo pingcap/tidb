@@ -879,9 +879,9 @@ impl Session {
             .map_or("", |(user, _)| user)
             .to_owned();
         let action = decide_summary_stmt(&SummaryGate {
-            // This session owner represents restricted SQL with no authenticated
-            // identity. EXPLAIN EXPLORE has no runtime consumer here yet.
-            in_restricted_sql: false,
+            // Go `sessVars.InRestrictedSQL`: an internal session's statements
+            // are internal. EXPLAIN EXPLORE has no runtime consumer here yet.
+            in_restricted_sql: self.restricted_sql,
             user_name: user.clone(),
             in_explain_explore: false,
             summary_enabled: tidb_stmtsummary::v2::stmtsummary::enabled(),

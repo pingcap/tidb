@@ -255,6 +255,7 @@ impl Session {
             login_user: self.login_user.clone(),
             current_user: self.current_user.clone(),
             active_roles: self.active_roles.to_vec(),
+            restricted_sql: self.restricted_sql_executor(),
         }
     }
 

@@ -61,6 +61,9 @@ pub(crate) struct ViewerState {
     /// Go `RequestVerification("", "", "", mysql.ProcessPriv)`, which the
     /// metric-backed tables ask before they look at their extractor.
     pub(crate) process_scoped: bool,
+    /// Go `GetRestrictedSQLExecutor`, which the inspection retrievers query
+    /// the metrics tables through.
+    pub(crate) restricted_sql: crate::restricted_sql::RestrictedSql,
     /// `@@tidb_slow_query_file`.
     pub(crate) slow_query_file: String,
     /// The DDL job store a node installs, else the shared catalog's history.
@@ -361,8 +364,12 @@ impl MemTableRetriever for InstanceStateRetriever {
         // Go's retrievers query the metrics tables through the restricted SQL
         // executor.
         let query_metrics = |sql: &str| {
-            tidb_executor::run_select_meta_in(sql, catalog, "metrics_schema", ctx)
-                .map(|(_, rows)| rows)
+            crate::restricted_sql::exec_restricted_sql_over(
+                self.viewer.restricted_sql.as_deref(),
+                sql,
+                catalog,
+                ctx,
+            )
         };
         if table.go_lower_eq("INSPECTION_SUMMARY") {
             let Some(Extractor::InspectionSummaryTable(extractor)) = &read.extractor else {

@@ -383,3 +383,35 @@ fn analyzed_root_filter_uses_table_histogram_population() {
     );
     assert_eq!(row_text(session.run(query)), vec![vec!["3"]]);
 }
+
+/// Go's `LoadExprPushdownBlacklist` and `LoadOptRuleBlacklist` read through
+/// `ExecRestrictedSQL(ctx, nil, ...)`, which runs on an internal session in
+/// its own transaction (`withRestrictedSQLExecutor` -> `getInternalSession`):
+/// an `ADMIN RELOAD` inside an open transaction sees committed rows, not that
+/// transaction's own uncommitted ones.
+#[test]
+fn admin_reload_reads_committed_rows_not_the_open_transaction() {
+    let mut session = Session::new();
+    session.run("BEGIN").unwrap();
+    session
+        .run("INSERT INTO mysql.expr_pushdown_blacklist VALUES ('abs','tikv','why')")
+        .unwrap();
+    session
+        .run("INSERT INTO mysql.opt_rule_blacklist VALUES ('decorrelate')")
+        .unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+    session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
+    let (expressions, rules) = session.debug_blacklists();
+    assert!(expressions.is_empty(), "{expressions:?}");
+    assert!(rules.is_empty(), "{rules:?}");
+
+    session.run("COMMIT").unwrap();
+    session.run("ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST").unwrap();
+    session.run("ADMIN RELOAD OPT_RULE_BLACKLIST").unwrap();
+    let (expressions, rules) = session.debug_blacklists();
+    assert_eq!(
+        expressions.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        vec!["abs"]
+    );
+    assert_eq!(rules, vec!["decorrelate"]);
+}
