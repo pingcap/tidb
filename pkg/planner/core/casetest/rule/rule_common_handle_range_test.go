@@ -15,7 +15,6 @@
 package rule
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -266,19 +265,6 @@ func TestCommonHandleIndexRanges(t *testing.T) {
 			"select * from t_chr_dec use index(ia) where a = 10 and pk = 2.50",
 		).Check(testkit.Rows("2.50 10"))
 	}
-}
-
-// explainHas scans EXPLAIN output rows and returns whether any line contains
-// the given substring.
-func explainHas(rows [][]any, substr string) bool {
-	for _, row := range rows {
-		for _, col := range row {
-			if s, ok := col.(string); ok && strings.Contains(s, substr) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // TestCommonHandleIndexRangesWithTupleCompare covers a tuple comparison that spans the

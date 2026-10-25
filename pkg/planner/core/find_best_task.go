@@ -891,8 +891,9 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 // hasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
 // with new collation enabled and at least one non-binary string column in the
 // handle. In this combination the handle bytes stored in the index are collation
-// sortKey weights, not original values, so they cannot be used as scan ranges.
-// (Taken from #66645, which is not yet on release-8.5.)
+// sortKey weights, not original values, so they cannot be used as scan ranges,
+// and collation-aware comparison on those bytes during merge-sort would be
+// incorrect.
 func hasV0NewCollationStringHandle(ds *logicalop.DataSource) bool {
 	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
 		return false
@@ -945,11 +946,57 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
-	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
+	if prop.IsSortItemEmpty() || !all {
 		return property.PropNotMatched
 	}
 
-	// Basically, if `prop.SortItems` is the prefix of `path.IdxCols`, then the property is matched.
+	// For non-unique secondary indexes on CommonHandle tables, the index physically
+	// stores (index_cols, PK_cols). Build an effective column list that includes the
+	// PK suffix so that ORDER BY on PK columns can be recognised.
+	//
+	// Skip this when CommonHandleVersion == 0 with new collation enabled and
+	// the handle contains non-binary string columns. In v0, string handle columns
+	// are stored as sortKey bytes (collation weight), not original values. If we
+	// extend idxCols and the query triggers PropMatchedNeedMergeSort (e.g. IN
+	// predicate), the merge-sort comparator would apply the column's collation to
+	// sortKey bytes, producing incorrect ordering.
+	idxCols := path.IdxCols
+	idxColLens := path.IdxColLens
+	if path.Index != nil && !path.Index.Unique && !path.Index.Primary &&
+		ds.TableInfo.IsCommonHandle && len(ds.CommonHandleCols) > 0 &&
+		len(path.Index.Columns) == len(path.IdxCols) &&
+		!hasV0NewCollationStringHandle(ds) {
+		extended := false
+		for i, handleCol := range ds.CommonHandleCols {
+			if handleCol == nil {
+				continue
+			}
+			alreadyInIndex := false
+			for _, col := range idxCols {
+				if col != nil && col.EqualColumn(handleCol) {
+					alreadyInIndex = true
+					break
+				}
+			}
+			if !alreadyInIndex {
+				if !extended {
+					idxCols = make([]*expression.Column, len(path.IdxCols), len(path.IdxCols)+len(ds.CommonHandleCols))
+					copy(idxCols, path.IdxCols)
+					idxColLens = make([]int, len(path.IdxColLens), len(path.IdxColLens)+len(ds.CommonHandleCols))
+					copy(idxColLens, path.IdxColLens)
+					extended = true
+				}
+				idxCols = append(idxCols, handleCol)
+				idxColLens = append(idxColLens, ds.CommonHandleLens[i])
+			}
+		}
+	}
+
+	if len(idxCols) < len(prop.SortItems) {
+		return property.PropNotMatched
+	}
+
+	// Basically, if `prop.SortItems` is the prefix of `idxCols`, then the property is matched.
 	// However, we need to consider the situations when some columns of `path.IdxCols` are evaluated as constant.
 	// For example:
 	// ```
@@ -971,9 +1018,9 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	colIdx := 0
 	for _, sortItem := range prop.SortItems {
 		found := false
-		for ; colIdx < len(path.IdxCols); colIdx++ {
+		for ; colIdx < len(idxCols); colIdx++ {
 			// Case 1: this sort item is satisfied by the index column, go to match the next sort item.
-			if path.IdxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(path.IdxCols[colIdx]) {
+			if idxColLens[colIdx] == types.UnspecifiedLength && sortItem.Col.EqualColumn(idxCols[colIdx]) {
 				found = true
 				colIdx++
 				break
