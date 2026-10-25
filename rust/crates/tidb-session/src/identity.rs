@@ -856,6 +856,16 @@ impl Session {
     }
 
     pub fn attach_privileges(&mut self, registry: privilege::PrivilegeRegistry) {
+        // A session on the store reads its domain's privilege cache, as a Go
+        // session does; a private registry would hide every account
+        // statement the node persists from this session.
+        let registry = match (&self.node, &self.privileges) {
+            (Some(_), Some(domain)) => {
+                drop(registry);
+                domain.clone()
+            }
+            _ => registry,
+        };
         // Go's `Auth` activates the account's DEFAULT roles the moment the
         // connection is authenticated (captured: a fresh session reports its
         // default roles from `CURRENT_ROLE()` with no `SET ROLE` at all).

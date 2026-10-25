@@ -741,6 +741,11 @@ fn cluster_lifecycle_batch_auto_analyze_kill_requires_connection_admin() {
 
 #[test]
 fn cluster_peer_batch_remote_id_never_uses_local_registry() {
+    // Injects the in-process tier's server id and process registry; a node
+    // session takes both from its node.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let registry = process::ProcessRegistry::default();
     let target = Arc::new(KillCounter::default());
     let mut session = Session::new();

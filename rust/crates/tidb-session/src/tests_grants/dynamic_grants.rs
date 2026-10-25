@@ -279,7 +279,7 @@ fn user_privileges_uses_raw_host_patterns_and_mysql_schema_select() {
         admin.run(sql).unwrap();
     }
     let registry = admin.privileges.clone().unwrap();
-    let mut alice = Session::new();
+    let mut alice = Session::with_catalog(admin.shared_catalog());
     // The login host is the address the raw USER_PRIVILEGES cache matches;
     // CURRENT_USER holds the most-specific mysql.user row selected by auth.
     alice.set_user("alice@localhost".to_owned(), "alice@127.0.0.1".to_owned());

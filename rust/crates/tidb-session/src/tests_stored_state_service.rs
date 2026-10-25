@@ -84,6 +84,11 @@ impl PendingSysvarChange for FakePendingSysvars {
 
 #[test]
 fn account_statements_run_on_the_scratch_registry_and_commit_only_on_success() {
+    // A node session's account statements go through its node's own account
+    // seam on the store; this fake service is the in-process tier's door.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session.attach_privileges(PrivilegeRegistry::default());
     let committed = Rc::new(Cell::new(false));

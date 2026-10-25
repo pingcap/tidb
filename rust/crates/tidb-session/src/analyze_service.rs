@@ -58,6 +58,9 @@ impl Session {
         tables: &[AnalyzeStatement],
         service: &dyn AnalyzeService,
     ) -> Result<(), DriverError> {
+        // Go plans against the domain's latest schema; a node session's
+        // catalog catches up with its node first (a no-op inside the node).
+        self.refresh_node_catalog()?;
         // Go checks the privileges of EVERY named table before running any
         // of them: `buildAnalyze` appends the visitInfo for each and
         // `CheckPrivilege` runs over the whole plan, so `ANALYZE TABLE ok, no`

@@ -2019,8 +2019,7 @@ fn slow_log_rules_and_last_ddl_info_follow_go() {
 }
 
 /// `TRACE` runs its statement and reports the spans its run recorded in Go's
-/// three formats. This in-process path drains the record set inside
-/// `session.ExecuteStmt`, so the executor calls sit under `session.runStmt`.
+/// three formats.
 #[test]
 fn trace_reports_go_spans() {
     let mut session = Session::new();
@@ -2029,9 +2028,11 @@ fn trace_reports_go_spans() {
         .iter()
         .map(|row| row[0].trim_end().to_owned())
         .collect::<Vec<_>>();
-    assert_eq!(
-        operations,
-        [
+    // Go drains the record set under the trace span after `ExecuteStmt`
+    // returns (oracle: `TRACE SELECT 1`), which is what a store session
+    // does; the in-process tier drains inside `session.runStmt`.
+    let expected: &[&str] = if crate::tests_support::in_process_tier() {
+        &[
             "trace",
             "  └─session.ExecuteStmt",
             "    ├─executor.Compile",
@@ -2043,7 +2044,21 @@ fn trace_reports_go_spans() {
             "      └─*executor.ProjectionExec.Next",
             "        └─*executor.TableDualExec.Next",
         ]
-    );
+    } else {
+        &[
+            "trace",
+            "  ├─session.ExecuteStmt",
+            "  │ ├─executor.Compile",
+            "  │ │ ├─planner.Preprocess",
+            "  │ │ └─planner.Optimize",
+            "  │ └─session.runStmt",
+            "  ├─*executor.ProjectionExec.Next",
+            "  │ └─*executor.TableDualExec.Next",
+            "  └─*executor.ProjectionExec.Next",
+            "    └─*executor.TableDualExec.Next",
+        ]
+    };
+    assert_eq!(operations, expected);
     let log = row_text(session.run("TRACE FORMAT = 'log' SELECT 1"));
     assert_eq!(log[0][1], "--- start span trace ----");
     assert!(
