@@ -1417,7 +1417,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			rArgs = rexpr.(*expression.ScalarFunction).GetArgs()
 		}
 		rhsKeys := make([]expression.Expression, lLen)
-		var castedConds []*expression.ScalarFunction
+		var projectedCastSources map[int64]*expression.Column
 		needProj := false
 		for i := range lLen {
 			rhsKeys[i] = np.Schema().Columns[i]
@@ -1433,7 +1433,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 					// by type coercion rules). Materialize it as an inner projection column so both
 					// DISTINCT and JOIN use exactly this coerced key.
 					rhsKeys[i] = rhs
-					castedConds = append(castedConds, sf)
 					needProj = true
 				}
 			}
@@ -1448,6 +1447,12 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 					RetType:  key.GetType(er.sctx.GetEvalCtx()).Clone(),
 				}
 				projCols = append(projCols, projCol)
+				if src, ok := logicalop.ExtractCastSourceColumn(key); ok {
+					if projectedCastSources == nil {
+						projectedCastSources = make(map[int64]*expression.Column)
+					}
+					projectedCastSources[projCol.UniqueID] = src
+				}
 				// Rebuild join condition against the projected key; this preserves
 				// the same coercion behavior while preventing duplicate matches.
 				cond, err := er.constructBinaryOpFunction(lArgs[i], projCol, ast.EQ)
@@ -1466,10 +1471,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			distinctChild = proj
 			distinctLen = lLen
 			joinCondition = expression.ComposeCNFCondition(er.sctx, conds...)
-			// The join only sees the projected inner key, so warn about the conversion as it would.
-			for _, sf := range castedConds {
-				logicalop.AppendImplicitJoinKeyConversionWarning(planCtx.builder.ctx, sf.GetArgs()[0], sf.GetArgs()[1])
-			}
 		}
 		// Build distinct for the inner query.
 		agg, err := planCtx.builder.buildDistinct(distinctChild, distinctLen)
@@ -1479,6 +1480,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 		// Build inner join above the aggregation.
 		join := logicalop.LogicalJoin{JoinType: base.InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
+		join.ProjectedKeyCastSources = projectedCastSources
 		join.SetChildren(planCtx.plan, agg)
 		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.Schema()))
 		join.SetOutputNames(make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len()))

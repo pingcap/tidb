@@ -187,16 +187,24 @@ id
 select id from t_outer where (id, 0) in (select b, a from t_inner) order by id;
 id
 1
-insert into t_inner values ('2', 2), ('2.0', 2);
+delete from t_inner;
+insert into t_inner values ('2', 2), ('02', 2);
 select id from t_outer where (id, id) in (select a, b from t_inner) order by id;
 id
 2
 show warnings;
 Level	Code	Message
 Warning	1105	Implicit type or collation conversion on join keys (executor__jointest__join.t_outer.id = executor__jointest__join.t_inner.a) may make indexes unusable
-Warning	1292	Truncated incorrect DOUBLE value: 'x'
-Warning	1292	Truncated incorrect DOUBLE value: 'y'
-Warning	1292	Truncated incorrect DOUBLE value: 'z'
+create view v_in as select id from t_outer where (id, id) in (select a, b from t_inner);
+show warnings;
+Level	Code	Message
+select id from v_in order by id;
+id
+2
+show warnings;
+Level	Code	Message
+Warning	1105	Implicit type or collation conversion on join keys (executor__jointest__join.t_outer.id = executor__jointest__join.t_inner.a) may make indexes unusable
+drop view v_in;
 drop table if exists t_outer, t_inner;
 drop table if exists t1, t2;
 create table t1 (a int, key b (a));
