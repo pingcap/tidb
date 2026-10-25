@@ -19,7 +19,7 @@ popd
 
 ## Failpoint decision for unit tests
 
-- Policy reference: `AGENTS.md` -> `Quick Decision Matrix` (`Unit tests in a package that uses failpoints`).
+- Policy reference: `AGENTS.md` -> `Task -> Validation Matrix` (rules that apply to every row: failpoints).
 
 ```bash
 rg -n --fixed-strings -- "failpoint." pkg/<package_name>
@@ -49,7 +49,7 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 
 ## Related guidance
 
-- Bug-fix regression policy lives in `AGENTS.md` -> `Quick Decision Matrix` (`Bug fix`).
+- Bug-fix regression policy lives in `AGENTS.md` -> `Task -> Validation Matrix` (rules that apply to every row: bug fix).
 - Test placement, naming, `shard_count`, and package-specific testdata rules live in `.agents/skills/tidb-test-guidelines`.
 - Include exact test commands in PR description under `Tests` when preparing a PR update.
 
@@ -71,7 +71,7 @@ popd
 ## RealTiKV tests (`/tests/realtikvtest`)
 
 - Use for cases requiring real TiKV/TiUP Playground behavior and tests under `tests/realtikvtest/`.
-- Policy reference: `AGENTS.md` -> `Quick Decision Matrix` (`RealTiKV tests`).
+- Policy reference: `AGENTS.md` -> `Task -> Validation Matrix` (`tests/realtikvtest/**` row).
 
 Start playground in background:
 
@@ -140,5 +140,5 @@ PD_ADDR=127.0.0.1:2379
 ! curl -sf "http://${PD_ADDR}/pd/api/v1/version"
 ```
 
-- For fmt-only PRs, follow `Quick Decision Matrix` and skip costly `realtikvtest`.
+- For fmt-only PRs, follow `AGENTS.md` -> `Task -> Validation Matrix` (fmt-only row) and skip costly `realtikvtest`.
 - Alternative RealTiKV workflows are available in `tests/realtikvtest/scripts/classic/` and `tests/realtikvtest/scripts/next-gen/`.

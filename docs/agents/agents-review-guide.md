@@ -47,7 +47,8 @@ Validate these first because they caused prior drift/regressions:
 ### 4) Testing and Validation Consistency
 
 - [ ] `Task -> Validation Matrix` still defines minimal required test surfaces by change scope.
-- [ ] `Testing Policy` remains policy-level and points to command playbooks under `docs/agents/`.
+- [ ] The matrix's rules for every row (regression tests, failpoints) remain policy-level and point to command playbooks under `docs/agents/`.
+- [ ] `Change Scope Decides the Gates` still routes Go-only gates (`make lint`, `make bazel_prepare`) away from `rust/`-only and docs-only changes.
 - [ ] RealTiKV rule still requires background start and mandatory cleanup.
 - [ ] Bug-fix policy still requires regression tests with fail-before-fix/pass-after-fix evidence (or explicit infeasibility note).
 
@@ -74,7 +75,7 @@ Use from repository root.
 ```bash
 # Check critical policy anchors in AGENTS.md
 grep -n "Issue Number:" AGENTS.md
-grep -n "Task -> Validation Matrix\|Testing Policy\|make bazel_prepare" AGENTS.md
+grep -n "Task -> Validation Matrix\|Change Scope Decides the Gates\|make bazel_prepare" AGENTS.md
 
 # Ensure normative keywords are not wrapped in backticks in policy docs.
 rg -n -P '\x60(MUST(?: NOT)?|SHOULD|MAY)\x60' AGENTS.md docs/agents/agents-review-guide.md

@@ -2,202 +2,84 @@
 
 This file provides guidance to agents working in this repository.
 
-## Purpose and Precedence
-
-- MUST means required.
-- SHOULD means recommended unless there is a concrete reason to deviate.
-- MAY means optional.
-- Root `AGENTS.md` defines repository-wide defaults. If a deeper path later adds a more specific `AGENTS.md`, the deeper file SHOULD be treated as higher precedence for that subtree.
+MUST means required, SHOULD means recommended unless there is a concrete reason to deviate, MAY means optional. A deeper `AGENTS.md` takes precedence for its subtree.
 
 ## Non-negotiables
 
 1. Correctness first. TiDB is a distributed SQL database; seemingly small changes can alter SQL semantics, consistency, or cluster behavior.
-2. No speculative behavior. Do not invent APIs, defaults, protocol behavior, or test workflows.
+2. No speculative behavior. Do not invent APIs, defaults, protocol behavior, or test workflows. For repo-specific terms, check the repository first.
 3. Keep diffs minimal. Avoid unrelated refactors, broad renames, or formatting-only churn unless explicitly requested.
 4. Leave verifiable evidence. Run targeted checks and report exact commands.
-5. Respect generated code artifacts. Do not hand-edit generated code outputs; regenerate from source inputs.
-6. TiDB Go-to-Rust transcreation MUST use one complete upstream Go package or
-   pinned external-module package as the minimum implementation and completion
-   unit. A claim MUST include every production source,
-   build/platform/generated variant and input, original test/support artifact,
-   fixture, build artifact, and required validation gate for that package.
-   One Go package MAY map to multiple Rust crates when that gives native
-   boundaries or faster builds, but the Go package retains one atomic claim,
-   complete inventory, integration decision, and receipt.
-   Partial file/function/branch/feature ports MAY remain explicit seed
-   evidence, but MUST NOT be dispatched, integrated, or reported as a
-   transcreated package.
-7. For any change under `rust/`, the pre-commit hook MUST run the basic Rust
-   server build and the commit MUST NOT proceed unless it passes:
-   `cd rust && cargo build --locked -p tidb-server`.
-8. Before pushing a branch that contains Rust changes, the agent MUST rerun
-   `cd rust && cargo build --locked -p tidb-server` from the repository root
-   and confirm success. A previous local build or a build without `--locked`
-   does not satisfy this gate.
+5. Do not hand-edit generated code; regenerate it from its source inputs.
+6. TiDB Go-to-Rust transcreation MUST use one complete upstream Go package (or pinned external-module package) as the unit of implementation and completion. A claim MUST include every production source, build/platform/generated variant and input, original test/support artifact, fixture, build artifact, and required validation gate for that package. One Go package MAY map to several Rust crates, but keeps one atomic claim, inventory, integration decision, and receipt. Partial file/function/branch/feature ports MAY remain as seed evidence, but MUST NOT be dispatched, integrated, or reported as a transcreated package.
+7. Rust build gate: for any change under `rust/`, `cd rust && cargo build --locked -p tidb-server` MUST pass in the pre-commit hook (`hooks/pre-commit`) and again immediately before pushing. A build without `--locked`, or an earlier build, does not satisfy this gate.
 
-## Agent Interaction Overrides (Repo-Local)
+## Change Scope Decides the Gates
 
-- For short non-code questions (definitions, acronyms, quick explanations), consider repository context first.
-- If a term may be repo-specific or appears in local docs/code, verify from repository files before answering.
-- If a term is clearly general and not repo-specific, answer directly without extra lookup.
-- When uncertain, prefer checking the repository.
+Run only the gates the changed files call for:
 
-## ExecPlans
+- Go or Bazel files changed: the Go gates below (`make bazel_prepare` when required, Go tests, `make lint`).
+- Only `rust/` changed: the Rust gates (non-negotiable 7 and the Rust rows of the validation matrix). Go lint, `make bazel_prepare` and Go tests are not required.
+- Only docs changed: no build or test; for `AGENTS.md` or `docs/agents/**`, follow `docs/agents/agents-review-guide.md`.
 
-When writing complex features or significant refactors, use an ExecPlan from design to implementation.
+Expensive optional sweeps (`make bazel_lint_changed`, full-package or full-workspace runs) MUST run only when the change scope, a CI reproduction, or the user requires them. Agents MUST NOT run `make bazel_lint_changed` unless the user explicitly requests it.
 
-- Definition and format: `PLANS.md` at repository root.
-- Requirement: keep the ExecPlan updated as a living document while implementation progresses.
-- Scope: use this for multi-step work where losing context would risk correctness or incomplete validation.
+## Go Gates
 
-## Quick Decision Matrix
+`make bazel_prepare` MUST run, and its Bazel metadata changes (`BUILD.bazel`, `**/*.bazel`, `**/*.bzl`) MUST be included, when any of these holds:
 
-| Task | Required action |
-| --- | --- |
-| Added/moved/renamed/removed Go files, changed the import section of an existing Go file, added a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file, changed Bazel files, updated Bazel test targets, or changed `go.mod`/`go.sum` | MUST run `make bazel_prepare` and include resulting Bazel metadata changes in the PR (for example `BUILD.bazel`, `**/*.bazel`, and `**/*.bzl`). |
-| Running package unit tests | SHOULD run targeted tests and avoid full-package runs unless needed (see `docs/agents/testing-flow.md` -> `Unit tests`). |
-| Unit tests in a package that uses failpoints | MUST enable failpoints before tests and disable afterward (see `docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`). |
-| Recording integration tests | MUST use the recording command in `docs/agents/testing-flow.md` -> `Integration tests` (not `-record`; `-record` is for unit-test suites that explicitly support it). |
-| RealTiKV tests | MUST start playground in background, run tests, then clean up playground/data (see `docs/agents/testing-flow.md` -> `RealTiKV tests`). |
-| Bug fix | MUST add a regression test and verify it fails before fix and passes after fix. |
-| Fmt-only PR | MUST NOT run costly `realtikvtest`; local compilation is enough. |
-| Claiming task completion / PR readiness | MUST run the validation required by the change scope; if there are code changes, this includes `make lint`. Report what was and was not verified. |
-| Creating or updating a GitHub issue | SHOULD use `.agents/skills/tidb-issue-metadata-guard` to preserve issue templates and label hygiene. |
-| Creating a PR or editing PR metadata | SHOULD use `.agents/skills/tidb-pr-metadata-guard` to preserve PR templates, title scope, and bot-parsed checklist sections. |
-| Before finishing | SHOULD self-review diff quality before finishing. |
-| Expensive optional sweeps (for example `make bazel_lint_changed`, broad package runs) | MUST run only when required by change scope, CI reproduction, or explicit user request. |
+- a Go source file is added, removed, renamed or moved;
+- the import section of an existing Go file (including `*_test.go`) changed;
+- a new top-level `func TestXxx(t *testing.T)` is added to an existing `*_test.go` file;
+- Bazel files or Bazel test targets changed (`WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`, `shard_count`, test `srcs`, `tests/realtikvtest/**/BUILD.bazel`);
+- `go.mod` / `go.sum` changed;
+- a fresh clone, or a local Bazel dependency/toolchain error.
 
-### Skills
-
-- Repository-level skills are maintained under `.agents/skills` (relative to the repository root / current working directory).
-- Keep skill content and references together under each skill folder (for example: `.agents/skills/<skill>/SKILL.md` and `.agents/skills/<skill>/references/`).
-- `.github/skills` is kept only as a migration note path and should not be used as the primary location for new skill updates.
-- Policy belongs in `AGENTS.md`; detailed command playbooks SHOULD live in `docs/agents/*`, and skills SHOULD provide entrypoint workflows that reference those playbooks.
-- Operational testing/build skills are indexed in `.agents/skills/README.md` to avoid duplicated lists drifting in multiple docs.
-
-## Pre-flight Checklist
-
-1. Restate the task goal and acceptance criteria.
-2. Locate the owning subsystem and the closest existing tests (`Repository Map`, `Task -> Validation Matrix`). If the target package has `doc.go`, agents MUST read that package-level doc first before diving into implementation files.
-3. Decide prerequisites before running tests/build (`docs/agents/testing-flow.md` -> `Failpoint decision for unit tests`; `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`).
-4. Pick the smallest valid validation set and prepare final reporting items (`Agent Output Contract`).
-5. If `AGENTS.md` or docs under `docs/agents/` changed, follow the checklist in `docs/agents/agents-review-guide.md` before finishing.
-6. If `rust/` changed, verify that the pre-commit hook ran the locked Rust
-   server build and rerun the same command immediately before push.
-
-## Repository Map (Entry Points)
-
-- Detailed subsystem path mapping and test surfaces live in `docs/agents/architecture-index.md` (source of truth).
-- Update policy: when module/path mapping changes, update `docs/agents/architecture-index.md` first; update this section only when top-level entry points change.
-- `/pkg/planner/`: planner and optimization entrypoint.
-- `/pkg/executor/`, `/pkg/expression/`: SQL execution and expression evaluation.
-- `/pkg/session/`, `/pkg/sessionctx/`: session lifecycle and runtime statement context.
-- `/pkg/ddl/`, `/pkg/infoschema/`, `/pkg/meta/`: schema and metadata management.
-- `/pkg/store/`, `/pkg/kv/`: storage and distributed query interfaces.
-- `/pkg/statistics/`: statistics and estimation behavior entrypoint.
-- `/pkg/parser/`: SQL grammar and AST.
-- `/tests/integrationtest/`, `/tests/realtikvtest/`: SQL integration and real TiKV test surfaces.
-- `/cmd/tidb-server/`: TiDB server entrypoint.
-
-## Notes
-
-- Follow `docs/agents/notes-guide.md`.
-- DDL module-only rules (applies to changes under `pkg/ddl/` and `docs/agents/ddl/`):
-  - MUST: Before making/reviewing any DDL changes in the DDL module, read `docs/agents/ddl/README.md` first and use it as the default map of the execution framework.
-  - Debugging: You MAY reference `docs/agents/ddl/*`, but you MUST NOT treat it as authoritative. Treat it as hypotheses until verified in code/tests (avoid hallucination/outdated assumptions).
-  - Doc drift: If implementation and `docs/agents/ddl/*` differ, you MUST update the docs to match reality and call it out in the PR/issue. Do not defer.
-
-## Build Flow
-
-### When `make bazel_prepare` is required
-
-Run `make bazel_prepare` before building when any of the following is true:
-
-- New workspace or fresh clone.
-- Bazel-related files changed (for example `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`, `MODULE.bazel`, `MODULE.bazel.lock`).
-- Any Go source file is added/removed/renamed/moved in the PR.
-- The import section changed in any existing Go source file (including `*_test.go`).
-- A code change adds a new top-level Go test function matching `func TestXxx(t *testing.T)` in an existing `*_test.go` file.
-- Go module dependencies changed (for example `go.mod`, `go.sum`), including adding third-party dependencies.
-- Bazel test targets were updated (for example `shard_count` changed, test `srcs` list edited, or `tests/realtikvtest/**/BUILD.bazel` modified).
-- Local Bazel dependency/toolchain errors occurred.
-
-For an operational decision checklist, use `.agents/skills/tidb-bazel-prepare-gate`.
-
-Recommended local build flow:
-
-```bash
-# Conditional step: run only when required by this section or `.agents/skills/tidb-bazel-prepare-gate`.
-make bazel_prepare
-```
-
-```bash
-# Then continue with normal local build steps.
-make bazel_bin
-make gogenerate   # optional: regenerate generated code
-go mod tidy       # optional: if go.mod/go.sum changed
-git fetch origin --prune
-```
-
-`make bazel_lint_changed` is intentionally excluded from the default local flow because it can be slow and resource-intensive on local macOS environments. Agents MUST NOT run `make bazel_lint_changed` unless the user explicitly requests it.
+`.agents/skills/tidb-bazel-prepare-gate` is the operational checklist. Claiming completion of a Go code change MUST include `make lint`.
 
 ## Task -> Validation Matrix
 
-Use the smallest set that still proves correctness.
-Command details for package, integration-test, and RealTiKV surfaces live in `docs/agents/testing-flow.md`.
+Use the smallest set that proves correctness. Command playbooks (unit tests, failpoints, integration recording, RealTiKV) live in `docs/agents/testing-flow.md`.
 
 | Change scope | Minimum validation |
 | --- | --- |
-| `pkg/planner/**` rules or logical/physical plans | Targeted planner unit tests and update rule testdata when needed |
-| `pkg/executor/**` SQL behavior | Targeted unit test plus relevant integration test (`tests/integrationtest`) |
-| `pkg/expression/**` builtins or type inference | Targeted expression unit tests with edge-case coverage |
-| `pkg/session/**` / variables / protocol behavior | Targeted package tests plus SQL integration tests for user-visible behavior |
-| `pkg/ddl/**` schema changes | DDL-focused unit/integration tests and compatibility impact checks |
-| `pkg/store/**` / `pkg/kv/**` storage behavior | Targeted unit tests; use realtikv tests if behavior depends on real TiKV |
-| Parser files (`pkg/parser/**`) | Parser-specific Make targets (`make parser`, `make parser_yacc`, `make parser_fmt`, `make parser_unit_test`) and related unit tests |
-| `tests/integrationtest/t/**` changed | Record and verify regenerated result correctness (see `docs/agents/testing-flow.md` -> `Integration tests`) |
-| `tests/realtikvtest/**` changed | Start playground, run scoped tests, then mandatory cleanup (see `docs/agents/testing-flow.md` -> `RealTiKV tests`) |
+| `pkg/planner/**` rules or plans | Targeted planner unit tests; update rule testdata when needed |
+| `pkg/executor/**` SQL behavior | Targeted unit test plus relevant `tests/integrationtest` |
+| `pkg/expression/**` builtins or type inference | Targeted expression unit tests with edge cases |
+| `pkg/session/**`, variables, protocol | Targeted package tests plus SQL integration tests for user-visible behavior |
+| `pkg/ddl/**` | DDL-focused unit/integration tests and compatibility checks; read `docs/agents/ddl/README.md` first |
+| `pkg/store/**`, `pkg/kv/**` | Targeted unit tests; RealTiKV tests if behavior depends on real TiKV |
+| `pkg/parser/**` | `make parser`, `make parser_yacc`, `make parser_fmt`, `make parser_unit_test` and related tests |
+| `tests/integrationtest/t/**` | Record with the command in `docs/agents/testing-flow.md` (not `-record`) and verify the regenerated results |
+| `tests/realtikvtest/**` | Start the playground in the background, run scoped tests, then clean up playground and data |
+| `rust/` crate code | That crate's tests (`cargo nextest run -p <crate>`) plus non-negotiable 7 |
+| `rust/` change crossing crates | The tests of every crate whose public items changed, plus non-negotiable 7 |
+| Fmt-only change | Compilation only; MUST NOT run `realtikvtest` |
 
-## Testing Policy
+Rules that apply to every row:
 
-- Detailed command playbooks live in `docs/agents/testing-flow.md`.
-- Select required test surfaces first (`Task -> Validation Matrix`), then run scoped commands from the playbook.
-- All other testing rules (failpoints, integration recording, RealTiKV lifecycle, regression tests) are stated once in `Quick Decision Matrix` above; do not duplicate them here.
+- A bug fix MUST add a regression test and show it fails before the fix and passes after it, or state why that is infeasible.
+- Unit tests in a package that uses failpoints MUST enable failpoints before the run and disable them afterwards.
+- Prefer targeted tests over full-package runs.
 
-## Code Style Guide
+## Working Method
 
-### Go and backend code
+- Multi-step features and significant refactors use an ExecPlan (`PLANS.md`), kept current as work proceeds.
+- Before changing a package, read its `doc.go` if it has one. `docs/agents/architecture-index.md` maps subsystems to paths and test surfaces.
+- DDL module changes (`pkg/ddl/`, `docs/agents/ddl/`): read `docs/agents/ddl/README.md` first and treat it as hypotheses to verify in code; when code and those docs differ, update the docs in the same change and call it out.
+- Notes follow `docs/agents/notes-guide.md`.
+- Skills live under `.agents/skills` (index: `.agents/skills/README.md`). Use `.agents/skills/tidb-issue-metadata-guard` for issues and `.agents/skills/tidb-pr-metadata-guard` for PRs and their metadata. Policy belongs here; command playbooks belong in `docs/agents/*`.
+- Self-review the diff before finishing.
 
-- Because TiDB is a complex system, code SHOULD remain maintainable for future readers with basic TiDB familiarity, including readers who are not experts in the specific subsystem/feature.
-- Follow existing package-local conventions first and keep style consistent with nearby files.
-- Code SHOULD be self-documenting through clear naming and structure.
-  - Example: when implementing a well-known algorithm, naming SHOULD be clear enough to make the approach recognizable; if naming alone may not make intent obvious, add a brief comment.
-- Keep changes focused; avoid unrelated refactors, renames, or moves in the same PR.
-- Keep error handling actionable and contextual; avoid silently swallowing errors.
-- For new source files (for example `*.go`), include the standard TiDB license header (copyright + Apache 2.0) by copying from a nearby file and updating year if needed.
-- Comments SHOULD explain non-obvious intent, constraints, invariants, concurrency guarantees, SQL/compatibility contracts, or important performance trade-offs, and SHOULD NOT restate what the code already makes clear.
-- Keep exported-symbol doc comments, and prefer semantic constraints over name restatement.
+## Code Style
 
-### Tests and testdata
-
-- Prefer extending existing test suites and fixtures over creating new scaffolding.
-- Keep test changes minimal and deterministic; avoid broad golden/testdata churn unless required.
-- Follow `.agents/skills/tidb-test-guidelines` for placement, naming, `shard_count` guidance, planner-specific casetest rules, and related testdata conventions.
-- When recording outputs, verify changed result files before reporting completion.
-
-### Docs and command snippets
-
-- Commands in docs SHOULD be copy-pasteable from repository root unless explicitly scoped.
-- Use explicit placeholders such as `<package_name>`, `<TestName>`, and `<dir>`.
-- Documentation updates SHOULD keep terminology, policy wording, and command conventions consistent across related docs.
-- Keep guidance executable and concrete; avoid ambiguous phrasing.
+- Follow the conventions of the surrounding code; keep code maintainable for readers with basic TiDB familiarity who are not experts in the subsystem.
+- Prefer self-documenting names; comment non-obvious intent, invariants, concurrency guarantees, SQL/compatibility contracts and performance trade-offs, not what the code already says.
+- Keep error handling actionable; do not swallow errors silently.
+- New source files carry the standard TiDB license header (copy it from a nearby file).
+- Tests: extend existing suites and fixtures, keep changes deterministic, and follow `.agents/skills/tidb-test-guidelines`. Verify recorded outputs before reporting completion.
+- Doc commands are copy-pasteable from the repository root and use explicit placeholders (`<package_name>`, `<TestName>`, `<dir>`).
 
 ## Agent Output Contract
 
-When finishing a task, report:
-
-1. Files changed.
-2. Validation scope and why.
-3. Risks: correctness, compatibility, performance.
-4. Exact commands run for validation.
-5. What was not verified locally.
+When finishing a task, report: files changed; the validation scope and why; risks (correctness, compatibility, performance); the exact commands run; what was not verified locally.

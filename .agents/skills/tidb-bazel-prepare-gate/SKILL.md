@@ -8,7 +8,7 @@ description: Use when deciding whether make bazel_prepare is required before bui
 ## Overview
 
 Use this skill before build/test commands when you are unsure whether `make bazel_prepare` is required.
-Policy source: `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`.
+Policy source: `AGENTS.md` -> `Go Gates`.
 In normal coding loops, skip this skill unless one of the decision-rule triggers is likely present.
 
 ## Inspect Local Changes
@@ -26,7 +26,7 @@ git diff -U0 --cached -- '*.go'
 
 ## Decision Rules
 
-Trigger conditions are defined in `AGENTS.md` -> `Build Flow` -> `When make bazel_prepare is required`.
+Trigger conditions are defined in `AGENTS.md` -> `Go Gates`.
 Compare the output from the commands above against those conditions.
 
 For the top-level test-function trigger in existing `*_test.go` files, inspect added lines in
