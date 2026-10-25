@@ -18,6 +18,20 @@
 //! ([`crate::executor::ExecutorRuntimeStatsSource::register_stats`]). The
 //! collection itself and the cop-side stats live in `tidb_exec::runtime_stats`.
 
+pub mod exec_details;
+pub mod runtime_stats;
+pub mod tiflash_stats;
+
+/// The cop-side runtime info of one plan id: its actual rows and display
+/// text (Go `CopRuntimeStats.GetActRows` and `String`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CopRuntimeInfo {
+    /// Go `CopRuntimeStats.GetActRows`.
+    pub act_rows: i64,
+    /// Go `CopRuntimeStats.String`.
+    pub info: String,
+}
+
 use std::any::Any;
 use std::sync::Mutex;
 use std::time::Duration as StdDuration;
@@ -97,18 +111,18 @@ pub trait RuntimeStats: Any + Send {
 }
 
 /// Go `RURuntimeStats`'s `RuntimeStats` methods; the type and its formatting
-/// live with the RU v2 metrics in [`tidb_util::ruv2_metrics`].
-impl RuntimeStats for tidb_util::ruv2_metrics::RuRuntimeStats {
+/// live with the RU v2 metrics in [`crate::ruv2_metrics`].
+impl RuntimeStats for crate::ruv2_metrics::RuRuntimeStats {
     fn string(&self) -> String {
-        tidb_util::ruv2_metrics::RuRuntimeStats::string(self)
+        crate::ruv2_metrics::RuRuntimeStats::string(self)
     }
 
     fn merge(&mut self, other: &dyn RuntimeStats) {
         if let Some(tmp) = other
             .as_any()
-            .downcast_ref::<tidb_util::ruv2_metrics::RuRuntimeStats>()
+            .downcast_ref::<crate::ruv2_metrics::RuRuntimeStats>()
         {
-            tidb_util::ruv2_metrics::RuRuntimeStats::merge(self, tmp);
+            crate::ruv2_metrics::RuRuntimeStats::merge(self, tmp);
         }
     }
 

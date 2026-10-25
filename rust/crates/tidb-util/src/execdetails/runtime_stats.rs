@@ -27,10 +27,10 @@
 //! TiFlash runtime-statistics entry points consume the generated `tipb`
 //! `ExecutorExecutionSummary` message directly.
 //! - client-go `util.ScanDetail` and `util.TimeDetail` reuse the complete
-//!   shared [`crate::exec_details::ScanDetail`] and
-//!   [`crate::exec_details::TimeDetail`] representations.
+//!   shared [`crate::execdetails::exec_details::ScanDetail`] and
+//!   [`crate::execdetails::exec_details::TimeDetail`] representations.
 //! - client-go `*util.CommitDetails`/`*util.LockKeysDetails` reuse
-//!   [`crate::exec_details::CommitDetails`]/[`crate::exec_details::LockKeysDetails`];
+//!   [`crate::execdetails::exec_details::CommitDetails`]/[`crate::execdetails::exec_details::LockKeysDetails`];
 //!   their native client `Merge` methods own detail accumulation.
 //! - `kv.StoreType` → [`StoreType`] with the `Name()` spellings from
 //!   `pkg/kv/kv.go`.
@@ -40,13 +40,13 @@
 //! `mergeExecSummary` and `CopRuntimeStats.String`'s
 //! `printTiFlashSpecificInfo`, plus [`StmtCopRuntimeStats`] and
 //! `RuntimeStatsColl.stmtCopStats`/`GetStmtCopRuntimeStats` — are wired
-//! against the [`crate::tiflash_stats`] types. Their Go tests
+//! against the [`crate::execdetails::tiflash_stats`] types. Their Go tests
 //! (`TestCopRuntimeStatsForTiFlash`, `TestVectorSearchStats`,
-//! `TestColumnarScanContextStats`) live in [`crate::tiflash_stats`]'s test
+//! `TestColumnarScanContextStats`) live in [`crate::execdetails::tiflash_stats`]'s test
 //! module and drive these production types.
 //!
 //! The detached execution-context wrapper is retired; Go `RURuntimeStats`
-//! lives in `tidb_util::ruv2_metrics` and is registered here as a
+//! lives in `crate::ruv2_metrics` and is registered here as a
 //! [`RuntimeStats`]. Percentile aggregation uses
 //! the algorithm and defaults of the pinned `github.com/influxdata/tdigest`
 //! dependency. Shared runtime-statistics
@@ -61,14 +61,14 @@ use std::time::Duration as StdDuration;
 use tidb_proto::tipb::executor_execution_summary::DetailInfo as ExecutionSummaryDetailInfo;
 use tidb_proto::ExecutorExecutionSummary;
 
-use crate::exec_details::{
+use crate::execdetails::exec_details::{
     format_go_duration, format_seconds_3, CommitDetails, LockKeysDetails, ScanDetail, TimeDetail,
 };
-use crate::tiflash_stats::{TiFlashNetworkTrafficSummary, TiflashStats};
+use crate::execdetails::tiflash_stats::{TiFlashNetworkTrafficSummary, TiflashStats};
 
 // Go `RuntimeStats`, its kind constants, `FormatDuration` and the
 // concurrency-info stats live with the executors that register them.
-pub use tidb_executor::execdetails::{
+pub use crate::execdetails::{
     format_duration, ConcurrencyInfo, RuntimeStats, RuntimeStatsWithConcurrencyInfo,
     TP_BASIC_COP_RUN_TIME_STATS, TP_BASIC_RUNTIME_STATS, TP_FK_CASCADE_RUNTIME_STATS,
     TP_FK_CHECK_RUNTIME_STATS, TP_HASH_AGG_RUNTIME_STAT, TP_HASH_JOIN_RUNTIME_STATS,
@@ -663,7 +663,7 @@ impl StmtCopRuntimeStats {
 
 /// Go `CopRuntimeStats`: collects cop tasks' execution info for one plan.
 /// The fields are Go-package-private; `pub(crate)` is the Go
-/// same-package-test seam for [`crate::tiflash_stats`]'s test module.
+/// same-package-test seam for [`crate::execdetails::tiflash_stats`]'s test module.
 #[derive(Clone, Debug, Default)]
 pub struct CopRuntimeStats {
     /// Go `CopRuntimeStats.stats`.
@@ -922,20 +922,6 @@ impl RuntimeStats for BasicRuntimeStats {
 
     fn as_any(&self) -> &dyn Any {
         self
-    }
-}
-
-impl tidb_executor::executor::ExecutorRuntimeStats for BasicRuntimeStats {
-    fn record_open(&self, elapsed: StdDuration) {
-        BasicRuntimeStats::record_open(self, elapsed);
-    }
-
-    fn record_next(&self, elapsed: StdDuration, rows: i64) {
-        BasicRuntimeStats::record(self, elapsed, rows);
-    }
-
-    fn record_close(&self, elapsed: StdDuration) {
-        BasicRuntimeStats::record_close(self, elapsed);
     }
 }
 
@@ -1253,20 +1239,9 @@ impl RuntimeStatsColl {
     }
 }
 
-impl tidb_executor::executor::ExecutorRuntimeStatsSource for RuntimeStatsColl {
-    fn for_executor(
-        &self,
-        plan_id: i64,
-    ) -> Option<Arc<dyn tidb_executor::executor::ExecutorRuntimeStats>> {
-        self.get_basic_runtime_stats(plan_id, true)
-            .map(|stats| stats as Arc<dyn tidb_executor::executor::ExecutorRuntimeStats>)
-    }
-
-    fn register_stats(&self, plan_id: i64, stats: Box<dyn RuntimeStats>) {
-        RuntimeStatsColl::register_stats(self, plan_id, stats);
-    }
-
-    fn root_runtime_info(&self, plan_id: i64) -> Option<String> {
+impl RuntimeStatsColl {
+    /// The root runtime info text of one plan, empty answered as `None`.
+    pub fn root_runtime_info(&self, plan_id: i64) -> Option<String> {
         let stats = {
             let inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
             inner.root_stats.get(&plan_id)?.clone()
@@ -1275,7 +1250,8 @@ impl tidb_executor::executor::ExecutorRuntimeStatsSource for RuntimeStatsColl {
         (!text.is_empty()).then_some(text)
     }
 
-    fn root_group_runtime_info(&self, plan_id: i64) -> Option<String> {
+    /// The registered group stats' texts of one plan, joined.
+    pub fn root_group_runtime_info(&self, plan_id: i64) -> Option<String> {
         let stats = {
             let inner = self.inner.lock().expect("RuntimeStatsColl mutex poisoned");
             inner.root_stats.get(&plan_id)?.clone()
@@ -1290,10 +1266,11 @@ impl tidb_executor::executor::ExecutorRuntimeStatsSource for RuntimeStatsColl {
         (!groups.is_empty()).then(|| groups.join(", "))
     }
 
-    fn cop_runtime_info(&self, plan_id: i64) -> Option<tidb_executor::executor::CopRuntimeInfo> {
+    /// Go `CopRuntimeStats.GetActRows` and `String` of one plan.
+    pub fn cop_runtime_info(&self, plan_id: i64) -> Option<crate::execdetails::CopRuntimeInfo> {
         let stats = self.get_cop_stats(plan_id)?;
         let stats = stats.lock().expect("CopRuntimeStats mutex poisoned");
-        Some(tidb_executor::executor::CopRuntimeInfo {
+        Some(crate::execdetails::CopRuntimeInfo {
             act_rows: stats.get_act_rows(),
             info: stats.string(),
         })
@@ -1586,27 +1563,17 @@ impl RuntimeStats for RuntimeStatsWithCommit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::exec_details::{ReqDetailInfo, ResolveLockDetail, TiKVExecDetails, WriteDetail};
+    use crate::execdetails::exec_details::{ReqDetailInfo, ResolveLockDetail, TiKVExecDetails, WriteDetail};
 
     #[test]
     fn executor_runtime_source_shares_go_basic_stats_with_statement_collector() {
         let collector = RuntimeStatsColl::new(None);
-        let stats =
-            tidb_executor::executor::ExecutorRuntimeStatsSource::for_executor(&collector, 17)
-                .expect("executor registration creates Go basic stats");
-        tidb_executor::executor::ExecutorRuntimeStats::record_open(
-            stats.as_ref(),
-            StdDuration::from_nanos(2),
-        );
-        tidb_executor::executor::ExecutorRuntimeStats::record_next(
-            stats.as_ref(),
-            StdDuration::from_nanos(3),
-            4,
-        );
-        tidb_executor::executor::ExecutorRuntimeStats::record_close(
-            stats.as_ref(),
-            StdDuration::from_nanos(5),
-        );
+        let stats = collector
+            .get_basic_runtime_stats(17, true)
+            .expect("executor registration creates Go basic stats");
+        stats.record_open(StdDuration::from_nanos(2));
+        stats.record(StdDuration::from_nanos(3), 4);
+        stats.record_close(StdDuration::from_nanos(5));
 
         let basic = collector
             .get_basic_runtime_stats(17, false)
@@ -1774,7 +1741,7 @@ mod tests {
     /// Port of Go `TestRuntimeStatsWithCommit` (`execdetails_test.go`).
     ///
     /// Divergence from the Go literal, in the commit fixture only: the
-    /// reused [`crate::exec_details::TimeDetail`]/[`WriteDetail`] carry
+    /// reused [`crate::execdetails::exec_details::TimeDetail`]/[`WriteDetail`] carry
     /// Port of Go `TestRuntimeStatsWithCommit` (`execdetails_test.go`).
     #[test]
     fn runtime_stats_with_commit() {
@@ -1782,7 +1749,7 @@ mod tests {
             get_commit_ts_time: StdDuration::from_secs(1),
             prewrite_time: StdDuration::from_secs(1),
             commit_time: StdDuration::from_secs(1),
-            detail: crate::exec_details::CommitDetailsInner {
+            detail: crate::execdetails::exec_details::CommitDetailsInner {
                 commit_backoff_time_ns: 1_000_000_000,
                 prewrite_backoff_types: vec![
                     "backoff1".to_owned(),
@@ -1865,7 +1832,7 @@ mod tests {
             region_num: 2,
             lock_keys: 10,
             backoff_time_ns: 3_000_000_000,
-            detail: crate::exec_details::LockKeysDetailsInner {
+            detail: crate::execdetails::exec_details::LockKeysDetailsInner {
                 backoff_types: vec![
                     "backoff4".to_owned(),
                     "backoff5".to_owned(),

@@ -4762,6 +4762,7 @@ dependencies = [
  "prost 0.14.4",
  "regex",
  "regex-syntax",
+ "reqwest 0.13.4",
  "rustix 1.1.4",
  "serde",
  "serde_json",

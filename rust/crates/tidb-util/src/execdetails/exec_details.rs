@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use tidb_log::{Field, Value};
 
-use crate::runtime_stats::{DurationWithAddr, Percentile};
+use crate::execdetails::runtime_stats::{DurationWithAddr, Percentile};
 
 /// Go `CopTimeStr`: the sum of cop-task time spent in TiDB distSQL.
 pub const COP_TIME_STR: &str = "Cop_time";

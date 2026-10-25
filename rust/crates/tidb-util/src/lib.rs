@@ -48,6 +48,8 @@ pub mod dbterror;
 pub mod disjointset;
 pub mod disk;
 pub mod encrypt;
+/// Go `pkg/util/execdetails`.
+pub mod execdetails;
 pub mod extsort;
 pub mod fastrand;
 pub mod filter;
@@ -113,6 +115,8 @@ pub mod table_router;
 pub mod table_rule_selector;
 pub mod texttree;
 pub use tidb_tikvutil as tikvutil;
+/// Go `pkg/util/tiflashcompute`.
+pub mod tiflashcompute;
 pub mod timeutil;
 /// TLS process state and MySQL-compatible names.
 pub mod tls;

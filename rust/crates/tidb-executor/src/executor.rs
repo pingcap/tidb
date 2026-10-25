@@ -248,13 +248,51 @@ pub trait ExecutorRuntimeStatsSource: Send + Sync {
     }
 }
 
-/// Go `CopRuntimeStats.GetActRows` and `String()` of one plan.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CopRuntimeInfo {
-    /// Go `CopRuntimeStats.GetActRows`: the rows every task produced.
-    pub act_rows: i64,
-    /// Go `CopRuntimeStats.String`.
-    pub info: String,
+pub use tidb_util::execdetails::CopRuntimeInfo;
+
+impl ExecutorRuntimeStats for tidb_util::execdetails::runtime_stats::BasicRuntimeStats {
+    fn record_open(&self, elapsed: Duration) {
+        tidb_util::execdetails::runtime_stats::BasicRuntimeStats::record_open(self, elapsed);
+    }
+
+    fn record_next(&self, elapsed: Duration, rows: i64) {
+        tidb_util::execdetails::runtime_stats::BasicRuntimeStats::record(self, elapsed, rows);
+    }
+
+    fn record_close(&self, elapsed: Duration) {
+        tidb_util::execdetails::runtime_stats::BasicRuntimeStats::record_close(self, elapsed);
+    }
+}
+
+impl ExecutorRuntimeStatsSource for tidb_util::execdetails::runtime_stats::RuntimeStatsColl {
+    fn for_executor(&self, plan_id: i64) -> Option<Arc<dyn ExecutorRuntimeStats>> {
+        self.get_basic_runtime_stats(plan_id, true)
+            .map(|stats| stats as Arc<dyn ExecutorRuntimeStats>)
+    }
+
+    fn register_stats(
+        &self,
+        plan_id: i64,
+        stats: Box<dyn tidb_util::execdetails::RuntimeStats>,
+    ) {
+        tidb_util::execdetails::runtime_stats::RuntimeStatsColl::register_stats(
+            self, plan_id, stats,
+        );
+    }
+
+    fn root_runtime_info(&self, plan_id: i64) -> Option<String> {
+        tidb_util::execdetails::runtime_stats::RuntimeStatsColl::root_runtime_info(self, plan_id)
+    }
+
+    fn root_group_runtime_info(&self, plan_id: i64) -> Option<String> {
+        tidb_util::execdetails::runtime_stats::RuntimeStatsColl::root_group_runtime_info(
+            self, plan_id,
+        )
+    }
+
+    fn cop_runtime_info(&self, plan_id: i64) -> Option<CopRuntimeInfo> {
+        tidb_util::execdetails::runtime_stats::RuntimeStatsColl::cop_runtime_info(self, plan_id)
+    }
 }
 
 /// A row counter owned by one executor and observed by its statement.

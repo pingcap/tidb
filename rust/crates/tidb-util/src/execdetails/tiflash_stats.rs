@@ -42,7 +42,7 @@
 //! `runtime_stats.go`'s `RuntimeStatsColl.RecordOneCopTask`/
 //! `RecordCopStats`, `CopRuntimeStats.String`,
 //! `basicCopRuntimeStats.String`, and `StmtCopRuntimeStats`; those TiFlash
-//! arms are wired in [`crate::runtime_stats`], and this module's
+//! arms are wired in [`crate::execdetails::runtime_stats`], and this module's
 //! `#[cfg(test)]` harness drives the production types there with the Go
 //! assertion literals byte-exact.
 
@@ -63,7 +63,7 @@ fn proto_value<T: Copy + Default>(value: Option<T>) -> T {
 }
 
 /// Go `TiflashStats`: contains tiflash execution stats. The Go fields are
-/// package-private; they are `pub` here for the [`crate::runtime_stats`]
+/// package-private; they are `pub` here for the [`crate::execdetails::runtime_stats`]
 /// wiring.
 #[derive(Clone, Debug, Default)]
 pub struct TiflashStats {
@@ -1087,7 +1087,7 @@ pub fn merge_tiflash_ru_consumption(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime_stats::{
+    use crate::execdetails::runtime_stats::{
         CopScanDetail, CopTimeDetail, RuntimeStats as _, RuntimeStatsColl, StoreType,
     };
     use tidb_proto::tipb::executor_execution_summary::DetailInfo as ExecutionSummaryDetailInfo;
@@ -1226,7 +1226,7 @@ mod tests {
     }
 
     /// Go `TestCopRuntimeStatsForTiFlash` (execdetails_test.go), driven
-    /// through [`crate::runtime_stats`]'s production TiFlash arms; the
+    /// through [`crate::execdetails::runtime_stats`]'s production TiFlash arms; the
     /// assertion literals are byte-exact copies of the Go test's.
     /// `require.NotNil(copStats)` collapses to the direct field access, and
     /// the extra scan/time-detail equality checks replace the unread Go
@@ -1410,7 +1410,7 @@ mod tests {
     }
 
     /// Go `TestVectorSearchStats` (execdetails_test.go), driven through
-    /// [`crate::runtime_stats`]'s production TiFlash arms; the assertion
+    /// [`crate::execdetails::runtime_stats`]'s production TiFlash arms; the assertion
     /// literal is a byte-exact copy of the Go test's. Go's
     /// `execSummary.DetailInfo.(*tipb.ExecutorExecutionSummary_TiflashScanContext)`
     /// type assertion collapses to the enum match.
@@ -1440,7 +1440,7 @@ mod tests {
     }
 
     /// Go `TestColumnarScanContextStats` (execdetails_test.go), driven
-    /// through [`crate::runtime_stats`]'s production TiFlash arms; the
+    /// through [`crate::execdetails::runtime_stats`]'s production TiFlash arms; the
     /// assertion literals are byte-exact copies of the Go test's.
     #[test]
     fn test_columnar_scan_context_stats() {
