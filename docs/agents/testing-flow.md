@@ -19,7 +19,7 @@ popd
 
 ## Failpoint decision for unit tests
 
-- Policy reference: `AGENTS.md` -> `Task -> Validation Matrix` (rules that apply to every row: failpoints).
+- Policy reference: `AGENTS.md` -> `Task -> Validation Matrix` (the failpoint rule under the table).
 
 ```bash
 rg -n --fixed-strings -- "failpoint." pkg/<package_name>
@@ -49,7 +49,7 @@ test -f pkg/<package_name>/BUILD.bazel && rg -n --fixed-strings -- "@com_github_
 
 ## Related guidance
 
-- Bug-fix regression policy lives in `AGENTS.md` -> `Task -> Validation Matrix` (rules that apply to every row: bug fix).
+- Bug-fix regression policy lives in `AGENTS.md` -> `Non-negotiables`.
 - Test placement, naming, `shard_count`, and package-specific testdata rules live in `.agents/skills/tidb-test-guidelines`.
 - Include exact test commands in PR description under `Tests` when preparing a PR update.
 
