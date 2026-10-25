@@ -1803,11 +1803,7 @@ func (p *LogicalJoin) updateEQCond() {
 			for i := range leftKeys {
 				lKey, rKey := leftKeys[i], rightKeys[i]
 				keepAsOtherCond := expression.IsMutableEffectsExpr(lKey) || expression.IsMutableEffectsExpr(rKey)
-				lCastCol, lCasted := extractCastSourceColumn(lKey)
-				rCastCol, rCasted := extractCastSourceColumn(rKey)
-				if lCasted && rCasted {
-					p.appendImplicitJoinKeyConversionWarning(lCastCol, rCastCol)
-				}
+				AppendImplicitJoinKeyConversionWarning(p.SCtx(), lKey, rKey)
 				if lProj != nil {
 					lKey = lProj.AppendExpr(lKey)
 				}
@@ -1918,14 +1914,27 @@ func extractCastSourceColumn(expr expression.Expression) (*expression.Column, bo
 	return castArg, true
 }
 
+// AppendImplicitJoinKeyConversionWarning warns when both keys of a join equality are implicit casts of columns.
+func AppendImplicitJoinKeyConversionWarning(sctx base.PlanContext, lKey, rKey expression.Expression) {
+	lCastCol, lCasted := extractCastSourceColumn(lKey)
+	rCastCol, rCasted := extractCastSourceColumn(rKey)
+	if lCasted && rCasted {
+		warnImplicitJoinKeyConversion(sctx, lCastCol, rCastCol)
+	}
+}
+
 func (p *LogicalJoin) appendImplicitJoinKeyConversionWarning(leftCol, rightCol *expression.Column) {
-	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+	warnImplicitJoinKeyConversion(p.SCtx(), leftCol, rightCol)
+}
+
+func warnImplicitJoinKeyConversion(sctx base.PlanContext, leftCol, rightCol *expression.Column) {
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	warn := errors.NewNoStackErrorf(
 		"Implicit type or collation conversion on join keys (%s = %s) may make indexes unusable",
 		leftCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
 		rightCol.StringWithCtx(evalCtx, errors.RedactLogDisable),
 	)
-	p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warn)
+	sctx.GetSessionVars().StmtCtx.AppendWarning(warn)
 }
 
 func (p *LogicalJoin) getProj(idx int) *LogicalProjection {

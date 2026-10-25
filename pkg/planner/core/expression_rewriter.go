@@ -1417,6 +1417,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			rArgs = rexpr.(*expression.ScalarFunction).GetArgs()
 		}
 		rhsKeys := make([]expression.Expression, lLen)
+		var castedConds []*expression.ScalarFunction
 		needProj := false
 		for i := range lLen {
 			rhsKeys[i] = np.Schema().Columns[i]
@@ -1432,6 +1433,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 					// by type coercion rules). Materialize it as an inner projection column so both
 					// DISTINCT and JOIN use exactly this coerced key.
 					rhsKeys[i] = rhs
+					castedConds = append(castedConds, sf)
 					needProj = true
 				}
 			}
@@ -1464,6 +1466,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			distinctChild = proj
 			distinctLen = lLen
 			joinCondition = expression.ComposeCNFCondition(er.sctx, conds...)
+			// The join only sees the projected inner key, so warn about the conversion as it would.
+			for _, sf := range castedConds {
+				logicalop.AppendImplicitJoinKeyConversionWarning(planCtx.builder.ctx, sf.GetArgs()[0], sf.GetArgs()[1])
+			}
 		}
 		// Build distinct for the inner query.
 		agg, err := planCtx.builder.buildDistinct(distinctChild, distinctLen)
