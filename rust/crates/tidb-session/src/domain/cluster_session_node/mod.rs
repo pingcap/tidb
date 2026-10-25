@@ -5209,15 +5209,13 @@ impl ClusterServerSession {
         }
         // Go builds a fresh `TxnCtx` at every transaction boundary, and its
         // GLOBAL temporary rows never reach a commit (`temporaryTableKVFilter`
-        // strips their keys), so a BEGIN, COMMIT or ROLLBACK starts this
-        // session's transaction-scoped state over.
+        // strips their keys), so a COMMIT or ROLLBACK starts this session's
+        // transaction-scoped state over. A BEGIN does so at its own `NewTxn`,
+        // after the checks that may refuse it
+        // (`Session::control_transaction_stmt`).
         if matches!(
             control,
-            Some(
-                TransactionControl::Begin { .. }
-                    | TransactionControl::Commit
-                    | TransactionControl::Rollback { .. }
-            )
+            Some(TransactionControl::Commit | TransactionControl::Rollback { .. })
         ) {
             self.store.session.reset_transaction_scope();
         }

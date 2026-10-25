@@ -315,7 +315,9 @@ impl Session {
     /// `ROLLBACK` can discard it. `BEGIN` opens one explicitly; this only
     /// covers the statements that would otherwise have none.
     pub(crate) fn begin_implicit_transaction(&mut self) -> Result<(), DriverError> {
-        if self.txn_ctx.is_some() || self.is_autocommit() {
+        // Go's condition: `!IsAutocommit() && SnapshotTS == 0`; a read under
+        // `tidb_snapshot` activates no transaction of the session's.
+        if self.txn_ctx.is_some() || self.is_autocommit() || self.vars.snapshot_ts() != 0 {
             return Ok(());
         }
         let mode = self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default);
@@ -741,8 +743,11 @@ impl Session {
             None => None,
         };
         // Go's `NewTxn` gives the transaction a fresh `TxnCtx`, so the
-        // statement's own (`origTxnCtx`) is not the one it opens.
+        // statement's own (`origTxnCtx`) is not the one it opens. Its GLOBAL
+        // temporary rows never reach a commit (`temporaryTableKVFilter`), and
+        // a BEGIN refused above leaves the open transaction's untouched.
         self.statement_began_txn = true;
+        self.reset_transaction_scope();
         self.commit_before_enter_new_txn(txn)?;
         let stale_ts = match as_of {
             Some(ts) => Some(ts),
@@ -758,7 +763,15 @@ impl Session {
                 self.open_txn_ctx(mode);
             }
         }
-        txn.enter_new_txn_with_begin(self)
+        // Go sets `InTxn` only once `ActivateTxn` succeeded
+        // (`isolation/base.go:108-114`): a failed activation leaves no
+        // transaction open.
+        if let Err(error) = txn.enter_new_txn_with_begin(self) {
+            self.txn_ctx = None;
+            self.current_tso().clear();
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Go `sessiontxn.CommitBeforeEnterNewTxn`: an open transaction is

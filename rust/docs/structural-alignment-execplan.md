@@ -329,6 +329,23 @@ The session also reads and writes `mysql.*` tables through in-process executors 
 
 The executor's own unit tests drive the appliers at about 600 call sites.
 
+Go's shape:
+- `session.ExecRestrictedSQL(ctx, opts, sql)` reaches `withRestrictedSQLExecutor` (`pkg/session/session.go:2323`). Without `ExecOptionUseCurSession` it borrows an internal session (`getInternalSession`), which reads committed data in its own autocommit transaction. Every site in the inventory passes `nil` options: `reload_expr_pushdown_blacklist.go:44`, `opt_rule_blacklist.go:42`, `infoschema_reader.go:382`, `gcutil.go:77`, `fetchShowCreateUser`, the inspection retrievers.
+- Bindings write through `callWithSCtx(sPool, wrapTxn, ...)`: a system session from the pool, in a transaction of its own.
+- DDL: one implementation, the job workers. Their checks and builders (`checkAddPartition`, `buildAddedPartitionInfo`, `BuildTableInfoWithStmt`) work on `TableInfo`. Local temporary tables are `TableInfo`s in `SessionVars.LocalTemporaryTables` (`createSessionTemporaryTable`, `DropLocalTemporaryTable`, `truncateLocalTemporaryTable`).
+
+Stages, top-down. As instructed, all are written before any build, then one verification pass.
+- [ ] W1, Go's `sqlexec.RestrictedSQLExecutor` on the session: `Session::exec_restricted_sql` runs over an executor the store session installs (Go `GetRestrictedSQLExecutor`). The node backs it with `ClusterSessionFactory::open_system_session`, an internal session in its own autocommit transaction; `ExecOptionUseCurSession` is the explicit opt-in Go has.
+- [ ] W2, the readers move onto it: `show_create_user_row`, `user_attributes_rows`, `gcutil::exec_restricted_sql`, `reload_expr_pushdown_blacklist`, `reload_opt_rule_blacklist`, the inspection metrics queries, and `user_table_rows` outside an account statement.
+- [ ] W3, bindings write through a system session in their own transaction (Go `callWithSCtx(wrapTxn)`), not `run_insert_in` / `run_update_in` / `run_delete_in` on the connection's catalog.
+- [ ] W4, the job path builds partition changes from `TableInfo` (Go `buildAddedPartitionInfo` / `checkAddPartition` / `checkDropTablePartition`); `apply_partition_change`'s scratch-catalog replay of the in-process `ALTER` is deleted.
+- [ ] W5, local temporary DDL as Go has it: `CREATE TEMPORARY TABLE` builds the `TableInfo` with the job path's builder and registers it in the session's local temporary tables; `DROP` / `TRUNCATE` edit them; no one-step catalog applier is used.
+- [ ] W6, `ALTER TABLE ... COMPACT` without the in-process applier (Go `CompactTableStmt` -> `CompactTableTiFlashExec`).
+- [ ] W7, the one-step appliers with no production caller are deleted, with their unit tests. Each Go check those tests pinned is moved onto the job path's tests, or onto the session store tests, before its applier test goes.
+- [ ] W8, the Go `pkg/ddl` helpers that stay (checks, builders, `job_history`) move out of `tidb-executor` into the DDL crate beside the job workers, as Go keeps them in `pkg/ddl`.
+- [ ] W9, the catalog counter (`allocate_tso`, `record_commit`, `state_as_of`) and the session's in-process DDL job history (`ddl_jobs.rs`, `stats_lock_arm.rs`) are deleted once nothing reaches them.
+- [ ] W10, documents and inventories; then the verification pass.
+
 ## Milestone 4 progress: EXPLAIN ANALYZE execution info
 
 Go reads every `EXPLAIN ANALYZE` cell from the statement's `RuntimeStatsColl` (`getRuntimeInfoStr`: `RootRuntimeStats.String()` plus, for pushed operators, `CopRuntimeStats.String()`, with the row count of whichever exists). This tier had `RuntimeStatsColl`, `BasicRuntimeStats`, `RootRuntimeStats`, `CopRuntimeStats`, `RuntimeStatsWithCommit` and the percentile types ported byte for byte in `tidb-exec/src/runtime_stats.rs`, but `EXPLAIN ANALYZE` rendered from an ad-hoc map (`PhysicalRuntimeCounter` in `tidb-executor/src/driver/physical_builder.rs`) and nothing fed the collection's cop side.

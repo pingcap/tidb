@@ -1157,3 +1157,74 @@ fn persistent_ddl_local_truncate_does_not_check_persistent_references() {
     s.run("drop temporary table parent").unwrap();
     assert_eq!(row_text(s.run("select id from parent")), vec![vec!["9"]]);
 }
+
+/// Go `addRecord` / `index.create` check a temporary table's keys in place
+/// even when the statement may defer the check ("Always check key for
+/// temporary table because it does not write to TiKV"): under an optimistic
+/// transaction (`tidb_constraint_check_in_place = OFF`) the duplicate is
+/// refused by the INSERT itself, in both scopes (captured from Go on this
+/// branch).
+#[test]
+fn a_temporary_table_checks_duplicate_keys_in_place_under_an_optimistic_transaction() {
+    let mut session = temporary_session();
+    session.run("SET tidb_txn_mode = 'optimistic'").unwrap();
+    session
+        .run("CREATE TEMPORARY TABLE tt (id INT PRIMARY KEY, u INT, UNIQUE KEY uu(u))")
+        .unwrap();
+    session
+        .run(
+            "CREATE GLOBAL TEMPORARY TABLE gt (id INT PRIMARY KEY, u INT, UNIQUE KEY uu(u)) \
+             ON COMMIT DELETE ROWS",
+        )
+        .unwrap();
+    // A LOCAL temporary table's committed rows live in the session, outside
+    // the transaction's staged writes: a deferred check would miss them.
+    session.run("INSERT INTO tt VALUES (7, 7)").unwrap();
+    session.run("BEGIN").unwrap();
+    assert_eq!(
+        refusal(&mut session, "INSERT INTO tt VALUES (7, 8)"),
+        (1062, "Duplicate entry '7' for key 'tt.PRIMARY'".to_owned())
+    );
+    assert_eq!(
+        refusal(&mut session, "INSERT INTO tt VALUES (8, 7)"),
+        (1062, "Duplicate entry '7' for key 'tt.uu'".to_owned())
+    );
+    for table in ["tt", "gt"] {
+        session
+            .run(&format!("INSERT INTO {table} VALUES (1, 1)"))
+            .unwrap();
+        assert_eq!(
+            refusal(&mut session, &format!("INSERT INTO {table} VALUES (1, 2)")),
+            (
+                1062,
+                format!("Duplicate entry '1' for key '{table}.PRIMARY'")
+            )
+        );
+        assert_eq!(
+            refusal(&mut session, &format!("INSERT INTO {table} VALUES (2, 1)")),
+            (1062, format!("Duplicate entry '1' for key '{table}.uu'"))
+        );
+    }
+    session.run("COMMIT").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT * FROM tt ORDER BY id")),
+        [["1", "1"], ["7", "7"]]
+    );
+}
+
+/// Go `executeBegin` refuses `START TRANSACTION READ ONLY` before `NewTxn`,
+/// so the open transaction -- its GLOBAL temporary rows included -- is left
+/// exactly as it was (captured from Go on this branch).
+#[test]
+fn a_refused_begin_keeps_the_open_transactions_global_temporary_rows() {
+    let mut session = temporary_session();
+    session
+        .run("CREATE GLOBAL TEMPORARY TABLE gt (id INT PRIMARY KEY) ON COMMIT DELETE ROWS")
+        .unwrap();
+    session.run("BEGIN").unwrap();
+    session.run("INSERT INTO gt VALUES (5)").unwrap();
+    assert_eq!(refusal(&mut session, "START TRANSACTION READ ONLY").0, 1235);
+    assert!(session.in_transaction());
+    assert_eq!(row_text(session.run("SELECT * FROM gt")), [["5"]]);
+    session.run("ROLLBACK").unwrap();
+}

@@ -115,6 +115,10 @@ impl KvTable {
         duplicate_key: &str,
         lazy: bool,
     ) -> Result<bool, KvTableError> {
+        // Go `addRecord` / `index.create`: "Always check key for temporary
+        // table because it does not write to TiKV" -- no prewrite would ever
+        // see a presumption (`tables.go:898`, `index.go:476`).
+        let lazy = lazy && !self.is_temporary();
         let value = if lazy {
             self.store.get_local(key)
         } else {
