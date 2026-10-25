@@ -18,7 +18,8 @@ Guidance for agents working in this repository. MUST is required, SHOULD is the 
 - Check before running: `cargo check -p <crate> --tests` catches most mistakes in seconds.
 - While iterating, run only the tests that cover the change: `cargo nextest run -p <crate> -E 'test(<name>)'`.
 - Before a commit, run the suites of the crates whose behavior changed. Workspace-wide runs and the replays (`cargo test -p difftest-result-tests --test integration_diff`, `cargo test -p tidb-server --lib production_replay_stays_within_budget -- --ignored`) are milestone checks, not per-commit ones.
-- `rust/target` grows quickly and a full disk breaks builds: run tests with `CARGO_INCREMENTAL=0`, and delete `rust/target/debug/incremental` when space runs low.
+- A pure move or rename (behavior unchanged) is verified by `cargo check --tests` alone; batch several such steps before any test run.
+- Keep incremental compilation on: rebuild time matters more than disk. When disk runs low, delete `rust/target/debug/incremental`.
 - A test failure that also fails on the unchanged tip is not yours; confirm that once and move on.
 - MUST NOT run `make bazel_lint_changed` unless the user asks.
 
