@@ -515,8 +515,8 @@ impl Session {
     /// Go's `NumErrorWarnings`: the error count is the ERROR-level entries,
     /// the warning count is every entry.
     fn set_previous_warning_counts(&mut self, previous: &[SqlWarning]) {
-        self.sys_warning_count = previous.len();
-        self.sys_error_count = previous
+        self.vars.sys_warning_count = previous.len();
+        self.vars.sys_error_count = previous
             .iter()
             .filter(|warning| warning.level == WarningLevel::Error)
             .count();
@@ -526,13 +526,13 @@ impl Session {
     /// `s.SysWarningCount`.
     #[must_use]
     pub(crate) fn sys_warning_count(&self) -> usize {
-        self.sys_warning_count
+        self.vars.sys_warning_count
     }
 
     /// Go's matching hook on `error_count`, `s.SysErrorCount`.
     #[must_use]
     pub(crate) fn sys_error_count(&self) -> usize {
-        self.sys_error_count
+        self.vars.sys_error_count
     }
 
     /// Go `clientConn.initResultEncoder`'s read:

@@ -530,7 +530,7 @@ impl Session {
         let snapshot = |catalog: &tidb_executor::Catalog| {
             Arc::new(tidb_executor::SequenceSnapshot::new(
                 catalog,
-                &self.current_db,
+                &self.vars.current_db,
                 Arc::clone(&self.sequence_last_values),
             ))
         };
@@ -785,7 +785,7 @@ impl Session {
         self.check_noop_functions(&body)?;
         self.refuse_stale_view_body(create, has_as_of)?;
         let create = create.clone();
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let ctx = self.statement_context(false);
         let or_replace = create.or_replace;
         let (database, name, view) = self.with_catalog_mut(|catalog| {
@@ -813,7 +813,7 @@ impl Session {
         }
         let (schema, name) = match create.name.as_slice() {
             [schema, name] => (schema.as_str(), name.as_str()),
-            [name] => (self.current_db.as_str(), name.as_str()),
+            [name] => (self.vars.current_db.as_str(), name.as_str()),
             _ => ("", ""),
         };
         Err(DriverError::Schema(crate::SchemaErrorKind::ViewInvalid(
@@ -1297,10 +1297,10 @@ impl Session {
     ) -> tidb_executor::StmtContext {
         // Go hands the same `SessionVars` to every expression, which is where
         // `DATABASE()` and `VERSION()` read from.
-        let current_db = if self.current_db.is_empty() {
+        let current_db = if self.vars.current_db.is_empty() {
             None
         } else {
-            Some(self.current_db.clone())
+            Some(self.vars.current_db.clone())
         };
         // The session-variable half, parsed once per variable-table
         // generation; see [`StatementVarSnapshot`].
@@ -1588,14 +1588,14 @@ impl Session {
                     .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                     .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                     .with_session_state(current_db, version)
-                    .with_user(self.current_user.clone(), self.login_user.clone())
+                    .with_user(self.vars.current_user.clone(), self.vars.login_user.clone())
                     .with_global_sysvar_accessor(Arc::clone(&global_sysvar_accessor))
                     .with_active_roles(
-                        self.current_user
+                        self.vars.current_user
                             .as_ref()
                             .map(|_| Arc::clone(&self.active_roles)),
                     )
-                    .with_connection_id(self.connection_id)
+                    .with_connection_id(self.vars.connection_id)
                     .with_selected_lock_keys(self.selected_lock_keys.clone())
                     .with_pessimistic_transaction(self.statement_is_pessimistic())
                     .with_in_transaction(!self.is_autocommit() || self.in_transaction())
@@ -1606,9 +1606,9 @@ impl Session {
                     .with_rand_session(Arc::clone(&self.rand))
                     .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                     .with_user_vars(self.user_vars.clone())
-                    .with_previous_statement(self.last_insert_id, self.prev_row_count)
-                    .with_last_found_rows(self.last_found_rows)
-                    .with_client_found_rows(self.client_found_rows)
+                    .with_previous_statement(self.vars.last_insert_id, self.vars.prev_row_count)
+                    .with_last_found_rows(self.vars.last_found_rows)
+                    .with_client_found_rows(self.vars.client_found_rows)
                     .with_week_and_division_scale(week_format, div_scale)
                     .with_windowing_use_high_precision(windowing_use_high_precision)
                     .with_pipelined_window_exec(enable_pipelined_window_exec)
@@ -1726,14 +1726,14 @@ impl Session {
                 .with_tmp_table_max_size(snapshot.tmp_table_max_size)
                 .with_remove_orderby_in_subquery(remove_orderby_in_subquery)
                 .with_session_state(current_db, version)
-                .with_user(self.current_user.clone(), self.login_user.clone())
+                .with_user(self.vars.current_user.clone(), self.vars.login_user.clone())
                 .with_global_sysvar_accessor(global_sysvar_accessor)
                 .with_active_roles(
-                    self.current_user
+                    self.vars.current_user
                         .as_ref()
                         .map(|_| Arc::clone(&self.active_roles)),
                 )
-                .with_connection_id(self.connection_id)
+                .with_connection_id(self.vars.connection_id)
                 .with_selected_lock_keys(self.selected_lock_keys.clone())
                 .with_pessimistic_transaction(self.statement_is_pessimistic())
                 .with_in_transaction(!self.is_autocommit() || self.in_transaction())
@@ -1744,9 +1744,9 @@ impl Session {
                 .with_rand_session(Arc::clone(&self.rand))
                 .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                 .with_user_vars(self.user_vars.clone())
-                .with_previous_statement(self.last_insert_id, self.prev_row_count)
-                .with_last_found_rows(self.last_found_rows)
-                .with_client_found_rows(self.client_found_rows)
+                .with_previous_statement(self.vars.last_insert_id, self.vars.prev_row_count)
+                .with_last_found_rows(self.vars.last_found_rows)
+                .with_client_found_rows(self.vars.client_found_rows)
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_windowing_use_high_precision(windowing_use_high_precision)
                 .with_pipelined_window_exec(enable_pipelined_window_exec)
@@ -1807,7 +1807,7 @@ impl Session {
                     !self.pessimistic_constraint_check_in_place()
                         && self.in_transaction()
                         && !self.restricted_sql
-                        && self.connection_id.is_some_and(|id| id > 0),
+                        && self.vars.connection_id.is_some_and(|id| id > 0),
                 )
                 // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`
                 // (`pkg/executor/insert.go:331-337,347-350`): normal INSERT uses
@@ -1817,7 +1817,7 @@ impl Session {
                 // so the Rust context must carry that mode before `Txn()` is opened.
                 .with_pessimistic_lazy_dup_check(
                     self.statement_txn_mode().is_pessimistic()
-                        && self.connection_id.is_some_and(|id| id > 0),
+                        && self.vars.connection_id.is_some_and(|id| id > 0),
                 )
                 .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
                 .with_cte_max_recursion_depth(cte_depth)
@@ -1956,16 +1956,16 @@ impl Session {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner))
         {
-            self.last_insert_id = published;
+            self.vars.last_insert_id = published;
         }
         if let Ok(crate::record_set::StatementCompletion::Rows(Some(rows))) = result {
-            self.last_found_rows = *rows;
+            self.vars.last_found_rows = *rows;
         }
         // Go preserves StmtCtx.PrevAffectedRows across SET SESSION_STATES.
         if self.in_set_session_states {
             return;
         }
-        self.prev_row_count = match self.statement_kind {
+        self.vars.prev_row_count = match self.statement_kind {
             StatementKind::Select => -1,
             // Go reads `StmtCtx.AffectedRows()`, which a failed statement
             // leaves at whatever it managed to apply -- 0 for a statement

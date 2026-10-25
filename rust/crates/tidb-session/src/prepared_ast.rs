@@ -178,7 +178,7 @@ impl Session {
                     self.vars.get_system("time_zone").unwrap_or_default(),
                     blacklist_generation,
                 )
-                .with_user_identity(self.current_user.clone().unwrap_or_default())
+                .with_user_identity(self.vars.current_user.clone().unwrap_or_default())
                 .with_pessimistic_transaction(pessimistic_transaction)
                 .with_foreign_key_checks(self.foreign_key_checks())
                 .with_session_state(

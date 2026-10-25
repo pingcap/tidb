@@ -385,7 +385,7 @@ impl Session {
             }
         }
         let login = self
-            .login_user
+            .vars.login_user
             .as_deref()
             .and_then(|login| login.split_once('@'))
             .map(|(user, host)| (user.to_owned(), host.to_owned()));
@@ -575,7 +575,7 @@ impl Session {
             }
         }
         let login = self
-            .login_user
+            .vars.login_user
             .as_deref()
             .and_then(|login| login.split_once('@'))
             .map(|(user, host)| (user.to_owned(), host.to_owned()));
@@ -728,10 +728,10 @@ impl Session {
     /// Go's preprocessor does.
     fn table_lock_name(&self, path: &[String]) -> Result<(String, String), DriverError> {
         match path {
-            [_] if self.current_db.is_empty() => {
+            [_] if self.vars.current_db.is_empty() => {
                 Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected))
             }
-            [table] => Ok((self.current_db.clone(), table.clone())),
+            [table] => Ok((self.vars.current_db.clone(), table.clone())),
             [db, table] => Ok((db.clone(), table.clone())),
             _ => Err(DriverError::unsupported(
                 "a LOCK TABLES name has one or two parts",

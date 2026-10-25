@@ -479,10 +479,10 @@ impl Session {
         if !enabled {
             return Ok(());
         }
-        let user = self.current_user.as_deref().map(|current| PasswordUser {
+        let user = self.vars.current_user.as_deref().map(|current| PasswordUser {
             auth_username: identity_username(current).into(),
             username: self
-                .login_user
+                .vars.login_user
                 .as_deref()
                 .map(identity_username)
                 .unwrap_or_else(|| identity_username(current))
@@ -1986,7 +1986,7 @@ impl Session {
     ) -> Result<String, DriverError> {
         match database {
             Some(database) => Ok(database.to_owned()),
-            None if !self.current_db.is_empty() => Ok(self.current_db.clone()),
+            None if !self.vars.current_db.is_empty() => Ok(self.vars.current_db.clone()),
             None => Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected)),
         }
     }

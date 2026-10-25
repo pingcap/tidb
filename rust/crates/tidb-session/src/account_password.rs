@@ -500,11 +500,11 @@ impl Session {
         // is the only thing it was allowed in here to do (Go's
         // `executeAlterUser` -> `checkSandboxMode`, whose gate ran before the
         // statement reached this driver).
-        if self.sandbox_mode
+        if self.vars.sandbox_mode
             && (alter.user_function_auth.is_some()
                 || alter.users.iter().any(|spec| spec.auth.is_some()))
         {
-            self.sandbox_mode = false;
+            self.vars.sandbox_mode = false;
         }
         Ok(StmtOutput::Affected(0))
     }
@@ -849,7 +849,7 @@ impl Session {
             self.run_user_table_write(&sql)?;
         }
         self.mirror_account_policy_and_history(&registry, &user, &host)?;
-        self.sandbox_mode = false;
+        self.vars.sandbox_mode = false;
         Ok(StmtOutput::Affected(0))
     }
 }

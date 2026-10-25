@@ -107,7 +107,7 @@ impl Session {
             self.check_noop_functions(query)?;
         }
         self.activate_statement_resource_group(target);
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         // Both forms plan through the driver's own build path (see
         // `tidb_executor::explain`), using the context of the statement
         // INSIDE EXPLAIN. Go unwraps `ExplainStmt` before its SELECT/DML
@@ -386,7 +386,7 @@ impl Session {
             return Ok(None);
         };
         let (columns, rows) = rendered?;
-        self.found_in_plan_cache = execution.cache_hit();
+        self.vars.found_in_plan_cache = execution.cache_hit();
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }
 }

@@ -252,8 +252,8 @@ impl Session {
         crate::account_state::AccountState {
             privileges: self.privileges.clone(),
             privilege_bypassed: self.privilege_bypassed,
-            login_user: self.login_user.clone(),
-            current_user: self.current_user.clone(),
+            login_user: self.vars.login_user.clone(),
+            current_user: self.vars.current_user.clone(),
             active_roles: self.active_roles.to_vec(),
             restricted_sql: self.restricted_sql_executor(),
         }
@@ -479,20 +479,20 @@ impl Session {
         }
         crate::table_privilege::required_table_privileges(
             stmt,
-            &self.current_db,
+            &self.vars.current_db,
             |dml| {
                 self.with_planning_catalog(|catalog| {
                     tidb_executor::driver::dml_visit_info(
                         dml,
                         catalog,
-                        &self.current_db,
+                        &self.vars.current_db,
                         &ctx,
                     )
                 })
             },
             |query| {
                 self.with_planning_catalog(|catalog| {
-                    tidb_executor::driver::query_visit_info(query, catalog, &self.current_db, &ctx)
+                    tidb_executor::driver::query_visit_info(query, catalog, &self.vars.current_db, &ctx)
                 })
             },
         )
@@ -523,7 +523,7 @@ impl Session {
         let (user, host) = (user.to_owned(), host.to_owned());
         let missing: Vec<(String, String)> = {
             let catalog = self.lock_catalog()?;
-            crate::table_privilege::read_tables(stmt, &self.current_db)
+            crate::table_privilege::read_tables(stmt, &self.vars.current_db)
                 .into_iter()
                 .filter(|(schema, table)| {
                     catalog.table_in(schema, table).is_none()
@@ -604,10 +604,10 @@ impl Session {
         let graded = match stmt {
             tidb_ast::Stmt::Ddl(ddl) => match ddl.as_ref() {
                 tidb_ast::DdlStmt::CreateTable(create)
-                    if create.name.len() == 1 && !self.current_db.is_empty() =>
+                    if create.name.len() == 1 && !self.vars.current_db.is_empty() =>
                 {
                     let mut create = create.clone();
-                    create.name.insert(0, self.current_db.clone());
+                    create.name.insert(0, self.vars.current_db.clone());
                     named = tidb_ast::Stmt::Ddl(tidb_ast::NodeBox::new(tidb_ast::DdlStmt::CreateTable(create)));
                     &named
                 }
@@ -641,7 +641,7 @@ impl Session {
                     let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
                     for path in &drop.names {
                         let (db, name) = match path.as_slice() {
-                            [name] => (self.current_db.as_str(), name.as_str()),
+                            [name] => (self.vars.current_db.as_str(), name.as_str()),
                             [db, name] => (db.as_str(), name.as_str()),
                             _ => continue,
                         };
@@ -767,8 +767,8 @@ impl Session {
     /// front end that has no user leaves it unset and the builtins answer
     /// NULL, which is what Go does for a session without one.
     pub fn set_user(&mut self, current_user: String, login_user: String) {
-        self.current_user = Some(current_user);
-        self.login_user = Some(login_user);
+        self.vars.current_user = Some(current_user);
+        self.vars.login_user = Some(login_user);
     }
 
     /// Grants or revokes this session's `PROCESS` privilege.
@@ -785,7 +785,7 @@ impl Session {
     /// after authentication; `guard` is that registration, and dropping the
     /// session removes the row.
     pub fn attach_process(&mut self, connection_id: u64, guard: process::ProcessGuard) {
-        self.connection_id = Some(connection_id);
+        self.vars.connection_id = Some(connection_id);
         guard.set_trackers(
             std::sync::Arc::clone(self.session_memory.session_tracker()),
             std::sync::Arc::clone(self.session_memory.session_disk_tracker()),
@@ -801,7 +801,7 @@ impl Session {
     pub fn retain_process_statement(&self, sql: &str) -> Option<process::ProcessStatementGuard> {
         let text = self.statement_text(sql);
         self.process.as_ref().map(|guard| {
-            guard.statement_started(&text, self.current_db.clone(), self.status_text())
+            guard.statement_started(&text, self.vars.current_db.clone(), self.status_text())
         })
     }
 
@@ -826,7 +826,7 @@ impl Session {
             guard.statement_started_with_digest(
                 &text,
                 Some(digest),
-                self.current_db.clone(),
+                self.vars.current_db.clone(),
                 self.status_text(),
             )
         })
@@ -1010,7 +1010,7 @@ impl Session {
     /// authenticated as, for privilege-registry lookups. `None` for a
     /// session with no front end.
     pub fn current_identity(&self) -> Option<(&str, &str)> {
-        let identity = self.current_user.as_deref()?;
+        let identity = self.vars.current_user.as_deref()?;
         identity.split_once('@')
     }
 
@@ -1019,7 +1019,7 @@ impl Session {
     /// connection. `attach_process` sets it too; this exists for a front end
     /// that has an id but no process registry.
     pub fn set_connection_id(&mut self, connection_id: u64) {
-        self.connection_id = Some(connection_id);
+        self.vars.connection_id = Some(connection_id);
         self.session_memory.set_connection_id(connection_id);
         self.advisory_locks.set_owner(connection_id);
     }
@@ -1071,7 +1071,7 @@ impl Session {
     /// Go stores the complete client capability word on `SessionVars`; this
     /// session currently consumes only the affected-row bit.
     pub fn set_client_found_rows(&mut self, enabled: bool) {
-        self.client_found_rows = enabled;
+        self.vars.client_found_rows = enabled;
     }
 
     /// Installs the server/domain advisory-lock authority before this session
@@ -1082,7 +1082,7 @@ impl Session {
     ) {
         self.advisory_locks.release_all();
         self.advisory_locks = tidb_executor::advisory_lock_state::AdvisoryLockSession::new(service);
-        if let Some(connection_id) = self.connection_id {
+        if let Some(connection_id) = self.vars.connection_id {
             self.advisory_locks.set_owner(connection_id);
         }
     }
@@ -1091,20 +1091,20 @@ impl Session {
     /// for a session no front end opened.
     #[must_use]
     pub fn connection_id(&self) -> u64 {
-        self.connection_id.unwrap_or(0)
+        self.vars.connection_id.unwrap_or(0)
     }
 
     /// Whether this session logged in with an expired password and is
     /// therefore restricted to fixing it -- Go's `session.InSandBoxMode`.
     #[must_use]
     pub const fn in_sandbox_mode(&self) -> bool {
-        self.sandbox_mode
+        self.vars.sandbox_mode
     }
 
     /// Puts this session in sandbox mode. The front end calls this when the
     /// login reported an expired password the server chose to admit.
     pub const fn enable_sandbox_mode(&mut self) {
-        self.sandbox_mode = true;
+        self.vars.sandbox_mode = true;
     }
 
     /// Go's `TiDBContext.checkSandBoxMode` (`pkg/server/driver_tidb.go`): a
@@ -1116,7 +1116,7 @@ impl Session {
     /// reports it. The extra parse is paid only while sandboxed, a state one
     /// statement ends.
     pub(crate) fn check_sandbox_mode(&self, sql: &str) -> Result<(), DriverError> {
-        if !self.sandbox_mode {
+        if !self.vars.sandbox_mode {
             return Ok(());
         }
         let Ok(stmt) = self.parse(sql) else {

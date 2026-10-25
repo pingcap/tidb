@@ -103,7 +103,7 @@ impl PendingQuery {
             self.execute_opened_at.elapsed().as_secs_f64(),
             false,
         );
-        session.use_chunk_alloc = self.context.is_chunk_alloc_valid();
+        session.vars.use_chunk_alloc = self.context.is_chunk_alloc_valid();
         let result = self.record_set.finish();
         self.context.drain_fold_warnings();
         session.drain_eval_warnings(&self.context);
@@ -118,7 +118,7 @@ impl PendingQuery {
         );
         // Go's result writer draws every chunk from the statement's
         // allocator, which marks `StmtCtx.useChunkAlloc` while it is valid.
-        session.use_chunk_alloc = self.context.is_chunk_alloc_valid();
+        session.vars.use_chunk_alloc = self.context.is_chunk_alloc_valid();
         let Self {
             record_set,
             context,
@@ -221,7 +221,7 @@ impl StatementRecordSet {
             Ok(()) if retained => {}
             Ok(()) if req.num_rows() == 0 => {
                 self.exhausted = true;
-                session.last_found_rows = self.found_rows;
+                session.vars.last_found_rows = self.found_rows;
             }
             Ok(()) => self.found_rows += req.num_rows() as u64,
             Err(error) => {

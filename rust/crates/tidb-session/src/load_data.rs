@@ -87,7 +87,7 @@ impl crate::Session {
         &mut self,
         load: &LoadDataStmt,
     ) -> Result<PreparedLoadData, DriverError> {
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let env = self.load_data_env();
         let privileges = match load.table.as_slice() {
             [schema, table] => self.load_data_privileges(schema, table, load.on_duplicate),
@@ -174,7 +174,7 @@ impl crate::Session {
             .statement_context_ignoring(true, !restrictive)
             .with_statement_priority(crate::classify::statement_priority_of(stmt))
             .with_statement_class(tidb_executor::StatementClass::LoadData);
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let result = self.with_staged_catalog_for_path(&load.table, &current_db, |catalog| {
             tidb_executor::load_data::run_load_data(
                 &prepared,
@@ -186,7 +186,7 @@ impl crate::Session {
             )
         });
         self.drain_eval_warnings(&ctx);
-        self.statement_insert_id = ctx
+        self.vars.statement_insert_id = ctx
             .published_last_insert_id()
             .unwrap_or_else(|| ctx.given_insert_id());
         self.statement_message = ctx.message();

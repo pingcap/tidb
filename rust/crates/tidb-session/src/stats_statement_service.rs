@@ -86,7 +86,7 @@ impl Session {
         {
             return FlushStatsDeltaTargets::All;
         }
-        let current_database = self.current_db.clone();
+        let current_database = self.vars.current_db.clone();
         let mut ids = Vec::new();
         let mut warnings = Vec::new();
         {
@@ -183,7 +183,7 @@ impl Session {
         let mut tables = Vec::with_capacity(stmt.tables.len());
         for path in &stmt.tables {
             let (database, name) = match path.as_slice() {
-                [name] => (self.current_db.clone(), name.clone()),
+                [name] => (self.vars.current_db.clone(), name.clone()),
                 [database, name] => (database.clone(), name.clone()),
                 _ => {
                     return Err(DriverError::unsupported(

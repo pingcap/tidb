@@ -65,7 +65,7 @@ impl Session {
         // without one.
         let name = match name {
             Some(name) => name.to_owned(),
-            None if !self.current_db.is_empty() => self.current_db.clone(),
+            None if !self.vars.current_db.is_empty() => self.vars.current_db.clone(),
             None => return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected)),
         };
         // Go `checkMultiSchemaSpecs`.

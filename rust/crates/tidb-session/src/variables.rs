@@ -462,7 +462,7 @@ impl Session {
     /// connection's `SET RESOURCE GROUP` selection is used.
     #[must_use]
     pub fn statement_resource_group<'a>(&'a self, stmt: &Stmt) -> Cow<'a, str> {
-        let stmt_hints = parse_statement_hints_without_catalog(stmt, &self.current_db);
+        let stmt_hints = parse_statement_hints_without_catalog(stmt, &self.vars.current_db);
         if stmt_hints.has_resource_group && self.resource_group_hint_rejection().is_none() {
             Cow::Owned(stmt_hints.resource_group)
         } else {
@@ -510,7 +510,7 @@ impl Session {
         if hints.is_empty() {
             return;
         }
-        let stmt_hints = parse_statement_hints_without_catalog(stmt, &self.current_db);
+        let stmt_hints = parse_statement_hints_without_catalog(stmt, &self.vars.current_db);
         if !stmt_hints.has_resource_group {
             return;
         }
@@ -1542,7 +1542,7 @@ impl Session {
                     && (name.eq_ignore_ascii_case("last_insert_id")
                         || name.eq_ignore_ascii_case("identity"))
                 {
-                    return Ok(Expr::Int(self.last_insert_id.to_string()));
+                    return Ok(Expr::Int(self.vars.last_insert_id.to_string()));
                 }
                 // `@@warning_count` and `@@error_count` are Go's `GetSession`
                 // hooks on `s.SysWarningCount` / `s.SysErrorCount`: the
@@ -1581,7 +1581,7 @@ impl Session {
                 if *scope != Some(tidb_ast::SysVarScope::Global)
                     && name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_USE_ALLOC)
                 {
-                    return Ok(Expr::Int(i32::from(self.pre_use_chunk_alloc).to_string()));
+                    return Ok(Expr::Int(i32::from(self.vars.pre_use_chunk_alloc).to_string()));
                 }
                 // `@@last_plan_from_binding` is Go's `PrevFoundInBinding`
                 // read, for the same reason and at the same boundary as
@@ -1687,7 +1687,7 @@ impl Session {
         if hints.is_empty() {
             return Ok(());
         }
-        let current_database = self.current_db.clone();
+        let current_database = self.vars.current_db.clone();
         let (mut stmt_hints, _, warnings) = {
             let catalog = self.lock_catalog()?;
             let mut set_var_checker = set_var_hint_checker;

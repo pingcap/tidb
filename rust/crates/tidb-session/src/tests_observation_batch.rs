@@ -453,7 +453,7 @@ fn observation_batch_prepared_cache_keeps_tables_and_one_execution_per_call() {
             .run_prepared_with_result_authority(&prepared, &[Datum::Int(1)])
             .unwrap();
     }
-    let cached = session.found_in_plan_cache;
+    let cached = session.vars.found_in_plan_cache;
     let data = session.statement_stats.take();
     disable_top_sql();
     let (_, digest) = normalize_statement_digest(sql);

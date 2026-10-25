@@ -102,7 +102,7 @@ impl Session {
 
     /// Temporarily selects the prepare-time database without running a USE statement.
     pub fn replace_migration_database(&mut self, database: String) -> String {
-        std::mem::replace(&mut self.current_db, database)
+        std::mem::replace(&mut self.vars.current_db, database)
     }
 
     /// Exports the state owned by this SQL session and its connection handlers.
@@ -116,7 +116,7 @@ impl Session {
         if self.advisory_locks.has_locks() {
             return Err(cannot_migrate("session has advisory locks"));
         }
-        if self.sandbox_mode {
+        if self.vars.sandbox_mode {
             return Err(cannot_migrate("session is in sandbox mode"));
         }
         if let Some(reason) = self.protocol_session_states.cannot_migrate {
@@ -181,11 +181,11 @@ impl Session {
             "sys-vars": system_vars, "prepared-stmts": prepared,
             "prepared-stmt-id": self.prepared_statement_id,
             "status": if self.is_autocommit() { 2u32 } else { 0 },
-            "current-db": self.current_db, "txn-info": *self.last_txn_info.borrow(),
-            "found-rows": self.last_found_rows, "in-plan-cache": self.prev_found_in_plan_cache,
-            "in-binding": self.prev_found_in_binding,
+            "current-db": self.vars.current_db, "txn-info": *self.last_txn_info.borrow(),
+            "found-rows": self.vars.last_found_rows, "in-plan-cache": self.vars.prev_found_in_plan_cache,
+            "in-binding": self.vars.prev_found_in_binding,
             "seq-values": *self.sequence_last_values.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
-            "affected-rows": self.prev_row_count, "last-insert-id": self.last_insert_id,
+            "affected-rows": self.vars.prev_row_count, "last-insert-id": self.vars.last_insert_id,
             "warnings": warnings, "rs-group": self.resource_group,
         });
         let (ddl_query, ddl_seq) = self.last_ddl_info.borrow().clone();
@@ -238,14 +238,14 @@ impl Session {
             serde_json::from_value(state.get("prepared-stmts").cloned().unwrap_or(json!({})))
                 .map_err(invalid_state)?;
         let old_id = self.prepared_statement_id;
-        let old_db = self.current_db.clone();
+        let old_db = self.vars.current_db.clone();
         let prepare_result = (|| {
             for (id, statement) in prepared {
                 if statement.name.is_empty() {
                     continue;
                 }
                 self.prepared_statement_id = id.wrapping_sub(1);
-                self.current_db = statement.database;
+                self.vars.current_db = statement.database;
                 self.prepare_statement(
                     &statement.name,
                     &tidb_ast::PrepareSource::Sql(statement.text),
@@ -254,7 +254,7 @@ impl Session {
             Ok::<_, DriverError>(())
         })();
         self.prepared_statement_id = old_id;
-        self.current_db = old_db;
+        self.vars.current_db = old_db;
         prepare_result?;
         if let Some(bindings) = state
             .get("bindings")
@@ -360,7 +360,7 @@ impl Session {
             if !self.vars.resource_control_strict_mode()
                 || (self.privilege_bypassed
                     || self.privileges.is_none()
-                    || self.current_user.is_none())
+                    || self.vars.current_user.is_none())
                 || self.has_dynamic_privilege("RESOURCE_GROUP_ADMIN", false)
                 || self.has_dynamic_privilege("RESOURCE_GROUP_USER", false)
             {
@@ -390,7 +390,7 @@ impl Session {
             .get("prepared-stmt-id")
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32;
-        self.current_db = state
+        self.vars.current_db = state
             .get("current-db")
             .and_then(Value::as_str)
             .unwrap_or_default()
@@ -412,20 +412,20 @@ impl Session {
         if let Some(query) = state.get("query-info").filter(|q| !q.is_null()) {
             *self.last_query_info.borrow_mut() = query.to_string();
         }
-        self.last_found_rows = state.get("found-rows").and_then(Value::as_u64).unwrap_or(0);
-        self.found_in_plan_cache = state
+        self.vars.last_found_rows = state.get("found-rows").and_then(Value::as_u64).unwrap_or(0);
+        self.vars.found_in_plan_cache = state
             .get("in-plan-cache")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        self.found_in_binding = state
+        self.vars.found_in_binding = state
             .get("in-binding")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        self.prev_row_count = state
+        self.vars.prev_row_count = state
             .get("affected-rows")
             .and_then(Value::as_i64)
             .unwrap_or(0);
-        self.last_insert_id = state
+        self.vars.last_insert_id = state
             .get("last-insert-id")
             .and_then(Value::as_u64)
             .unwrap_or(0);

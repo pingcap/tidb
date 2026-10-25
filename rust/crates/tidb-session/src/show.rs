@@ -895,7 +895,7 @@ impl Session {
             unreachable!("the selection template is a SELECT")
         };
         select.where_clause = Some(predicate.clone());
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let ctx = self.statement_context(false);
         let table = tidb_executor::MemTable {
             columns: columns.clone(),

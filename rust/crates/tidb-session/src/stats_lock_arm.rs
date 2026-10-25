@@ -41,7 +41,7 @@ impl Session {
         statement: &tidb_ast::StatsLockStmt,
         lock: bool,
     ) -> Result<Option<StmtOutput>, DriverError> {
-        let current_database = self.current_db.clone();
+        let current_database = self.vars.current_db.clone();
         // Go's planner appends INSERT and then SELECT visit-info for every
         // target before it builds the executor. No lock row may change until
         // every requested table passes both checks.

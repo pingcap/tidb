@@ -616,41 +616,15 @@ pub struct Session {
     /// without `use_plan_cache()`, or an `ignore_plan_cache()` hint),
     /// reported after the uncached statement's boundary.
     pending_plan_cache_refusal: Option<&'static str>,
-    /// Go `SessionVars.InMultiStmts`: the running COM_QUERY text holds more
-    /// than one statement, which keeps the non-prepared plan cache out.
-    in_multi_stmts: bool,
     /// Go `StatementContext.InShowWarning`: set for exactly the statements
     /// that inherit the buffer, and the reason `WarningCount()` reports 0 for
     /// them. See [`Session::wire_warning_count`].
     in_show_warning: bool,
-    /// Go `SessionVars.SysWarningCount` / `SysErrorCount`: the PREVIOUS
-    /// statement's counts, which is what `@@warning_count` and
-    /// `@@error_count` report.
-    ///
-    /// `ResetContextOfStmt` snapshots them from the outgoing
-    /// `StmtCtx.NumErrorWarnings()` at every statement start, whatever the
-    /// incoming statement is -- unlike the buffer above, which only the
-    /// statements that REPORT warnings inherit. Reading the buffer instead
-    /// answered `0` for every statement that is not one of those three.
-    sys_warning_count: usize,
-    sys_error_count: usize,
-    /// Go `SessionVars.User` in its two spellings: the matched grant
-    /// identity `CURRENT_USER()` reports and the login identity `USER()`
-    /// reports. Empty until a front end authenticates one.
-    current_user: Option<String>,
-    login_user: Option<String>,
     /// Go `SessionVars.ActiveRoles`: the roles this session has activated,
     /// which every privilege check widens through and which `CURRENT_ROLE()`
     /// reports. A fresh session starts with its account's DEFAULT roles
     /// (Go activates them in `Auth`); `SET ROLE` replaces the set wholesale.
     active_roles: Arc<Vec<privilege::Account>>,
-    /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
-    /// `None` for a session with no connection identity, where the builtin
-    /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
-    connection_id: Option<u64>,
-    /// Go `SessionVars.ClientCapability & mysql.ClientFoundRows`: negotiated
-    /// once by the front end and copied into every statement context.
-    client_found_rows: bool,
     /// This connection's lock references over the domain/server lock service.
     advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
     /// Go `session.lockedTables`: the tables this session holds a
@@ -661,12 +635,6 @@ pub struct Session {
     /// transaction `decideTxnMode` made pessimistic, set by the storage owner
     /// for the statement attempt it runs.
     autocommit_pessimistic_statement: bool,
-    /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
-    /// which only a statement that ALLOCATED an auto value updates.
-    last_insert_id: u64,
-    /// The id the last statement allocated, which the OK packet carries and
-    /// which is 0 for a statement that allocated nothing.
-    statement_insert_id: u64,
     /// Go's `StatementContext.LastMessage`, retained until the next statement
     /// so the MySQL OK/EOF writer can publish UPDATE's summary text.
     statement_message: String,
@@ -685,16 +653,7 @@ pub struct Session {
     /// hint overwrote for the duration of ONE statement, put back when that
     /// statement finishes whether it succeeded or failed.
     set_var_hint_restore: Vec<(String, Option<String>)>,
-    /// Go `StmtCtx.PrevAffectedRows`, which is all `ROW_COUNT()` reports: the
-    /// preceding statement's affected rows, `-1` after a SELECT, `0`
-    /// otherwise. Derived once at the statement boundary from
-    /// [`Session::statement_kind`], so the function and the OK packet cannot
-    /// disagree about what the statement did.
-    prev_row_count: i64,
     in_set_session_states: bool,
-    /// Go `SessionVars.LastFoundRows`: the row count of the last result set
-    /// drained to EOF. Non-result statements leave it unchanged.
-    last_found_rows: u64,
     /// The class of the statement currently running, which decides what
     /// `ROW_COUNT()` reports next (Go's `StmtCtx.InSelectStmt` /
     /// `InInsertStmt` / `InUpdateStmt` / `InDeleteStmt` bits, read by
@@ -732,12 +691,6 @@ pub struct Session {
     /// Whether the running statement already ran Go's `CommitTxn`
     /// ([`Self::set_txn_isolation_level_one_shot_state_for_next_txn`]).
     statement_committed_txn: bool,
-    /// Go `SessionVars.CurrentDBChanged`: a `USE` switched databases since
-    /// the last slow-log entry, which then prints `use <db>;`.
-    current_db_changed: bool,
-    /// Go `SessionVars.PrevStmt`: the previous statement's loggable text
-    /// (`GetTextToLog(false)`), which a slow `COMMIT` prints as `Prev_stmt`.
-    prev_stmt_text: Option<String>,
     /// Go `ConnectionInfo.Attributes`: the handshake's connection attributes.
     connection_attributes: std::collections::BTreeMap<String, String>,
     /// Go `txn.GetMemBuffer()`: the current transaction's (or, in autocommit,
@@ -868,17 +821,6 @@ pub struct Session {
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
     physical_plan_cache: tidb_executor::SessionPlanCache,
     plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
-    /// Go `SessionVars.FoundInPlanCache`: whether the statement RUNNING now
-    /// found its plan in the cache. Reset for every statement.
-    found_in_plan_cache: bool,
-    /// Go `SessionVars.PrevFoundInPlanCache`, which is what
-    /// `@@last_plan_from_cache` reads -- the PRECEDING statement's value,
-    /// promoted at the statement boundary, since the reading `SELECT` is
-    /// itself never cacheable and would otherwise always answer 0.
-    prev_found_in_plan_cache: bool,
-    /// Go `StmtCtx.useChunkAlloc` for the running statement: its result was
-    /// produced through a valid reusable chunk allocator.
-    pub(crate) use_chunk_alloc: bool,
     /// The parser warnings of the statement now running, with where they
     /// start in [`Self::warnings`]; see
     /// [`Self::move_parse_warnings_behind_execution`].
@@ -890,9 +832,6 @@ pub struct Session {
     pub(crate) last_result_output_names: Vec<tidb_datatype::FieldNameMetadata>,
     /// Go `SessionVars.CurrentDB` when that result's statement opened.
     pub(crate) last_result_current_db: String,
-    /// Go `SessionVars.preUseChunkAlloc`, promoted from the previous
-    /// statement by `ExchangeChunkStatus`; `@@last_sql_use_alloc` reads it.
-    pub(crate) pre_use_chunk_alloc: bool,
     /// Go `SessionVars.userVars`: this session's user variables, keyed
     /// lowercased, with independent runtime values and declared SQL types.
     /// Planning may publish a type before any value exists.
@@ -907,9 +846,6 @@ pub struct Session {
     /// fresh session reads `NULL` from a sequence other sessions have advanced
     /// (captured: `lastval` before any `nextval` is `<nil>`).
     sequence_last_values: Arc<std::sync::Mutex<HashMap<i64, i64>>>,
-    /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
-    /// Empty means no database is selected, which is Go's `ErrNoDB` case.
-    current_db: String,
     /// Whether the front end's parse already opened THIS statement's warning
     /// boundary (go `ResetContextOfStmt` runs once per statement): a second
     /// boundary for the same statement would reset the counts the first one
@@ -951,12 +887,6 @@ pub struct Session {
     /// Negotiated TLS `(cipher, version)` names for `Ssl_cipher` /
     /// `Ssl_version`; `None` on a plaintext connection.
     tls_status: Option<(String, String)>,
-    /// Go `session.sandboxMode`: this connection logged in with an EXPIRED
-    /// password while the server allowed it, so it may run nothing but the
-    /// `SET PASSWORD` / `ALTER USER` that fixes the password. Set by the
-    /// front end from the login's verdict, cleared by the statement that
-    /// stores a new password.
-    sandbox_mode: bool,
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
@@ -1011,14 +941,6 @@ pub struct Session {
     /// `pkg/session/session.go`: `execStmt.Name == ""` clears `currentPlan`),
     /// so its statement contexts skip rendering `BriefBinaryPlan`.
     binary_prepared_execution: bool,
-    /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
-    /// took its hints from a binding.
-    found_in_binding: bool,
-    /// Go `SessionVars.PrevFoundInBinding`, which is what
-    /// `@@last_plan_from_binding` reads -- the PRECEDING statement's value,
-    /// promoted at the statement boundary for the same reason
-    /// `@@last_plan_from_cache` is.
-    prev_found_in_binding: bool,
     /// The jobs the current statement's DDL submitted (Go `doDDLJob2`),
     /// shared with every statement context built for it and finished into
     /// the store's DDL history when the statement completes.
@@ -1088,30 +1010,19 @@ impl Session {
             active_resource_group: "default".to_owned(),
             warnings: Vec::new(),
             deferred_multi_statement_warning: false,
-            in_multi_stmts: false,
             pending_plan_cache_refusal: None,
             in_show_warning: false,
-            sys_warning_count: 0,
-            sys_error_count: 0,
-            current_user: None,
-            login_user: None,
             active_roles: Arc::new(Vec::new()),
-            connection_id: None,
-            client_found_rows: false,
             advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             locked_tables: std::collections::BTreeMap::new(),
             selected_lock_keys: None,
             autocommit_pessimistic_statement: false,
-            last_insert_id: 0,
-            statement_insert_id: 0,
             statement_message: String::new(),
             statement_affected_rows: 0,
             local_infile_data: None,
             local_infile_accepted: false,
             set_var_hint_restore: Vec::new(),
-            prev_row_count: 0,
             in_set_session_states: false,
-            last_found_rows: 0,
             statement_kind: StatementKind::Other,
             statement_in_select: false,
             statement_keys_read: Arc::default(),
@@ -1122,8 +1033,6 @@ impl Session {
             statement_ended_txn_start_ts: None,
             statement_began_txn: false,
             statement_committed_txn: false,
-            current_db_changed: false,
-            prev_stmt_text: None,
             connection_attributes: std::collections::BTreeMap::new(),
             staged_writes: std::sync::Arc::default(),
             server_info_syncer: None,
@@ -1176,16 +1085,11 @@ impl Session {
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             physical_plan_cache: tidb_executor::SessionPlanCache::default(),
             plan_cache_invalidation,
-            found_in_plan_cache: false,
-            prev_found_in_plan_cache: false,
-            use_chunk_alloc: false,
             parse_warnings: None,
             last_result_output_names: Vec::new(),
             last_result_current_db: String::new(),
-            pre_use_chunk_alloc: tidb_vardef::defaults::DEF_TIDB_USE_ALLOC,
             user_vars: tidb_expr::user_vars::UserVars::new(),
             sequence_last_values: Arc::default(),
-            current_db: DEFAULT_DATABASE.to_owned(),
             statement_boundary_open: false,
             process: None,
             has_process_priv: false,
@@ -1193,7 +1097,6 @@ impl Session {
             privilege_bypassed: false,
             secure_transport: false,
             tls_status: None,
-            sandbox_mode: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
             prepared_statement_id: 0,
@@ -1213,8 +1116,6 @@ impl Session {
             sql_cpu_usages: Arc::default(),
             ruv2_pending_session_parser_total: 0,
             binary_prepared_execution: false,
-            found_in_binding: false,
-            prev_found_in_binding: false,
             ddl_job_sink: tidb_executor::ddl::job_history::DdlJobSink::default(),
             node: None,
         }
@@ -2018,7 +1919,7 @@ impl Session {
     /// Go `SessionVars.CurrentDB`. Empty when no database is selected.
     #[must_use]
     pub fn current_database(&self) -> &str {
-        &self.current_db
+        &self.vars.current_db
     }
 
     /// Go `clientConn.useDB`: selects a schema outside the statement path.
@@ -2035,7 +1936,7 @@ impl Session {
         if let Some(guard) = &self.process {
             guard
                 .registry()
-                .statement_finished(guard.id(), &self.current_db, &self.status_text());
+                .statement_finished(guard.id(), &self.vars.current_db, &self.status_text());
         }
         Ok(())
     }
@@ -2050,7 +1951,7 @@ impl Session {
         if let Some(guard) = &self.process {
             guard
                 .registry()
-                .statement_finished(guard.id(), &self.current_db, &self.status_text());
+                .statement_finished(guard.id(), &self.vars.current_db, &self.status_text());
         }
     }
 
@@ -2064,7 +1965,7 @@ impl Session {
     /// handshake carried no schema at all -- or a harness replaying one --
     /// needs to say so, and this is the one way to.
     pub fn deselect_database(&mut self) {
-        self.current_db = String::new();
+        self.vars.current_db = String::new();
     }
 
     /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
@@ -2086,8 +1987,8 @@ impl Session {
                 name.to_owned(),
             )));
         };
-        self.current_db_changed = name != self.current_db;
-        self.current_db = name.to_owned();
+        self.vars.current_db_changed = name != self.vars.current_db;
+        self.vars.current_db = name.to_owned();
         // The schema's collation, substituted when new collations do not
         // support it, becomes `collation_database`; that variable's hook
         // mirrors its charset into `character_set_database`.
@@ -2101,10 +2002,10 @@ impl Session {
 
     /// The current database, or Go's `ErrNoDB` when none is selected.
     fn require_current_database(&self) -> Result<&str, DriverError> {
-        if self.current_db.is_empty() {
+        if self.vars.current_db.is_empty() {
             return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
         }
-        Ok(&self.current_db)
+        Ok(&self.vars.current_db)
     }
 
     /// Go `LAST_INSERT_ID()`: the first id the most recent ALLOCATING
@@ -2113,7 +2014,7 @@ impl Session {
     /// was, which is what MySQL and TiDB both do.
     #[must_use]
     pub fn last_insert_id(&self) -> u64 {
-        self.last_insert_id
+        self.vars.last_insert_id
     }
 
     /// The auto-increment ids the running statement has assigned, which a
@@ -2129,7 +2030,7 @@ impl Session {
     /// which is 0 when the statement allocated nothing.
     #[must_use]
     pub fn statement_insert_id(&self) -> u64 {
-        self.statement_insert_id
+        self.vars.statement_insert_id
     }
 
     /// The info string produced by the statement most recently executed.
@@ -2377,7 +2278,7 @@ impl Session {
                 );
                 // The nested statement boundary consumes the binding flag.
                 if binding_sql.is_some() {
-                    self.found_in_binding = true;
+                    self.vars.found_in_binding = true;
                 }
                 return result;
             }
@@ -2414,7 +2315,7 @@ impl Session {
             }) {
                 let opened = self.open_prepared_record_set_for(&cached, prepared)?;
                 if binding_sql.is_some() {
-                    self.found_in_binding = true;
+                    self.vars.found_in_binding = true;
                 }
                 let authority = matches!(opened, OpenedStatement::Rows(_) | OpenedStatement::Complete(StmtOutput::Rows { .. }))
                     .then(|| self.result_materialization_authority());
@@ -2455,7 +2356,7 @@ impl Session {
                 "prepared metadata for set operations is not supported here",
             ));
         };
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let ctx = self
             .statement_context(false)
             .with_prepared_params(parameters.unwrap_or_default());
@@ -2560,7 +2461,7 @@ impl Session {
                                 the security risk";
         // Go `handleQuery` clears `InMultiStmts` for every COM_QUERY and sets
         // it once a multi-statement text is admitted.
-        self.in_multi_stmts = false;
+        self.vars.in_multi_stmts = false;
         // Go parses this text ONCE; the admission parse below is this tier's
         // second pass over every COM_QUERY. A text that provably holds exactly
         // one statement needs no admission answer from a parser -- the
@@ -2600,7 +2501,7 @@ impl Session {
                 _ => self.deferred_multi_statement_warning = true,
             }
         }
-        self.in_multi_stmts = true;
+        self.vars.in_multi_stmts = true;
         // Each statement's exact source bytes (Go `OriginalText`), carried as
         // the whole text was for the parse each one gets again.
         Ok(statements
@@ -2669,7 +2570,7 @@ impl Session {
     /// Go server `addQueryMetrics`' SLI call at the end of one SQL command.
     pub fn finish_txn_write_throughput(&mut self, cost: Duration) {
         let cost = i64::try_from(cost.as_nanos()).unwrap_or(i64::MAX);
-        let affected_rows = u64::try_from(self.prev_row_count.max(0)).unwrap_or(0);
+        let affected_rows = u64::try_from(self.vars.prev_row_count.max(0)).unwrap_or(0);
         let in_txn = self.in_transaction();
         self.write_sli
             .finish_execute_stmt(cost, affected_rows, in_txn);
@@ -2960,13 +2861,13 @@ impl Session {
         // `ResetContextOfStmt`, at the same boundary as the other `Prev*`
         // fields above -- which is why `select @@last_plan_from_cache`
         // reports the PRECEDING statement rather than itself.
-        self.prev_found_in_plan_cache = std::mem::take(&mut self.found_in_plan_cache);
+        self.vars.prev_found_in_plan_cache = std::mem::take(&mut self.vars.found_in_plan_cache);
         // Go `ExchangeChunkStatus`, at the same `ResetContextOfStmt` boundary.
-        self.pre_use_chunk_alloc = std::mem::take(&mut self.use_chunk_alloc);
+        self.vars.pre_use_chunk_alloc = std::mem::take(&mut self.vars.use_chunk_alloc);
         // Go promotes `FoundInBinding` at the same boundary, which is why
         // `select @@last_plan_from_binding` reports the statement BEFORE it
         // rather than itself (that SELECT matches no binding of its own).
-        self.prev_found_in_binding = std::mem::take(&mut self.found_in_binding);
+        self.vars.prev_found_in_binding = std::mem::take(&mut self.vars.found_in_binding);
         Ok(())
     }
 
@@ -3066,7 +2967,7 @@ impl Session {
             if let Some(guard) = &self.process {
                 guard.registry().statement_finished(
                     guard.id(),
-                    &self.current_db,
+                    &self.vars.current_db,
                     &self.status_text(),
                 );
             }

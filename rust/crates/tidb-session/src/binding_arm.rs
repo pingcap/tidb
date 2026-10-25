@@ -114,7 +114,7 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         let digest = match &set.target {
             tidb_ast::SetBindingTarget::Statement(target) => {
-                let current_db = self.current_db.clone();
+                let current_db = self.vars.current_db.clone();
                 let (_, digest) = binding::normalize_with_db(target.origin.as_ref(), &current_db);
                 digest
             }
@@ -180,7 +180,7 @@ impl Session {
         let origin = target.origin.as_ref();
         let hinted = hinted.as_ref();
 
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         // A cross-DB binding (`*.t`) belongs to NO schema: Go stores an
         // empty `Default_db` (measured), and the `*` survives normalization.
         let wildcard = binding::collect_table_names(origin)
@@ -463,7 +463,7 @@ impl Session {
     ///   that is both mismatched and over a temporary table reports 8006.
     fn refuse_binding_on_temporary_table(&mut self, origin: &Stmt) -> Result<(), DriverError> {
         let names = binding::collect_table_names(origin);
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         self.with_catalog_mut(|catalog| {
             for (schema, table) in &names {
                 let database = if schema.is_empty() {
@@ -549,7 +549,7 @@ impl Session {
                 if target.hinted.is_some() {
                     self.refuse_binding_on_temporary_table(target.origin.as_ref())?;
                 }
-                let current_db = self.current_db.clone();
+                let current_db = self.vars.current_db.clone();
                 let (_, digest) = binding::normalize_with_db(target.origin.as_ref(), &current_db);
                 vec![digest]
             }
@@ -750,7 +750,7 @@ impl Session {
         let (hints, bind_sql) = match self.session_bindings.match_statement(
             &no_db_digest,
             &table_names,
-            &self.current_db,
+            &self.vars.current_db,
             fuzzy_enabled,
         ) {
             Some(matched) => (matched.hints.clone(), matched.bind_sql.clone()),
@@ -758,7 +758,7 @@ impl Session {
                 let matched = global.as_ref()?.matching_binding(
                     &no_db_digest,
                     &table_names,
-                    &self.current_db,
+                    &self.vars.current_db,
                     fuzzy_enabled,
                 )?;
                 if self
@@ -777,7 +777,7 @@ impl Session {
                 let matched = global.match_statement(
                     &no_db_digest,
                     &table_names,
-                    &self.current_db,
+                    &self.vars.current_db,
                     fuzzy_enabled,
                 )?;
                 (matched.hints.clone(), matched.bind_sql.clone())
@@ -798,7 +798,7 @@ impl Session {
         for warning in crate::dispatch::filter_sem_restricted_hints(&mut bound) {
             self.append_warning(crate::WarningLevel::Warning, 1105, warning);
         }
-        self.found_in_binding = true;
+        self.vars.found_in_binding = true;
         // Go `optimize`: `originStmtHints.QueryHasHints` -- the statement
         // wrote hints of its own, which the binding's replace.
         if !tidb_hint::extract_table_hints_from_stmt_node(stmt)
@@ -841,7 +841,7 @@ impl Session {
     /// Whether `@@last_plan_from_binding` should report a hit, which is the
     /// PRECEDING statement's outcome (Go `PrevFoundInBinding`).
     pub(crate) fn last_plan_from_binding(&self) -> bool {
-        self.prev_found_in_binding
+        self.vars.prev_found_in_binding
     }
 
     /// Go `checkBindingValidation`'s effect: the hinted statement must plan
@@ -854,7 +854,7 @@ impl Session {
         let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
             return Ok(());
         };
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let ctx = self.statement_context(false);
         let select = select.clone();
         self.with_catalog_retrieving(&ctx, |catalog| {

@@ -551,7 +551,7 @@ impl Session {
                     &prepared.privilege_requests,
                 );
                 if binding_matched {
-                    self.found_in_binding = true;
+                    self.vars.found_in_binding = true;
                 }
                 return result;
             }
@@ -569,7 +569,7 @@ impl Session {
                     &prepared.privilege_requests,
                 );
                 if binding_matched {
-                    self.found_in_binding = true;
+                    self.vars.found_in_binding = true;
                 }
                 return result.map(PendingExecution::Complete);
             }
@@ -583,7 +583,7 @@ impl Session {
         let result =
             self.prepare_bound_execution(&prepared.sql, bound, &prepared.privilege_requests);
         if binding_matched {
-            self.found_in_binding = true;
+            self.vars.found_in_binding = true;
         }
         result
     }

@@ -38,7 +38,7 @@ impl Session {
             {
                 // Go executes this local expression before numeric ID/config gates.
                 if let Some(registry) = registry {
-                    registry.kill(self.connection_id.unwrap_or(0), kill.query);
+                    registry.kill(self.vars.connection_id.unwrap_or(0), kill.query);
                 }
                 return Ok(Some(StmtOutput::Affected(0)));
             }
@@ -255,7 +255,7 @@ impl Session {
     /// The `User` column: Go reports the bare user name, while this session
     /// stores the login identity as `user@host`.
     pub(crate) fn process_list_user(&self) -> String {
-        match &self.login_user {
+        match &self.vars.login_user {
             Some(user) => user.split('@').next().unwrap_or_default().to_owned(),
             None => String::new(),
         }
@@ -278,13 +278,13 @@ impl Session {
         crate::instance_state::ViewerState {
             has_process: self.has_process_privilege(),
             registry: self.process.as_ref().map(|guard| guard.registry().clone()),
-            connection_id: self.connection_id.unwrap_or(0),
+            connection_id: self.vars.connection_id.unwrap_or(0),
             own_process_id: self.process.as_ref().map(|guard| guard.id()),
             process_user: self.process_list_user(),
-            current_db: self.current_db.clone(),
+            current_db: self.vars.current_db.clone(),
             status: self.status_text(),
             resource_group: self.active_resource_group.clone(),
-            login_user: self.login_user.clone(),
+            login_user: self.vars.login_user.clone(),
             auth_identity: self
                 .current_identity()
                 .map(|(user, host)| (user.to_owned(), host.to_owned())),
@@ -392,7 +392,7 @@ impl Session {
                     )
                 })
             })
-            || self.login_user.is_none()
+            || self.vars.login_user.is_none()
     }
 
 }

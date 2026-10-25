@@ -555,7 +555,7 @@ impl Session {
     /// `dropIndex`, `TruncateTable`, `renameTable(s)`).
     pub fn validate_cached_table_ddl(&self, stmt: &tidb_ast::Stmt) -> Result<(), DriverError> {
         let catalog = self.lock_catalog()?;
-        tidb_executor::ddl::check_cached_table_ddl(&catalog, &self.current_db, stmt)
+        tidb_executor::ddl::check_cached_table_ddl(&catalog, &self.vars.current_db, stmt)
     }
 
     /// Go's submitter validates persistent FK references after implicit commit.
@@ -673,7 +673,7 @@ impl Session {
         &mut self,
         names: Vec<Vec<String>>,
     ) -> Result<(), DriverError> {
-        let database = self.current_db.clone();
+        let database = self.vars.current_db.clone();
         // The shared splitter reverses local names; restore input order here
         // so its executor walks the same reverse order as the original DROP.
         let drop = tidb_ast::DropTableStmt {
@@ -696,7 +696,7 @@ impl Session {
 
     pub(crate) fn is_local_temporary_table_path(&self, name: &[String]) -> bool {
         let (database, table) = match name {
-            [table] => (self.current_db.as_str(), table.as_str()),
+            [table] => (self.vars.current_db.as_str(), table.as_str()),
             [database, table] => (database.as_str(), table.as_str()),
             _ => return false,
         };

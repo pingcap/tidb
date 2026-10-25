@@ -103,7 +103,7 @@ impl Session {
         match ddl.as_ref() {
             DdlStmt::AlterTable(alter) => self.alter_table_target_precheck(alter)?,
             DdlStmt::CreateTable(create) => {
-                let current_db = self.current_db.clone();
+                let current_db = self.vars.current_db.clone();
                 let (database, _) =
                     tidb_executor::driver::split_table_path_pub(&create.name, &current_db)?;
                 let database = database.to_owned();
@@ -157,7 +157,7 @@ impl Session {
         path: &[String],
         verb: &'static str,
     ) -> Result<(), DriverError> {
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let (database, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
         let (database, name) = (go_to_lower(database), name.to_owned());
         let exists =
@@ -185,7 +185,7 @@ impl Session {
     /// planner's privilege check, so a missing table answers 1146 even to a
     /// user who holds no privilege on it.
     pub fn require_table_exists(&mut self, path: &[String]) -> Result<(), DriverError> {
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let (database, name) = tidb_executor::driver::split_table_path_pub(path, &current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());
         self.with_catalog_mut(|catalog| {
@@ -206,7 +206,7 @@ impl Session {
         &mut self,
         alter: &tidb_ast::AlterTableStmt,
     ) -> Result<(), DriverError> {
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let (database, name) =
             tidb_executor::driver::split_table_path_pub(&alter.name, &current_db)?;
         let (database, name) = (database.to_owned(), name.to_owned());

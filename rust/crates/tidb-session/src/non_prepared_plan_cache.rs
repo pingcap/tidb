@@ -1004,7 +1004,7 @@ impl crate::Session {
         parameterize_select(
             stmt,
             &catalog,
-            &self.current_db,
+            &self.vars.current_db,
             enable_param_limit,
             self.non_prepared_plan_cache_for_dml_enabled(),
             string_collation,
@@ -1055,7 +1055,7 @@ impl crate::Session {
         parameterize_dml(
             stmt,
             &catalog,
-            &self.current_db,
+            &self.vars.current_db,
             enable_param_limit,
             string_collation,
             max_num_param,
@@ -1244,7 +1244,7 @@ impl crate::Session {
     /// Whether `@@last_plan_from_cache` should report a hit, which is the
     /// PRECEDING statement's outcome (Go `PrevFoundInPlanCache`).
     pub(crate) fn last_plan_from_cache(&self) -> bool {
-        self.prev_found_in_plan_cache
+        self.vars.prev_found_in_plan_cache
     }
 
     pub(crate) fn non_prepared_plan_cache_enabled(&self) -> bool {
@@ -1273,7 +1273,7 @@ impl crate::Session {
     fn non_prepared_plan_cache_allowed(&self, statement: &Stmt) -> bool {
         // Go `getPlanFromNonPreparedPlanCache`: a statement of a
         // multi-statement query never reaches the cache.
-        if self.in_multi_stmts {
+        if self.vars.in_multi_stmts {
             return false;
         }
         let hints = crate::variables::parse_statement_hints_without_catalog(

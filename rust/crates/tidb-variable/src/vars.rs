@@ -1909,6 +1909,105 @@ pub struct SessionVars {
     /// The GLOBAL values this session read for variables `SkipInit` left
     /// out of its copy; see [`Self::unseeded_global_value`].
     first_read_globals: FirstReadGlobals,
+    /// Go `SessionVars.InMultiStmts`: the running COM_QUERY text holds more
+    /// than one statement, which keeps the non-prepared plan cache out.
+    /// (Go `SessionVars.InMultiStmts`.)
+    pub in_multi_stmts: bool,
+    /// Go `SessionVars.SysWarningCount` / `SysErrorCount`: the PREVIOUS
+    /// statement's counts, which is what `@@warning_count` and
+    /// `@@error_count` report.
+    ///
+    /// `ResetContextOfStmt` snapshots them from the outgoing
+    /// `StmtCtx.NumErrorWarnings()` at every statement start, whatever the
+    /// incoming statement is -- unlike the buffer above, which only the
+    /// statements that REPORT warnings inherit. Reading the buffer instead
+    /// answered `0` for every statement that is not one of those three.
+    /// (Go `SessionVars.SysWarningCount`.)
+    pub sys_warning_count: usize,
+    /// Go `SessionVars.SysErrorCount`.
+    pub sys_error_count: usize,
+    /// Go `SessionVars.User` in its two spellings: the matched grant
+    /// identity `CURRENT_USER()` reports and the login identity `USER()`
+    /// reports. Empty until a front end authenticates one.
+    /// (Go `SessionVars.User (rendered)`.)
+    pub current_user: Option<String>,
+    /// Go `SessionVars.User.AuthUsername@AuthHostname (rendered)`.
+    pub login_user: Option<String>,
+    /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports.
+    /// `None` for a session with no connection identity, where the builtin
+    /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
+    /// (Go `SessionVars.ConnectionID`.)
+    pub connection_id: Option<u64>,
+    /// Go `SessionVars.ClientCapability & mysql.ClientFoundRows`: negotiated
+    /// once by the front end and copied into every statement context.
+    /// (Go `SessionVars.ClientCapability & ClientFoundRows`.)
+    pub client_found_rows: bool,
+    /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
+    /// which only a statement that ALLOCATED an auto value updates.
+    /// (Go `SessionVars.LastInsertID`.)
+    pub last_insert_id: u64,
+    /// The id the last statement allocated, which the OK packet carries and
+    /// which is 0 for a statement that allocated nothing.
+    /// (Go `SessionVars.StmtCtx.InsertID`.)
+    pub statement_insert_id: u64,
+    /// Go `StmtCtx.PrevAffectedRows`, which is all `ROW_COUNT()` reports: the
+    /// preceding statement's affected rows, `-1` after a SELECT, `0`
+    /// otherwise. Derived once at the statement boundary from
+    /// [`Session::statement_kind`], so the function and the OK packet cannot
+    /// disagree about what the statement did.
+    /// (Go `SessionVars.PrevAffectedRows / StmtCtx.PrevAffectedRows`.)
+    pub prev_row_count: i64,
+    /// Go `SessionVars.LastFoundRows`: the row count of the last result set
+    /// drained to EOF. Non-result statements leave it unchanged.
+    /// (Go `SessionVars.LastFoundRows`.)
+    pub last_found_rows: u64,
+    /// Go `SessionVars.CurrentDBChanged`: a `USE` switched databases since
+    /// the last slow-log entry, which then prints `use <db>;`.
+    /// (Go `SessionVars.the CurrentDB change flag`.)
+    pub current_db_changed: bool,
+    /// Go `SessionVars.PrevStmt`: the previous statement's loggable text
+    /// (`GetTextToLog(false)`), which a slow `COMMIT` prints as `Prev_stmt`.
+    /// (Go `SessionVars.PrevStmt`.)
+    pub prev_stmt_text: Option<String>,
+    /// Go `SessionVars.FoundInPlanCache`: whether the statement RUNNING now
+    /// found its plan in the cache. Reset for every statement.
+    /// (Go `SessionVars.FoundInPlanCache`.)
+    pub found_in_plan_cache: bool,
+    /// Go `SessionVars.PrevFoundInPlanCache`, which is what
+    /// `@@last_plan_from_cache` reads -- the PRECEDING statement's value,
+    /// promoted at the statement boundary, since the reading `SELECT` is
+    /// itself never cacheable and would otherwise always answer 0.
+    /// (Go `SessionVars.PrevFoundInPlanCache`.)
+    pub prev_found_in_plan_cache: bool,
+    /// Go `StmtCtx.useChunkAlloc` for the running statement: its result was
+    /// produced through a valid reusable chunk allocator.
+    /// (Go `SessionVars.UseChunkAlloc`.)
+    pub use_chunk_alloc: bool,
+    /// Go `SessionVars.preUseChunkAlloc`, promoted from the previous
+    /// statement by `ExchangeChunkStatus`; `@@last_sql_use_alloc` reads it.
+    /// (Go `SessionVars.PreUseChunkAlloc`.)
+    pub pre_use_chunk_alloc: bool,
+    /// Go `SessionVars.CurrentDB`: the schema an unqualified name resolves in.
+    /// Empty means no database is selected, which is Go's `ErrNoDB` case.
+    /// (Go `SessionVars.CurrentDB`.)
+    pub current_db: String,
+    /// Go `session.sandboxMode`: this connection logged in with an EXPIRED
+    /// password while the server allowed it, so it may run nothing but the
+    /// `SET PASSWORD` / `ALTER USER` that fixes the password. Set by the
+    /// front end from the login's verdict, cleared by the statement that
+    /// stores a new password.
+    /// (Go `SessionVars.InSandBoxMode`.)
+    pub sandbox_mode: bool,
+    /// Go `SessionVars.FoundInBinding`: whether the statement RUNNING now
+    /// took its hints from a binding.
+    /// (Go `SessionVars.FoundInBinding`.)
+    pub found_in_binding: bool,
+    /// Go `SessionVars.PrevFoundInBinding`, which is what
+    /// `@@last_plan_from_binding` reads -- the PRECEDING statement's value,
+    /// promoted at the statement boundary for the same reason
+    /// `@@last_plan_from_cache` is.
+    /// (Go `SessionVars.PrevFoundInBinding`.)
+    pub prev_found_in_binding: bool,
 }
 
 /// Go `GetSessionOrGlobalSystemVar`'s lazy population of `s.systems` for a
@@ -1976,6 +2075,27 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
 impl Default for SessionVars {
     fn default() -> Self {
         Self {
+            in_multi_stmts: false,
+            sys_warning_count: 0,
+            sys_error_count: 0,
+            current_user: None,
+            login_user: None,
+            connection_id: None,
+            client_found_rows: false,
+            last_insert_id: 0,
+            statement_insert_id: 0,
+            prev_row_count: 0,
+            last_found_rows: 0,
+            current_db_changed: false,
+            prev_stmt_text: None,
+            found_in_plan_cache: false,
+            prev_found_in_plan_cache: false,
+            use_chunk_alloc: false,
+            pre_use_chunk_alloc: tidb_vardef::defaults::DEF_TIDB_USE_ALLOC,
+            current_db: "test".to_owned(),
+            sandbox_mode: false,
+            found_in_binding: false,
+            prev_found_in_binding: false,
             systems: HashMap::new(),
             autocommit: true,
             sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)

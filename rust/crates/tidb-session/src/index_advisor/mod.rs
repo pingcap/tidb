@@ -218,7 +218,7 @@ impl Session {
         let values = self.get_advisor_options()?;
         let option = options::fill_option(values, user_options, sqls)?;
 
-        let default_db = self.current_db.clone();
+        let default_db = self.vars.current_db.clone();
         let mut optimizer = SessionOptimizer { session: self };
         let query_set = prepare_query_set(&mut optimizer, &default_db, &option)?;
 
@@ -605,7 +605,7 @@ impl SessionOptimizer<'_> {
         }
         self.session.hypo_indexes = Arc::new(hypo);
 
-        let current_db = self.session.current_db.clone();
+        let current_db = self.session.vars.current_db.clone();
         // Go sets \`StmtCtx.InExplainStmt\`, the only planning mode that reads
         // the session's hypothetical indexes.
         let ctx = self

@@ -892,7 +892,7 @@ fn range_quota_fallback_is_visible_to_sql_and_prepared_cache() {
             vec![vec!["9", "9"]]
         );
         assert!(
-            !session.found_in_plan_cache,
+            !session.vars.found_in_plan_cache,
             "fallback plan must not be cached"
         );
         let warnings = row_text(session.run("SHOW WARNINGS"));
@@ -1007,7 +1007,7 @@ fn forced_range_fallback_warning_reaches_sql() {
         vec![vec!["9", "7"]]
     );
     assert!(
-        session.found_in_plan_cache,
+        session.vars.found_in_plan_cache,
         "forced fallback plan should be reused"
     );
     let warnings = row_text(session.run("SHOW WARNINGS"));
@@ -1046,7 +1046,7 @@ fn forced_range_fallback_dml_warning_reaches_sql() {
     );
     session.run("EXECUTE fd USING @a").unwrap();
     assert!(
-        session.found_in_plan_cache,
+        session.vars.found_in_plan_cache,
         "forced DML plan should be reused"
     );
     let warnings = row_text(session.run("SHOW WARNINGS"));
@@ -1119,7 +1119,7 @@ fn rejected_range_dml_retains_planning_warnings_without_caching() {
     session.run("SET @a = 1").unwrap();
     for _ in 0..2 {
         session.run("EXECUTE rd USING @a").unwrap();
-        assert!(!session.found_in_plan_cache);
+        assert!(!session.vars.found_in_plan_cache);
         let warnings = row_text(session.run("SHOW WARNINGS"));
         assert!(
             warnings
@@ -1225,7 +1225,7 @@ fn static_partition_quota_rejects_prepared_cache_and_keeps_rows() {
             row_text(session.run("EXECUTE pq USING @a,@b")),
             vec![vec![a.to_string()], vec![b.to_string()]]
         );
-        assert!(!session.found_in_plan_cache);
+        assert!(!session.vars.found_in_plan_cache);
         let warnings = row_text(session.run("SHOW WARNINGS"));
         assert_eq!(
             warnings
@@ -1319,7 +1319,7 @@ fn physical_index_range_quota_rejects_prepared_cache() {
                     vec![b.to_string(), b.to_string()]
                 ]
             );
-            assert!(!session.found_in_plan_cache, "{key}");
+            assert!(!session.vars.found_in_plan_cache, "{key}");
             let warnings = row_text(session.run("SHOW WARNINGS"));
             assert_eq!(
                 warnings
@@ -1375,7 +1375,7 @@ fn integer_handle_range_quota_preserves_filters_and_rejects_cache() {
                 row_text(session.run("EXECUTE iq USING @a,@b")),
                 vec![vec![a.to_string()], vec![b.to_string()]]
             );
-            assert!(!session.found_in_plan_cache);
+            assert!(!session.vars.found_in_plan_cache);
             let warnings = row_text(session.run("SHOW WARNINGS"));
             assert_eq!(
                 warnings
@@ -1437,7 +1437,7 @@ fn logical_range_quota_rejects_unindexed_prepared_cache() {
             row_text(session.run("EXECUTE uq USING @a,@b")),
             vec![vec![a.to_string()], vec![b.to_string()]]
         );
-        assert!(!session.found_in_plan_cache);
+        assert!(!session.vars.found_in_plan_cache);
         let warnings = row_text(session.run("SHOW WARNINGS"));
         assert_eq!(
             warnings

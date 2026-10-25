@@ -691,7 +691,7 @@ impl Session {
                         tidb_hint::extract_table_hints_from_stmt_node(&handled).0;
                 }
                 (observation.binding_sql, observation.binding_digest) =
-                    crate::binding::normalize_with_db(stmt, &self.current_db);
+                    crate::binding::normalize_with_db(stmt, &self.vars.current_db);
             }
             observation.prepared |= prepared;
             // Go's ExecuteStmt node records whatever it executes.
@@ -787,7 +787,7 @@ impl Session {
             if self.routed_statement_kind.take() == Some(crate::classify::StatementKind::Other)
                 && !self.in_set_session_states
             {
-                self.prev_row_count = 0;
+                self.vars.prev_row_count = 0;
             }
             self.finish_routed_statement_warnings(succeeded);
             self.publish_statement_observation(succeeded, affected_rows, 0, error);
@@ -939,7 +939,7 @@ impl Session {
         ctx.add_affected_rows(affected_rows);
         ctx.set_warning_count(u32::try_from(self.warnings.len()).unwrap_or(u32::MAX));
         tidb_stmtsummary::v2::stmtsummary::add(&StmtExecInfo {
-            schema_name: self.current_db.go_to_lower(),
+            schema_name: self.vars.current_db.go_to_lower(),
             charset: self
                 .vars
                 .get_system("character_set_connection")
@@ -970,8 +970,8 @@ impl Session {
             start_time: observation.start_time,
             is_internal: internal,
             succeed: succeeded,
-            plan_in_cache: !observation.routed && self.found_in_plan_cache,
-            plan_in_binding: !observation.routed && self.found_in_binding,
+            plan_in_cache: !observation.routed && self.vars.found_in_plan_cache,
+            plan_in_binding: !observation.routed && self.vars.found_in_binding,
             exec_retry_count: phases.exec_retry_count,
             exec_retry_time: phases.exec_retry_time(elapsed),
             write_sql_resp_duration: phases.write_sql_resp,
@@ -1292,7 +1292,7 @@ impl Session {
             match_rules = rules.should_write_slow_log(&crate::slow_log_rules::SlowLogRuleValues {
                 conn_id,
                 session_alias: session_alias.clone(),
-                db: self.current_db.clone(),
+                db: self.vars.current_db.clone(),
                 exec_retry_count: phases.exec_retry_count,
                 query_time: elapsed,
                 parse_time: phases.parse,
@@ -1369,7 +1369,7 @@ impl Session {
             _ => (false, false),
         };
         let login = self
-            .login_user
+            .vars.login_user
             .as_deref()
             .and_then(|identity| identity.split_once('@'))
             .map(|(user, host)| (user.to_owned(), host.to_owned()));
@@ -1396,11 +1396,11 @@ impl Session {
             is_write_cache_table: false,
             is_sync_stats_failed: !observation.routed && plan.is_sync_stats_failed,
             prepared: observation.prepared,
-            plan_from_cache: !observation.routed && self.found_in_plan_cache,
-            plan_from_binding: !observation.routed && self.found_in_binding,
+            plan_from_cache: !observation.routed && self.vars.found_in_plan_cache,
+            plan_from_binding: !observation.routed && self.vars.found_in_binding,
             has_more_results: false,
             prev_stmt: if observation.label == "Commit" {
-                self.prev_stmt_text
+                self.vars.prev_stmt_text
                     .as_deref()
                     .map(|text| crate::slow_log::format_sql(text, self.query_log_max_len()))
                     .unwrap_or_default()
@@ -1495,14 +1495,14 @@ impl Session {
             duration_optimizer: durations.duration_optimizer,
             duration_wait_ts: durations.duration_wait_ts,
             ruv2_weights: crate::slow_log::ruv2_weights(),
-            current_db: self.current_db.clone(),
+            current_db: self.vars.current_db.clone(),
             in_restricted_sql: self.restricted_sql,
-            current_db_changed: self.current_db_changed,
+            current_db_changed: self.vars.current_db_changed,
             ..crate::slow_log::SlowLogSessionVars::default()
         };
         let entry = crate::slow_log::slow_log_format(&vars, &items);
         // Go `SlowLogFormat` clears `CurrentDBChanged` once it printed `use`.
-        self.current_db_changed = false;
+        self.vars.current_db_changed = false;
         tidb_util::logutil::slow_query_logger().warn(&entry, &[]);
 
         if !match_rules {
@@ -1530,8 +1530,8 @@ impl Session {
             conn_id,
             sess_alias: session_alias,
             txn_ts,
-            user: self.current_user.clone().unwrap_or_default(),
-            db: self.current_db.clone(),
+            user: self.vars.current_user.clone().unwrap_or_default(),
+            db: self.vars.current_db.clone(),
             table_ids,
             index_names: items.index_names,
             digest: items.digest,
@@ -1542,7 +1542,7 @@ impl Session {
     /// Go `ExecStmt.updatePrevStmt`: the statement text a later slow
     /// `COMMIT` prints as `Prev_stmt` (`FormatSQL(GetTextToLog(false))`).
     fn update_prev_stmt(&mut self, observation: &StatementObservation) {
-        self.prev_stmt_text = Some(self.text_to_log(observation, false));
+        self.vars.prev_stmt_text = Some(self.text_to_log(observation, false));
     }
 
     /// Go `handlePessimisticLockError` replaces the statement's error before
@@ -1594,7 +1594,7 @@ impl Session {
     /// as `CRUCIAL OPERATION`; any other goes to the general log
     /// (`logGeneralQuery`) while `tidb_general_log` is on.
     fn log_stmt(&self, observation: &StatementObservation) {
-        let user = self.current_user.clone().unwrap_or_default();
+        let user = self.vars.current_user.clone().unwrap_or_default();
         let schema_version = self.cluster_schema_version_now();
         if observation.crucial {
             let mut fields = vec![
@@ -1609,7 +1609,7 @@ impl Session {
             } else {
                 fields.push(tidb_log::Field::new(
                     "cur_db",
-                    tidb_log::Value::Str(self.current_db.clone()),
+                    tidb_log::Value::Str(self.vars.current_db.clone()),
                 ));
                 // Go `logStmt`: `zap.String("sql", stmt.Text())`.
                 fields.push(tidb_log::Field::new(
@@ -1656,7 +1656,7 @@ impl Session {
             ),
             tidb_log::Field::new(
                 "user",
-                tidb_log::Value::Str(self.login_user.clone().unwrap_or_default()),
+                tidb_log::Value::Str(self.vars.login_user.clone().unwrap_or_default()),
             ),
             tidb_log::Field::new("schemaVersion", tidb_log::Value::I64(schema_version)),
             tidb_log::Field::new("txnStartTS", tidb_log::Value::U64(start_ts)),
@@ -1665,7 +1665,7 @@ impl Session {
                 "isReadConsistency",
                 tidb_log::Value::Bool(self.is_read_committed()),
             ),
-            tidb_log::Field::new("currentDB", tidb_log::Value::Str(self.current_db.clone())),
+            tidb_log::Field::new("currentDB", tidb_log::Value::Str(self.vars.current_db.clone())),
             tidb_log::Field::new(
                 "isPessimistic",
                 tidb_log::Value::Bool(self.txn_mode() == Some(SessionTxnMode::Pessimistic)),

@@ -542,8 +542,8 @@ impl Session {
                     // Dropping the current database leaves the session with
                     // none selected, which is Go's ErrNoDB state for the next
                     // unqualified statement.
-                    if dropped && self.current_db.go_lower_eq(name) {
-                        self.current_db.clear();
+                    if dropped && self.vars.current_db.go_lower_eq(name) {
+                        self.vars.current_db.clear();
                     }
                     // Go `DropSchema` then clears the session's table locks
                     // on the schema's tables.
@@ -1023,7 +1023,7 @@ impl Session {
             // executor owns one handle read and the admission gate already refuses
             // an open transaction, so walking every catalog table cannot affect
             // its result.
-            self.statement_insert_id = 0;
+            self.vars.statement_insert_id = 0;
             self.statement_kind = StatementKind::Select;
 
             if self.in_transaction() {
@@ -1038,7 +1038,7 @@ impl Session {
             let Some(record_set) = result else {
                 return Ok(None);
             };
-            self.found_in_plan_cache = cache_hit;
+            self.vars.found_in_plan_cache = cache_hit;
             let query = PendingQuery::new(record_set, stmt_ctx);
             Ok(Some(PendingExecution::Query(query)))
         })();
@@ -1148,12 +1148,12 @@ impl Session {
             self.apply_set_var_hints(statement)?;
             self.activate_statement_resource_group(statement);
             self.check_table_privilege_requests(prepared.privilege_requests())?;
-            self.statement_insert_id = 0;
+            self.vars.statement_insert_id = 0;
             self.statement_kind = StatementKind::Select;
             if self.in_transaction() {
                 self.record_mdl_related_table_names(&table_names);
             }
-            let current_db = self.current_db.clone();
+            let current_db = self.vars.current_db.clone();
             let stmt_ctx = self
                 .statement_context_for_stmt(statement, false)
                 .with_prepared_params(parameters.clone());
@@ -1196,7 +1196,7 @@ impl Session {
                 .as_secs_f64(),
             false,
         );
-        self.found_in_plan_cache = cache_hit;
+        self.vars.found_in_plan_cache = cache_hit;
         let query = PendingQuery::new(record_set, stmt_ctx);
         Ok(Some(PendingExecution::Query(query)))
     }
@@ -1231,7 +1231,7 @@ impl Session {
                     "prepared SELECT plan generation changed before executor construction",
                 )
             })??;
-        self.found_in_plan_cache = execution.cache_hit() && used;
+        self.vars.found_in_plan_cache = execution.cache_hit() && used;
         Ok(output)
     }
 
@@ -1257,7 +1257,7 @@ impl Session {
     ) -> Result<StmtOutput, DriverError> {
         // go's stats meta bumps the target table's row count on every INSERT
         // (`stats_meta.count`), which `I_S.TABLES`' TABLE_ROWS reads back.
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         let mut stats_update: Option<(String, String, i64)> = None;
         let output = execution
             .with_plan(|statement, physical| {
@@ -1308,7 +1308,7 @@ impl Session {
                 Ok::<_, DriverError>(())
             });
         }
-        self.found_in_plan_cache = execution.cache_hit();
+        self.vars.found_in_plan_cache = execution.cache_hit();
         Ok(output)
     }
 
@@ -1785,7 +1785,7 @@ impl Session {
             execution,
             PendingExecution::Complete(StmtOutput::Affected(_) | StmtOutput::Done(_))
         ) {
-            self.use_chunk_alloc = self
+            self.vars.use_chunk_alloc = self
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
                 .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
@@ -1805,7 +1805,7 @@ impl Session {
             return Ok(());
         }
 
-        let current_db = self.current_db.clone();
+        let current_db = self.vars.current_db.clone();
         // The context takes its catalog-backed snapshots, so construct it
         // before holding the catalog guard used by every resolved-type probe.
         let ctx = self.statement_context(false);
@@ -2079,7 +2079,7 @@ impl Session {
         let sql_mode = self.scanner_sql_mode();
         let parser_config = self.vars.build_parser_config();
         // Only an allocating INSERT sets it; every other statement reports 0.
-        self.statement_insert_id = 0;
+        self.vars.statement_insert_id = 0;
         // The Apply channel describes THIS statement's plan.
         self.planned_apply
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -2134,7 +2134,7 @@ impl Session {
         // where Go's does.
         let output = match &stmt {
             Stmt::Query(query) => {
-                let current_db = self.current_db.clone();
+                let current_db = self.vars.current_db.clone();
                 let ctx = self.statement_context_for_stmt(&stmt, false);
                 // go `SelectIntoOutfile` opens the destination with O_EXCL:
                 // an existing file is refused with the raw open error (the
@@ -2203,7 +2203,7 @@ impl Session {
                             })
                         });
                         if let Some(Some(record_set)) = result.transpose()? {
-                            self.found_in_plan_cache = cache_hit;
+                            self.vars.found_in_plan_cache = cache_hit;
                             return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
                         }
                     }
@@ -2258,7 +2258,7 @@ impl Session {
                 match &**dml {
                     DmlStmt::Insert(insert) => {
                         let mut physical_plan = cached_dml_plan(dml_plan, "Insert")?;
-                        let current_db = self.current_db.clone();
+                        let current_db = self.vars.current_db.clone();
                         let enable_strict_not_null_check = !matches!(
                             self.vars
                                 .get_system(
@@ -2324,7 +2324,7 @@ impl Session {
                         // The publication itself is promoted at the statement
                         // boundary by `publish_statement_status`, off the same
                         // cell this reads -- one channel, two readers.
-                        self.statement_insert_id = ctx
+                        self.vars.statement_insert_id = ctx
                             .published_last_insert_id()
                             .unwrap_or_else(|| ctx.given_insert_id());
                         // Go `InsertExec.setMessage`'s `Records: ...` text.
@@ -2334,7 +2334,7 @@ impl Session {
                     }
                     DmlStmt::Update(update) => {
                         let mut physical_plan = cached_dml_plan(dml_plan, "Update")?;
-                        let current_db = self.current_db.clone();
+                        let current_db = self.vars.current_db.clone();
                         // Go `ResetUpdateStmtCtx`, which applies the same
                         // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
                         // does; the class is what `StmtContext::push_down_flags`
@@ -2389,7 +2389,7 @@ impl Session {
                     }
                     DmlStmt::Delete(delete) => {
                         let mut physical_plan = cached_dml_plan(dml_plan, "Delete")?;
-                        let current_db = self.current_db.clone();
+                        let current_db = self.vars.current_db.clone();
                         // Go `ResetDeleteStmtCtx`, which applies the same
                         // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
                         // does; the class is what `StmtContext::push_down_flags`
@@ -2471,7 +2471,7 @@ impl Session {
                         .ddl_statement_context()
                         .with_parser_config(self.vars.build_parser_config());
                     let local = self.is_local_temporary_table_path(name);
-                    let current_db = self.current_db.clone();
+                    let current_db = self.vars.current_db.clone();
                     let foreign_key_checks = !local && self.foreign_key_checks();
                     let target = match name.as_slice() {
                         [table] => Some((current_db.clone(), table.clone())),
@@ -2515,7 +2515,7 @@ impl Session {
                 DdlStmt::CreateIndex(create)
                     if create.options.index_type == Some(tidb_ast::IndexType::HYPO) =>
                 {
-                    let current_db = self.current_db.clone();
+                    let current_db = self.vars.current_db.clone();
                     let ctx = self.statement_context(false);
                     let mut hypo_indexes = (*self.hypo_indexes).clone();
                     let result = self.with_persistent_catalog_mut(|catalog| {
@@ -2534,7 +2534,7 @@ impl Session {
                 }
                 // Go `dropIndex` with `isHypo`: `dropHypoIndexFromCtx`.
                 DdlStmt::DropIndex(drop) if drop.is_hypo => {
-                    let current_db = self.current_db.clone();
+                    let current_db = self.vars.current_db.clone();
                     let mut hypo_indexes = (*self.hypo_indexes).clone();
                     self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::ddl::drop_hypo_index(
@@ -2561,7 +2561,7 @@ impl Session {
                         unreachable!("matched by the guard");
                     };
                     let (database, table) =
-                        tidb_executor::driver::split_table_path_pub(&alter.name, &self.current_db)?;
+                        tidb_executor::driver::split_table_path_pub(&alter.name, &self.vars.current_db)?;
                     let (database, table) = (database.to_owned(), table.to_owned());
                     let mut replicas = (*self.hypo_tiflash_replicas).clone();
                     self.with_persistent_catalog_mut(|catalog| {
@@ -2579,7 +2579,7 @@ impl Session {
                 }
                 DdlStmt::DropTable(drop) => {
                     let context = self.ddl_statement_context();
-                    let current_db = self.current_db.clone();
+                    let current_db = self.vars.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
                     let missing = if drop.temporary == tidb_ast::DropTemporary::Local {
                         self.with_catalog_mut(|catalog| {
@@ -2633,7 +2633,7 @@ impl Session {
                     Ok(StmtOutput::Affected(0))
                 }
                 DdlStmt::CreateTable(create) => {
-                    let current_db = self.current_db.clone();
+                    let current_db = self.vars.current_db.clone();
                     let foreign_key_checks = self.foreign_key_checks();
                     let enable_check_constraint = self.enable_check_constraint();
                     // `@@tidb_enable_clustered_index` decides whether a
@@ -2701,7 +2701,7 @@ impl Session {
                 // parser spells it as a lone `ALTER TABLE ... COMPACT`, and
                 // it is a session statement, not a DDL job.
                 DdlStmt::AlterTable(alter) if crate::classify::is_compact_table(ddl) => {
-                    let current_db = self.current_db.clone();
+                    let current_db = self.vars.current_db.clone();
                     let ctx = self.statement_context(false);
                     let result = self.with_persistent_catalog_mut(|catalog| {
                         tidb_executor::run_compact_table_in(alter, catalog, &current_db, &ctx)
