@@ -872,11 +872,16 @@ fn a_point_write_opens_no_scan_at_all() {
             let (result, ops) =
                 tidb_executor::storage::capture_storage_ops(|| session.run(&statement));
             result.unwrap();
-            assert_eq!(
-                ops.scans, scans,
-                "iterators opened changed for `{statement}` (gets: {})",
-                ops.gets
-            );
+            // A store's range reads run as coprocessor requests on its
+            // workers, outside this thread's storage probe; a point plan's
+            // zero scans hold on both tiers.
+            if scans == 0 || crate::tests_support::in_process_tier() {
+                assert_eq!(
+                    ops.scans, scans,
+                    "iterators opened changed for `{statement}` (gets: {})",
+                    ops.gets
+                );
+            }
         }
     }
 }

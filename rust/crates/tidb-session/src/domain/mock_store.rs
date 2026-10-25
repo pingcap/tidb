@@ -326,6 +326,13 @@ impl MockStoreConnection {
         std::mem::swap(session, self.connection.driver_session_mut());
     }
 
+    /// Observes every request the node sends its embedded store (`None`
+    /// removes the observer).
+    #[cfg(test)]
+    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) {
+        self.domain.stack.rpc.set_send_hook(hook);
+    }
+
     /// Go's corruption tests delete one of a table's keys in a committed
     /// transaction of their own (`indexOpr.Delete` + `txn.Commit`): this
     /// commits the delete of `key` straight into the embedded store.

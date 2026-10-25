@@ -42,8 +42,41 @@ fn prune_session() -> Session {
 }
 
 /// The rows a query returns, and the column ids its scans asked the row
-/// codec to decode.
+/// codec to decode. A store session decodes in its coprocessor handler, so
+/// there the ids are the ones its DAG table scans request -- the form Go's
+/// pruned `TableScan.Columns` takes on the wire.
 fn rows_and_decoded(session: &mut Session, sql: &str) -> (Vec<Vec<String>>, BTreeSet<i64>) {
+    let requested: std::sync::Arc<std::sync::Mutex<BTreeSet<i64>>> = std::sync::Arc::default();
+    let recorded = std::sync::Arc::clone(&requested);
+    let observing = session.set_store_send_hook(Some(std::sync::Arc::new(move |request| {
+        use prost::Message;
+        let Some(request) = request
+            .as_any()
+            .downcast_ref::<tikv_client::proto::coprocessor::Request>()
+        else {
+            return;
+        };
+        let Ok(dag) = tidb_proto::tipb::DagRequest::decode(request.data.as_slice()) else {
+            return;
+        };
+        let mut ids = recorded.lock().unwrap();
+        for executor in &dag.executors {
+            if let Some(scan) = &executor.tbl_scan {
+                ids.extend(
+                    scan.columns
+                        .iter()
+                        .filter_map(|column| column.column_id)
+                        .filter(|id| *id > 0),
+                );
+            }
+        }
+    })));
+    if observing {
+        let result = session.run(sql);
+        session.set_store_send_hook(None);
+        let ids = requested.lock().unwrap().clone();
+        return (row_text(result), ids);
+    }
     let (result, ids) = capture_decoded_column_ids(|| session.run(sql));
     (row_text(result), ids)
 }

@@ -2762,6 +2762,16 @@ impl Session {
         }
     }
 
+    /// Observes the requests a node session's store receives; `false` for an
+    /// in-process session, which sends none.
+    #[cfg(test)]
+    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) -> bool {
+        self.node
+            .as_ref()
+            .map(|node| node.set_store_send_hook(hook))
+            .is_some()
+    }
+
     /// Commits the delete of one raw key into a node session's store, as Go's
     /// corruption tests do through a transaction of their own. `None` for
     /// an in-process session, whose tests edit the catalog's bytes instead.
