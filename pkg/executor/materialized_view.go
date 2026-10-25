@@ -4185,9 +4185,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	failpoint.InjectCall("refreshMaterializedViewAfterInitSession", sessVars.SQLMode, sessVars.Location().String())
 
 	mviewID = tblInfo.ID
-	if err := e.initMVRefreshSourceInfo(kctx, refreshSctx, mviewID); err != nil {
-		return err
-	}
 	advisoryLockName, err := acquireMVRefreshAdvisoryLock(refreshSctx, schemaName, tblInfo)
 	if err != nil {
 		return err
@@ -4225,6 +4222,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	currentTbl, ok := domain.GetDomain(e.Ctx()).InfoSchema().TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
+	}
+	// CREATE registers input logs before publishing a ready MV. Missing records
+	// indicate inconsistent metadata and must not be reconstructed during refresh.
+	registeredLogs, err := mviewutil.ReadRefreshSourceIDs(kctx, sqlExec, mviewID)
+	if err != nil {
+		return err
+	}
+	if len(registeredLogs) == 0 {
+		return errors.Errorf("refresh materialized view: input log records are missing for %s.%s", schemaName.O, tblInfo.Name.O)
 	}
 	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
 		if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {

@@ -53,7 +53,6 @@ go_library(
         "mpp_gather.go",
         "mv_refresh_observability.go",
         "mview_delta_merge_agg_builder.go",
-        "mview_refresh_source.go",
         "operate_ddl_jobs.go",
         "opt_rule_blacklist.go",
         "parallel_apply.go",

@@ -16,7 +16,6 @@ package bootstraptest_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -179,15 +178,6 @@ func TestUpgradeToVer223MViewRefreshSourceInfo(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_source_upgrade (a int not null, b int not null)")
-	tk.MustExec("insert into t_source_upgrade values (1, 10)")
-	tk.MustExec("create materialized view log on t_source_upgrade (a, b)")
-	tk.MustExec("create materialized view mv_source_upgrade (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_source_upgrade group by a")
-	mv, err := dom.InfoSchema().TableByName(ctx, model.NewCIStr("test"), model.NewCIStr("mv_source_upgrade"))
-	require.NoError(t, err)
-	refreshInfoSQL := fmt.Sprintf("select * from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mv.Meta().ID)
-	refreshInfo := tk.MustQuery(refreshInfoSQL).Rows()
 	tk.MustExec("drop table mysql.tidb_mview_fast_refresh_source_info")
 
 	txn, err := store.Begin()
@@ -204,9 +194,6 @@ func TestUpgradeToVer223MViewRefreshSourceInfo(t *testing.T) {
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
-	require.Equal(t, refreshInfo, tk.MustQuery(refreshInfoSQL).Rows(), "upgrade must not change existing refresh state")
-	tk.MustExec("refresh materialized view mv_source_upgrade fast")
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = %d", mv.Meta().ID)).Check(testkit.Rows("1"))
 }
 
 func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
