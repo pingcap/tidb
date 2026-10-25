@@ -471,10 +471,13 @@ impl Session {
     /// the same autocommit, snapshot, session-binding, and schema gates used
     /// by the Go point-get cache.
     pub fn bind_cached_prepared_point_get(
-        &self,
+        &mut self,
         plan: &Arc<PreparedPointGetPlan>,
         values: &[Datum],
     ) -> Option<PreparedPointGetExecution> {
+        // Go checks a cached plan against the latest infoschema at EXECUTE;
+        // a node session's catalog catches up with its node first.
+        self.refresh_node_catalog().ok()?;
         self.bind_cached_prepared_point_get_for_binding(plan, values, None)
     }
 
