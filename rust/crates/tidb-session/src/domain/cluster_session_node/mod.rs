@@ -7152,6 +7152,8 @@ impl QuerySession for ClusterServerSession {
             self.store.session.start_statement_transaction_scope();
         }
         self.store.session.clear_statement_message();
+        // A statement without a query result leaves no result field names.
+        self.store.session.last_result_output_names.clear();
         // Go resolves and plans against the current infoschema before it
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
         // access-shape classification, and the statement lifecycle.
@@ -7656,12 +7658,19 @@ impl QuerySession for ClusterServerSession {
                 return self.run_non_transactional_dml(batch);
             }
         }
-        let process_statement = self.store.session.retain_process_statement(sql);
+        // Go `handleStmt`'s `ContextWithInitializedExecDetails`, before the
+        // statement below can reach storage -- and before `ExecuteStmt`
+        // publishes the process info, which takes the digest computed here.
+        self.store.session.initialize_statement_exec_details(sql);
+        let process_statement = match self.store.session.pending_statement_digest(sql) {
+            Some(digest) => self
+                .store
+                .session
+                .retain_process_statement_with_digest(sql, &digest),
+            None => self.store.session.retain_process_statement(sql),
+        };
         let resource_group = self.store.session.statement_resource_group(stmt).into_owned();
         let shape = self.store.session.statement_read_shape_bound(stmt);
-        // Go `handleStmt`'s `ContextWithInitializedExecDetails`, before the
-        // statement below can reach storage.
-        self.store.session.initialize_statement_exec_details(sql);
         let result = self.open_statement_result(shape, &resource_group, |session| {
             session
                 .open_record_set_parsed(stmt.clone(), sql)

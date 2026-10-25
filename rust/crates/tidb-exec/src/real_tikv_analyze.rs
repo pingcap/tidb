@@ -1176,7 +1176,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         let task_result = match task_result {
             Ok(result) => result,
             Err(panic) => {
-                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panicked");
+                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panic");
                 std::panic::resume_unwind(panic);
             }
         };
@@ -1263,7 +1263,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         let task_result = match task_result {
             Ok(result) => result,
             Err(panic) => {
-                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panicked");
+                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panic");
                 std::panic::resume_unwind(panic);
             }
         };
@@ -1299,7 +1299,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         let task_result = match task_result {
             Ok(result) => result,
             Err(panic) => {
-                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panicked");
+                fail_analyze_jobs(jobs, &task_jobs[position..], "analyze worker panic");
                 std::panic::resume_unwind(panic);
             }
         };

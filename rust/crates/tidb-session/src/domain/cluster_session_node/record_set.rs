@@ -213,6 +213,12 @@ impl ResultSetSource for ClusterRecordSet<'_> {
         if std::mem::replace(&mut self.finished, true) {
             return Ok(());
         }
+        // The result set's field origins, as the in-process collect records
+        // them for the statement that produced them.
+        let (names, current_db) = self.state.output_names();
+        let session = &mut self.owner.store.session;
+        session.last_result_output_names = names.to_vec();
+        current_db.clone_into(&mut session.last_result_current_db);
         let result = self
             .state
             .finish(&mut self.owner.store.session)

@@ -751,6 +751,11 @@ fn analyze_empty_predicate_usage_keeps_only_go_mandatory_columns() {
 /// cases here to preserve the complete source-test disposition.
 #[test]
 fn analyze_internal_panics_become_errors_and_leave_the_in_process_session_usable() {
+    // The failpoint arms the in-process analyze engine; a store session's
+    // analyze recovers its panics at the node's own boundary.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     for (source_test, phase) in [
         (
             "TestPanicInHandleResultErrorWithSingleGoroutine",

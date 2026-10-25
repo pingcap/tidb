@@ -584,6 +584,15 @@ impl Session {
         });
     }
 
+    /// The digest [`Self::initialize_statement_exec_details`] computed for
+    /// the statement about to run, so its process info reuses it.
+    pub(crate) fn pending_statement_digest(&self, sql: &str) -> Option<String> {
+        self.pending_statement_exec_details
+            .as_ref()
+            .filter(|pending| pending.sql == sql)
+            .map(|pending| pending.digest.to_string())
+    }
+
     /// Go `vars.User.String()` for Top RU: `user@host`, empty with no user.
     fn top_ru_user(&self) -> String {
         self.current_identity()

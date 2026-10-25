@@ -1079,6 +1079,11 @@ fn tidb_decode_sql_digests_reads_the_statement_summaries() {
 /// same details and the statement's resource-group tags.
 #[test]
 fn statement_ru_details_reach_requests_and_summary() {
+    // Plays the server door before `Session::run`; on a store the node is
+    // that door and initializes the details itself (`execute_parsed`).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut session = Session::new();
     session.set_user("root@%".into(), "root@localhost".into());
     let sql = "SELECT 'ru_details_reach_summary'";
