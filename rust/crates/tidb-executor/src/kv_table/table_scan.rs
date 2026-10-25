@@ -4179,6 +4179,11 @@ pub struct TableScanExec {
     cursor: Option<RowCursor>,
     /// The open coprocessor-served cursor, when the backend has one.
     remote: Option<RemoteRowCursor>,
+    /// Go `RuntimeStatsColl.GetCopCountAndRows` of the remote cursors this
+    /// run already dropped (at exhaustion, an early stop or close): the
+    /// index-usage reporter reads them when the executor closes, after the
+    /// cursor is gone.
+    dropped_cop_stats: Option<(u64, u64)>,
     /// Logical projection above a remote physical scan, including virtual
     /// columns. Local record cursors already perform this decoding step.
     remote_materialization: Option<RemoteRowMaterialization>,
@@ -4350,6 +4355,17 @@ impl PartialSum {
 }
 
 impl TableScanExec {
+    /// Drops the remote cursor, keeping its coprocessor counts for the
+    /// index-usage report.
+    fn drop_remote(&mut self) {
+        if let Some(remote) = self.remote.take() {
+            let (tasks, rows) = remote.cop_count_and_rows();
+            let retained = self.dropped_cop_stats.get_or_insert((0, 0));
+            retained.0 = retained.0.wrapping_add(tasks);
+            retained.1 = retained.1.wrapping_add(rows);
+        }
+    }
+
     /// Installs Go's per-open handle-range rebuild for correlated access
     /// conditions.
     pub(crate) fn set_handle_range_rebuilder(&mut self, rebuilder: crate::access_path::RangeRebuilder) {
@@ -4398,6 +4414,7 @@ impl TableScanExec {
             table,
             cursor: None,
             remote: None,
+            dropped_cop_stats: None,
             remote_materialization: None,
             partial_remote: None,
             partial_remote_noted: 0,
@@ -4560,7 +4577,7 @@ impl TableScanExec {
                     return Ok(Some(row));
                 }
                 Ok(None) => {
-                    self.remote = None;
+                    self.drop_remote();
                     self.cursor = None;
                     return Ok(None);
                 }
@@ -4568,6 +4585,8 @@ impl TableScanExec {
                     // Nothing crossed the wire, so nothing is lost by
                     // scanning locally instead.
                     let refused = format!("{error:?}");
+                    // The refused attempt read nothing; the local scan's own
+                    // count is what the usage report should see.
                     self.remote = None;
                     self.open_local_cursor().map_err(|open| {
                         ExecError::unsupported(format!(
@@ -5047,6 +5066,7 @@ impl Executor for TableScanExec {
         }
         self.scanned.set(0);
         self.emitted = 0;
+        self.dropped_cop_stats = None;
         self.cursor = None;
         self.partial_remote = None;
         self.partial_remote_noted = 0;
@@ -5079,7 +5099,7 @@ impl Executor for TableScanExec {
                 )
                 .map_err(ExecError::from)?;
             if self.partial_remote.is_some() {
-                self.remote = None;
+                self.drop_remote();
                 return Ok(());
             }
         }
@@ -5230,7 +5250,7 @@ impl Executor for TableScanExec {
                         .min(cap)
                 });
                 if target == 0 {
-                    self.remote = None;
+                    self.drop_remote();
                     return Ok(());
                 }
                 if let Some(appended) = remote
@@ -5241,7 +5261,7 @@ impl Executor for TableScanExec {
                         .set(self.scanned.get().saturating_add(appended as u64));
                     self.emitted = self.emitted.saturating_add(appended as u64);
                     if appended == 0 {
-                        self.remote = None;
+                        self.drop_remote();
                     }
                     return Ok(());
                 }
@@ -5255,7 +5275,7 @@ impl Executor for TableScanExec {
                 // a time, so "dropped" is what actually stops the reading --
                 // it did not when the cursor materialized its whole range.
                 self.cursor = None;
-                self.remote = None;
+                self.drop_remote();
                 return Ok(());
             }
             let remote_projected = self.remote.is_some() && self.post_filter_projection.is_some();
@@ -5299,7 +5319,7 @@ impl Executor for TableScanExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
-        self.remote = None;
+        self.drop_remote();
         self.remote_materialization = None;
         self.partial_remote = None;
         self.partial_pending = None;
@@ -5376,13 +5396,23 @@ fn append_partial_remote_chunk(
 
 impl crate::table_access::TableAccess for TableScanExec {
     fn cop_count_and_rows(&self) -> Option<(u64, u64)> {
-        self.remote
+        let live = self
+            .remote
             .as_ref()
-            .map(RemoteRowCursor::cop_count_and_rows)
+            .map(RemoteRowCursor::cop_count_and_rows);
+        match (self.dropped_cop_stats, live) {
+            (None, live) => live,
+            (Some(dropped), None) => Some(dropped),
+            (Some(dropped), Some(live)) => Some((
+                dropped.0.wrapping_add(live.0),
+                dropped.1.wrapping_add(live.1),
+            )),
+        }
     }
 
     fn local_index_usage_rows(&self) -> Option<u64> {
         if self.remote.is_some()
+            || self.dropped_cop_stats.is_some()
             || self.partial_remote.is_some()
             || self.table.has_dirty_content(&self.statement.staged_writes)
         {

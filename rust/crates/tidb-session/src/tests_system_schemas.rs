@@ -1182,7 +1182,15 @@ fn tidb_index_usage_records_a_partition_local_index_read() {
     );
     assert_eq!(usage.row_access_total, 255, "usage={usage:?}");
     assert_kv_requests(usage.kv_req_total);
-    assert_eq!(usage.percentage_access, [0, 3, 3, 0, 3, 3, 3]);
+    // A server's point and batch-point reads carry no used statistics, so
+    // their samples size against `MaxInt32` and land in (0, 1%) (oracle:
+    // both in PERCENTAGE_ACCESS_0_1); the in-process tier sizes them.
+    let expected = if crate::tests_support::in_process_tier() {
+        [0, 3, 3, 0, 3, 3, 3]
+    } else {
+        [0, 6, 0, 0, 3, 3, 3]
+    };
+    assert_eq!(usage.percentage_access, expected);
 }
 
 /// Go `TestIndexUsageReporterWithRealData` exercises index readers, lookup,

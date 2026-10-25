@@ -1515,9 +1515,18 @@ fn analyzed_selectivity_estimates_a_disjunction_and_never_drops_below_one_row() 
 /// newly resident handle statistics.
 #[test]
 fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
+    // Installs statistics objects straight into the in-process catalog; a
+    // session on the store keeps statistics in its stats handle, which Go's
+    // tests feed through `UpdateStatsCache`.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     std::thread::Builder::new()
         .name("statistics-load-statement-boundary".to_owned())
-        .stack_size(8 * 1024 * 1024)
+        // The workspace's configured thread stack (`.cargo/config.toml`'s
+        // RUST_MIN_STACK, what node workers run on): a store session's
+        // statement runs the node's frames on this thread.
+        .stack_size(32 * 1024 * 1024)
         .spawn(|| {
             let mut session = Session::new();
             session
