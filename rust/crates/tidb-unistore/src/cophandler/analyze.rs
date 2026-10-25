@@ -153,9 +153,16 @@ fn execute(
                 let mut sampled = Vec::new();
                 let mut keyed = Vec::new();
                 let mut sizes = Vec::new();
+                // Go `analyzeColumnsExec.Process`: the row decoded in the
+                // request's zone goes back out through
+                // `tablecodec.EncodeValue(sc.TimeZone(), ..)`, so a TIMESTAMP
+                // sample is the stored UTC value again.
                 for (value, column) in values.iter().zip(&columns.columns_info) {
-                    let encoded = tidb_codec::encode_value(std::slice::from_ref(value))
-                        .map_err(|e| other_error(&e.to_string()))?;
+                    let encoded = tidb_codec::encode_value_in_timezone(
+                        &timezone,
+                        std::slice::from_ref(value),
+                    )
+                    .map_err(|e| other_error(&e.to_string()))?;
                     sizes.push(if value.is_null() {
                         0
                     } else {
@@ -178,7 +185,7 @@ fn execute(
                         Datum::Null
                     } else {
                         Datum::Bytes(
-                            tidb_codec::encode_value(&[value])
+                            tidb_codec::encode_value_in_timezone(&timezone, &[value])
                                 .map_err(|e| other_error(&e.to_string()))?,
                         )
                     });
