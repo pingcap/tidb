@@ -532,6 +532,18 @@ fn tidb_trx_reads_live_transactions_with_go_visibility_and_digest_history() {
     assert_eq!(history.len(), 50);
 }
 
+/// Go's reporters take `kv_req_total` from the statement's RPC counts (the
+/// point get's `CmdGet`, the reader's cop tasks): a store session issues at
+/// least one, and the in-process tier, which has no RPCs, issues none.
+#[track_caller]
+fn assert_kv_requests(kv_req_total: u64) {
+    if crate::tests_support::in_process_tier() {
+        assert_eq!(kv_req_total, 0, "in-process scans issue no KV RPCs");
+    } else {
+        assert!(kv_req_total > 0, "a store read issues KV requests");
+    }
+}
+
 /// Pinned Go `setDataFromIndexUsage` enumerates the catalog's integer-handle
 /// primary key as index ID zero, then every `TableInfo.Indices` entry, and
 /// joins both to Domain's node-global collector.
@@ -541,15 +553,15 @@ fn tidb_index_usage_reads_the_shared_collector_for_every_catalog_index() {
     session
         .run("CREATE TABLE usage_t (id INT PRIMARY KEY, v INT, INDEX MixedCase(v))")
         .unwrap();
-    let (table_id, secondary_id) = {
-        let catalog = session.shared_catalog();
-        let catalog = catalog.lock().unwrap();
-        let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "usage_t").unwrap()
-        else {
-            panic!("usage_t must be a stored table");
-        };
-        (table.table_id, table.indexes()[0].id)
-    };
+    let ids = row_text(session.run(
+        "SELECT t.tidb_table_id, i.index_id FROM information_schema.tables t \
+         JOIN information_schema.tidb_indexes i \
+         ON i.table_schema = t.table_schema AND i.table_name = t.table_name \
+         WHERE t.table_schema = 'test' AND t.table_name = 'usage_t' \
+         AND i.key_name = 'MixedCase'",
+    ));
+    let (table_id, secondary_id): (i64, i64) =
+        (ids[0][0].parse().unwrap(), ids[0][1].parse().unwrap());
 
     let collector = std::sync::Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
     collector.start_worker();
@@ -625,7 +637,7 @@ fn tidb_index_usage_records_a_clustered_point_read() {
 
     let usage = collector.get_index_usage(table_id, primary_id);
     assert_eq!(usage.query_total, 1);
-    assert_eq!(usage.kv_req_total, 0);
+    assert_kv_requests(usage.kv_req_total);
     assert_eq!(usage.row_access_total, 1);
     assert_eq!(usage.percentage_access, [0, 1, 0, 0, 0, 0, 0]);
 }
@@ -980,13 +992,13 @@ fn tidb_index_usage_records_clustered_handle_and_primary_index_reads() {
     let int_usage = collector.get_index_usage(int_key.0, int_key.1);
     assert_eq!(int_usage.query_total, 9, "{int_usage:?}");
     assert_eq!(int_usage.row_access_total, 225, "{int_usage:?}");
-    assert_eq!(int_usage.kv_req_total, 0);
+    assert_kv_requests(int_usage.kv_req_total);
     assert_eq!(int_usage.percentage_access, [0, 3, 3, 0, 0, 3, 0]);
 
     let common_usage = collector.get_index_usage(common_key.0, common_key.1);
     assert_eq!(common_usage.query_total, 9, "{common_usage:?}");
     assert_eq!(common_usage.row_access_total, 243, "{common_usage:?}");
-    assert_eq!(common_usage.kv_req_total, 0);
+    assert_kv_requests(common_usage.kv_req_total);
     assert_eq!(common_usage.percentage_access, [0, 3, 3, 0, 0, 3, 0]);
 
     let nonclustered_usage = collector.get_index_usage(nonclustered_key.0, nonclustered_key.1);
@@ -995,13 +1007,13 @@ fn tidb_index_usage_records_clustered_handle_and_primary_index_reads() {
         nonclustered_usage.row_access_total, 228,
         "{nonclustered_usage:?}"
     );
-    assert_eq!(nonclustered_usage.kv_req_total, 0);
+    assert_kv_requests(nonclustered_usage.kv_req_total);
     assert_eq!(nonclustered_usage.percentage_access, [0, 0, 0, 0, 0, 3, 0]);
 
     let merge_pk_usage = collector.get_index_usage(merge_key.0, merge_key.1);
     assert_eq!(merge_pk_usage.query_total, 3, "{merge_pk_usage:?}");
     assert_eq!(merge_pk_usage.row_access_total, 225, "{merge_pk_usage:?}");
-    assert_eq!(merge_pk_usage.kv_req_total, 0);
+    assert_kv_requests(merge_pk_usage.kv_req_total);
     assert_eq!(merge_pk_usage.percentage_access, [0, 0, 3, 0, 0, 3, 0]);
 
     let merge_secondary_usage = collector.get_index_usage(merge_key.0, merge_index_id);
@@ -1013,7 +1025,7 @@ fn tidb_index_usage_records_clustered_handle_and_primary_index_reads() {
         merge_secondary_usage.row_access_total, 150,
         "{merge_secondary_usage:?}"
     );
-    assert_eq!(merge_secondary_usage.kv_req_total, 0);
+    assert_kv_requests(merge_secondary_usage.kv_req_total);
     assert_eq!(
         merge_secondary_usage.percentage_access,
         [0, 0, 0, 0, 0, 3, 0]
@@ -1167,7 +1179,7 @@ fn tidb_index_usage_records_a_partition_local_index_read() {
         "range={range_plan:?}; selection={selection_plan:?}; point={point_plan:?}; batch={batch_plan:?}; usage={usage:?}"
     );
     assert_eq!(usage.row_access_total, 255, "usage={usage:?}");
-    assert_eq!(usage.kv_req_total, 0, "in-process scans issue no KV RPCs");
+    assert_kv_requests(usage.kv_req_total);
     assert_eq!(usage.percentage_access, [0, 3, 3, 0, 3, 3, 3]);
 }
 
@@ -1293,13 +1305,13 @@ fn tidb_index_usage_records_real_data_reads() {
     let index_1_usage = collector.get_index_usage(table_id, index_1_id);
     assert_eq!(index_1_usage.query_total, 18, "{index_1_usage:?}");
     assert_eq!(index_1_usage.row_access_total, 672, "{index_1_usage:?}");
-    assert_eq!(index_1_usage.kv_req_total, 0);
+    assert_kv_requests(index_1_usage.kv_req_total);
     assert_eq!(index_1_usage.percentage_access, [0, 3, 3, 3, 0, 9, 0]);
 
     let index_2_usage = collector.get_index_usage(table_id, index_2_id);
     assert_eq!(index_2_usage.query_total, 3, "{index_2_usage:?}");
     assert_eq!(index_2_usage.row_access_total, 60, "{index_2_usage:?}");
-    assert_eq!(index_2_usage.kv_req_total, 0);
+    assert_kv_requests(index_2_usage.kv_req_total);
     assert_eq!(index_2_usage.percentage_access, [0, 0, 0, 0, 3, 0, 0]);
 }
 

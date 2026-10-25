@@ -1296,6 +1296,17 @@ fn session_migration_restored_timestamp_uses_shared_historical_read_owner() {
         .unwrap();
     let historical = source.shared_catalog().lock().unwrap().clone();
     source.run("UPDATE migrated_snapshot SET a=8").unwrap();
+    if !crate::tests_support::in_process_tier() {
+        // Go validates the snapshot against the seeded safe point (oracle:
+        // 8055 for a timestamp older than it); the in-process tier skips
+        // that check, which is what the restore flow below relies on.
+        crate::tests_support::assert_err(
+            source.run("SET tidb_snapshot=100"),
+            8055,
+            "snapshot is older than GC safe point 2006-01-02 14:04:05 -0800 PST",
+        );
+        return;
+    }
     source.run("SET tidb_snapshot=100").unwrap();
     let states = source.encode_session_states().unwrap();
     let mut target = Session::with_catalog(source.catalog.clone());

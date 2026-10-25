@@ -4613,8 +4613,66 @@ fn partition_lock_batch_session(mode: &str) -> Session {
     session
 }
 
+/// Which of `ids` a peer's pessimistic transaction finds locked: Go's
+/// observable form of a lock (`FOR UPDATE NOWAIT` answers 3572).
+fn locked_by_peer(session: &Session, table: &str, ids: &[i64]) -> Vec<bool> {
+    let mut witness = Session::with_catalog(session.shared_catalog());
+    ids.iter()
+        .map(|id| {
+            witness.run("BEGIN PESSIMISTIC").unwrap();
+            let locked = match witness.run(&format!(
+                "SELECT * FROM {table} WHERE id = {id} FOR UPDATE NOWAIT"
+            )) {
+                Ok(_) => false,
+                Err(error) => {
+                    assert_eq!(error.to_mysql_error().code, 3572, "{table} {id}");
+                    true
+                }
+            };
+            witness.run("ROLLBACK").unwrap();
+            locked
+        })
+        .collect()
+}
+
 #[test]
 fn partition_lock_batch_select() {
+    // A store session locks through its node; a peer observes the locks.
+    // The in-process tier captures the keys it would lock instead.
+    if !tests_support::in_process_tier() {
+        for mode in ["static", "dynamic"] {
+            for access in ["IGNORE INDEX(iv)", "FORCE INDEX(iv)"] {
+                let mut session = partition_lock_batch_session(mode);
+                session
+                    .run(&format!(
+                        "SELECT c FROM lock_route {access} WHERE v>0 ORDER BY id FOR UPDATE"
+                    ))
+                    .unwrap();
+                assert_eq!(
+                    locked_by_peer(&session, "lock_route", &[1, 11]),
+                    [true, true],
+                    "{mode} {access}"
+                );
+                session.run("ROLLBACK").unwrap();
+            }
+            let mut session = partition_lock_batch_session(mode);
+            session
+                .run("PREPARE lock_stmt FROM 'SELECT c FROM lock_route WHERE v > ? ORDER BY id FOR UPDATE'")
+                .unwrap();
+            session.run("SET @bound=100").unwrap();
+            assert_eq!(
+                tests_support::row_text(session.run("EXECUTE lock_stmt USING @bound")),
+                [["8"]]
+            );
+            assert_eq!(
+                locked_by_peer(&session, "lock_route", &[1, 11]),
+                [false, true],
+                "{mode}: only the matched partition row is locked"
+            );
+            session.run("ROLLBACK").unwrap();
+        }
+        return;
+    }
     for mode in ["static", "dynamic"] {
         let mut session = partition_lock_batch_session(mode);
         let expected_keys = session
@@ -4727,6 +4785,15 @@ fn partition_lock_batch_outer_join() {
         session.run("INSERT INTO lock_peer VALUES (1),(5)").unwrap();
         session.run("BEGIN PESSIMISTIC").unwrap();
         assert_eq!(tests_support::row_text(session.run("SELECT l.id, r.c FROM lock_peer l LEFT JOIN lock_route r ON l.id=r.id ORDER BY l.id FOR UPDATE")), [["1", "7"], ["5", "NULL"]]);
+        if !tests_support::in_process_tier() {
+            assert_eq!(locked_by_peer(&session, "lock_peer", &[1, 5]), [true, true]);
+            assert_eq!(
+                locked_by_peer(&session, "lock_route", &[1, 11]),
+                [true, false]
+            );
+            session.run("ROLLBACK").unwrap();
+            continue;
+        }
         let keys = session.take_selected_lock_keys();
         assert_eq!(keys.len(), 3);
         assert!(keys.iter().all(|key| tidb_codec::decode_table_id(key) != 0));
