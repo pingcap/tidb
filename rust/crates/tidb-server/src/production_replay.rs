@@ -93,74 +93,51 @@ impl ReplaySession for UnistoreSession {
             .session
             .query_cancellation()
             .map(|active| self.cancellation.install(active));
-        let parsed = match self.session.parse_statement(sql) {
-            Ok(parsed) => parsed,
+        let stmt = match self.session.parse_statement(sql) {
+            Ok(stmt) => stmt,
             Err(error) => {
                 self.session
                     .record_parse_failure(error.code, error.message.clone());
                 return Err(driver_error(error));
             }
         };
-        // LOAD STATS parks a file request the connection answers with the
-        // client's file, which mysql-tester reads relative to
-        // `tests/integrationtest`.
-        let local_infile_path = match &parsed {
-            Some(stmt) => self.session.local_infile_path_parsed(sql, stmt),
-            None => self.session.local_infile_path(sql),
-        }
-        .map_err(driver_error)?;
-        if let Some(path) = local_infile_path {
-            if let Some(stmt) = &parsed {
+        // One `ExecuteStmt`, as the connection runs it. The rows a client
+        // reads are the server's result-set packets, so the comparison reads
+        // exactly those: the connection's own writer frames the result and it
+        // is decoded as mysql-tester decodes it.
+        let response = match self
+            .session
+            .execute_stmt(sql, &stmt)
+            .map_err(driver_error)?
+        {
+            Some(mut result) => Some(
+                crate::connection_resultset::write_connection_result_set(
+                    result.source(),
+                    tidb_protocol::ResultSetOptions::default(),
+                    1024,
+                )
+                .map_err(|error| source_error(error.cause))?,
+            ),
+            None => None,
+        };
+        let Some(response) = response else {
+            // LOAD STATS parks a file request the connection answers with the
+            // client's file, which mysql-tester reads relative to
+            // `tests/integrationtest`.
+            if let Some(path) = self.session.take_local_infile_request() {
+                let data =
+                    std::fs::read(difftest_result_tests::replay::integrationtest_dir().join(&path))
+                        .map_err(|error| {
+                            DriverError::Mysql(MysqlError::unknown(format!(
+                                "client file `{path}`: {error}"
+                            )))
+                        })?;
                 self.session
-                    .accept_local_infile_parsed(sql, stmt)
+                    .finish_local_infile(&data)
                     .map_err(driver_error)?;
             }
-            let data =
-                std::fs::read(difftest_result_tests::replay::integrationtest_dir().join(&path))
-                    .map_err(|error| {
-                        DriverError::Mysql(MysqlError::unknown(format!(
-                            "client file `{path}`: {error}"
-                        )))
-                    })?;
-            let outcome = match &parsed {
-                Some(stmt) => self.session.execute_local_infile_parsed(sql, stmt, &data),
-                None => self.session.execute_local_infile(sql, &data),
-            }
-            .map_err(driver_error)?;
-            return Ok(StmtOutput::Affected(outcome.affected_rows));
-        }
-        let control = match &parsed {
-            Some(stmt) => self.session.control_transaction_parsed(sql, stmt),
-            None => self.session.control_transaction(sql),
+            return Ok(StmtOutput::Affected(self.session.affected_rows()));
         };
-        if control.map_err(driver_error)?.is_some() {
-            return Ok(StmtOutput::Affected(0));
-        }
-        let written = match &parsed {
-            Some(stmt) => self.session.execute_write_parsed(sql, stmt),
-            None => self.session.execute_write(sql),
-        };
-        if let Err(error) = &written {
-            tidb_session::domain::session_api::record_text_write_failure(
-                &mut self.session,
-                parsed.as_ref(),
-                error,
-            );
-        }
-        if let Some(outcome) = written.map_err(driver_error)? {
-            return Ok(StmtOutput::Affected(outcome.affected_rows));
-        }
-        let mut result = self.session.execute(sql).map_err(driver_error)?;
-        // The rows a client reads are the server's result-set packets, so
-        // the comparison reads exactly those: the connection's own writer
-        // frames the result and it is decoded as mysql-tester decodes it.
-        let response = crate::connection_resultset::write_connection_result_set(
-            result.source(),
-            tidb_protocol::ResultSetOptions::default(),
-            1024,
-        )
-        .map_err(|error| source_error(error.cause))?;
-        drop(result);
         if let Some(session) = self.session.migration_session() {
             self.output_names = session.last_result_output_names().0.to_vec();
         }

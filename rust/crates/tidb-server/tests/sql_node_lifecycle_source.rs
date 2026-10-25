@@ -18,7 +18,18 @@ use tidb_server::{
 struct UnusedSession;
 
 impl QuerySession for UnusedSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         panic!("malformed connection must not reach query execution")
     }
 }

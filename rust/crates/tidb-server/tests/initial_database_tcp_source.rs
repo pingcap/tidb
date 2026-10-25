@@ -110,10 +110,19 @@ struct Session {
 }
 
 impl QuerySession for Session {
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    /// The fixture's commands are not all SQL; any statement stands for them.
+    fn parse_statement(&mut self, _sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        Ok(tidb_parser::parse("SELECT 1").expect("a statement"))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         let qualified = format!("SELECT id FROM {SCHEMA}.rows");
         if sql == qualified || (sql == "SELECT id FROM rows" && self.current == SCHEMA) {
-            return Ok(QueryResult::new(Box::new(Rows::default())));
+            return Ok(Some(QueryResult::new(Box::new(Rows::default()))));
         }
         Err(SqlQueryError::new(
             1146,

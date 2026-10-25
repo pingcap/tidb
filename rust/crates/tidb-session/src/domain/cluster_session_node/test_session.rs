@@ -141,25 +141,24 @@ impl ClusterServerSession {
         &mut self,
         sql: &str,
     ) -> Result<Option<bool>, tidb_executor::DriverError> {
-        QuerySession::control_transaction(self, sql).map_err(driver_error)
+        self.control_transaction(sql).map_err(driver_error)
     }
 
     /// Go `clientConn.handleQuery` for one statement, read back as the rows a
-    /// [`Session::run`] caller expects: parse once, then transaction
-    /// control, then a write answered by an OK packet, and only then a
-    /// result-set query, drained here.
+    /// [`Session::run`] caller expects: parse once, then one
+    /// [`QuerySession::execute_stmt`], its result set drained here.
     pub(crate) fn run_statement_output(
         &mut self,
         sql: &str,
     ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        let parsed = match self.parse_statement(sql) {
-            Ok(parsed) => parsed,
+        let stmt = match self.parse_statement(sql) {
+            Ok(stmt) => stmt,
             Err(error) => {
                 self.record_parse_failure(error.code, error.message.clone());
                 return Err(driver_error(error));
             }
         };
-        self.run_parsed_statement_output(sql, parsed)
+        self.run_parsed_statement_output(sql, stmt)
     }
 
     /// A bound prepared write, as [`Self::execute_general`] runs one for
@@ -260,51 +259,32 @@ impl ClusterServerSession {
     pub(crate) fn run_parsed_statement_output(
         &mut self,
         sql: &str,
-        parsed: Option<Stmt>,
+        stmt: Stmt,
     ) -> Result<StmtOutput, tidb_executor::DriverError> {
-        let control = match &parsed {
-            Some(stmt) => self.control_transaction_parsed(sql, stmt),
-            None => self.control_transaction(sql),
-        };
-        if control.map_err(driver_error)?.is_some() {
-            return Ok(StmtOutput::Affected(0));
+        if let Some(mut result) = self.execute_stmt(sql, &stmt).map_err(driver_error)? {
+            return drain_result(result.source()).map_err(tidb_executor::DriverError::Mysql);
         }
-        let written = match &parsed {
-            Some(stmt) => self.execute_write_parsed(sql, stmt),
-            None => self.execute_write(sql),
-        };
-        if let Err(error) = &written {
-            crate::domain::session_api::record_text_write_failure(self, parsed.as_ref(), error);
-        }
-        if let Some(outcome) = written.map_err(driver_error)? {
-            // The outputs the session's own DDL arms give: CREATE TABLE
-            // reports whether it created the table (an IF NOT EXISTS that
-            // found it leaves the 1050 note), placement-policy DDL reports
-            // nothing created, and the rest report the affected rows.
-            return Ok(match &parsed {
-                Some(Stmt::Ddl(ddl)) => match &**ddl {
-                    tidb_ast::DdlStmt::CreateTable(_) => StmtOutput::Done(
-                        !self
-                            .store
-                            .session
-                            .warnings()
-                            .iter()
-                            .any(|warning| warning.code == 1050),
-                    ),
-                    tidb_ast::DdlStmt::CreatePlacementPolicy(_)
-                    | tidb_ast::DdlStmt::AlterPlacementPolicy(_)
-                    | tidb_ast::DdlStmt::DropPlacementPolicy(_) => StmtOutput::Done(false),
-                    _ => StmtOutput::Affected(outcome.affected_rows),
-                },
-                _ => StmtOutput::Affected(outcome.affected_rows),
-            });
-        }
-        let mut result = match &parsed {
-            Some(stmt) => self.execute_parsed(sql, stmt),
-            None => self.execute(sql),
-        }
-        .map_err(driver_error)?;
-        drain_result(result.source()).map_err(tidb_executor::DriverError::Mysql)
+        // The outputs the session's own DDL arms give: CREATE TABLE reports
+        // whether it created the table (an IF NOT EXISTS that found it leaves
+        // the 1050 note), placement-policy DDL reports nothing created, and
+        // the rest report the affected rows.
+        Ok(match &stmt {
+            Stmt::Ddl(ddl) => match &**ddl {
+                tidb_ast::DdlStmt::CreateTable(_) => StmtOutput::Done(
+                    !self
+                        .store
+                        .session
+                        .warnings()
+                        .iter()
+                        .any(|warning| warning.code == 1050),
+                ),
+                tidb_ast::DdlStmt::CreatePlacementPolicy(_)
+                | tidb_ast::DdlStmt::AlterPlacementPolicy(_)
+                | tidb_ast::DdlStmt::DropPlacementPolicy(_) => StmtOutput::Done(false),
+                _ => StmtOutput::Affected(self.affected_rows()),
+            },
+            _ => StmtOutput::Affected(self.affected_rows()),
+        })
     }
 }
 

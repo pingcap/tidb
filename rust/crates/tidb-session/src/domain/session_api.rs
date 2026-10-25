@@ -479,55 +479,8 @@ pub enum GeneralExecuteOutcome<'a> {
     Write(WriteOutcome),
 }
 
-/// A write returns an OK packet and never a result set, so the two kinds carry
-/// different response shapes and must stay distinguishable at execute time.
-#[derive(Clone, Debug)]
-pub enum PreparedStatement {
-    /// Any other statement, bound and run through the session.
-    General(PreparedGeneral),
-    /// `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` and friends, carried as written.
-    ///
-    /// Transaction control is recognized at PREPARE and applied through
-    /// [`QuerySession::control_transaction`] at EXECUTE, which is the same
-    /// route the text protocol takes. Running it as an ordinary statement
-    /// instead would flip only the driver session's own flag and leave the
-    /// connection's transaction unopened, so every following statement would
-    /// read at a fresh timestamp -- the wrong snapshot, not merely a slow one.
-    TransactionControl(String),
-}
-
-impl PreparedStatement {
-    /// The statement text as PREPAREd (Go `PreparedAst.Stmt.Text()`).
-    #[must_use]
-    pub fn sql_text(&self) -> &str {
-        match self {
-            Self::General(general) => general.sql(),
-            Self::TransactionControl(sql) => sql,
-        }
-    }
-
-    /// Positional markers the execute packet must supply.
-    #[must_use]
-    pub fn parameter_count(&self) -> usize {
-        match self {
-            Self::General(general) => general.parameter_count(),
-            // Transaction control has no markers to bind.
-            Self::TransactionControl(_) => 0,
-        }
-    }
-
-    /// Result metadata sent at prepare time; a write has no result columns.
-    #[must_use]
-    pub fn result_columns(&self) -> &[ColumnInfo] {
-        match self {
-            Self::General(general) => general.result_columns(),
-            Self::TransactionControl(_) => &[],
-        }
-    }
-}
-
 /// What one prepared write reported after a determinate commit.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WriteOutcome {
     /// Rows to report in the MySQL OK packet.
     pub affected_rows: u64,
@@ -860,18 +813,50 @@ pub trait QuerySession {
         self.metrics_resource_group()
     }
 
-    /// Starts one sequential query and returns its lazy result owner.
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
+    /// Parses one COM_QUERY statement once: Go `handleQuery` runs
+    /// `session.ParseSQL` and hands each node to `handleStmt`
+    /// (`pkg/server/conn.go:1861`); no later step parses the text again.
+    fn parse_statement(&mut self, sql: &str) -> Result<Stmt, SqlQueryError>;
 
-    /// Parses one COM_QUERY statement ONCE, ahead of every door below -- Go
-    /// `handleQuery` runs `session.ParseSQL` once and hands each node to
-    /// `handleStmt` (`pkg/server/conn.go:1861`), and no later step parses the
-    /// text again. A session that answers `Some(stmt)` is then asked through
-    /// the `*_parsed` doors; the text doors remain for the direct callers and
-    /// for sessions that keep the default `None`, which take the text as
-    /// before.
-    fn parse_statement(&mut self, _sql: &str) -> Result<Option<Stmt>, SqlQueryError> {
-        Ok(None)
+    /// Go `QueryCtx.ExecuteStmt` (`pkg/server/driver_tidb.go:364`): runs one
+    /// parsed statement, whatever its kind. `Some` is a result set the
+    /// connection writes as rows. `None` is answered with an OK packet built
+    /// from [`Self::affected_rows`], [`Self::last_insert_id`],
+    /// [`Self::statement_info`], the status and the warnings -- unless the
+    /// statement parked a client-local file request
+    /// ([`Self::take_local_infile_request`]), which the connection serves
+    /// first. A failed statement's error is already in the warning buffer
+    /// (Go `StmtCtx.AppendError`).
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError>;
+
+    /// Go `QueryCtx.AffectedRows` for the OK packet of the last statement
+    /// that answered no result set.
+    fn affected_rows(&self) -> u64 {
+        0
+    }
+
+    /// Go `QueryCtx.LastInsertID` for the same OK packet.
+    fn last_insert_id(&self) -> u64 {
+        0
+    }
+
+    /// Go `ctx.Value(LoadDataVarKey)` / `ctx.Value(LoadStatsVarKey)` after
+    /// `ExecuteStmt`: the client-local path the statement just executed
+    /// parked, if it parked one.
+    fn take_local_infile_request(&mut self) -> Option<String> {
+        None
+    }
+
+    /// Go `handleLoadData` / `handleLoadStats`: finishes the parked statement
+    /// over the file the client sent.
+    fn finish_local_infile(&mut self, _data: &[u8]) -> Result<(), SqlQueryError> {
+        Err(SqlQueryError::unknown(
+            "this session does not accept client-local files",
+        ))
     }
 
     /// Records a COM_QUERY parse failure on the session's warning buffer:
@@ -881,70 +866,6 @@ pub trait QuerySession {
     /// statement's leftovers. Default: nothing, for sessions without a
     /// warning buffer.
     fn record_parse_failure(&mut self, _code: u16, _message: String) {}
-
-    /// Records a write-door statement failure (DDL/GlobalVars/etc.) on the
-    /// session's warning buffer: go `driver_tidb.go:376` appends every
-    /// statement error so `SHOW WARNINGS` reports it.
-    fn record_write_failure(&mut self, _code: u16, _message: String) {}
-
-    /// Returns the client-local path a statement asks the connection to read.
-    fn local_infile_path(&mut self, _sql: &str) -> Result<Option<String>, SqlQueryError> {
-        Ok(None)
-    }
-
-    /// [`QuerySession::local_infile_path`] over the node
-    /// [`QuerySession::parse_statement`] produced.
-    fn local_infile_path_parsed(
-        &mut self,
-        sql: &str,
-        _stmt: &Stmt,
-    ) -> Result<Option<String>, SqlQueryError> {
-        self.local_infile_path(sql)
-    }
-
-    /// Runs what the statement owes before the connection asks the client
-    /// for its file (Go builds the LOAD DATA executor before
-    /// `LoadDataExec.Open` sends the request); an error answers the
-    /// statement instead of the request.
-    fn accept_local_infile_parsed(
-        &mut self,
-        _sql: &str,
-        _stmt: &Stmt,
-    ) -> Result<(), SqlQueryError> {
-        Ok(())
-    }
-
-    /// Finishes a statement after the connection transferred its local file.
-    fn execute_local_infile(
-        &mut self,
-        _sql: &str,
-        _data: &[u8],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        Err(SqlQueryError::unknown(
-            "this session does not accept client-local files",
-        ))
-    }
-
-    /// [`QuerySession::execute_local_infile`] over the node
-    /// [`QuerySession::parse_statement`] produced.
-    fn execute_local_infile_parsed(
-        &mut self,
-        sql: &str,
-        _stmt: &Stmt,
-        data: &[u8],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        self.execute_local_infile(sql, data)
-    }
-
-    /// [`QuerySession::execute`] over the node
-    /// [`QuerySession::parse_statement`] produced.
-    fn execute_parsed<'a>(
-        &'a mut self,
-        sql: &str,
-        _stmt: &Stmt,
-    ) -> Result<QueryResult<'a>, SqlQueryError> {
-        self.execute(sql)
-    }
 
     /// Go `clientConn.addQueryMetrics`' transaction-write SLI finalizer,
     /// called after the SQL command has written its response.
@@ -1057,7 +978,7 @@ pub trait QuerySession {
     }
 
     /// Release physical entries for COM_STMT_CLOSE using session cache policy.
-    fn close_prepared(&mut self, _statement: &PreparedStatement) {}
+    fn close_prepared(&mut self, _statement: &PreparedGeneral) {}
 
     /// Prepares a statement of any shape, reporting the marker count and the
     /// result columns a PREPARE sends.
@@ -1079,52 +1000,6 @@ pub trait QuerySession {
         Err(SqlQueryError::unknown(
             "this session does not support general prepared statements",
         ))
-    }
-
-    /// Applies a `BEGIN`/`START TRANSACTION`, `COMMIT`, or `ROLLBACK` statement.
-    ///
-    /// Returns `Some(in_transaction)` when the SQL is one of those
-    /// transaction-control statements — the session updates its own transaction
-    /// state and the caller answers with an OK packet whose status advertises
-    /// `SERVER_STATUS_IN_TRANS` per the returned flag. Returns `None` when the
-    /// SQL is not transaction control, so the caller runs it as an ordinary
-    /// query. Sessions without transaction support keep the default and treat
-    /// every statement as an ordinary query.
-    fn control_transaction(&mut self, _sql: &str) -> Result<Option<bool>, SqlQueryError> {
-        Ok(None)
-    }
-
-    /// [`QuerySession::control_transaction`] over the node
-    /// [`QuerySession::parse_statement`] produced.
-    fn control_transaction_parsed(
-        &mut self,
-        sql: &str,
-        _stmt: &Stmt,
-    ) -> Result<Option<bool>, SqlQueryError> {
-        self.control_transaction(sql)
-    }
-
-    /// Runs one statement that answers with an OK packet rather than a result
-    /// set — a DML write or DDL, as MySQL answers them on the text protocol.
-    ///
-    /// Returns `Some(outcome)` when the SQL is such a statement (the caller
-    /// writes an OK packet carrying `affected_rows`), and `None` when it is an
-    /// ordinary query the caller should run through [`QuerySession::execute`].
-    /// This mirrors [`QuerySession::control_transaction`]'s shape: sessions
-    /// that serve only queries keep the default and answer everything with a
-    /// result set.
-    fn execute_write(&mut self, _sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        Ok(None)
-    }
-
-    /// [`QuerySession::execute_write`] over the node
-    /// [`QuerySession::parse_statement`] produced.
-    fn execute_write_parsed(
-        &mut self,
-        sql: &str,
-        _stmt: &Stmt,
-    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        self.execute_write(sql)
     }
 
     /// The warning count the OK/EOF packet carries for the statement that just
@@ -1271,21 +1146,6 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
     }
 }
 
-
-/// Go `TiDBContext.ExecuteStmt`'s error door for a text-protocol write: a
-/// failed DDL, and any write whose error is not one of the data-conversion
-/// codes the session already filed as a warning, is recorded as the
-/// statement's error.
-pub fn record_text_write_failure<S: QuerySession + ?Sized>(
-    engine: &mut S,
-    parsed: Option<&Stmt>,
-    error: &SqlQueryError,
-) {
-    let is_ddl = parsed.is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
-    if is_ddl || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406) {
-        engine.record_write_failure(error.code, error.message.clone());
-    }
-}
 
 /// Go `Domain`'s connection-ID allocator (`domain.go`, "initialize the global
 /// kill"): with global kill on, a global allocator whose IDs name this node's

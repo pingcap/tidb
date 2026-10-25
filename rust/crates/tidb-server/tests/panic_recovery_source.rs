@@ -46,13 +46,26 @@ impl Drop for PanickingSession {
 }
 
 impl QuerySession for PanickingSession {
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    /// The fixture's commands are not all SQL; any statement stands for them.
+    fn parse_statement(&mut self, _sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        Ok(tidb_parser::parse("SELECT 1").expect("a statement"))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         // Setup must finish before the test injects a command-loop failure.
         if sql.starts_with("SET NAMES ") {
             return Err(SqlQueryError::unknown("fixture does not execute setup SQL"));
         }
         if sql == "stream" {
-            return Ok(QueryResult::new(Box::new(PanickingRows { pulls: 0 })));
+            return Ok(Some(QueryResult::new(Box::new(PanickingRows { pulls: 0 }))));
+        }
+        if sql == "infile" {
+            // Parks the client file request; the panic comes with the file.
+            return Ok(None);
         }
         if sql == "closed" {
             self.context.close.request();
@@ -64,15 +77,11 @@ impl QuerySession for PanickingSession {
         panic!("injected command panic")
     }
 
-    fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
-        Ok((sql == "infile").then(|| "fixture.data".into()))
+    fn take_local_infile_request(&mut self) -> Option<String> {
+        Some("fixture.data".into())
     }
 
-    fn execute_local_infile(
-        &mut self,
-        _: &str,
-        data: &[u8],
-    ) -> Result<WriteOutcome, SqlQueryError> {
+    fn finish_local_infile(&mut self, data: &[u8]) -> Result<(), SqlQueryError> {
         assert_eq!(data, b"fixture contents");
         panic!("injected command panic")
     }

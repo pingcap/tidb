@@ -13961,8 +13961,8 @@ fn ignored_table_options_warn_through_the_parser_as_go_does() {
     // The connection's COM_QUERY order: parse at the statement boundary,
     // then the write.
     let sql = "CREATE TABLE test.a (id INT PRIMARY KEY) PAGE_CHECKSUM=1 COMPRESSION='zlib'";
-    let parsed = session.parse_statement(sql).unwrap().unwrap();
-    session.execute_write_parsed(sql, &parsed).unwrap();
+    let parsed = session.parse_statement(sql).unwrap();
+    assert!(session.execute_stmt(sql, &parsed).unwrap().is_none());
     let warnings = displayed(rows(&mut session, "SHOW WARNINGS"));
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert_eq!(warnings[0][..2], ["Warning", "1064"]);
@@ -13972,8 +13972,8 @@ fn ignored_table_options_warn_through_the_parser_as_go_does() {
         "{warnings:?}"
     );
     let sql = "CREATE TABLE test.b (a INT)";
-    let parsed = session.parse_statement(sql).unwrap().unwrap();
-    session.execute_write_parsed(sql, &parsed).unwrap();
+    let parsed = session.parse_statement(sql).unwrap();
+    assert!(session.execute_stmt(sql, &parsed).unwrap().is_none());
     assert!(rows(&mut session, "SHOW WARNINGS").is_empty());
     let created = displayed(rows(&mut session, "SHOW CREATE TABLE test.a"));
     assert!(
@@ -20094,14 +20094,18 @@ fn run_load_data_cases(cases: &[(&str, &str, &[u8], &str, &str)], connection_id:
                 }
             }
             _ => {
-                let stmt = session.parse_statement(sql).unwrap().unwrap();
+                // The connection's order: one `ExecuteStmt`, then the client's
+                // file for a statement that parked a request for it.
+                let stmt = session.parse_statement(sql).unwrap();
                 let outcome = (|| {
-                    if session.local_infile_path_parsed(sql, &stmt)?.is_some() {
-                        session.accept_local_infile_parsed(sql, &stmt)?;
-                        session.execute_local_infile_parsed(sql, &stmt, data)
-                    } else {
-                        Ok(session.execute_write_parsed(sql, &stmt)?.expect("a write"))
+                    assert!(session.execute_stmt(sql, &stmt)?.is_none(), "{sql} answers no rows");
+                    if session.take_local_infile_request().is_some() {
+                        session.finish_local_infile(data)?;
                     }
+                    Ok(crate::domain::session_api::WriteOutcome {
+                        affected_rows: session.affected_rows(),
+                        last_insert_id: session.last_insert_id(),
+                    })
                 })();
                 let actual = match outcome {
                     Ok(outcome) => format!(

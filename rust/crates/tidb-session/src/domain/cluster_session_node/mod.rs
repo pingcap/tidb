@@ -3788,6 +3788,8 @@ impl ClusterSessionFactory {
             connection_id: connection_id,
             schema_validator: self.schema_validator.clone(),
             historical_stats_worker: Arc::clone(&self.historical_stats_worker),
+            ok_packet: WriteOutcome::default(),
+            parked_local_infile: None,
         })
     }
 }
@@ -4927,8 +4929,20 @@ pub struct ClusterServerSession {
     schema_validator: Option<Arc<SchemaValidator>>,
     /// The domain-global mailbox successful ANALYZE results enqueue into.
     historical_stats_worker: Arc<HistoricalStatsWorker<ClusterHistoricalInfoSchema>>,
+    /// Go `QueryCtx.AffectedRows` / `LastInsertID` of the last statement
+    /// [`QuerySession::execute_stmt`] answered without a result set.
+    ok_packet: WriteOutcome,
+    /// Go `LoadDataVarKey` / `LoadStatsVarKey`: the statement a LOCAL load
+    /// parked until the connection brings the client's file.
+    parked_local_infile: Option<ParkedLocalInfile>,
 }
 
+/// A LOAD DATA LOCAL or LOAD STATS waiting for the client's file.
+struct ParkedLocalInfile {
+    sql: String,
+    stmt: Stmt,
+    path: String,
+}
 
 impl Drop for ClusterServerSession {
     fn drop(&mut self) {
@@ -5315,7 +5329,7 @@ impl ClusterServerSession {
                     })
                 })
         } else {
-            QuerySession::execute_write_parsed(self, &inner_sql, &inner)
+            self.execute_write_parsed(&inner_sql, &inner)
         };
         match outcome {
             Ok(Some(outcome)) => affected = outcome.affected_rows,
@@ -6738,10 +6752,6 @@ impl QuerySession for ClusterServerSession {
         self.store.session.record_parse_failure_coded(code, message);
     }
 
-    fn record_write_failure(&mut self, code: u16, message: String) {
-        self.store.session.record_ddl_failure(code, message);
-    }
-
     fn metrics_resource_group(&self) -> &str {
         self.store.session.current_resource_group()
     }
@@ -6756,77 +6766,80 @@ impl QuerySession for ClusterServerSession {
     /// one that reports them. Parsing through the bare `&self` door left
     /// the buffer uncleared, so a failed DDL's error rows leaked into every
     /// later `SHOW WARNINGS`.
-    fn parse_statement(&mut self, sql: &str) -> Result<Option<Stmt>, SqlQueryError> {
-        self.store.session
+    fn parse_statement(&mut self, sql: &str) -> Result<Stmt, SqlQueryError> {
+        self.store
+            .session
             .parse_at_statement_boundary(sql)
-            .map(Some)
             .map_err(map_error)
     }
 
-    fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
-        self.local_infile_path_parsed(sql, &stmt)
-    }
-
-    fn local_infile_path_parsed(
-        &mut self,
-        _sql: &str,
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
         stmt: &Stmt,
-    ) -> Result<Option<String>, SqlQueryError> {
-        // Go `LoadDataExec.Open` asks the client for a LOCAL load's file.
-        if let Stmt::Dml(dml) = stmt {
-            if let tidb_ast::DmlStmt::LoadData(load) = dml.as_ref() {
-                return Ok(load.local.then(|| load.path.clone()));
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+        // Go builds a fresh statement context per statement: the previous
+        // statement's counts and any file exchange it left unfinished end here.
+        self.ok_packet = WriteOutcome::default();
+        self.parked_local_infile = None;
+        self.store.session.clear_local_infile();
+        // Go `LoadDataExec` / `LoadStatsExec`: the statement runs far enough
+        // to be admitted, then parks its file request on the session.
+        if let Some(path) = self.local_infile_path_parsed(sql, stmt)? {
+            self.accept_local_infile_parsed(sql, stmt)?;
+            self.parked_local_infile = Some(ParkedLocalInfile {
+                sql: sql.to_owned(),
+                stmt: stmt.clone(),
+                path,
+            });
+            return Ok(None);
+        }
+        if self.control_transaction_parsed(sql, stmt)?.is_some() {
+            return Ok(None);
+        }
+        match self.execute_write_parsed(sql, stmt) {
+            Ok(Some(outcome)) => {
+                self.ok_packet = outcome;
+                return Ok(None);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                // Go `TiDBContext.ExecuteStmt` appends the error to the
+                // statement context; the data-conversion codes a DML filed as
+                // its own warning are not appended twice.
+                if matches!(stmt, Stmt::Ddl(_))
+                    || !matches!(error.code, 1148 | 1210 | 1264 | 1265 | 1366 | 1406)
+                {
+                    self.store
+                        .session
+                        .record_ddl_failure(error.code, error.message.clone());
+                }
+                return Err(error);
             }
         }
-        let Some(statement) = prepare_cluster_load_stats_parsed(stmt) else {
-            return Ok(None);
-        };
-        if statement.path.is_empty() {
-            return Err(SqlQueryError::unknown("Load Stats: file path is empty"));
-        }
-        Ok(Some(statement.path))
+        self.execute_parsed(sql, stmt).map(Some)
     }
 
-    fn execute_local_infile(
-        &mut self,
-        sql: &str,
-        data: &[u8],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
-        self.execute_local_infile_parsed(sql, &stmt, data)
+    fn affected_rows(&self) -> u64 {
+        self.ok_packet.affected_rows
     }
 
-    fn accept_local_infile_parsed(&mut self, _sql: &str, stmt: &Stmt) -> Result<(), SqlQueryError> {
-        // The executor is built against the current schema, as the write
-        // door builds every statement.
-        self.rebuild_catalog_if_stale();
-        self.store.session.accept_local_infile(stmt).map_err(map_error)
+    fn last_insert_id(&self) -> u64 {
+        self.ok_packet.last_insert_id
     }
 
-    fn execute_local_infile_parsed(
-        &mut self,
-        sql: &str,
-        stmt: &Stmt,
-        data: &[u8],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        self.store.session.clear_statement_message();
-        if matches!(stmt, Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::LoadData(_)))
-        {
-            // The load is an ordinary write over the client's bytes.
-            self.store.session.set_local_infile_data(data.to_vec());
-            let outcome = self.observe_routed_write(sql, stmt, |node| {
-                node.execute_ordinary_write_parsed(sql, stmt)
-            });
-            self.store.session.clear_local_infile();
-            return outcome;
-        }
-        if prepare_cluster_load_stats_parsed(stmt).is_none() {
-            return Err(SqlQueryError::unknown(
-                "statement did not request a client-local file",
-            ));
-        }
-        self.run_load_stats(data)
+    fn take_local_infile_request(&mut self) -> Option<String> {
+        self.parked_local_infile
+            .as_ref()
+            .map(|parked| parked.path.clone())
+    }
+
+    fn finish_local_infile(&mut self, data: &[u8]) -> Result<(), SqlQueryError> {
+        let parked = self.parked_local_infile.take().ok_or_else(|| {
+            SqlQueryError::unknown("statement did not request a client-local file")
+        })?;
+        self.ok_packet = self.execute_local_infile_parsed(&parked.sql, &parked.stmt, data)?;
+        Ok(())
     }
 
     fn finish_execute_stmt(&mut self, cost: std::time::Duration) {
@@ -6937,132 +6950,6 @@ impl QuerySession for ClusterServerSession {
         self.store.session.input_charset()
     }
 
-    /// Maps `BEGIN`/`COMMIT`/`ROLLBACK` onto the connection's buffer.
-    ///
-    /// The driver session owns the *state* (so `in_transaction` and the
-    /// statement's OK-packet status flag agree with the in-process tier); this
-    /// adds what the state means for cluster storage.
-    fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
-        self.control_transaction_parsed(sql, &stmt)
-    }
-
-    fn control_transaction_parsed(
-        &mut self,
-        sql: &str,
-        stmt: &Stmt,
-    ) -> Result<Option<bool>, SqlQueryError> {
-        let observed = classify_transaction_control_stmt(stmt).is_some();
-        // Go runs a transaction statement as any other: `session.ExecuteStmt`
-        // compiles its `Simple` plan and `runStmt` drives the `SimpleExec`.
-        let _execute_stmt =
-            observed.then(|| tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt"));
-        if observed {
-            compile_simple_statement(sql);
-            self.store.session.begin_routed_statement_observation(sql, stmt);
-        }
-        let result = self
-            .control_transaction_parsed_inner(sql, stmt)
-            .map_err(|error| self.record_statement_failure(error));
-        if observed {
-            self.store.session.finish_routed_statement_observation_with_error(
-                result.is_ok(),
-                0,
-                result.as_ref().err().map(|error| error.error_string()),
-            );
-        }
-        result
-    }
-
-    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        let stmt = self.store.session.parse_statement(sql).map_err(|error| {
-            self.store.session.record_parse_failure(&error);
-            map_error(error)
-        })?;
-        self.execute_write_parsed(sql, &stmt)
-    }
-
-    /// One parse per command (Go `session.ParseSQL`, done by the connection
-    /// through [`QuerySession::parse_statement`]); routing, the SET door, the
-    /// kind, the resource group, the prelock keys and the run all read that
-    /// node.
-    fn execute_write_parsed(
-        &mut self,
-        sql: &str,
-        stmt: &Stmt,
-    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
-        // builds the prepared plan as its body). The DDL must take this
-        // node's cluster route; the session would apply it to its own
-        // in-process catalog, where no other statement can see it.
-        if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
-            return self.execute_write_parsed(&body_sql, &body);
-        }
-        // A transaction statement an internal session runs as SQL (Go's
-        // `ExecuteInternal("BEGIN")`) takes the same door the wire's does.
-        if classify_transaction_control_stmt(stmt).is_some() {
-            self.control_transaction_parsed(sql, stmt)?;
-            return Ok(Some(WriteOutcome {
-                affected_rows: 0,
-                last_insert_id: 0,
-            }));
-        }
-        // Go `TxnCtx.StatementCount`: every statement inside an explicit
-        // transaction counts toward its COMMIT observation.
-        if let Some(transaction) = self.store.txn.explicit.as_ref() {
-            transaction.note_statement();
-        }
-        // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
-        // for every statement no transaction continues into: neither this
-        // node's explicit transaction nor one the session itself opened.
-        if self.store.txn.explicit.is_none() {
-            self.store.session.start_statement_transaction_scope();
-        }
-        self.store.session.clear_statement_message();
-        // A statement without a query result leaves no result field names.
-        self.store.session.last_result_output_names.clear();
-        // Go resolves and plans against the current infoschema before it
-        // chooses a statement snapshot. Keep schema refresh ahead of routing,
-        // access-shape classification, and the statement lifecycle.
-        self.rebuild_catalog_if_stale();
-        // Go `PlanBuilder.Build` starts with `checkSEMStmt` for every
-        // statement, so a routed one is refused before its own privileges.
-        self.store
-            .session
-            .check_sem_stmt(sql, stmt)
-            .map_err(map_error)?;
-        // Routed before anything else: what happens to a stored-state change
-        // must not depend on which answer shape it would otherwise have taken.
-        let route = self.schema_route(stmt)?;
-        if let Some(outcome) = self.run_routed_statement(route, sql, stmt)? {
-            return Ok(Some(outcome));
-        }
-        if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))
-        {
-            let outcome = self.observe_routed_write(sql, stmt, |node| {
-                node.store.session.apply_set_stmt(stmt).map_err(map_error)?;
-                // SET autocommit=1 may commit the open transaction without
-                // entering the snapshot/executor path.
-                node.commit_if_session_left_transaction()?;
-                Ok(WriteOutcome {
-                    affected_rows: 0,
-                    last_insert_id: 0,
-                })
-            })?;
-            return Ok(Some(outcome));
-        }
-        if self.store.session.statement_kind_parsed(stmt) != StmtKind::Write {
-            return Ok(None);
-        }
-        // Go `session.ExecuteStmt`: compile and `runStmt`, the autocommit
-        // commit included.
-        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-        self.observe_routed_write(sql, stmt, |node| {
-            node.execute_ordinary_write_parsed(sql, stmt)
-        })
-        .map(Some)
-    }
-
     /// The catalog is refreshed first so a schema another node created since
     /// this connection opened is selectable, exactly as it is for a statement.
 
@@ -7083,11 +6970,9 @@ impl QuerySession for ClusterServerSession {
         self.store.session.select_database(name).map_err(map_error)
     }
 
-    fn close_prepared(&mut self, statement: &crate::domain::session_api::PreparedStatement) {
-        if let crate::domain::session_api::PreparedStatement::General(general) = statement {
-            if let Some(prepared) = general.prepared_ast() {
-                self.store.session.close_prepared(prepared);
-            }
+    fn close_prepared(&mut self, statement: &PreparedGeneral) {
+        if let Some(prepared) = statement.prepared_ast() {
+            self.store.session.close_prepared(prepared);
         }
     }
 
@@ -7467,7 +7352,216 @@ impl QuerySession for ClusterServerSession {
         })
     }
 
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+}
+
+/// The steps Go's `ExecuteStmt` takes for each statement kind, run by
+/// [`QuerySession::execute_stmt`] and by internal callers that know the
+/// statement's kind.
+impl ClusterServerSession {
+    pub(crate) fn record_write_failure(&mut self, code: u16, message: String) {
+        self.store.session.record_ddl_failure(code, message);
+    }
+
+    pub(crate) fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
+        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
+        self.local_infile_path_parsed(sql, &stmt)
+    }
+
+    pub(crate) fn local_infile_path_parsed(
+        &mut self,
+        _sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<String>, SqlQueryError> {
+        // Go `LoadDataExec.Open` asks the client for a LOCAL load's file.
+        if let Stmt::Dml(dml) = stmt {
+            if let tidb_ast::DmlStmt::LoadData(load) = dml.as_ref() {
+                return Ok(load.local.then(|| load.path.clone()));
+            }
+        }
+        let Some(statement) = prepare_cluster_load_stats_parsed(stmt) else {
+            return Ok(None);
+        };
+        if statement.path.is_empty() {
+            return Err(SqlQueryError::unknown("Load Stats: file path is empty"));
+        }
+        Ok(Some(statement.path))
+    }
+
+    pub(crate) fn execute_local_infile(
+        &mut self,
+        sql: &str,
+        data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
+        self.execute_local_infile_parsed(sql, &stmt, data)
+    }
+
+    pub(crate) fn accept_local_infile_parsed(
+        &mut self,
+        _sql: &str,
+        stmt: &Stmt,
+    ) -> Result<(), SqlQueryError> {
+        // The executor is built against the current schema, as the write
+        // door builds every statement.
+        self.rebuild_catalog_if_stale();
+        self.store.session.accept_local_infile(stmt).map_err(map_error)
+    }
+
+    pub(crate) fn execute_local_infile_parsed(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+        data: &[u8],
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        self.store.session.clear_statement_message();
+        if matches!(stmt, Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::LoadData(_)))
+        {
+            // The load is an ordinary write over the client's bytes.
+            self.store.session.set_local_infile_data(data.to_vec());
+            let outcome = self.observe_routed_write(sql, stmt, |node| {
+                node.execute_ordinary_write_parsed(sql, stmt)
+            });
+            self.store.session.clear_local_infile();
+            return outcome;
+        }
+        if prepare_cluster_load_stats_parsed(stmt).is_none() {
+            return Err(SqlQueryError::unknown(
+                "statement did not request a client-local file",
+            ));
+        }
+        self.run_load_stats(data)
+    }
+
+    /// Maps `BEGIN`/`COMMIT`/`ROLLBACK` onto the connection's buffer.
+    ///
+    /// The driver session owns the *state* (so `in_transaction` and the
+    /// statement's OK-packet status flag agree with the in-process tier); this
+    /// adds what the state means for cluster storage.
+    pub(crate) fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
+        let stmt = self.store.session.parse_statement(sql).map_err(map_error)?;
+        self.control_transaction_parsed(sql, &stmt)
+    }
+
+    pub(crate) fn control_transaction_parsed(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<bool>, SqlQueryError> {
+        let observed = classify_transaction_control_stmt(stmt).is_some();
+        // Go runs a transaction statement as any other: `session.ExecuteStmt`
+        // compiles its `Simple` plan and `runStmt` drives the `SimpleExec`.
+        let _execute_stmt =
+            observed.then(|| tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt"));
+        if observed {
+            compile_simple_statement(sql);
+            self.store.session.begin_routed_statement_observation(sql, stmt);
+        }
+        let result = self
+            .control_transaction_parsed_inner(sql, stmt)
+            .map_err(|error| self.record_statement_failure(error));
+        if observed {
+            self.store.session.finish_routed_statement_observation_with_error(
+                result.is_ok(),
+                0,
+                result.as_ref().err().map(|error| error.error_string()),
+            );
+        }
+        result
+    }
+
+    pub(crate) fn execute_write(
+        &mut self,
+        sql: &str,
+    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        let stmt = self.store.session.parse_statement(sql).map_err(|error| {
+            self.store.session.record_parse_failure(&error);
+            map_error(error)
+        })?;
+        self.execute_write_parsed(sql, &stmt)
+    }
+
+    /// One parse per command (Go `session.ParseSQL`, done by the connection
+    /// through [`QuerySession::parse_statement`]); routing, the SET door, the
+    /// kind, the resource group, the prelock keys and the run all read that
+    /// node.
+    pub(crate) fn execute_write_parsed(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
+        // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
+        // builds the prepared plan as its body). The DDL must take this
+        // node's cluster route; the session would apply it to its own
+        // in-process catalog, where no other statement can see it.
+        if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
+            return self.execute_write_parsed(&body_sql, &body);
+        }
+        // A transaction statement an internal session runs as SQL (Go's
+        // `ExecuteInternal("BEGIN")`) takes the same door the wire's does.
+        if classify_transaction_control_stmt(stmt).is_some() {
+            self.control_transaction_parsed(sql, stmt)?;
+            return Ok(Some(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }));
+        }
+        // Go `TxnCtx.StatementCount`: every statement inside an explicit
+        // transaction counts toward its COMMIT observation.
+        if let Some(transaction) = self.store.txn.explicit.as_ref() {
+            transaction.note_statement();
+        }
+        // Go builds a fresh `TxnCtx` -- membuffer and GLOBAL temporary rows --
+        // for every statement no transaction continues into: neither this
+        // node's explicit transaction nor one the session itself opened.
+        if self.store.txn.explicit.is_none() {
+            self.store.session.start_statement_transaction_scope();
+        }
+        self.store.session.clear_statement_message();
+        // A statement without a query result leaves no result field names.
+        self.store.session.last_result_output_names.clear();
+        // Go resolves and plans against the current infoschema before it
+        // chooses a statement snapshot. Keep schema refresh ahead of routing,
+        // access-shape classification, and the statement lifecycle.
+        self.rebuild_catalog_if_stale();
+        // Go `PlanBuilder.Build` starts with `checkSEMStmt` for every
+        // statement, so a routed one is refused before its own privileges.
+        self.store
+            .session
+            .check_sem_stmt(sql, stmt)
+            .map_err(map_error)?;
+        // Routed before anything else: what happens to a stored-state change
+        // must not depend on which answer shape it would otherwise have taken.
+        let route = self.schema_route(stmt)?;
+        if let Some(outcome) = self.run_routed_statement(route, sql, stmt)? {
+            return Ok(Some(outcome));
+        }
+        if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))
+        {
+            let outcome = self.observe_routed_write(sql, stmt, |node| {
+                node.store.session.apply_set_stmt(stmt).map_err(map_error)?;
+                // SET autocommit=1 may commit the open transaction without
+                // entering the snapshot/executor path.
+                node.commit_if_session_left_transaction()?;
+                Ok(WriteOutcome {
+                    affected_rows: 0,
+                    last_insert_id: 0,
+                })
+            })?;
+            return Ok(Some(outcome));
+        }
+        if self.store.session.statement_kind_parsed(stmt) != StmtKind::Write {
+            return Ok(None);
+        }
+        // Go `session.ExecuteStmt`: compile and `runStmt`, the autocommit
+        // commit included.
+        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+        self.observe_routed_write(sql, stmt, |node| {
+            node.execute_ordinary_write_parsed(sql, stmt)
+        })
+        .map(Some)
+    }
+
+    pub(crate) fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
         let stmt = self.store.session.parse_statement(sql).map_err(|error| {
             self.store.session.record_parse_failure(&error);
             map_error(error)
@@ -7477,7 +7571,7 @@ impl QuerySession for ClusterServerSession {
 
     /// One parse per command (Go `session.ParseSQL`, done by the connection
     /// through [`QuerySession::parse_statement`]).
-    fn execute_parsed<'a>(
+    pub(crate) fn execute_parsed<'a>(
         &'a mut self,
         sql: &str,
         stmt: &Stmt,

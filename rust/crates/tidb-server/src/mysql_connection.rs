@@ -56,14 +56,11 @@ use crate::resultset_writer::ResultSetSink;
 use crate::secure_transport::TransportKind;
 use tidb_ast::Stmt;
 
-use crate::session_api::record_text_write_failure;
 use crate::sql_node::{
     ConnectionCancellation, ConnectionClose, ConnectionTracker, GeneralExecuteOutcome,
-    PreparedStatement, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
-    SqlQueryError,
+    PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
 };
 use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
-use tidb_planner::transaction_control::classify_transaction_control;
 use tidb_session::privilege::plugin_needs_cleartext;
 
 /// Carries one client SQL payload's bytes for `@@character_set_client`.
@@ -208,7 +205,7 @@ struct ConnectionPreparedStatement {
     /// The parsed statement is immutable after PREPARE.  Keep it behind an
     /// `Arc` so COM_STMT_EXECUTE only clones a pointer; cloning the retained
     /// AST for every execute made YCSB's point reads pay a full tree copy.
-    statement: Arc<PreparedStatement>,
+    statement: Arc<PreparedGeneral>,
     parameter_types: Option<Vec<PreparedParameterType>>,
     metrics_label: &'static str,
     /// An open read-only cursor: the materialized result a cursor-mode
@@ -257,25 +254,6 @@ enum AppendParamError {
     ParameterOutOfRange,
 }
 
-fn prepared_sql(statement: &PreparedStatement) -> &str {
-    match statement {
-        PreparedStatement::General(value) => value.sql(),
-        PreparedStatement::TransactionControl(value) => value.as_str(),
-    }
-}
-
-fn prepare_connection_statement<S: QuerySession>(
-    engine: &mut S,
-    sql: &str,
-) -> Result<PreparedStatement, SqlQueryError> {
-    if classify_transaction_control(sql).is_some() {
-        return Ok(PreparedStatement::TransactionControl(sql.to_owned()));
-    }
-    engine
-        .prepare_general(sql)
-        .map(PreparedStatement::General)
-}
-
 struct PreparedStatementRegistry {
     next_id: Option<u32>,
     statements: HashMap<u32, ConnectionPreparedStatement>,
@@ -314,7 +292,7 @@ impl PreparedStatementRegistry {
                     state.cannot_migrate = Some("prepared statements have unfetched rows");
                     break;
                 }
-                let sql = prepared_sql(&prepared.statement);
+                let sql = prepared.statement.sql();
                 let types: Vec<u8> = prepared
                     .parameter_types
                     .as_ref()
@@ -376,7 +354,7 @@ impl PreparedStatementRegistry {
             let old_db = engine
                 .migration_session()
                 .map(|session| session.replace_migration_database(database.clone()));
-            let result = prepare_connection_statement(engine, &info.text);
+            let result = engine.prepare_general(&info.text);
             if let Some(old_db) = old_db {
                 if let Some(session) = engine.migration_session() {
                     session.replace_migration_database(old_db);
@@ -412,20 +390,15 @@ impl PreparedStatementRegistry {
         Ok(())
     }
 
-    fn insert(&mut self, statement: PreparedStatement) -> Result<u32, &'static str> {
+    fn insert(&mut self, statement: PreparedGeneral) -> Result<u32, &'static str> {
         let statement_id = self
             .next_id
             .ok_or("prepared statement ID space exhausted")?;
         self.next_id = statement_id.checked_add(1);
-        let sql = prepared_sql(&statement);
         // Compute once at PREPARE; EXECUTE uses this immutable label.
-        let metrics_label = match &statement {
-            PreparedStatement::General(general) if general.prepared_ast().is_some() => general
-                .prepared_ast()
-                .expect("checked above")
-                .statement()
-                .label(),
-            _ => tidb_parser::parse(sql).map_or("general", |stmt| stmt.label()),
+        let metrics_label = match statement.prepared_ast() {
+            Some(prepared) => prepared.statement().label(),
+            None => tidb_parser::parse(statement.sql()).map_or("general", |stmt| stmt.label()),
         };
         self.statements.insert(
             statement_id,
@@ -761,19 +734,6 @@ impl<O: ConnectionPacketOutput> ConnectionPacketOutput for ClientErrorRecordingO
 
     fn set_compressed_sequence(&mut self, sequence: u8) {
         self.inner.set_compressed_sequence(sequence);
-    }
-}
-
-/// Go `handleStmt` for a result-set statement: the node `parse_statement`
-/// produced goes to the session that parsed it, the text to one that did not.
-fn execute_statement<'a, S: QuerySession>(
-    engine: &'a mut S,
-    sql: &str,
-    parsed: Option<&Stmt>,
-) -> Result<QueryResult<'a>, SqlQueryError> {
-    match parsed {
-        Some(stmt) => engine.execute_parsed(sql, stmt),
-        None => engine.execute(sql),
     }
 }
 
@@ -1813,7 +1773,7 @@ fn log_dispatch_failure<S: QuerySession>(
         tidb_mysql::consts::ComStmtExecute | tidb_mysql::consts::ComStmtFetch => {
             let id = statement_id();
             let text = match prepared.statements.get(&id) {
-                Some(statement) => statement.statement.sql_text().to_owned(),
+                Some(statement) => statement.statement.sql().to_owned(),
                 None => format!("prepared statement not found, ID: {id}"),
             };
             statement_text(&text, true)
@@ -2128,32 +2088,30 @@ fn run_connection_commands<S: QuerySession>(
                     };
                     let mut next_sequence = 1;
                     if subcommand == 0x01 {
-                        match engine.execute_write("FLUSH PRIVILEGES") {
-                            Ok(Some(outcome)) => {
-                                write_affected_rows_ok_with_info(
-                                    output,
-                                    1,
-                                    outcome.affected_rows,
-                                    outcome.last_insert_id,
-                                    engine.wire_status(),
-                                    engine.warning_count(),
-                                    protocol_41,
-                                    &engine.statement_info(),
-                                )?;
-                                record_client_warnings(&*output, &*engine);
-                                queries += 1;
-                                next_sequence = 2;
-                            }
-                            // Query-only sessions have no privilege cache to
-                            // refresh; the command remains Go's successful
-                            // no-op and still gets its trailing command OK.
-                            Ok(None) => {}
-                            Err(error) => {
-                                write_query_error(output, &error, protocol_41)?;
-                                record_client_warnings(&*output, &*engine);
-                                return Ok(None);
-                            }
+                        const FLUSH_PRIVILEGES: &str = "FLUSH PRIVILEGES";
+                        let executed = engine.parse_statement(FLUSH_PRIVILEGES).and_then(|stmt| {
+                            engine
+                                .execute_stmt(FLUSH_PRIVILEGES, &stmt)
+                                .map(|result| drop(result))
+                        });
+                        if let Err(error) = executed {
+                            write_query_error(output, &error, protocol_41)?;
+                            record_client_warnings(&*output, &*engine);
+                            return Ok(None);
                         }
+                        write_affected_rows_ok_with_info(
+                            output,
+                            1,
+                            engine.affected_rows(),
+                            engine.last_insert_id(),
+                            engine.wire_status(),
+                            engine.warning_count(),
+                            protocol_41,
+                            &engine.statement_info(),
+                        )?;
+                        record_client_warnings(&*output, &*engine);
+                        queries += 1;
+                        next_sequence = 2;
                     }
                     write_ok(
                         output,
@@ -2229,8 +2187,8 @@ fn run_connection_commands<S: QuerySession>(
                         // Go `handleQuery` parses the command ONCE and hands each
                         // node to `handleStmt`; every door below takes that node
                         // and none parses the text again.
-                        let parsed = match engine.parse_statement(sql) {
-                            Ok(parsed) => parsed,
+                        let stmt = match engine.parse_statement(sql) {
+                            Ok(stmt) => stmt,
                             Err(error) => {
                                 // go session.go:1955-1968's parse-failure
                                 // half: fresh warning context + the error row
@@ -2241,97 +2199,107 @@ fn run_connection_commands<S: QuerySession>(
                                 break;
                             }
                         };
-                        if let Some(stmt) = parsed.as_ref() {
-                            if let Err(error) = prepared.session_states_handler(engine, stmt) {
-                                engine.record_parse_failure(error.code, error.message.clone());
-                                write_query_error_at(output, sequence, &error, protocol_41)?;
-                                aborted = true;
-                                break;
-                            }
+                        if let Err(error) = prepared.session_states_handler(engine, &stmt) {
+                            engine.record_parse_failure(error.code, error.message.clone());
+                            write_query_error_at(output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
                         }
-                        command_metrics.sql_type = parsed.as_ref().map_or("general", Stmt::label);
+                        command_metrics.sql_type = stmt.label();
                         // Go `executor.go`: StmtNodeCounter counts every
                         // executed statement by its executor label.
-                        if let Some(stmt) = parsed.as_ref() {
-                            tidb_executor::metrics::STATEMENT_TOTAL
-                                .with_label_values(&[
-                                    "",
-                                    engine.metrics_resource_group(),
-                                    stmt.label(),
-                                ])
-                                .inc();
-                        }
+                        tidb_executor::metrics::STATEMENT_TOTAL
+                            .with_label_values(&["", engine.metrics_resource_group(), stmt.label()])
+                            .inc();
                         // Go excludes text DDL from addQueryMetrics.
-                        command_metrics.skip = parsed
-                            .as_ref()
-                            .is_some_and(|stmt| matches!(stmt, Stmt::Ddl(_)));
-                        // Go executes LOAD STATS far enough to park its file
-                        // request, then the connection asks the CLIENT for that
-                        // path with a 0xfb local-infile packet and feeds the
-                        // returned packet stream back into the same statement.
-                        let local_infile_path = match &parsed {
-                            Some(stmt) => engine.local_infile_path_parsed(sql, stmt),
-                            None => engine.local_infile_path(sql),
-                        };
-                        let local_infile_path = match local_infile_path {
-                            Ok(path) => path,
-                            Err(error) => {
-                                write_query_error_at(output, sequence, &error, protocol_41)?;
-                                aborted = true;
-                                break;
-                            }
-                        };
-                        if let Some(path) = local_infile_path {
-                            if capabilities & CLIENT_LOCAL_FILES == 0 {
-                                let error = SqlQueryError::new(
-                                    1148,
-                                    *b"42000",
-                                    "The used command is not allowed with this MySQL version",
-                                );
-                                write_query_error_at(output, sequence, &error, protocol_41)?;
-                                aborted = true;
-                                break;
-                            }
-                            if let Some(stmt) = &parsed {
-                                if let Err(error) = engine.accept_local_infile_parsed(sql, stmt) {
-                                    write_query_error_at(output, sequence, &error, protocol_41)?;
-                                    record_client_warnings(&*output, &*engine);
-                                    aborted = true;
-                                    break;
-                                }
-                            }
-                            let mut request = Vec::with_capacity(path.len() + 1);
-                            request.push(0xfb);
-                            request.extend_from_slice(path.as_bytes());
-                            write_payload(output, sequence, &request)?;
-                            if let Some(compressed_sequence) = output.compressed_sequence() {
-                                reader.set_compressed_sequence(compressed_sequence);
-                            }
-                            reader.set_sequence(sequence.wrapping_add(1));
-                            let mut data = Vec::new();
-                            loop {
-                                let packet = reader.read_packet()?;
-                                if packet.is_empty() {
-                                    break;
-                                }
-                                data.extend_from_slice(&packet);
-                            }
-                            if let Some(compressed_sequence) = reader.compressed_sequence() {
-                                output.set_compressed_sequence(compressed_sequence);
-                            }
-                            sequence = reader.sequence();
-                            output.set_sequence(sequence);
-                            let outcome = match &parsed {
-                                Some(stmt) => engine.execute_local_infile_parsed(sql, stmt, &data),
-                                None => engine.execute_local_infile(sql, &data),
-                            };
-                            match outcome {
-                                Ok(outcome) => {
+                        command_metrics.skip = matches!(stmt, Stmt::Ddl(_));
+                        // Go `handleStmt`: the statement runs with the connection's
+                        // liveness probe on its SQL killer, cleared when it ends.
+                        let _connection_alive = engine
+                            .should_install_connection_alive(&stmt)
+                            .then(|| set_sql_killer_connection_alive(engine, &connection_alive))
+                            .flatten();
+                        // Go `handleStmt`: one `ExecuteStmt`. A result set is
+                        // written as rows; no result set is an OK packet, after
+                        // the client's file when the statement parked a request
+                        // for one (`handleLoadData`, `handleLoadStats`).
+                        let mut result = {
+                            let executed = engine.execute_stmt(sql, &stmt);
+                            match executed {
+                                Ok(Some(result)) => result,
+                                // Consumed here so no part of it still borrows the
+                                // session below.
+                                other => {
+                                    if let Err(error) = other.map(drop) {
+                                        write_query_error_at(
+                                            output,
+                                            sequence,
+                                            &error,
+                                            protocol_41,
+                                        )?;
+                                        record_client_warnings(&*output, &*engine);
+                                        aborted = true;
+                                        break;
+                                    }
+                                    if let Some(path) = engine.take_local_infile_request() {
+                                        if capabilities & CLIENT_LOCAL_FILES == 0 {
+                                            let error = SqlQueryError::new(
+                                                1148,
+                                                *b"42000",
+                                                "The used command is not allowed with this MySQL version",
+                                            );
+                                            write_query_error_at(
+                                                output,
+                                                sequence,
+                                                &error,
+                                                protocol_41,
+                                            )?;
+                                            record_client_warnings(&*output, &*engine);
+                                            aborted = true;
+                                            break;
+                                        }
+                                        let mut request = Vec::with_capacity(path.len() + 1);
+                                        request.push(0xfb);
+                                        request.extend_from_slice(path.as_bytes());
+                                        write_payload(output, sequence, &request)?;
+                                        if let Some(compressed_sequence) =
+                                            output.compressed_sequence()
+                                        {
+                                            reader.set_compressed_sequence(compressed_sequence);
+                                        }
+                                        reader.set_sequence(sequence.wrapping_add(1));
+                                        let mut data = Vec::new();
+                                        loop {
+                                            let packet = reader.read_packet()?;
+                                            if packet.is_empty() {
+                                                break;
+                                            }
+                                            data.extend_from_slice(&packet);
+                                        }
+                                        if let Some(compressed_sequence) =
+                                            reader.compressed_sequence()
+                                        {
+                                            output.set_compressed_sequence(compressed_sequence);
+                                        }
+                                        sequence = reader.sequence();
+                                        output.set_sequence(sequence);
+                                        if let Err(error) = engine.finish_local_infile(&data) {
+                                            write_query_error_at(
+                                                output,
+                                                sequence,
+                                                &error,
+                                                protocol_41,
+                                            )?;
+                                            record_client_warnings(&*output, &*engine);
+                                            aborted = true;
+                                            break;
+                                        }
+                                    }
                                     write_affected_rows_ok_with_info(
                                         output,
                                         sequence,
-                                        outcome.affected_rows,
-                                        outcome.last_insert_id,
+                                        engine.affected_rows(),
+                                        engine.last_insert_id(),
                                         stamp(engine.wire_status()),
                                         engine.warning_count(),
                                         protocol_41,
@@ -2342,93 +2310,6 @@ fn run_connection_commands<S: QuerySession>(
                                     queries += 1;
                                     continue;
                                 }
-                                Err(error) => {
-                                    write_query_error_at(output, sequence, &error, protocol_41)?;
-                                    record_client_warnings(&*output, &*engine);
-                                    aborted = true;
-                                    break;
-                                }
-                            }
-                        }
-                        // Go `handleStmt`: the statement runs with the connection's
-                        // liveness probe on its SQL killer, cleared when it ends.
-                        let _connection_alive = parsed
-                            .as_ref()
-                            .filter(|stmt| engine.should_install_connection_alive(stmt))
-                            .and_then(|_| set_sql_killer_connection_alive(engine, &connection_alive));
-                        // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
-                        // answer with an OK packet carrying the transaction status, not a
-                        // result set; every other statement runs as an ordinary query.
-                        let control = match &parsed {
-                            Some(stmt) => engine.control_transaction_parsed(sql, stmt),
-                            None => engine.control_transaction(sql),
-                        };
-                        match control {
-                            Ok(Some(_)) => {
-                                // The session has already applied the statement, so its
-                                // own status is the answer -- there is no separate
-                                // transaction flag for this packet to get wrong.
-                                write_ok(
-                                    output,
-                                    sequence,
-                                    stamp(engine.wire_status()),
-                                    engine.warning_count(),
-                                    protocol_41,
-                                )?;
-                                record_client_warnings(&*output, &*engine);
-                                sequence = sequence.wrapping_add(1);
-                                queries += 1;
-                                continue;
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                write_query_error_at(output, sequence, &error, protocol_41)?;
-                                aborted = true;
-                                break;
-                            }
-                        }
-                        // A DML write or DDL answers with an OK packet carrying its
-                        // affected-row count, as MySQL does on the text protocol;
-                        // everything else runs as an ordinary result-set query.
-                        let written = match &parsed {
-                            Some(stmt) => engine.execute_write_parsed(sql, stmt),
-                            None => engine.execute_write(sql),
-                        };
-                        if let Err(ref error) = written {
-                            record_text_write_failure(engine, parsed.as_ref(), error);
-                        }
-                        match written {
-                            Ok(Some(outcome)) => {
-                                let info = engine.statement_info();
-                                write_affected_rows_ok_with_info(
-                                    output,
-                                    sequence,
-                                    outcome.affected_rows,
-                                    outcome.last_insert_id,
-                                    stamp(engine.wire_status()),
-                                    engine.warning_count(),
-                                    protocol_41,
-                                    &info,
-                                )?;
-                                record_client_warnings(&*output, &*engine);
-                                sequence = sequence.wrapping_add(1);
-                                queries += 1;
-                                continue;
-                            }
-                            Ok(None) => {}
-                            Err(error) => {
-                                write_query_error_at(output, sequence, &error, protocol_41)?;
-                                record_client_warnings(&*output, &*engine);
-                                aborted = true;
-                                break;
-                            }
-                        }
-                        let mut result = match execute_statement(engine, sql, parsed.as_ref()) {
-                            Ok(result) => result,
-                            Err(error) => {
-                                write_query_error_at(output, sequence, &error, protocol_41)?;
-                                aborted = true;
-                                break;
                             }
                         };
                         let (write_result, next_sequence) = {
@@ -2526,7 +2407,7 @@ fn run_connection_commands<S: QuerySession>(
                     // The predicate
                     // is the same one the text arm routes on, so a statement takes
                     // the same route whichever protocol carried it.
-                    let statement = match prepare_connection_statement(engine, sql) {
+                    let statement = match engine.prepare_general(sql) {
                         Ok(statement) => statement,
                         Err(error) => {
                             write_query_error(output, &error, protocol_41)?;
@@ -2700,190 +2581,150 @@ fn run_connection_commands<S: QuerySession>(
                     tidb_executor::metrics::STATEMENT_TOTAL
                         .with_label_values(&["", engine.metrics_resource_group(), statement_label])
                         .inc();
-                    if let PreparedStatement::General(general) = prepared_statement.as_ref() {
-                        if let Some(ast) = general.prepared_ast() {
-                            if let Err(error) =
-                                prepared.session_states_handler(engine, ast.statement())
-                            {
-                                write_query_error(output, &error, protocol_41)?;
-                                return Ok(None);
-                            }
+                    let general = prepared_statement.as_ref();
+                    if let Some(ast) = general.prepared_ast() {
+                        if let Err(error) = prepared.session_states_handler(engine, ast.statement())
+                        {
+                            write_query_error(output, &error, protocol_41)?;
+                            return Ok(None);
                         }
                     }
-                    match prepared_statement.as_ref() {
-                        // The same two lines the text arm runs, so the transaction
-                        // a prepared BEGIN opens, and the status flag the client
-                        // reads back, are the text protocol's own.
-                        PreparedStatement::TransactionControl(sql) => {
-                            match engine.control_transaction(&sql) {
-                                Ok(Some(_)) => {
-                                    write_ok(
-                                        output,
-                                        1,
-                                        engine.wire_status(),
-                                        engine.warning_count(),
-                                        protocol_41,
-                                    )?;
-                                    queries += 1;
-                                    commands.stmt_execute_successes += 1;
-                                }
-                                // A statement PREPARE classified as transaction
-                                // control that the session then declines is a
-                                // disagreement between the two, not a client
-                                // error: report it rather than answering OK.
-                                Ok(None) => write_error(
+                    // Go `executePreparedStmtAndWriteResult`: the execute runs
+                    // with the liveness probe when its prepared statement
+                    // would on the text protocol.
+                    let _connection_alive = general
+                        .template()
+                        .filter(|stmt| engine.should_install_connection_alive(stmt))
+                        .and_then(|_| set_sql_killer_connection_alive(engine, &connection_alive));
+                    // Go's read-only cursor: the execute materializes the
+                    // rows, holds them on the statement, and answers with
+                    // only the column definitions plus an EOF whose
+                    // status advertises the open cursor; the rows travel
+                    // later through COM_STMT_FETCH.
+                    if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
+                        let mut write_outcome = None;
+                        match engine.execute_general(general, &values) {
+                            Ok(GeneralExecuteOutcome::Rows(mut result)) => {
+                                match open_prepared_cursor(
+                                    &mut result,
                                     output,
-                                    1,
-                                    ER_UNKNOWN_ERROR,
-                                    *b"HY000",
-                                    "prepared transaction control was not applied",
-                                    protocol_41,
-                                )?,
-                                Err(error) => write_query_error(output, &error, protocol_41)?,
-                            }
-                            record_client_warnings(&*output, &*engine);
-                        }
-                        PreparedStatement::General(general) => {
-                            // Go `executePreparedStmtAndWriteResult`: the execute runs
-                            // with the liveness probe when its prepared statement
-                            // would on the text protocol.
-                            let _connection_alive = general
-                                .template()
-                                .filter(|stmt| engine.should_install_connection_alive(stmt))
-                                .and_then(|_| {
-                                    set_sql_killer_connection_alive(engine, &connection_alive)
-                                });
-                            // Go's read-only cursor: the execute materializes the
-                            // rows, holds them on the statement, and answers with
-                            // only the column definitions plus an EOF whose
-                            // status advertises the open cursor; the rows travel
-                            // later through COM_STMT_FETCH.
-                            if execute.cursor_flags & tidb_protocol::CURSOR_TYPE_READ_ONLY != 0 {
-                                let mut write_outcome = None;
-                                match engine.execute_general(general, &values) {
-                                    Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                        match open_prepared_cursor(
-                                            &mut result,
-                                            output,
-                                            framing,
-                                            result_encoder,
-                                        ) {
-                                            Ok(cursor) => {
-                                                drop(result);
-                                                drop(prepared.open_cursor(statement_id, cursor));
-                                                queries += 1;
-                                                commands.stmt_execute_successes += 1;
-                                            }
-                                            Err(PreparedCursorOpenError::Query(error)) => {
-                                                drop(result);
-                                                write_query_error(output, &error, protocol_41)?;
-                                            }
-                                            Err(PreparedCursorOpenError::Transport(error)) => {
-                                                return Err(error);
-                                            }
-                                        }
+                                    framing,
+                                    result_encoder,
+                                ) {
+                                    Ok(cursor) => {
+                                        drop(result);
+                                        drop(prepared.open_cursor(statement_id, cursor));
+                                        queries += 1;
+                                        commands.stmt_execute_successes += 1;
                                     }
-                                    // Go clears the cursor bit when the statement
-                                    // produced no result set and answers a plain
-                                    // OK. The answer is written after the match
-                                    // because its warning count is read off the
-                                    // session, whose borrow the result arm holds
-                                    // for as long as the match scrutinee lives.
-                                    Ok(GeneralExecuteOutcome::Write(outcome)) => {
-                                        write_outcome = Some(outcome);
-                                    }
-                                    Err(error) => {
+                                    Err(PreparedCursorOpenError::Query(error)) => {
+                                        drop(result);
                                         write_query_error(output, &error, protocol_41)?;
                                     }
+                                    Err(PreparedCursorOpenError::Transport(error)) => {
+                                        return Err(error);
+                                    }
                                 }
-                                if let Some(outcome) = write_outcome {
-                                    let info = engine.statement_info();
-                                    write_affected_rows_ok_with_info(
-                                        output,
-                                        1,
-                                        outcome.affected_rows,
-                                        outcome.last_insert_id,
-                                        engine.wire_status(),
-                                        engine.warning_count(),
-                                        protocol_41,
-                                        &info,
-                                    )?;
+                            }
+                            // Go clears the cursor bit when the statement
+                            // produced no result set and answers a plain
+                            // OK. The answer is written after the match
+                            // because its warning count is read off the
+                            // session, whose borrow the result arm holds
+                            // for as long as the match scrutinee lives.
+                            Ok(GeneralExecuteOutcome::Write(outcome)) => {
+                                write_outcome = Some(outcome);
+                            }
+                            Err(error) => {
+                                write_query_error(output, &error, protocol_41)?;
+                            }
+                        }
+                        if let Some(outcome) = write_outcome {
+                            let info = engine.statement_info();
+                            write_affected_rows_ok_with_info(
+                                output,
+                                1,
+                                outcome.affected_rows,
+                                outcome.last_insert_id,
+                                engine.wire_status(),
+                                engine.warning_count(),
+                                protocol_41,
+                                &info,
+                            )?;
+                            queries += 1;
+                            commands.stmt_execute_successes += 1;
+                        }
+                        record_client_warnings(&*output, &*engine);
+                        return Ok(None);
+                    }
+                    let mut write_outcome = None;
+                    match engine.execute_general(general, &values) {
+                        Ok(GeneralExecuteOutcome::Rows(mut result)) => {
+                            let write_result = {
+                                let statement_options = framing.result_set_with_output(
+                                    result.wire_status(),
+                                    result.warning_count(),
+                                    result.affected_rows(),
+                                    result.last_insert_id(),
+                                    result.info().to_vec(),
+                                    result_encoder,
+                                );
+                                let mut sink = TcpResultSetSink::new(output, 1);
+                                write_connection_binary_result_set_to_sink(
+                                    result.source(),
+                                    &mut sink,
+                                    statement_options,
+                                    RESULT_BATCH_SIZE,
+                                )
+                            };
+                            match write_result {
+                                Ok(_) => {
                                     queries += 1;
                                     commands.stmt_execute_successes += 1;
                                 }
-                                record_client_warnings(&*output, &*engine);
-                                return Ok(None);
-                            }
-                            let mut write_outcome = None;
-                            match engine.execute_general(general, &values) {
-                                Ok(GeneralExecuteOutcome::Rows(mut result)) => {
-                                    let write_result = {
-                                        let statement_options = framing.result_set_with_output(
-                                            result.wire_status(),
-                                            result.warning_count(),
-                                            result.affected_rows(),
-                                            result.last_insert_id(),
-                                            result.info().to_vec(),
-                                            result_encoder,
-                                        );
-                                        let mut sink = TcpResultSetSink::new(output, 1);
-                                        write_connection_binary_result_set_to_sink(
-                                            result.source(),
-                                            &mut sink,
-                                            statement_options,
-                                            RESULT_BATCH_SIZE,
-                                        )
-                                    };
-                                    match write_result {
-                                        Ok(_) => {
-                                            queries += 1;
-                                            commands.stmt_execute_successes += 1;
-                                        }
-                                        Err(error) if !error.bytes_escaped => {
-                                            write_error(
-                                                output,
-                                                1,
-                                                error.cause.code,
-                                                error.cause.state,
-                                                error.cause.message,
-                                                protocol_41,
-                                            )?;
-                                        }
-                                        Err(error) => {
-                                            return Err(MysqlConnectionError::PartialResult(
-                                                error.cause.message,
-                                            ))
-                                        }
-                                    }
-                                }
-                                // Answered after the match: see the cursor arm
-                                // above for why the session cannot be read while
-                                // the scrutinee is alive.
-                                Ok(GeneralExecuteOutcome::Write(outcome)) => {
-                                    write_outcome = Some(outcome);
+                                Err(error) if !error.bytes_escaped => {
+                                    write_error(
+                                        output,
+                                        1,
+                                        error.cause.code,
+                                        error.cause.state,
+                                        error.cause.message,
+                                        protocol_41,
+                                    )?;
                                 }
                                 Err(error) => {
-                                    write_query_error(output, &error, protocol_41)?;
+                                    return Err(MysqlConnectionError::PartialResult(
+                                        error.cause.message,
+                                    ))
                                 }
                             }
-                            if let Some(outcome) = write_outcome {
-                                let info = engine.statement_info();
-                                write_affected_rows_ok_with_info(
-                                    output,
-                                    1,
-                                    outcome.affected_rows,
-                                    outcome.last_insert_id,
-                                    engine.wire_status(),
-                                    engine.warning_count(),
-                                    protocol_41,
-                                    &info,
-                                )?;
-                                queries += 1;
-                                commands.stmt_execute_successes += 1;
-                            }
-                            record_client_warnings(&*output, &*engine);
+                        }
+                        // Answered after the match: see the cursor arm
+                        // above for why the session cannot be read while
+                        // the scrutinee is alive.
+                        Ok(GeneralExecuteOutcome::Write(outcome)) => {
+                            write_outcome = Some(outcome);
+                        }
+                        Err(error) => {
+                            write_query_error(output, &error, protocol_41)?;
                         }
                     }
+                    if let Some(outcome) = write_outcome {
+                        let info = engine.statement_info();
+                        write_affected_rows_ok_with_info(
+                            output,
+                            1,
+                            outcome.affected_rows,
+                            outcome.last_insert_id,
+                            engine.wire_status(),
+                            engine.warning_count(),
+                            protocol_41,
+                            &info,
+                        )?;
+                        queries += 1;
+                        commands.stmt_execute_successes += 1;
+                    }
+                    record_client_warnings(&*output, &*engine);
                     engine.finish_execute_stmt(execute_started.elapsed());
                 }
                 Command::StmtSendLongData(bytes) => {
@@ -3320,7 +3161,18 @@ mod dispatch_failure_log_tests {
     struct NoSession;
 
     impl QuerySession for NoSession {
-        fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+            // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+        }
+
+        fn execute_stmt<'a>(
+            &'a mut self,
+            _sql: &str,
+            _stmt: &tidb_ast::Stmt,
+        ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
             panic!("the log reads no statement")
         }
     }

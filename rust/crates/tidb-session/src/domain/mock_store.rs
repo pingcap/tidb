@@ -302,7 +302,7 @@ impl MockStoreConnection {
         stmt: tidb_ast::Stmt,
     ) -> Result<StmtOutput, tidb_executor::DriverError> {
         std::mem::swap(session, self.connection.driver_session_mut());
-        let result = self.connection.run_parsed_statement_output(sql, Some(stmt));
+        let result = self.connection.run_parsed_statement_output(sql, stmt);
         std::mem::swap(session, self.connection.driver_session_mut());
         result
     }

@@ -140,12 +140,21 @@ impl QuerySession for Session {
         Ok(())
     }
 
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    /// The fixture's commands are not all SQL; any statement stands for them.
+    fn parse_statement(&mut self, _sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        Ok(tidb_parser::parse("SELECT 1").expect("a statement"))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         assert!(self.initialized, "the handshake collation precedes every command");
         assert_eq!(sql, "select id from campaign21.rows");
-        Ok(QueryResult::new(Box::new(Rows {
+        Ok(Some(QueryResult::new(Box::new(Rows {
             rows: [vec![Datum::Int(42)]].into(),
-        })))
+        }))))
     }
 }
 

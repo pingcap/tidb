@@ -32,7 +32,18 @@ const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 struct Session;
 
 impl QuerySession for Session {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         unreachable!("these sessions only log in; Go's login issues no statement")
     }
 
@@ -256,15 +267,26 @@ struct BlockingQuerySession {
 }
 
 impl QuerySession for BlockingQuerySession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         let cancellation = Arc::new(BlockingCancellation {
             state: Arc::clone(&self.state),
         });
         let lease = self.cancellation.install(cancellation);
-        Ok(QueryResult::new(Box::new(BlockingResultSet {
+        Ok(Some(QueryResult::new(Box::new(BlockingResultSet {
             state: Arc::clone(&self.state),
             _cancellation_lease: lease,
-        })))
+        }))))
     }
 }
 
@@ -379,7 +401,16 @@ impl QuerySessionFactory for CommandFailureFactory {
 }
 
 impl QuerySession for CommandFailureSession {
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    /// The injected commands are not SQL; any statement stands for them.
+    fn parse_statement(&mut self, _sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        Ok(tidb_parser::parse("SELECT 1").expect("a statement"))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         assert_ne!(sql, "panic", "injected command panic");
         Err(SqlQueryError::unknown("injected command error"))
     }
@@ -688,36 +719,47 @@ impl QuerySessionFactory for MetricsFactory {
     }
 }
 impl QuerySession for MetricsSession {
-    fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, SqlQueryError> {
-        Ok((sql == "BEGIN").then_some(true))
-    }
     fn metrics_resource_group(&self) -> &str {
         self.group
     }
     fn metrics_statement_resource_group(&self) -> &str {
         "metrics-statement-hint"
     }
-    fn parse_statement(&mut self, sql: &str) -> Result<Option<tidb_ast::Stmt>, SqlQueryError> {
-        tidb_parser::parse(sql)
-            .map(Some)
-            .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
     }
-    fn execute_write(
-        &mut self,
+    fn execute_stmt<'a>(
+        &'a mut self,
         sql: &str,
-    ) -> Result<Option<tidb_server::WriteOutcome>, SqlQueryError> {
-        if sql.starts_with("SET") {
-            self.group = "metrics-after";
-        } else if !sql.starts_with("CREATE") {
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+        if sql == "BEGIN" || sql.starts_with("CREATE") {
             return Ok(None);
         }
-        Ok(Some(tidb_server::WriteOutcome {
-            affected_rows: 0,
-            last_insert_id: 0,
-        }))
-    }
-    fn execute<'a>(&'a mut self, _: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        if sql.starts_with("SET") {
+            self.group = "metrics-after";
+            return Ok(None);
+        }
         Err(SqlQueryError::unknown("metrics fixture execution error"))
+    }
+    fn prepare_general(
+        &mut self,
+        sql: &str,
+    ) -> Result<tidb_server::PreparedGeneral, SqlQueryError> {
+        Ok(tidb_server::PreparedGeneral::new(sql.to_owned(), 0, Vec::new()))
+    }
+    fn execute_general<'a>(
+        &'a mut self,
+        statement: &tidb_server::PreparedGeneral,
+        _values: &[tidb_protocol::PreparedValue],
+    ) -> Result<tidb_server::GeneralExecuteOutcome<'a>, SqlQueryError> {
+        if statement.sql() != "BEGIN" {
+            return Err(SqlQueryError::unknown("only a prepared BEGIN is part of this fixture"));
+        }
+        Ok(tidb_server::GeneralExecuteOutcome::Write(tidb_server::WriteOutcome::default()))
     }
 }
 

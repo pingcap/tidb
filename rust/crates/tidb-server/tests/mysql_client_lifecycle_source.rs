@@ -107,16 +107,27 @@ struct Session {
 }
 
 impl QuerySession for Session {
-    fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         self.queries.lock().unwrap().push(sql.to_owned());
-        Ok(QueryResult::new(Box::new(Rows {
+        Ok(Some(QueryResult::new(Box::new(Rows {
             rows: [
                 vec![Datum::Int(-11), Datum::Int(7)],
                 vec![Datum::Int(25), Datum::Int(8)],
             ]
             .into(),
             lifecycle: Arc::clone(&self.lifecycle),
-        })))
+        }))))
     }
 }
 
@@ -270,30 +281,41 @@ fn assert_mysql_error(packet: &[u8], code: u16, state: &[u8; 5]) {
 
 struct LocalInfileSession {
     received: Arc<Mutex<Vec<u8>>>,
+    /// The client path the last LOAD STATS parked.
+    parked: Option<String>,
 }
 
 impl QuerySession for LocalInfileSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        Err(SqlQueryError::unknown(
-            "LOAD STATS must not use the query path",
-        ))
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
     }
 
-    fn local_infile_path(&mut self, sql: &str) -> Result<Option<String>, SqlQueryError> {
-        Ok((sql == "LOAD STATS 'client/stats.json'").then(|| "client/stats.json".to_owned()))
-    }
-
-    fn execute_local_infile(
-        &mut self,
+    fn execute_stmt<'a>(
+        &'a mut self,
         sql: &str,
-        data: &[u8],
-    ) -> Result<WriteOutcome, SqlQueryError> {
-        assert_eq!(sql, "LOAD STATS 'client/stats.json'");
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+        // Go `LoadStatsExec` parks the client path; no result set.
+        if sql != "LOAD STATS 'client/stats.json'" {
+            return Err(SqlQueryError::unknown(
+                "only LOAD STATS is part of this test",
+            ));
+        }
+        self.parked = Some("client/stats.json".to_owned());
+        Ok(None)
+    }
+
+    fn take_local_infile_request(&mut self) -> Option<String> {
+        self.parked.clone()
+    }
+
+    fn finish_local_infile(&mut self, data: &[u8]) -> Result<(), SqlQueryError> {
+        assert_eq!(self.parked.take().as_deref(), Some("client/stats.json"));
         *self.received.lock().unwrap() = data.to_vec();
-        Ok(WriteOutcome {
-            affected_rows: 0,
-            last_insert_id: 0,
-        })
+        Ok(())
     }
 }
 
@@ -307,6 +329,7 @@ impl QuerySessionFactory for LocalInfileFactory {
     fn open_session(&self, _context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         Ok(LocalInfileSession {
             received: Arc::clone(&self.received),
+            parked: None,
         })
     }
 }
@@ -483,7 +506,18 @@ struct PreparedSession {
 }
 
 impl QuerySession for PreparedSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         Err(SqlQueryError::unknown(
             "text execution is not part of this test",
         ))
@@ -605,7 +639,18 @@ struct CursorEncodingSession {
 }
 
 impl QuerySession for CursorEncodingSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         Err(SqlQueryError::unknown(
             "text execution is not part of this test",
         ))
@@ -794,7 +839,18 @@ struct CursorReaderFailureSession {
 }
 
 impl QuerySession for CursorReaderFailureSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         Err(SqlQueryError::unknown(
             "text execution is not part of this test",
         ))
@@ -1655,7 +1711,18 @@ fn real_tcp_malformed_prepared_execute_counts_command_without_success() {
 struct RejectingSession;
 
 impl QuerySession for RejectingSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         Err(SqlQueryError::new(1142, *b"42000", "read denied"))
     }
 }
@@ -1728,6 +1795,8 @@ fn query_error_is_written_as_err_and_connection_remains_command_aligned() {
 struct TransactionSession {
     /// Whether a `BEGIN` is open: the whole state this fixture owns.
     transaction_open: bool,
+    /// Affected rows of the last statement answered with an OK packet.
+    affected_rows: u64,
 }
 
 impl QuerySession for TransactionSession {
@@ -1737,7 +1806,26 @@ impl QuerySession for TransactionSession {
         WireStatus::autocommit_session(self.transaction_open)
     }
 
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
+        self.affected_rows = 0;
+        if self.control_transaction(sql)?.is_some() {
+            return Ok(None);
+        }
+        if let Some(outcome) = self.execute_write(sql)? {
+            self.affected_rows = outcome.affected_rows;
+            return Ok(None);
+        }
         if self.transaction_open {
             return Err(SqlQueryError::unknown(
                 "this test session runs no statement inside a transaction",
@@ -1748,6 +1836,12 @@ impl QuerySession for TransactionSession {
         ))
     }
 
+    fn affected_rows(&self) -> u64 {
+        self.affected_rows
+    }
+}
+
+impl TransactionSession {
     /// One DML, answered with an OK packet the way MySQL answers a text-protocol
     /// write. It exists so the status word that OK packet carries can be pinned
     /// while a transaction this session really owns is open.
@@ -1785,6 +1879,7 @@ impl QuerySession for TransactionSession {
             ))),
         }
     }
+
 }
 
 struct TransactionFactory;
@@ -2031,7 +2126,18 @@ struct LongDataSession {
 }
 
 impl QuerySession for LongDataSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
+    }
+
+    fn execute_stmt<'a>(
+        &'a mut self,
+        _sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         Err(SqlQueryError::unknown(
             "text execution is not part of this test",
         ))
@@ -2511,20 +2617,28 @@ impl QuerySessionFactory for MessageFactory {
 struct MessageSession;
 
 impl QuerySession for MessageSession {
-    fn execute<'a>(&'a mut self, _sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
-        Err(SqlQueryError::unknown(
-            "text execution is not part of this test",
-        ))
+    fn parse_statement(&mut self, sql: &str) -> Result<tidb_ast::Stmt, SqlQueryError> {
+        // A fixture session takes any command text; one that is not SQL
+        // stands as a plain statement.
+        Ok(tidb_parser::parse(sql)
+            .unwrap_or_else(|_| tidb_parser::parse("SELECT 1").expect("a statement")))
     }
 
-    fn execute_write(&mut self, sql: &str) -> Result<Option<WriteOutcome>, SqlQueryError> {
+    fn execute_stmt<'a>(
+        &'a mut self,
+        sql: &str,
+        _stmt: &tidb_ast::Stmt,
+    ) -> Result<Option<QueryResult<'a>>, SqlQueryError> {
         if !sql.to_ascii_uppercase().starts_with("REPLACE") {
-            return Ok(None);
+            return Err(SqlQueryError::unknown(
+                "only the REPLACE is part of this test",
+            ));
         }
-        Ok(Some(WriteOutcome {
-            affected_rows: 3,
-            last_insert_id: 0,
-        }))
+        Ok(None)
+    }
+
+    fn affected_rows(&self) -> u64 {
+        3
     }
 
     fn warning_count(&self) -> u16 {

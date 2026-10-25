@@ -78,7 +78,12 @@ pub(crate) fn session_context_with_identity(
 }
 
 pub(crate) fn rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {
-    let mut result = session.execute(sql).expect("the query runs");
+    use crate::sql_node::QuerySession as _;
+    let stmt = session.parse_statement(sql).expect("the query parses");
+    let mut result = session
+        .execute_stmt(sql, &stmt)
+        .expect("the query runs")
+        .expect("the query answers rows");
     let source = result.source();
     let mut rows = Vec::new();
     loop {
