@@ -164,7 +164,6 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 	refreshInfoTbl, err := is.TableByName(context.Background(), model.NewCIStr("mysql"), model.NewCIStr("tidb_mview_refresh_info"))
 	require.NoError(t, err)
 	refreshInfoMeta := refreshInfoTbl.Meta()
-	// Lazy source-info initialization uses this integer handle as its conflict anchor.
 	require.True(t, refreshInfoMeta.PKIsHandle)
 	require.False(t, refreshInfoMeta.IsCommonHandle)
 	require.Len(t, refreshInfoMeta.Columns, 4)
