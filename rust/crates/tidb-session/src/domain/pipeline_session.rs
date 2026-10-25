@@ -65,11 +65,12 @@ pub struct PipelineServerSession {
 }
 
 impl PipelineServerSession {
-    /// Creates a session over a fresh, empty pipeline catalog.
+    /// Creates a session over a fresh, empty pipeline catalog (the
+    /// in-process tier: [`Session::default`], not a booted store).
     #[must_use]
     pub fn new() -> Self {
         Self {
-            session: Session::new(),
+            session: Session::default(),
         }
     }
 

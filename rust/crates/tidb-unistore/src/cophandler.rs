@@ -537,8 +537,15 @@ fn exec_index_scan(
     // surviving row and sorts once -- the same N rows in the same key order,
     // without the intermediate evictions.
     let mut topn_rows: Vec<(Vec<Datum>, Vec<Datum>)> = Vec::new();
+    let output_types = dag_output_field_types(context, &field_types, aggregation);
     if aggregation.is_none() && limit == 0 {
-        return encode_default_rows(rows, &timezone, std::mem::take(&mut eval_warnings));
+        return encode_select_rows(
+            rows,
+            output_types.as_deref(),
+            context,
+            &timezone,
+            std::mem::take(&mut eval_warnings),
+        );
     }
     let descending = idx_scan.desc();
     let mut ranges = context.key_ranges.iter().collect::<Vec<_>>();
@@ -702,7 +709,148 @@ fn exec_index_scan(
         }
     }
     produced.output = rows.len() as u64;
-    encode_default_rows(rows, &timezone, eval_warnings)
+    encode_select_rows(
+        rows,
+        output_types.as_deref(),
+        context,
+        &timezone,
+        eval_warnings,
+    )
+}
+
+/// Go `closureExecutor`'s output field types (`closure_exec.go:112`): the
+/// scan's columns, or with an aggregation its results then its group keys,
+/// picked by `output_offsets`. `None` when the request leaves a type out,
+/// which only the default row encoding can answer without.
+fn dag_output_field_types(
+    context: &DagContext,
+    scan_types: &[tidb_datatype::FieldType],
+    aggregation: Option<&tipb::Aggregation>,
+) -> Option<Vec<tidb_datatype::FieldType>> {
+    let original: Vec<tidb_datatype::FieldType> = match aggregation {
+        Some(aggregation) => aggregation
+            .agg_func
+            .iter()
+            .chain(&aggregation.group_by)
+            .map(|expr| {
+                expr.field_type
+                    .as_ref()
+                    .map(tidb_expr::distsql_builtin::pb_type_to_field_type)
+            })
+            .collect::<Option<_>>()?,
+        None => scan_types.to_vec(),
+    };
+    if context.dag_req.output_offsets.is_empty() {
+        return Some(original);
+    }
+    context
+        .dag_req
+        .output_offsets
+        .iter()
+        .map(|offset| original.get(*offset as usize).cloned())
+        .collect()
+}
+
+/// Go `encodeChunk`: the rows in the request's encode type. `TypeChunk`
+/// (`useChunkEncoding`) carries each value as decoded -- a DECIMAL keeps its
+/// stored words, which the default row encoding would round to the field
+/// type's fraction on the TiDB side (`DecodeOneToChunk`).
+fn encode_select_rows(
+    rows: Vec<Vec<tidb_datatype::Datum>>,
+    field_types: Option<&[tidb_datatype::FieldType]>,
+    context: &DagContext,
+    timezone: &tidb_datatype::SessionTimeZone,
+    warnings: Vec<tipb::Error>,
+) -> coprocessor::Response {
+    let field_types = match field_types {
+        Some(types)
+            if context.dag_req.encode_type() == tipb::EncodeType::TypeChunk
+                && rows.iter().all(|row| {
+                    row.len() == types.len()
+                        && row
+                            .iter()
+                            .zip(types)
+                            .all(|(value, field_type)| datum_fits_chunk_column(value, field_type))
+                }) =>
+        {
+            types
+        }
+        // Go's decoder fills the chunk with typed values. A value this tier
+        // decoded untyped (a stored default read back as its raw form) fits
+        // no column layout, so the response keeps the row encoding, which
+        // the TiDB side types on decode.
+        _ => return encode_default_rows(rows, timezone, warnings),
+    };
+    let codec = tidb_chunk::codec::Codec::new(field_types.to_vec());
+    // Go's executors fill chunks of `DefaultBatchSize` rows
+    // (`mpp_exec.go:60`, `NewChunkWithCapacity(fieldTypes, DefaultBatchSize)`
+    // is full at that many) and `mppExecute` encodes each as its own
+    // `tipb.Chunk`, which is the unit the TiDB side's `readFromChunk` either
+    // takes whole or splices.
+    let chunks = rows
+        .chunks(GO_MPP_DEFAULT_BATCH_SIZE)
+        .map(|batch| {
+            let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(field_types, batch.len());
+            for row in batch {
+                for (column, value) in row.iter().enumerate() {
+                    chunk.append_datum(column, value);
+                }
+            }
+            tipb::Chunk {
+                rows_data: Some(codec.encode(&chunk).into()),
+                ..tipb::Chunk::default()
+            }
+        })
+        .collect();
+    let warning_count = warnings.len() as i64;
+    let select = tipb::SelectResponse {
+        warnings,
+        warning_count: Some(warning_count),
+        chunks,
+        encode_type: Some(tipb::EncodeType::TypeChunk as i32),
+        ..tipb::SelectResponse::default()
+    };
+    coprocessor::Response {
+        data: select.encode_to_vec().into(),
+        ..coprocessor::Response::default()
+    }
+}
+
+/// Whether `value` is the kind a chunk column of `field_type` stores.
+fn datum_fits_chunk_column(
+    value: &tidb_datatype::Datum,
+    field_type: &tidb_datatype::FieldType,
+) -> bool {
+    use tidb_datatype::{Datum, FieldTypeCode as Code};
+    let code = field_type.code();
+    match value {
+        Datum::Null => true,
+        Datum::Int(_) | Datum::UInt(_) => matches!(
+            code,
+            Code::Tiny | Code::Short | Code::Int24 | Code::Long | Code::LongLong | Code::Year
+        ),
+        Datum::Real(_) => code == Code::Double,
+        Datum::Float32(_) => code == Code::Float,
+        Datum::Decimal(_) => code == Code::NewDecimal,
+        Datum::Time(_) => matches!(code, Code::Date | Code::Datetime | Code::Timestamp),
+        Datum::Duration(_) => code == Code::Duration,
+        Datum::String(_) | Datum::Bytes(_) => matches!(
+            code,
+            Code::Varchar
+                | Code::VarString
+                | Code::String
+                | Code::Blob
+                | Code::TinyBlob
+                | Code::MediumBlob
+                | Code::LongBlob
+        ),
+        Datum::Enum(..) => code == Code::Enum,
+        Datum::Set(..) => code == Code::Set,
+        Datum::Bit(_) | Datum::BinaryLiteral(_) => code == Code::Bit,
+        Datum::Json(_) => code == Code::Json,
+        Datum::VectorFloat32(_) => code == Code::VectorFloat32,
+        _ => false,
+    }
 }
 
 fn encode_default_rows(
@@ -761,6 +909,10 @@ fn encode_default_rows(
 /// before starting the next.
 const CHUNK_MAX_ROWS: usize = 1024;
 
+/// Go `cophandler.DefaultBatchSize`: the rows of one executor chunk, and so
+/// of one chunk-encoded `tipb.Chunk` in a response.
+const GO_MPP_DEFAULT_BATCH_SIZE: usize = 32;
+
 /// The table-scan executor over the MVCC store: each range scanned at the
 /// request's start ts, each surviving row decoded into the REQUESTED columns
 /// in request order, datum-encoded into default-format chunks — the shape a
@@ -806,6 +958,12 @@ fn exec_table_scan(
     for column in &tbl_scan.columns {
         column_types.insert(column.column_id(), field_type_from_pb_column(column));
     }
+    let scan_types: Vec<_> = tbl_scan
+        .columns
+        .iter()
+        .map(field_type_from_pb_column)
+        .collect();
+    let output_types = dag_output_field_types(context, &scan_types, aggregation);
     // Go `tableScanProcessor.Process`: "Add ExtraPhysTblID if requested.
     // Assumes it is always last!" -- the row's physical table ID comes from
     // its key, which is what SelectLock builds a partitioned row's lock key
@@ -815,9 +973,7 @@ fn exec_table_scan(
         .last()
         .filter(|column| column.column_id() == EXTRA_PHYSICAL_TABLE_ID)
         .map(|_| tbl_scan.columns.len() - 1);
-    let mut chunks: Vec<tipb::Chunk> = Vec::new();
-    let mut current = Vec::new();
-    let mut current_rows = 0_usize;
+    let mut rows: Vec<Vec<Datum>> = Vec::new();
     let mut emitted = 0_usize;
     // Go keeps the kept rows in a bounded heap; this lowering buffers every
     // surviving row and sorts once -- the same N rows in the same key order,
@@ -996,20 +1152,8 @@ fn exec_table_scan(
                 topn_rows.push((projected, keys));
                 continue;
             }
-            let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
-                Ok(encoded) => encoded,
-                Err(err) => return other_error(&format!("encode row failed: {err:?}")),
-            };
-            current.extend_from_slice(&encoded);
-            current_rows += 1;
+            rows.push(projected);
             emitted += 1;
-            if current_rows == CHUNK_MAX_ROWS {
-                chunks.push(tipb::Chunk {
-                    rows_data: Some((std::mem::take(&mut current)).into()),
-                    ..tipb::Chunk::default()
-                });
-                current_rows = 0;
-            }
             // Go `e.rowCount == e.limit` (`closure_exec.go:597`).
             if emitted == limit {
                 break 'ranges;
@@ -1019,20 +1163,8 @@ fn exec_table_scan(
     if let Some(spec) = topn {
         let topn_rows = go_topn_heap_finish(&spec.keys, topn_rows, spec.limit);
         for (projected, _) in topn_rows {
-            let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
-                Ok(encoded) => encoded,
-                Err(err) => return other_error(&format!("encode row failed: {err:?}")),
-            };
-            current.extend_from_slice(&encoded);
-            current_rows += 1;
+            rows.push(projected);
             emitted += 1;
-            if current_rows == CHUNK_MAX_ROWS {
-                chunks.push(tipb::Chunk {
-                    rows_data: Some((std::mem::take(&mut current)).into()),
-                    ..tipb::Chunk::default()
-                });
-                current_rows = 0;
-            }
             if emitted == limit {
                 break;
             }
@@ -1058,40 +1190,18 @@ fn exec_table_scan(
                 }
                 projected
             };
-            let encoded = match tidb_codec::encode_value_in_timezone(&timezone, &projected) {
-                Ok(encoded) => encoded,
-                Err(err) => return other_error(&format!("encode row failed: {err:?}")),
-            };
-            current.extend_from_slice(&encoded);
-            current_rows += 1;
+            rows.push(projected);
             emitted += 1;
-            if current_rows == CHUNK_MAX_ROWS {
-                chunks.push(tipb::Chunk {
-                    rows_data: Some((std::mem::take(&mut current)).into()),
-                    ..tipb::Chunk::default()
-                });
-                current_rows = 0;
-            }
         }
     }
     produced.output = emitted as u64;
-    if !current.is_empty() {
-        chunks.push(tipb::Chunk {
-            rows_data: Some((current).into()),
-            ..tipb::Chunk::default()
-        });
-    }
-    let select = tipb::SelectResponse {
-        chunks,
-        encode_type: Some(tipb::EncodeType::TypeDefault as i32),
-        ..tipb::SelectResponse::default()
-    };
-    let mut data = Vec::new();
-    select.encode(&mut data).expect("a select response encodes");
-    coprocessor::Response {
-        data: data.into(),
-        ..coprocessor::Response::default()
-    }
+    encode_select_rows(
+        rows,
+        output_types.as_deref(),
+        context,
+        &timezone,
+        Vec::new(),
+    )
 }
 
 /// Go's live `aggExec` shares typed group evaluation and first-seen group

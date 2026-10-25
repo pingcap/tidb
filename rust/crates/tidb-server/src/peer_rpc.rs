@@ -161,10 +161,12 @@ impl PeerService {
                             .iter()
                             .any(|column| column.column_id == Some(9)))
             });
+        // A request that reads no catalog needs only a bare session (not a
+        // booted store): the memory tables it serves are the node's own.
         let mut session = if needs_catalog {
             (self.session_factory)()
         } else {
-            Session::new()
+            Session::default()
         };
         if let Some(user) = &dag.user {
             let name = user.user_name.as_deref().unwrap_or("");
@@ -842,6 +844,9 @@ impl tikvpb::tikv_server::Tikv for PeerService {
 
 #[cfg(test)]
 mod tests {
+    // The fixtures are bare in-process sessions (`Session::default()`): the
+    // peer host serves a catalog-free request on one, and these tests drive
+    // its diagnostics state directly. Stage 3 replaces them with the node's.
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tidb_datatype::Datum;
@@ -1008,7 +1013,7 @@ mod tests {
         } else {
             summary.add(&info);
         }
-        let mut session = Session::new();
+        let mut session = Session::default();
         session.set_user(
             "diagnostic_reader@%".into(),
             "diagnostic_reader@localhost".into(),
@@ -1090,7 +1095,7 @@ mod tests {
                     )
                     .with_session_factory(Arc::new(move || {
                         observed.fetch_add(1, Ordering::SeqCst);
-                        Session::new()
+                        Session::default()
                     }));
                     for (column, expected_reads) in [(6, 0), (9, 1)] {
                         let mut dag = scan(None, tipb::EncodeType::TypeDefault);
@@ -1399,7 +1404,7 @@ mod tests {
         let mut local = tidb_domain::serverinfo::ServerInfo::default();
         local.static_info.id = "digest-local".into();
         local.static_info.ip = "127.0.0.1".into();
-        let mut session = Session::new();
+        let mut session = Session::default();
         session.set_user("digest_reader@%".into(), "digest_reader@localhost".into());
         session.set_process_privilege(true);
         let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
@@ -1647,14 +1652,14 @@ mod tests {
 
     #[test]
     fn cluster_diagnostics_batch_transaction_sql() {
-        Session::new()
+        Session::default()
             .run("SELECT * FROM information_schema.CLUSTER_TIDB_TRX")
             .unwrap();
     }
 
     #[test]
     fn cluster_diagnostics_batch_deadlock_admission() {
-        let mut session = Session::new();
+        let mut session = Session::default();
         session.set_user("diagnostic@%".into(), "diagnostic@localhost".into());
         let error = session
             .run("SELECT * FROM information_schema.CLUSTER_DEADLOCKS")
@@ -1667,7 +1672,7 @@ mod tests {
 
     #[test]
     fn cluster_diagnostics_batch_memory_sql() {
-        let mut session = Session::new();
+        let mut session = Session::default();
         let tidb_session::StmtResult::Rows(rows) = session
             .run("SELECT MEMORY_TOTAL FROM information_schema.CLUSTER_MEMORY_USAGE")
             .unwrap()
@@ -1682,7 +1687,7 @@ mod tests {
 
     #[test]
     fn cluster_diagnostics_batch_index_sql() {
-        let mut session = Session::new();
+        let mut session = Session::default();
         session.run("CREATE DATABASE diagnostic_batch").unwrap();
         session
             .run("CREATE TABLE diagnostic_batch.t (id INT PRIMARY KEY, v INT, KEY ix(v))")
@@ -1752,7 +1757,7 @@ mod tests {
         processes.transaction_started(42, 200 << 18);
         let privileges = PrivilegeRegistry::default();
         privileges.create_user("diagnostic_alice", "%", "");
-        let mut producer = Session::new();
+        let mut producer = Session::default();
         producer.run("CREATE DATABASE diagnostic_batch").unwrap();
         let catalog = producer.shared_catalog();
         let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
@@ -1938,7 +1943,7 @@ mod tests {
     // distributed readers consume the same live summary owners.
     #[test]
     fn cluster_summary_batch_sql_tables_share_completed_statements() {
-        let mut session = Session::new();
+        let mut session = Session::default();
         session.set_user("summary_reader@%".into(), "summary_reader@localhost".into());
         session.run("SELECT 918273 + 4").unwrap();
         for table in [
@@ -1962,7 +1967,7 @@ mod tests {
 
     #[test]
     fn cluster_summary_batch_evicted_requires_process() {
-        let mut session = Session::new();
+        let mut session = Session::default();
         session.set_user("summary_reader@%".into(), "summary_reader@localhost".into());
         let error = session
             .run("SELECT * FROM information_schema.STATEMENTS_SUMMARY_EVICTED")
@@ -2000,7 +2005,7 @@ mod tests {
         let privileges = PrivilegeRegistry::default();
         privileges.create_user("summary_alice", "%", "");
         privileges.create_user("summary_bob", "%", "");
-        let mut producer = Session::new();
+        let mut producer = Session::default();
         producer.set_user("summary_alice@%".into(), "summary_alice@localhost".into());
         producer.run("SELECT 73 + 8").unwrap();
         producer.set_user("summary_bob@%".into(), "summary_bob@localhost".into());
@@ -2194,7 +2199,7 @@ mod tests {
         let mut local = tidb_domain::serverinfo::ServerInfo::default();
         local.static_info.id = "unpublished-local".into();
         local.static_info.ip = "127.0.0.1".into();
-        let mut origin = Session::new();
+        let mut origin = Session::default();
         origin.set_user("summary_alice@%".into(), "summary_alice@127.0.0.1".into());
         origin.attach_privileges(privileges.clone());
         origin.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
@@ -2233,7 +2238,7 @@ mod tests {
         // The store comes up first: its bootstrap's sysvar-cache rebuild
         // publishes tidb_stmt_summary_max_stmt_count's default into the
         // process-global summary, as a new Go domain does.
-        let mut session = Session::new();
+        let mut session = Session::default();
         let config = tidb_config::config_tree::config::get_global_config();
         let previous = global_stmt_summary();
         let summary = StmtSummary::new_for_test(1);

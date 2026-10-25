@@ -6679,13 +6679,17 @@ impl ClusterServerSession {
         stmt: &Stmt,
     ) -> Result<Option<WriteOutcome>, SqlQueryError> {
         let outcome = match route {
-            StatementRoute::Ddl(statement) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))
-            }
+            // Go's DDL returns once this domain has loaded the new schema,
+            // so the issuing session sees it at once, not at its next
+            // statement.
+            StatementRoute::Ddl(statement) => self
+                .observe_routed_write(sql, stmt, |node| node.run_ddl(sql, stmt, &statement))
+                .inspect(|_| self.rebuild_catalog_if_stale()),
             StatementRoute::DdlSequence(statements) => self
                 .observe_routed_write(sql, stmt, |node| {
                     node.run_ddl_sequence(sql, stmt, &statements)
-                }),
+                })
+                .inspect(|_| self.rebuild_catalog_if_stale()),
             StatementRoute::MixedTemporaryDrop { statement, local } => self
                 .observe_routed_write(sql, stmt, |node| {
                     node.run_mixed_temporary_drop(sql, stmt, &statement, local)

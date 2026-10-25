@@ -2007,10 +2007,12 @@ impl Session {
         self.viewer_state().tidb_servers_info_rows()
     }
 
-    /// A fresh session with its own empty catalog.
+    /// A fresh session over a freshly booted embedded store, as Go's
+    /// `testkit.CreateMockStoreAndDomain` + `CreateSession4Test`
+    /// ([`Session::new_on_mock_store`]).
     ///
-    /// With `TIDB_SESSION_MOCK_STORE=1` the session is instead built over a
-    /// freshly booted embedded store, as [`Session::new_on_mock_store`].
+    /// `TIDB_SESSION_MOCK_STORE=0` keeps the in-process catalog tier instead
+    /// (a session with its own empty catalog) until stage 3 deletes it.
     #[must_use]
     pub fn new() -> Self {
         if Session::mock_store_enabled() {
@@ -2019,9 +2021,11 @@ impl Session {
         Session::default()
     }
 
-    /// Whether [`Session::new`] builds over a booted embedded store.
+    /// Whether [`Session::new`] builds over a booted embedded store: the
+    /// default, unless `TIDB_SESSION_MOCK_STORE=0` asks for the in-process
+    /// catalog tier.
     pub(crate) fn mock_store_enabled() -> bool {
-        std::env::var_os("TIDB_SESSION_MOCK_STORE").is_some_and(|value| value == "1")
+        std::env::var_os("TIDB_SESSION_MOCK_STORE").is_none_or(|value| value != "0")
     }
 
     /// A session on the store whose node keeps its accounts in `accounts`

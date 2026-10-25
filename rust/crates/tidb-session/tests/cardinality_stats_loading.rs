@@ -77,7 +77,9 @@ fn rows(session: &mut Session, sql: &str) -> Vec<String> {
 
 #[test]
 fn subset_index_cardinality_after_async_statistics_load() {
-    let mut session = Session::new();
+    // Reads the in-process catalog's statistics objects: the in-process
+    // tier (a store session keeps statistics in its stats handle).
+    let mut session = Session::default();
     session
         .run("CREATE TABLE t(a INT,b INT,c INT,INDEX iabc(a,b,c))")
         .unwrap();
@@ -258,7 +260,9 @@ fn builtin_in_estimate_survives_statistics_initialization() {
         load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad, StatsTarget,
     };
 
-    let mut session = Session::new();
+    // Reads the in-process catalog's statistics objects: the in-process
+    // tier (a store session keeps statistics in its stats handle).
+    let mut session = Session::default();
     session.run("CREATE TABLE t(a INT,b INT)").unwrap();
     session
         .run("INSERT INTO t VALUES(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
@@ -428,7 +432,9 @@ fn builtin_in_estimate_survives_statistics_initialization() {
 /// enumeration rather than a small integer-only surrogate.
 #[test]
 fn datetime_range_overflow_survives_async_statistics_load() {
-    let mut session = Session::new();
+    // Reads the in-process catalog's statistics objects: the in-process
+    // tier (a store session keeps statistics in its stats handle).
+    let mut session = Session::default();
     session.run("CREATE TABLE t(col DATETIME)").unwrap();
     session.run("INSERT INTO t VALUES('3580-05-26 07:16:48'),('4055-03-06 22:27:16'),('4862-01-26 07:16:54')").unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();

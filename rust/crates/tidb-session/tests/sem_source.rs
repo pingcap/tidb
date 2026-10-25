@@ -31,7 +31,9 @@ fn sem_policy_requires_explicit_restricted_privileges() {
     tidb_util::sem::enable();
 
     let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::new();
+    // Drives a private registry directly: the in-process tier, which a
+    // store session (whose privileges are its domain's) does not have.
+    let mut session = Session::default();
     session.set_user("root@%".to_owned(), "root@%".to_owned());
     session.attach_privileges(registry.clone());
 
