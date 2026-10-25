@@ -116,6 +116,11 @@ fn put_str(fake: &FakeEtcd, key: &str, value: &str) {
 // acceptance of Go's complete seven-source cluster discovery owner.
 #[test]
 fn cluster_metadata_contains_only_discovered_nodes() {
+    // Injects in-process server-info syncers; a node session discovers its
+    // own node (`unistore_cop::cluster_info_reports_this_node`).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     use crate::{tests_support::row_text, Session};
 
     let mut session = Session::new();
@@ -199,6 +204,11 @@ fn cluster_metadata_servers_info_propagates_discovery_errors() {
 
 #[test]
 fn cluster_metadata_config_refuses_captured_runtime_rows() {
+    // Injects in-process server-info syncers; a node session discovers its
+    // own node (`unistore_cop::cluster_info_reports_this_node`).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     use crate::Session;
 
     let mut session = Session::new();
@@ -703,6 +713,11 @@ fn cluster_metadata_instance_uses_local_status_identity_without_discovery() {
 // SEM is process-global. As in tests_sem_v2, isolate it from unrelated tests.
 #[test]
 fn cluster_metadata_sem_redacts_each_projection_and_observes_live_roles() {
+    // Injects in-process server-info syncers; a node session discovers its
+    // own node (`unistore_cop::cluster_info_reports_this_node`).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let result = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--ignored",

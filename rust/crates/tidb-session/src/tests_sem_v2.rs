@@ -66,11 +66,9 @@ fn configured_sem_v2_policy_child() {
     let mut bootstrap = bootstrap_session(&privileges);
     bootstrap.run("CREATE USER 'nobody'@'%'").unwrap();
     bootstrap.run("CREATE USER 'recipient'@'%'").unwrap();
-    privileges.grant(
-        "nobody",
-        "%",
-        privilege::GlobalPriv::File.bit() | privilege::GlobalPriv::GrantOption.bit(),
-    );
+    bootstrap
+        .run("GRANT FILE ON *.* TO 'nobody'@'%' WITH GRANT OPTION")
+        .unwrap();
 
     let mut nobody = authenticated_session(&privileges, "nobody", "%");
     let restricted = nobody
@@ -96,9 +94,14 @@ fn configured_sem_v2_policy_child() {
             if privilege == "RESTRICTED_VARIABLES_ADMIN"
     ));
 
-    privileges.grant_dynamic("nobody", "%", "RESTRICTED_SQL_ADMIN", false);
-    privileges.grant_dynamic("nobody", "%", "RESTRICTED_PRIV_ADMIN", false);
-    privileges.grant_dynamic("nobody", "%", "RESTRICTED_VARIABLES_ADMIN", false);
+    // Granted through SQL, as Go's test does: a session on a store reads its
+    // privileges from the store, not from a registry edited in place.
+    bootstrap
+        .run(
+            "GRANT RESTRICTED_SQL_ADMIN, RESTRICTED_PRIV_ADMIN, RESTRICTED_VARIABLES_ADMIN \
+             ON *.* TO 'nobody'@'%'",
+        )
+        .unwrap();
     nobody.run("GRANT FILE ON *.* TO 'recipient'@'%'").unwrap();
     assert!(privileges.has_global_priv("recipient", "%", privilege::GlobalPriv::File));
     nobody.run("SET autocommit=0").unwrap();

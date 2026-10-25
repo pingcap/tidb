@@ -5547,13 +5547,32 @@ fn expression_index_statistics_remain_initialized() {
     assert!(!first.is_empty());
     let histograms = row_text(session.run("SHOW STATS_HISTOGRAMS"));
     assert!(!histograms.is_empty());
-    assert!(
-        !histograms
+    if crate::tests_support::in_process_tier() {
+        assert!(
+            !histograms
+                .iter()
+                .flatten()
+                .any(|cell| cell.contains("allEvicted")),
+            "{histograms:?}"
+        );
+    } else {
+        // A server loads what the query used and leaves the rest evicted
+        // (oracle: id, c1 allEvicted; c2, idx_expr allLoaded).
+        let status: Vec<(&str, &str)> = histograms
             .iter()
-            .flatten()
-            .any(|cell| cell.contains("allEvicted")),
-        "{histograms:?}"
-    );
+            .map(|row| (row[3].as_str(), row[10].as_str()))
+            .collect();
+        assert_eq!(
+            status,
+            [
+                ("id", "allEvicted"),
+                ("c1", "allEvicted"),
+                ("c2", "allLoaded"),
+                ("idx_expr", "allLoaded")
+            ],
+            "{histograms:?}"
+        );
+    }
     let second = row_text(session.run(sql));
     assert!(!second.is_empty());
     assert!(

@@ -7156,6 +7156,12 @@ impl QuerySession for ClusterServerSession {
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
         // access-shape classification, and the statement lifecycle.
         self.rebuild_catalog_if_stale();
+        // Go `PlanBuilder.Build` starts with `checkSEMStmt` for every
+        // statement, so a routed one is refused before its own privileges.
+        self.store
+            .session
+            .check_sem_stmt(sql, stmt)
+            .map_err(map_error)?;
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
         let route = self.schema_route(stmt)?;

@@ -1685,6 +1685,24 @@ impl Session {
         result
     }
 
+    /// Go `PlanBuilder.checkSEMStmt`, the first step of `Build` for every
+    /// statement: SQL the SEM v2 policy restricts needs
+    /// `RESTRICTED_SQL_ADMIN`, ahead of any privilege check.
+    pub(crate) fn check_sem_stmt(&self, sql: &str, stmt: &Stmt) -> Result<(), DriverError> {
+        if tidb_util::sem_v2::is_enabled()
+            && tidb_util::sem_v2::is_restricted_sql(&sem_stmt_view(stmt))
+            && !self.has_dynamic_privilege("RESTRICTED_SQL_ADMIN", false)
+        {
+            let statement = if stmt.text().is_empty() {
+                sql.to_owned()
+            } else {
+                String::from_utf8_lossy(stmt.text()).into_owned()
+            };
+            return Err(DriverError::NotSupportedWithSem(statement));
+        }
+        Ok(())
+    }
+
     fn prepare_parsed_statement_compile_phase(
         &mut self,
         sql: &str,
@@ -1699,17 +1717,7 @@ impl Session {
         if let Ok(mut locked) = self.mdl_statement_tables.lock() {
             locked.clear();
         }
-        if tidb_util::sem_v2::is_enabled()
-            && tidb_util::sem_v2::is_restricted_sql(&sem_stmt_view(&stmt))
-            && !self.has_dynamic_privilege("RESTRICTED_SQL_ADMIN", false)
-        {
-            let statement = if stmt.text().is_empty() {
-                sql.to_owned()
-            } else {
-                String::from_utf8_lossy(stmt.text()).into_owned()
-            };
-            return Err(DriverError::NotSupportedWithSem(statement));
-        }
+        self.check_sem_stmt(sql, &stmt)?;
         for warning in filter_sem_restricted_hints(&mut stmt) {
             self.append_warning(WarningLevel::Warning, 1105, warning);
         }
