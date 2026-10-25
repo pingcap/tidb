@@ -2762,6 +2762,14 @@ impl Session {
         }
     }
 
+    /// Commits the delete of one raw key into a node session's store, as Go's
+    /// corruption tests do through a transaction of their own. `None` for
+    /// an in-process session, whose tests edit the catalog's bytes instead.
+    #[cfg(test)]
+    pub(crate) fn delete_store_key_for_test(&self, key: &[u8]) -> Option<Result<(), String>> {
+        self.node.as_ref().map(|node| node.delete_key_for_test(key))
+    }
+
     /// Brings a node session's catalog up to the node's latest schema, as
     /// every statement through the node does first; a no-op elsewhere.
     pub(crate) fn refresh_node_catalog(&mut self) -> Result<(), DriverError> {

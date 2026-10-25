@@ -200,6 +200,12 @@ impl ClusterServerSession {
             .map_err(driver_error)
     }
 
+    /// A fresh timestamp from the store's oracle, for a test transaction
+    /// written straight into the store.
+    pub(crate) fn fresh_timestamp_for_test(&self) -> Result<u64, String> {
+        self.transactions.fresh_timestamp()
+    }
+
     /// Rebuilds the session's catalog when the node's schema moved on.
     pub(crate) fn refresh_catalog(&mut self) {
         self.rebuild_catalog_if_stale();

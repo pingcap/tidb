@@ -326,6 +326,37 @@ impl MockStoreConnection {
         std::mem::swap(session, self.connection.driver_session_mut());
     }
 
+    /// Go's corruption tests delete one of a table's keys in a committed
+    /// transaction of their own (`indexOpr.Delete` + `txn.Commit`): this
+    /// commits the delete of `key` straight into the embedded store.
+    pub(crate) fn delete_key_for_test(&self, key: &[u8]) -> Result<(), String> {
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let start = self.connection.fresh_timestamp_for_test()?;
+        let commit = self.connection.fresh_timestamp_for_test()?;
+        let handler = self.domain.stack.rpc.handler();
+        let mut handler = handler
+            .lock()
+            .map_err(|_| "kv handler poisoned".to_owned())?;
+        handler
+            .store
+            .prewrite(&tidb_unistore::mvcc_store::PrewriteReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::Del as i32,
+                    key: key.to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: key.to_vec(),
+                start_version: start,
+                lock_ttl: 3000,
+                ..tidb_unistore::mvcc_store::PrewriteReq::default()
+            })
+            .map_err(|error| format!("prewrite: {error:?}"))?;
+        handler
+            .store
+            .commit(&[key.to_vec()], start, commit)
+            .map_err(|error| format!("commit: {error:?}"))
+    }
+
     /// Runs the domain binding owner's GC; see
     /// [`ClusterServerSession::gc_global_bindings`].
     pub(crate) fn gc_global_bindings(&self) -> Result<(), tidb_executor::DriverError> {

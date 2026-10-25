@@ -347,7 +347,7 @@ fn a_corrupted_index_is_caught() {
     assert_check_passes(&mut session, "admin check table t");
 
     // Drop ONE entry of `idx_b`, leaving the rows untouched.
-    session
+    let entry = session
         .with_catalog_mut(|catalog| {
             let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
             else {
@@ -361,12 +361,19 @@ fn a_corrupted_index_is_caught() {
                 .expect("idx_b");
             let entries = table.index_entries_for_check(index.id).expect("entries");
             assert_eq!(entries.len(), 3, "three rows, three entries");
+            if !crate::tests_support::in_process_tier() {
+                return Ok(entries[0].0.clone());
+            }
             table
                 .delete_raw_key_for_test(&entries[0].0)
                 .expect("delete the entry");
-            Ok(())
+            Ok(entries[0].0.clone())
         })
         .unwrap();
+    // A store session commits the delete into its store, as Go's test does.
+    if let Some(deleted) = session.delete_store_key_for_test(&entry) {
+        deleted.expect("delete the entry");
+    }
 
     // Go reports the row/entry count difference as 8003 for `ADMIN CHECK
     // INDEX` (`admin.CheckIndicesCount`'s own error) ...
@@ -589,7 +596,8 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
         .run("insert into t values (1, 'aa'), (2, 'bb'), (3, 'cc')")
         .unwrap();
     let corrupt = |session: &mut Session, drop_entry: bool| {
-        session
+        let in_process = crate::tests_support::in_process_tier();
+        let key = session
             .with_catalog_mut(|catalog| {
                 let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
                 else {
@@ -603,17 +611,30 @@ fn recover_and_cleanup_index_repair_what_check_finds() {
                         .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
                         .expect("idx_b");
                     let entries = table.index_entries_for_check(index.id).expect("entries");
-                    table
-                        .delete_raw_key_for_test(&entries[0].0)
-                        .expect("delete the entry");
+                    if in_process {
+                        table
+                            .delete_raw_key_for_test(&entries[0].0)
+                            .expect("delete the entry");
+                    }
+                    Ok(entries[0].0.clone())
                 } else {
-                    table
-                        .delete_record_for_test(&tidb_executor::kv_table::TableHandle::Int(2))
-                        .expect("delete the row");
+                    if in_process {
+                        table
+                            .delete_record_for_test(&tidb_executor::kv_table::TableHandle::Int(2))
+                            .expect("delete the row");
+                    }
+                    Ok(tidb_codec::table_key::encode_row_key_with_handle(
+                        table.table_id,
+                        &tidb_codec::table_key::RecordHandle::Int(2),
+                    ))
                 }
-                Ok(())
             })
             .unwrap();
+        // A store session commits the delete into its store, as Go's test
+        // does through a transaction of its own.
+        if let Some(deleted) = session.delete_store_key_for_test(&key) {
+            deleted.expect("delete the key");
+        }
     };
     assert_eq!(
         row_text(session.run("admin recover index t idx_b")),
