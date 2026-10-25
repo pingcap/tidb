@@ -192,6 +192,14 @@ impl ClusterServerSession {
         Ok(output)
     }
 
+    /// Go testkit's `dom.StatsHandle().Update(ctx, is)`: the stats cache
+    /// reloads every table whose `mysql.stats_meta` moved since it last read.
+    pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_executor::DriverError> {
+        self.analyze
+            .update_stats_cache(Vec::new())
+            .map_err(driver_error)
+    }
+
     /// Rebuilds the session's catalog when the node's schema moved on.
     pub(crate) fn refresh_catalog(&mut self) {
         self.rebuild_catalog_if_stale();

@@ -2751,6 +2751,17 @@ impl Session {
         result
     }
 
+    /// Go testkit's `dom.StatsHandle().Update(ctx, is)` for a session on a
+    /// store: its domain's stats cache reloads what `mysql.stats_meta` says
+    /// changed. The in-process tier publishes statistics eagerly, so there
+    /// it has nothing to do.
+    pub fn update_stats_cache(&mut self) -> Result<(), DriverError> {
+        match &self.node {
+            Some(node) => node.update_stats_cache(),
+            None => Ok(()),
+        }
+    }
+
     /// Brings a node session's catalog up to the node's latest schema, as
     /// every statement through the node does first; a no-op elsewhere.
     pub(crate) fn refresh_node_catalog(&mut self) -> Result<(), DriverError> {

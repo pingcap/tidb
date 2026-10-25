@@ -314,6 +314,11 @@ impl MockStoreConnection {
         result
     }
 
+    /// See [`ClusterServerSession::update_stats_cache`].
+    pub(crate) fn update_stats_cache(&self) -> Result<(), tidb_executor::DriverError> {
+        self.connection.update_stats_cache()
+    }
+
     /// Rebuilds `session`'s catalog from the node when its schema is stale.
     pub(crate) fn refresh_catalog(&mut self, session: &mut Session) {
         std::mem::swap(session, self.connection.driver_session_mut());

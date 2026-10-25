@@ -870,7 +870,21 @@ fn a_zero_count_table_plans_from_a_fresh_pseudo_table() {
     let meta = row_text(session.run("SHOW STATS_META WHERE table_name = 'z'"));
     assert_eq!(meta.len(), 1, "{meta:?}");
     assert_eq!(meta[0][5], "0", "the row count stays zero: {meta:?}");
-    assert_ne!(meta[0][4], "0", "the modifications are recorded: {meta:?}");
+    if crate::tests_support::in_process_tier() {
+        assert_ne!(meta[0][4], "0", "the modifications are recorded: {meta:?}");
+    } else {
+        // A Go server's SHOW STATS_META answers its stats cache, which the
+        // flush does not refresh; the durable row has the delta (oracle:
+        // cached 0, `mysql.stats_meta` 6).
+        assert_eq!(
+            row_text(session.run(
+                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = \
+                 (SELECT tidb_table_id FROM information_schema.tables \
+                 WHERE table_schema = 'test' AND table_name = 'z')"
+            )),
+            [["0", "6"]]
+        );
+    }
 
     let plan = |session: &mut Session, sql: &str| {
         row_text(session.run(sql))
@@ -987,6 +1001,8 @@ fn outdated_statistics_are_judged_on_the_determinate_copy() {
         .run(&format!("INSERT INTO o VALUES {}", rows(11..=30)))
         .unwrap();
     session.run("FLUSH STATS_DELTA test.o").unwrap();
+    // Go's test reloads the cache after the flush (`h.Update`).
+    session.update_stats_cache().unwrap();
     let meta = row_text(session.run("SHOW STATS_META WHERE table_name = 'o'"));
     assert_eq!(
         (meta[0][4].as_str(), meta[0][5].as_str()),
@@ -1014,12 +1030,19 @@ fn outdated_statistics_are_judged_on_the_determinate_copy() {
     session
         .run("SET tidb_opt_objective = 'determinate'")
         .unwrap();
+    // A server loads only the columns a query needs, so the unused index
+    // stays evicted (oracle); testkit's capture had it loaded.
+    let scan = if crate::tests_support::in_process_tier() {
+        "  └─TableFullScan 10.00 keep order:false"
+    } else {
+        "  └─TableFullScan 10.00 keep order:false, stats:partial[ia:allEvicted]"
+    };
     assert_eq!(
         plan(&mut session),
         [
             "TableReader 5.00 data:Selection",
             "└─Selection 5.00 gt(test.o.b, 5)",
-            "  └─TableFullScan 10.00 keep order:false",
+            scan,
         ]
     );
 }
@@ -1971,9 +1994,17 @@ fn analyze_saves_statistics_and_finishes_its_job_row() {
     session.run("analyze table t").unwrap();
     let id = "(select tidb_table_id from information_schema.tables \
               where table_schema = 'test' and table_name = 't')";
+    // Go's save transaction stamps `version` after the analyze snapshot it
+    // records (oracle: `version > snapshot`); the in-process tier writes
+    // both from one clock reading.
+    let version_vs_snapshot = if crate::tests_support::in_process_tier() {
+        "version = snapshot"
+    } else {
+        "version > snapshot"
+    };
     assert_eq!(
         row_text(session.run(&format!(
-            "select count, modify_count, version = snapshot from mysql.stats_meta \
+            "select count, modify_count, {version_vs_snapshot} from mysql.stats_meta \
              where table_id = {id}"
         ))),
         [["4", "0", "1"]]

@@ -686,6 +686,8 @@ fn tidb_index_usage_sizes_a_determinate_read_by_the_analyze_count() {
     session
         .run("FLUSH STATS_DELTA test.usage_determinate")
         .unwrap();
+    // Go's capture reloads the cache after the flush (`h.Update`).
+    session.update_stats_cache().unwrap();
     let (table_id, index_id) = {
         let catalog = session.shared_catalog();
         let catalog = catalog.lock().unwrap();

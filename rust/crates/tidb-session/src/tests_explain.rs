@@ -5219,6 +5219,8 @@ fn global_partition_out_of_range_estimates_survive_delete_and_partition_analyze(
         .run("DELETE FROM global_out_of_range WHERE a < 500")
         .unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();
+    // Go's test: `h.Update(ctx, dom.InfoSchema())` after the flush.
+    session.update_stats_cache().unwrap();
     let expected_input: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../pkg/planner/cardinality/testdata/cardinality_suite_in.json"
     ))
