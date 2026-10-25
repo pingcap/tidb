@@ -66,37 +66,8 @@ use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
 use crate::executor::ExecError;
 
-/// `tidb_mem_oom_action`: what a statement that exceeds
-/// `tidb_mem_quota_query` does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OomAction {
-    /// `CANCEL`, Go's `vardef.DefTiDBMemOOMAction` -- the PRODUCTION default.
-    /// The statement fails with errno 8175.
-    ///
-    /// Go's own test builds report `LOG` instead, but only because
-    /// `GlobalSystemVariableInitialValue` rewrites the initial value when
-    /// `intest.InTest` is set; the shipped default is this one (captured).
-    #[default]
-    Cancel,
-    /// `LOG`. The statement RUNS TO COMPLETION and the overrun is logged --
-    /// no error, and no `SHOW WARNINGS` row either (captured).
-    Log,
-}
+pub use tidb_vardef::OomAction;
 
-impl OomAction {
-    /// Parses `@@tidb_mem_oom_action`. Go's sysvar is a `TypeEnum` over
-    /// exactly `CANCEL`/`LOG`, so an unrecognized string cannot come from a
-    /// validated `SET`; treating it as the default keeps the protective
-    /// action rather than silently downgrading to logging.
-    #[must_use]
-    pub fn parse(value: &str) -> Self {
-        if value.eq_ignore_ascii_case("LOG") {
-            OomAction::Log
-        } else {
-            OomAction::Cancel
-        }
-    }
-}
 
 /// The wire form of `exeerrors.ErrMemoryExceedForQuery` for `conn_id`,
 /// rendered by the SAME ported path Go's `SQLKiller.getKillError` uses -- a

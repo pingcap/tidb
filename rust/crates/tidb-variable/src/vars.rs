@@ -48,7 +48,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
 use tidb_model::Job;
-use tidb_planner::fix_control::OptimizerFixControl;
+use tidb_util::fixcontrol::OptimizerFixControl;
 
 use crate::sysvar::{
     alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_SESSION,
@@ -62,7 +62,7 @@ use crate::sysvar::{
 /// (SESSION, GLOBAL/INSTANCE, and the read-only refusal in
 /// `Session::check_max_allowed_packet_scope`) must agree: the same rejected
 /// value has to name the same error whichever tier was being written.
-pub(crate) fn validation_var_error(name: &str, value: &str, error: ValidationError) -> VarError {
+pub fn validation_var_error(name: &str, value: &str, error: ValidationError) -> VarError {
     match error {
         ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
         ValidationError::WrongValue => {
@@ -214,7 +214,7 @@ impl Default for GlobalSysvars {
     }
 }
 
-impl tidb_executor::GlobalSysvarAccessor for GlobalSysvars {
+impl crate::GlobalSysvarAccessor for GlobalSysvars {
     fn get_global_sysvar(&self, name: &str) -> Option<String> {
         self.get(name).ok()
     }
@@ -237,7 +237,7 @@ impl tidb_executor::GlobalSysvarAccessor for GlobalSysvars {
 struct ResolvedGlobals {
     values: std::boxed::Box<[Option<Arc<str>>]>,
     /// Go's process-wide typed `vardef.OOMAction` atomic.
-    oom_action: tidb_executor::OomAction,
+    oom_action: tidb_vardef::OomAction,
     /// Go's process-wide typed `vardef.EnableTmpStorageOnOOM` atomic.
     tmp_storage_on_oom: bool,
     /// Go's `config.GetGlobalConfig().Instance.CheckMb4ValueInUTF8` atomic
@@ -251,7 +251,7 @@ impl Default for ResolvedGlobals {
     fn default() -> Self {
         Self {
             values: std::boxed::Box::default(),
-            oom_action: tidb_executor::OomAction::Cancel,
+            oom_action: tidb_vardef::OomAction::Cancel,
             tmp_storage_on_oom: true,
             check_mb4_value_in_utf8: true,
             enable_check_constraint: false,
@@ -671,7 +671,7 @@ impl GlobalSysvars {
     /// The global-form read used by both SQL variables and expression
     /// accessors. INSTANCE and NONE scopes have one node value; only a
     /// SESSION-only variable has no global copy (Go error 1238).
-    pub(crate) fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
+    pub fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
@@ -738,7 +738,7 @@ impl GlobalSysvars {
                     crate::sysvar::effective_default(&crate::sysvar::SYS_VARS[index])
                 })
         };
-        let oom_action = tidb_executor::OomAction::parse(&effective(
+        let oom_action = tidb_vardef::OomAction::parse(&effective(
             tidb_vardef::tidb_vars::TIDB_MEM_OOM_ACTION,
         ));
         let tmp_storage = effective(tidb_vardef::tidb_vars::TIDB_ENABLE_TMP_STORAGE_ON_OOM);
@@ -765,7 +765,7 @@ impl GlobalSysvars {
     ///
     /// It is parsed when a GLOBAL mutation publishes the resolved image, not
     /// when each statement starts.
-    pub(crate) fn statement_memory_policy(&self) -> (tidb_executor::OomAction, bool) {
+    pub fn statement_memory_policy(&self) -> (tidb_vardef::OomAction, bool) {
         let snapshot = Arc::clone(
             &*self
                 .resolved
@@ -778,7 +778,7 @@ impl GlobalSysvars {
     /// Go's process-wide typed `vardef.CheckMb4ValueInUTF8` atomic, parsed
     /// when a GLOBAL mutation publishes the resolved image rather than by
     /// every statement context.
-    pub(crate) fn check_mb4_value_in_utf8(&self) -> bool {
+    pub fn check_mb4_value_in_utf8(&self) -> bool {
         self.resolved
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -787,7 +787,7 @@ impl GlobalSysvars {
 
     /// Go's process-wide typed `vardef.EnableCheckConstraint` atomic, parsed
     /// once per GLOBAL publication.
-    pub(crate) fn enable_check_constraint(&self) -> bool {
+    pub fn enable_check_constraint(&self) -> bool {
         self.resolved
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -798,7 +798,7 @@ impl GlobalSysvars {
     /// admission. The table is authoritative for this registry (and for a
     /// cluster scratch image); the process atomic is published alongside it
     /// for Go-compatible callbacks.
-    pub(crate) fn resource_control_enabled(&self) -> bool {
+    pub fn resource_control_enabled(&self) -> bool {
         self.global_bool_value(
             tidb_vardef::tidb_vars::TIDB_ENABLE_RESOURCE_CONTROL,
             tidb_vardef::defaults::DEF_TIDB_ENABLE_RESOURCE_CONTROL,
@@ -806,7 +806,7 @@ impl GlobalSysvars {
     }
 
     /// Reads the current GLOBAL resource-control strict-mode value.
-    pub(crate) fn resource_control_strict_mode(&self) -> bool {
+    pub fn resource_control_strict_mode(&self) -> bool {
         self.global_bool_value(
             tidb_vardef::tidb_vars::TIDB_RESOURCE_CONTROL_STRICT_MODE,
             tidb_vardef::defaults::DEF_TIDB_RESOURCE_CONTROL_STRICT_MODE,
@@ -817,7 +817,7 @@ impl GlobalSysvars {
     /// callers already paid (`SessionVars::get_system` resolves the index
     /// once for both tiers). Same image-then-authoritative fallback as
     /// [`Self::get`].
-    pub(crate) fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
+    pub fn get_by_registry_index(&self, index: usize) -> Result<String, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
         if def.name == "tidb_external_ts" {
             return self.get(def.name);
@@ -865,7 +865,7 @@ impl GlobalSysvars {
         // Go `validateScope` (`variable.go:265`): `SET GLOBAL` is admitted by
         // `sv.HasGlobalScope() || sv.HasInstanceScope()`, so `SET GLOBAL
         // tidb_general_log = 1` is legal and lands in the instance tier.
-        self.set_with_time_zone(name, value, &tidb_executor::SessionTimeZone::utc())
+        self.set_with_time_zone(name, value, &tidb_datatype::SessionTimeZone::utc())
     }
 
     /// `SET GLOBAL` with the issuing session's time zone.
@@ -879,7 +879,7 @@ impl GlobalSysvars {
         &self,
         name: &str,
         value: String,
-        zone: &tidb_executor::SessionTimeZone,
+        zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<bool, VarError> {
         if name.eq_ignore_ascii_case("tidb_external_ts") {
             if let Some(provider) = self.external_timestamp_provider() {
@@ -1761,9 +1761,9 @@ impl tidb_domain::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
     fn resize_info_cache(&self) {}
 }
 
-pub use tidb_variable::VarError;
+pub use crate::VarError;
 
-impl tidb_variable::session_vars::SystemVars for SessionVars {
+impl crate::session_vars::SystemVars for SessionVars {
     fn get_system(&self, name: &str) -> Option<String> {
         SessionVars::get_system(self, name).ok()
     }
@@ -1829,7 +1829,7 @@ pub struct SessionVars {
     max_execution_time: u64,
     /// Go's typed `SessionVars.TimeZone`, resolved once by the time-zone
     /// `SetSession` hook rather than reparsed by every statement.
-    time_zone: tidb_executor::SessionTimeZone,
+    time_zone: tidb_datatype::SessionTimeZone,
     /// Go SnapshotTS: resolved by SET in that session's location, not on each read.
     snapshot_ts: u64,
     txn_read_ts: u64,
@@ -1875,7 +1875,7 @@ pub struct SessionVars {
     bulk_dml_enabled: bool,
     /// Go's typed replica-read selection, maintained by the
     /// `tidb_replica_read` SetSession hook.
-    replica_read: tidb_executor::ReplicaReadType,
+    replica_read: tidb_distsql::ReplicaReadType,
     /// Go's typed `SessionVars.AnalyzeStoreBatchSize`, maintained by the
     /// `tidb_analyze_store_batch_size` SetSession hook. Zero disables
     /// Analyze store batching.
@@ -1932,8 +1932,8 @@ impl Clone for FirstReadGlobals {
 /// type. Go's `timeutil.ParseTimeZone` preserves the original `+HH:MM` name
 /// on the session location even though the DAGR request later sends an empty
 /// name for fixed offsets; retaining that text here keeps both behaviors.
-fn resolve_session_time_zone_value(written: &str) -> tidb_executor::SessionTimeZone {
-    use tidb_executor::SessionTimeZone;
+fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZone {
+    use tidb_datatype::SessionTimeZone;
 
     if !written.eq_ignore_ascii_case("SYSTEM") {
         if let Ok(zone) = written.parse::<chrono_tz::Tz>() {
@@ -2005,7 +2005,7 @@ impl Default for SessionVars {
             ti_flash_query_spill_ratio: tidb_vardef::defaults::DEF_TIFLASH_QUERY_SPILL_RATIO,
             pessimistic_transaction_fair_locking: false,
             bulk_dml_enabled: false,
-            replica_read: tidb_executor::ReplicaReadType::Leader,
+            replica_read: tidb_distsql::ReplicaReadType::Leader,
             analyze_store_batch_size: tidb_vardef::defaults::DEF_TIDB_ANALYZE_STORE_BATCH_SIZE,
             query_cop_store_limit: tidb_vardef::defaults::DEF_TIDB_QUERY_COP_STORE_LIMIT,
             generation: 0,
@@ -2020,7 +2020,7 @@ impl Default for SessionVars {
 impl SessionVars {
     /// Restore only Go's typed SnapshotTS after failed storage/schema validation.
     /// SetExecutor leaves the system-variable string as assigned.
-    pub(crate) fn restore_snapshot_ts(&mut self, ts: u64) {
+    pub fn restore_snapshot_ts(&mut self, ts: u64) {
         self.snapshot_ts = ts;
     }
 
@@ -2029,17 +2029,17 @@ impl SessionVars {
         self.txn_read_ts
     }
 
-    pub(crate) fn set_txn_read_ts(&mut self, ts: u64) {
+    pub fn set_txn_read_ts(&mut self, ts: u64) {
         self.txn_read_ts = ts;
         self.txn_read_ts_used = false;
     }
 
-    pub(crate) fn use_txn_read_ts(&mut self) -> u64 {
+    pub fn use_txn_read_ts(&mut self) -> u64 {
         self.txn_read_ts_used = true;
         self.txn_read_ts
     }
 
-    pub(crate) fn cleanup_txn_read_ts(&mut self) -> bool {
+    pub fn cleanup_txn_read_ts(&mut self) -> bool {
         if self.txn_read_ts_used && self.txn_read_ts != 0 {
             self.set_txn_read_ts(0);
             return true;
@@ -2051,7 +2051,7 @@ impl SessionVars {
     /// entered now runs at -- a `SET TRANSACTION ISOLATION LEVEL` level
     /// (just set inside a transaction, or waiting outside one), else
     /// `transaction_isolation`.
-    pub(crate) fn isolation_level_for_new_txn(&self, in_txn: bool) -> String {
+    pub fn isolation_level_for_new_txn(&self, in_txn: bool) -> String {
         let (state, value) = &self.txn_isolation_level_one_shot;
         let pending = if in_txn {
             TxnIsolationLevelOneShotState::Set
@@ -2066,7 +2066,7 @@ impl SessionVars {
 
     /// The `SET TRANSACTION ISOLATION LEVEL` level Go `IsIsolation` adopts
     /// for a transaction context that has none yet (`oneShotUse`).
-    pub(crate) fn txn_isolation_level_one_shot_in_use(&self) -> Option<&str> {
+    pub fn txn_isolation_level_one_shot_in_use(&self) -> Option<&str> {
         let (state, value) = &self.txn_isolation_level_one_shot;
         (*state == TxnIsolationLevelOneShotState::Use && !value.is_empty())
             .then_some(value.as_str())
@@ -2075,7 +2075,7 @@ impl SessionVars {
     /// Go `SetTxnIsolationLevelOneShotStateForNextTxn`, run by every
     /// `CommitTxn` (`doCommitWithRetry`): a level set by `SET TRANSACTION`
     /// waits for the next transaction, and that transaction's end clears it.
-    pub(crate) fn set_txn_isolation_level_one_shot_state_for_next_txn(&mut self) {
+    pub fn set_txn_isolation_level_one_shot_state_for_next_txn(&mut self) {
         let one_shot = &mut self.txn_isolation_level_one_shot;
         match one_shot.0 {
             TxnIsolationLevelOneShotState::Def => {}
@@ -2228,7 +2228,7 @@ impl SessionVars {
             .unwrap_or(0)
     }
 
-    fn time_zone_from_systems(systems: &HashMap<String, String>) -> tidb_executor::SessionTimeZone {
+    fn time_zone_from_systems(systems: &HashMap<String, String>) -> tidb_datatype::SessionTimeZone {
         resolve_session_time_zone_value(systems.get("time_zone").map_or("SYSTEM", String::as_str))
     }
 
@@ -2331,30 +2331,30 @@ impl SessionVars {
 
     fn replica_read_from_systems(
         systems: &HashMap<String, String>,
-    ) -> tidb_executor::ReplicaReadType {
+    ) -> tidb_distsql::ReplicaReadType {
         match systems
             .get(tidb_vardef::tidb_vars::TIDB_REPLICA_READ)
             .map(String::as_str)
         {
             Some(value) if value.eq_ignore_ascii_case("follower") => {
-                tidb_executor::ReplicaReadType::Follower
+                tidb_distsql::ReplicaReadType::Follower
             }
             Some(value) if value.eq_ignore_ascii_case("leader-and-follower") => {
-                tidb_executor::ReplicaReadType::Mixed
+                tidb_distsql::ReplicaReadType::Mixed
             }
             Some(value) if value.eq_ignore_ascii_case("closest-replicas") => {
-                tidb_executor::ReplicaReadType::Closest
+                tidb_distsql::ReplicaReadType::Closest
             }
             Some(value) if value.eq_ignore_ascii_case("closest-adaptive") => {
-                tidb_executor::ReplicaReadType::ClosestAdaptive
+                tidb_distsql::ReplicaReadType::ClosestAdaptive
             }
             Some(value) if value.eq_ignore_ascii_case("learner") => {
-                tidb_executor::ReplicaReadType::Learner
+                tidb_distsql::ReplicaReadType::Learner
             }
             Some(value) if value.eq_ignore_ascii_case("prefer-leader") => {
-                tidb_executor::ReplicaReadType::PreferLeader
+                tidb_distsql::ReplicaReadType::PreferLeader
             }
-            _ => tidb_executor::ReplicaReadType::Leader,
+            _ => tidb_distsql::ReplicaReadType::Leader,
         }
     }
 
@@ -2379,7 +2379,7 @@ impl SessionVars {
     }
 
     /// Restore the autocommit status bit separately from the sysvar string, as Go does.
-    pub(crate) fn restore_autocommit_status(&mut self, status: u32) {
+    pub fn restore_autocommit_status(&mut self, status: u32) {
         self.autocommit = status & 2 != 0;
     }
 
@@ -2419,7 +2419,7 @@ impl SessionVars {
     /// Go `SessionVars.TimeZone`, resolved from `SET time_zone` and retained
     /// until the next mutation or session-image reseed.
     #[must_use]
-    pub fn session_time_zone(&self) -> tidb_executor::SessionTimeZone {
+    pub fn session_time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.time_zone.clone()
     }
 
@@ -2564,7 +2564,7 @@ impl SessionVars {
 
     /// Go `SessionVars.GetReplicaRead`, the typed KV replica-read mode.
     #[must_use]
-    pub const fn replica_read(&self) -> tidb_executor::ReplicaReadType {
+    pub const fn replica_read(&self) -> tidb_distsql::ReplicaReadType {
         self.replica_read
     }
 
@@ -2647,7 +2647,7 @@ impl SessionVars {
     /// registry index (see [`crate::sysvar::StaticSysVarIndex`]), which skips
     /// only the name-to-index hash probe. Every other step, and the error a
     /// node-tier read can raise, is what [`Self::system_value`] does.
-    pub(crate) fn system_value_at(&self, index: usize) -> Result<Cow<'_, str>, VarError> {
+    pub fn system_value_at(&self, index: usize) -> Result<Cow<'_, str>, VarError> {
         let def = &crate::sysvar::SYS_VARS[index];
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
@@ -2719,7 +2719,7 @@ impl SessionVars {
     /// Go `vardef.EnableNoopVariables`: the GLOBAL
     /// `tidb_enable_noop_variables` switch.
     #[must_use]
-    pub(crate) fn noop_variables_enabled(&self) -> bool {
+    pub fn noop_variables_enabled(&self) -> bool {
         self.get_global(tidb_vardef::tidb_vars::TIDB_ENABLE_NOOP_VARIABLES)
             .map_or(
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_NOOP_VARIABLES,
@@ -2735,7 +2735,7 @@ impl SessionVars {
     /// clock. Reading `@@timestamp` itself (Go's `GetSession` hook) answers
     /// the CURRENT statement's time when no override is set, so a value read
     /// through [`Self::get_system`] must never be kept past one statement.
-    pub(crate) fn timestamp_override(&self) -> Option<f64> {
+    pub fn timestamp_override(&self) -> Option<f64> {
         self.systems
             .get("timestamp")
             .filter(|value| !value.is_empty() && value.as_str() != "0")
@@ -2964,40 +2964,40 @@ impl SessionVars {
 
     /// Shares the currently selected global table, not its values. Account
     /// writes may temporarily swap this owner for a scratch validation table.
-    pub(crate) fn global_sysvars(&self) -> GlobalSysvars {
+    pub fn global_sysvars(&self) -> GlobalSysvars {
         (*self.globals).clone()
     }
 
-    pub(crate) fn global_sysvar_accessor(&self) -> Arc<dyn tidb_executor::GlobalSysvarAccessor> {
+    pub fn global_sysvar_accessor(&self) -> Arc<dyn crate::GlobalSysvarAccessor> {
         self.globals.clone()
     }
 
     /// Reads Go's two process-wide typed statement-memory settings without
     /// converting their GLOBAL sysvar text on every statement.
-    pub(crate) fn statement_memory_policy(&self) -> (tidb_executor::OomAction, bool) {
+    pub fn statement_memory_policy(&self) -> (tidb_vardef::OomAction, bool) {
         self.globals.statement_memory_policy()
     }
 
     /// Go's process-wide `vardef.CheckMb4ValueInUTF8` switch, typed once per
     /// GLOBAL publication.
-    pub(crate) fn check_mb4_value_in_utf8(&self) -> bool {
+    pub fn check_mb4_value_in_utf8(&self) -> bool {
         self.globals.check_mb4_value_in_utf8()
     }
 
     /// Go's process-wide `vardef.EnableCheckConstraint` switch, typed once per
     /// GLOBAL publication.
-    pub(crate) fn enable_check_constraint(&self) -> bool {
+    pub fn enable_check_constraint(&self) -> bool {
         self.globals.enable_check_constraint()
     }
 
     /// Go's process-wide resource-control enable switch, published by the
     /// GLOBAL sysvar hook and consumed by statement hint admission.
-    pub(crate) fn resource_control_enabled(&self) -> bool {
+    pub fn resource_control_enabled(&self) -> bool {
         self.globals.resource_control_enabled()
     }
 
     /// Go's process-wide resource-control strict-mode switch.
-    pub(crate) fn resource_control_strict_mode(&self) -> bool {
+    pub fn resource_control_strict_mode(&self) -> bool {
         self.globals.resource_control_strict_mode()
     }
 
@@ -3352,7 +3352,7 @@ impl SessionVars {
     /// bootstrap writes into `mysql.global_variables`
     /// (`globalSystemVariableInitialValue`). A variable without a global scope
     /// answers its compiled default.
-    pub(crate) fn global_value_for_session_default(&self, name: &str) -> Result<String, VarError> {
+    pub fn global_value_for_session_default(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
         let default = crate::sysvar::effective_default(def);
@@ -3490,6 +3490,13 @@ fn format_double(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// Serializes the tests that flip process-wide switches (Go `vardef`
+    /// globals) within this test binary.
+    fn process_switch_tests() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     use super::*;
 
     struct RestoreAnalyzeDefaults {
@@ -3633,7 +3640,7 @@ mod tests {
     fn dml_type_and_replica_read_use_go_typed_hooks() {
         let mut vars = SessionVars::new();
         assert!(!vars.bulk_dml_enabled());
-        assert_eq!(vars.replica_read(), tidb_executor::ReplicaReadType::Leader);
+        assert_eq!(vars.replica_read(), tidb_distsql::ReplicaReadType::Leader);
 
         vars.set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "standard".to_owned())
             .unwrap();
@@ -3655,17 +3662,17 @@ mod tests {
         }
 
         let modes = [
-            ("follower", tidb_executor::ReplicaReadType::Follower),
-            ("leader-and-follower", tidb_executor::ReplicaReadType::Mixed),
-            ("closest-replicas", tidb_executor::ReplicaReadType::Closest),
+            ("follower", tidb_distsql::ReplicaReadType::Follower),
+            ("leader-and-follower", tidb_distsql::ReplicaReadType::Mixed),
+            ("closest-replicas", tidb_distsql::ReplicaReadType::Closest),
             (
                 "closest-adaptive",
-                tidb_executor::ReplicaReadType::ClosestAdaptive,
+                tidb_distsql::ReplicaReadType::ClosestAdaptive,
             ),
-            ("learner", tidb_executor::ReplicaReadType::Learner),
+            ("learner", tidb_distsql::ReplicaReadType::Learner),
             (
                 "prefer-leader",
-                tidb_executor::ReplicaReadType::PreferLeader,
+                tidb_distsql::ReplicaReadType::PreferLeader,
             ),
         ];
         for (name, expected) in modes {
@@ -3677,7 +3684,7 @@ mod tests {
                     panic!("nextgen replica-read refusal should retain MySQL error 1235");
                 };
                 assert_eq!(error.code, 1235);
-                assert_eq!(vars.replica_read(), tidb_executor::ReplicaReadType::Leader);
+                assert_eq!(vars.replica_read(), tidb_distsql::ReplicaReadType::Leader);
             } else {
                 vars.set_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ, name.to_owned())
                     .unwrap();
@@ -3690,7 +3697,7 @@ mod tests {
     fn global_analyze_defaults_update_the_vardef_backing_values() {
         // `ANALYZE_DEFAULT_NUM_*` are process-wide too; the session-tier test
         // that asserts on them runs apart from this one.
-        let _serialised = crate::tests_support::process_switch_tests();
+        let _serialised = process_switch_tests();
         let _restore = RestoreAnalyzeDefaults {
             buckets: tidb_vardef::ANALYZE_DEFAULT_NUM_BUCKETS
                 .load(std::sync::atomic::Ordering::SeqCst),
@@ -3995,7 +4002,7 @@ mod tests {
         vars.set_system("time_zone", "+10:00".to_owned()).unwrap();
         assert_eq!(
             vars.session_time_zone(),
-            tidb_executor::SessionTimeZone::Fixed {
+            tidb_datatype::SessionTimeZone::Fixed {
                 name: "+10:00".to_owned(),
                 offset_secs: 10 * 60 * 60,
             }
@@ -4005,12 +4012,12 @@ mod tests {
         vars.set_system("time_zone", "UTC".to_owned()).unwrap();
         assert_eq!(
             vars.session_time_zone(),
-            tidb_executor::SessionTimeZone::Named(chrono_tz::Tz::UTC)
+            tidb_datatype::SessionTimeZone::Named(chrono_tz::Tz::UTC)
         );
         vars.restore_system(restore);
         assert_eq!(
             vars.session_time_zone(),
-            tidb_executor::SessionTimeZone::Fixed {
+            tidb_datatype::SessionTimeZone::Fixed {
                 name: "+10:00".to_owned(),
                 offset_secs: 10 * 60 * 60,
             }
@@ -4022,7 +4029,7 @@ mod tests {
         inherited.seed_from_globals(globals).unwrap();
         assert_eq!(
             inherited.session_time_zone(),
-            tidb_executor::SessionTimeZone::Named(chrono_tz::Tz::UTC)
+            tidb_datatype::SessionTimeZone::Named(chrono_tz::Tz::UTC)
         );
     }
 
@@ -4138,47 +4145,6 @@ mod tests {
     }
 
     #[test]
-    fn sem_enable_and_disable_change_new_session_defaults() {
-        struct DisableSemOnDrop;
-
-        impl Drop for DisableSemOnDrop {
-            fn drop(&mut self) {
-                tidb_util::sem::disable();
-            }
-        }
-
-        tidb_util::sem::disable();
-        let _reset = DisableSemOnDrop;
-
-        tidb_util::sem::enable();
-        let enabled = SessionVars::new();
-        assert_eq!(
-            enabled.get_system("tidb_enable_enhanced_security").unwrap(),
-            "ON"
-        );
-        assert_eq!(enabled.get_system("hostname").unwrap(), "localhost");
-
-        let mut recovery = crate::Session::new();
-        recovery.set_user("recovery@%".to_owned(), "recovery@127.0.0.1".to_owned());
-        recovery.attach_privileges(crate::privilege::PrivilegeRegistry::default());
-        assert!(recovery.sem_hides_status_var("tidb_gc_leader_desc"));
-        recovery.enable_privilege_bypass();
-        assert!(
-            !recovery.sem_hides_status_var("tidb_gc_leader_desc"),
-            "skip-grant-table satisfies RESTRICTED_STATUS_ADMIN verification",
-        );
-
-        tidb_util::sem::disable();
-        let disabled = SessionVars::new();
-        assert_eq!(
-            disabled
-                .get_system("tidb_enable_enhanced_security")
-                .unwrap(),
-            "OFF"
-        );
-    }
-
-    #[test]
     fn an_unknown_system_variable_is_rejected_both_ways() {
         let mut vars = SessionVars::new();
         assert_eq!(
@@ -4195,7 +4161,7 @@ mod tests {
     fn a_loaded_row_overrides_and_an_absent_one_still_falls_back_to_default() {
         // Loading or replacing a whole GLOBAL table republishes the process
         // switches; the tests that assert on them run apart from this one.
-        let _serialised = crate::tests_support::process_switch_tests();
+        let _serialised = process_switch_tests();
         let globals = GlobalSysvars::new();
         globals.load_from_cluster([("AUTOCOMMIT".to_owned(), "OFF".to_owned())]);
         // The seeded row overrides, case-insensitively, exactly like `set`.
@@ -4210,7 +4176,7 @@ mod tests {
     fn a_loaded_row_naming_an_unknown_variable_is_skipped_not_refused() {
         // Loading or replacing a whole GLOBAL table republishes the process
         // switches; the tests that assert on them run apart from this one.
-        let _serialised = crate::tests_support::process_switch_tests();
+        let _serialised = process_switch_tests();
         let globals = GlobalSysvars::new();
         // Bypasses `set`'s validation on purpose (a stored row already passed
         // it once), but an unrecognized name from an older/newer cluster must
@@ -4355,7 +4321,7 @@ mod tests {
     fn set_global_redact_log_updates_the_process_redaction_authority() {
         // Loading or replacing a whole GLOBAL table republishes the process
         // switches; the tests that assert on them run apart from this one.
-        let _serialised = crate::tests_support::process_switch_tests();
+        let _serialised = process_switch_tests();
         let mut vars = SessionVars::new();
         vars.set_global("tidb_redact_log", "MARKER".to_owned())
             .unwrap();
@@ -4506,7 +4472,7 @@ mod tests {
     fn replacing_a_cluster_global_image_preserves_instance_only_values() {
         // Loading or replacing a whole GLOBAL table republishes the process
         // switches; the tests that assert on them run apart from this one.
-        let _serialised = crate::tests_support::process_switch_tests();
+        let _serialised = process_switch_tests();
         let globals = GlobalSysvars::new();
         globals
             .set_instance("tidb_general_log", "ON".to_owned())
@@ -4577,9 +4543,9 @@ mod tests {
 }
 
 /// Go parseTSFromNumberOrTime; tx_read_ts deliberately permits datetime syntax only.
-pub(crate) fn parse_read_timestamp(
+pub fn parse_read_timestamp(
     value: &str,
-    zone: &tidb_executor::SessionTimeZone,
+    zone: &tidb_datatype::SessionTimeZone,
     numeric: bool,
 ) -> Result<u64, VarError> {
     if value.is_empty() {
@@ -4785,7 +4751,7 @@ mod pd_region_batch_tests {
 /// (`config.GetGlobalConfig().Store`) that this tier is not told, so
 /// `tidb_enable_async_commit`/`tidb_enable_1pc` resolve to their non-TiKV-store
 /// defaults here; every other override is unconditional.
-pub(crate) fn global_system_variable_initial_value(def: &SysVarDef) -> String {
+pub fn global_system_variable_initial_value(def: &SysVarDef) -> String {
     tidb_vardef::global_sysvar_initial::global_system_variable_initial_value(
         def.name,
         &crate::sysvar::effective_default(def),

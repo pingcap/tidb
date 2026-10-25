@@ -120,3 +120,43 @@ mod closure_tests {
     }
 }
 
+#[test]
+fn sem_enable_and_disable_change_new_session_defaults() {
+    struct DisableSemOnDrop;
+
+    impl Drop for DisableSemOnDrop {
+        fn drop(&mut self) {
+            tidb_util::sem::disable();
+        }
+    }
+
+    tidb_util::sem::disable();
+    let _reset = DisableSemOnDrop;
+
+    tidb_util::sem::enable();
+    let enabled = SessionVars::new();
+    assert_eq!(
+        enabled.get_system("tidb_enable_enhanced_security").unwrap(),
+        "ON"
+    );
+    assert_eq!(enabled.get_system("hostname").unwrap(), "localhost");
+
+    let mut recovery = crate::Session::new();
+    recovery.set_user("recovery@%".to_owned(), "recovery@127.0.0.1".to_owned());
+    recovery.attach_privileges(crate::privilege::PrivilegeRegistry::default());
+    assert!(recovery.sem_hides_status_var("tidb_gc_leader_desc"));
+    recovery.enable_privilege_bypass();
+    assert!(
+        !recovery.sem_hides_status_var("tidb_gc_leader_desc"),
+        "skip-grant-table satisfies RESTRICTED_STATUS_ADMIN verification",
+    );
+
+    tidb_util::sem::disable();
+    let disabled = SessionVars::new();
+    assert_eq!(
+        disabled
+            .get_system("tidb_enable_enhanced_security")
+            .unwrap(),
+        "OFF"
+    );
+}

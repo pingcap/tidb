@@ -10,6 +10,7 @@ description = "TiDB executor: the wired execution engine spine (Executor trait +
 autotests = false
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 prometheus = { version = "0.14", default-features = false }
 base64 = { workspace = true }
 stacker = { workspace = true }

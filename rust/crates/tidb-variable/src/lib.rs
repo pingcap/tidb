@@ -22,5 +22,15 @@ pub mod session_vars;
 pub mod slow_log_rules;
 pub mod sysvar;
 pub mod varsutil;
+pub mod vars;
 
 pub use error::VarError;
+pub use vars::{GlobalSysvars, SessionVars};
+
+/// The live GLOBAL-variable reader Go exposes through
+/// `SessionVars.GlobalVarsAccessor`.
+pub trait GlobalSysvarAccessor: Send + Sync {
+    /// Reads the current GLOBAL value, or `None` when no session/global table
+    /// is attached to this evaluation context.
+    fn get_global_sysvar(&self, name: &str) -> Option<String>;
+}

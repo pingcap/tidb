@@ -18,7 +18,6 @@ serde.workspace = true
 serde_json.workspace = true
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
-tidb-exec = { path = "../tidb-exec" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-model = { path = "../tidb-model" }

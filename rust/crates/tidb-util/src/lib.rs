@@ -53,6 +53,8 @@ pub mod execdetails;
 pub mod extsort;
 pub mod fastrand;
 pub mod filter;
+/// Go `pkg/planner/util/fixcontrol`.
+pub mod fixcontrol;
 pub mod format;
 pub mod generic;
 pub mod globalconn;

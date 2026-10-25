@@ -57,7 +57,7 @@
 //!   [`statement_summary::StmtSummaryStmtCtx`], carrying only the fields this
 //!   file reads.
 //! - `execdetails.CopTasksSummary` uses the canonical
-//!   `tidb_exec::exec_details::CopTasksSummary` owner.
+//!   `tidb_util::execdetails::exec_details::CopTasksSummary` owner.
 //! - client-go `*util.RUDetails` / `*util.ExecDetails` use the canonical
 //!   `tikv-client` `RuDetails` and already-loaded `ExecDetailsSnapshot`, so
 //!   Go's atomic loads become canonical accessor calls or snapshot field

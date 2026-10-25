@@ -83,7 +83,7 @@ use std::time::Duration;
 use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
-use tidb_exec::exec_details::{
+use tidb_util::execdetails::exec_details::{
     get_ia_remote_read_segment_stats, CommitDetails, CommitDetailsInner, CopExecDetails,
     CopTasksSummary, ExecDetails, ResolveLockDetail, ScanDetail, TimeDetail,
 };

@@ -1432,7 +1432,7 @@ mod show_index;
 mod stats_lock_arm;
 pub use tidb_vardef::statusvar;
 pub use tidb_variable::sysvar;
-pub mod vars;
+pub use tidb_variable::vars;
 #[cfg(test)]
 mod tests_variable_session;
 pub use vars::{GlobalSysvars, SessionVars, VarError};

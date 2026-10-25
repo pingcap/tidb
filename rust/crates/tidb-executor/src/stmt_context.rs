@@ -283,13 +283,7 @@ impl RowIdShardGenerator {
     }
 }
 
-/// The live GLOBAL-variable reader Go exposes through
-/// `SessionVars.GlobalVarsAccessor`.
-pub trait GlobalSysvarAccessor: Send + Sync {
-    /// Reads the current GLOBAL value, or `None` when no session/global table
-    /// is attached to this evaluation context.
-    fn get_global_sysvar(&self, name: &str) -> Option<String>;
-}
+pub use tidb_variable::GlobalSysvarAccessor;
 
 /// The physical plan a connection last executed, shared with
 /// `EXPLAIN FOR CONNECTION` (Go's `ProcessInfo.Plan`).

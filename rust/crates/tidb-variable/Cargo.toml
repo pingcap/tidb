@@ -20,3 +20,8 @@ tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 chrono = { workspace = true }
 serde_json.workspace = true
+tidb-domain = { path = "../tidb-domain" }
+tidb-distsql = { path = "../tidb-distsql" }
+tidb-stmtsummary = { path = "../tidb-stmtsummary" }
+tidb-tikvutil = { path = "../tidb-tikvutil" }
+chrono-tz = { workspace = true }

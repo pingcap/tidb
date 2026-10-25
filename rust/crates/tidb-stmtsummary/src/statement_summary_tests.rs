@@ -14,7 +14,7 @@
 
 use std::thread;
 
-use tidb_exec::exec_details::{
+use tidb_util::execdetails::exec_details::{
     CommitDetails, CommitDetailsInner, CopExecDetails, ResolveLockDetail, ScanDetail, TimeDetail,
 };
 
