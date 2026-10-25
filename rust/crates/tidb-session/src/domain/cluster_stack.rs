@@ -802,8 +802,21 @@ pub fn start_resource_groups_controller(
     Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
     RunConfiguredNodeError,
 > {
+    start_resource_groups_controller_over(store, server_id, store.store().pd_client())
+}
+
+/// [`start_resource_groups_controller`] over any store and resource-manager
+/// provider: Go takes the provider from `store.GetPDClient()`, which for
+/// unistore is its mock `pdClient`.
+pub fn start_resource_groups_controller_over<PdC: tikv_client::PdClient>(
+    store: &tidb_txnkv::driver::tikv_store::TikvStore<PdC>,
+    server_id: u64,
+    provider: Arc<dyn tikv_client::pd_resource_group::controller::ResourceGroupProvider>,
+) -> Result<
+    Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
+    RunConfiguredNodeError,
+> {
     use tikv_client::pd_resource_group::controller as rmclient;
-    let provider: Arc<dyn rmclient::ResourceGroupProvider> = store.store().pd_client();
     let controller = store
         .block_on(rmclient::new_resource_group_controller(
             server_id,
@@ -841,8 +854,8 @@ impl tidb_util::topsql_stmtstats::RuVersionProvider for DomainRuVersion {
 
 /// Go `Domain.Close`'s controller teardown: the interceptor is removed and
 /// the controller's loop stopped.
-pub fn stop_resource_groups_controller(
-    store: &tidb_txnkv::driver::tikv_store::TikvStore,
+pub fn stop_resource_groups_controller<PdC: tikv_client::PdClient>(
+    store: &tidb_txnkv::driver::tikv_store::TikvStore<PdC>,
     controller: &Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
 ) {
     tikv_client::unset_resource_control_interceptor();

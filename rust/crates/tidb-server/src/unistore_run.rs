@@ -74,6 +74,9 @@ pub fn run_unistore_cluster_session(
         _async_stats_loader,
         _stats_maintenance: stats_maintenance,
         rpc: _rpc,
+        // Go `initResourceGroupsController`: the controller lives as long as
+        // the server, stopped by its guard when this function returns.
+        _resource_groups,
     } = stack;
     if tidb_config::config_tree::config::get_global_config()
         .instance

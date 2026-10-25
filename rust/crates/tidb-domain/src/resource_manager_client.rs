@@ -35,6 +35,17 @@ pub trait ResourceManagerClient: Send + Sync {
     fn modify_resource_group(&self, group: rmpb::ResourceGroup) -> Result<String, String>;
     /// Go `DeleteResourceGroup`.
     fn delete_resource_group(&self, name: &str) -> Result<String, String>;
+    /// Go `GetResourceGroup`, for the resource-groups controller of a store
+    /// whose PD client is this one (unistore's `pdClient`).
+    fn get_resource_group(&self, name: &str) -> Result<rmpb::ResourceGroup, String> {
+        Err(format!(
+            "the group {name} cannot be read through this client"
+        ))
+    }
+    /// Go `ListResourceGroups`, as [`Self::get_resource_group`].
+    fn list_resource_groups(&self) -> Result<Vec<rmpb::ResourceGroup>, String> {
+        Err("resource groups cannot be listed through this client".to_owned())
+    }
 }
 
 /// Go `mockResourceManagerClient`: groups held in memory, starting with the
@@ -78,6 +89,17 @@ impl MockResourceManagerClient {
             .cloned()
             .ok_or_else(|| format!("the group {name} does not exist"))
     }
+
+    /// Go `ListResourceGroups`.
+    #[must_use]
+    pub fn list_resource_groups(&self) -> Vec<rmpb::ResourceGroup> {
+        self.groups
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
+    }
 }
 
 impl Default for MockResourceManagerClient {
@@ -87,6 +109,14 @@ impl Default for MockResourceManagerClient {
 }
 
 impl ResourceManagerClient for MockResourceManagerClient {
+    fn get_resource_group(&self, name: &str) -> Result<rmpb::ResourceGroup, String> {
+        MockResourceManagerClient::get_resource_group(self, name)
+    }
+
+    fn list_resource_groups(&self) -> Result<Vec<rmpb::ResourceGroup>, String> {
+        Ok(MockResourceManagerClient::list_resource_groups(self))
+    }
+
     fn add_resource_group(&self, group: rmpb::ResourceGroup) -> Result<String, String> {
         let mut groups = self.groups.write().unwrap_or_else(PoisonError::into_inner);
         if groups.contains_key(&group.name) {
@@ -130,6 +160,16 @@ fn client() -> Arc<dyn ResourceManagerClient> {
 pub fn init_resource_manager_client(client: Option<Arc<dyn ResourceManagerClient>>) {
     *CLIENT.lock().unwrap_or_else(PoisonError::into_inner) =
         Some(client.unwrap_or_else(|| Arc::new(MockResourceManagerClient::new())));
+}
+
+/// Go `infosync.GetResourceGroup`.
+pub fn get_resource_group(name: &str) -> Result<rmpb::ResourceGroup, String> {
+    client().get_resource_group(name)
+}
+
+/// Go `infosync.ListResourceGroups`.
+pub fn list_resource_groups() -> Result<Vec<rmpb::ResourceGroup>, String> {
+    client().list_resource_groups()
 }
 
 /// Go `infosync.AddResourceGroup`.

@@ -71,6 +71,9 @@ pub struct DagContext {
     pub key_ranges: Vec<coprocessor::KeyRange>,
     /// `startTS` — Go reads `req.StartTs`.
     pub start_ts: u64,
+    /// Go `req.PagingSize`: the rows one page may return before the scan
+    /// stops and answers its continuation range (`mppExecute`).
+    pub paging_size: u64,
     /// The request's time zone, resolved when building its expression context.
     pub time_zone: TimeZoneSpec,
     /// Go `DAGRequest.Flags`: controls error-tolerance in expression
@@ -548,6 +551,8 @@ fn exec_index_scan(
         );
     }
     let descending = idx_scan.desc();
+    let mut paging = PagingCut::new(context, descending, aggregator.is_some() || topn.is_some());
+    let mut page_end: Option<coprocessor::KeyRange> = None;
     let mut ranges = context.key_ranges.iter().collect::<Vec<_>>();
     if descending {
         ranges.reverse();
@@ -568,6 +573,13 @@ fn exec_index_scan(
             reverse: descending,
         });
         for pair in pairs {
+            if let Some(page) = paging.as_mut() {
+                if let Some(range) = page.before_key() {
+                    page_end = Some(range);
+                    break 'ranges;
+                }
+                page.scanned(&pair.key);
+            }
             if let Some(err) = pair.error {
                 if let crate::mvcc_store::KvError::Locked(lock) = *err {
                     return coprocessor::Response {
@@ -675,6 +687,9 @@ fn exec_index_scan(
             };
             rows.push(projected);
             emitted += 1;
+            if let Some(page) = paging.as_mut() {
+                page.produced_row();
+            }
             if emitted == limit {
                 break 'ranges;
             }
@@ -709,13 +724,17 @@ fn exec_index_scan(
         }
     }
     produced.output = rows.len() as u64;
-    encode_select_rows(
+    let mut response = encode_select_rows(
         rows,
         output_types.as_deref(),
         context,
         &timezone,
         eval_warnings,
-    )
+    );
+    if let Some(page) = paging {
+        response.range = Some(page_end.unwrap_or_else(|| page.finish(&context.key_ranges)));
+    }
+    response
 }
 
 /// Go `closureExecutor`'s output field types (`closure_exec.go:112`): the
@@ -913,6 +932,105 @@ const CHUNK_MAX_ROWS: usize = 1024;
 /// of one chunk-encoded `tipb.Chunk` in a response.
 const GO_MPP_DEFAULT_BATCH_SIZE: usize = 32;
 
+/// Go's coprocessor paging over one scan (`tableScanExec.next` +
+/// `mppExecute`): the scan hands up chunks of `DefaultBatchSize` scanned
+/// keys; after each chunk the rows it produced are counted, and once they
+/// pass the page size the response stops there and answers the range it
+/// scanned, so the client resumes after it.
+struct PagingCut {
+    size: u64,
+    descending: bool,
+    scanned_in_chunk: usize,
+    produced_in_chunk: u64,
+    produced: u64,
+    last_key: Option<Vec<u8>>,
+}
+
+impl PagingCut {
+    /// Paging applies to a chunk-encoded scan whose rows leave as scanned:
+    /// Go counts the encoded output rows, which an aggregation or TopN only
+    /// produces after the whole scan.
+    fn new(context: &DagContext, descending: bool, buffers_rows: bool) -> Option<Self> {
+        (context.paging_size > 0
+            && !buffers_rows
+            && context.dag_req.encode_type() == tipb::EncodeType::TypeChunk)
+            .then_some(Self {
+                size: context.paging_size,
+                descending,
+                scanned_in_chunk: 0,
+                produced_in_chunk: 0,
+                produced: 0,
+                last_key: None,
+            })
+    }
+
+    /// Before the next key: if the previous chunk is complete, count it, and
+    /// answer the page's range when the page is full.
+    fn before_key(&mut self) -> Option<coprocessor::KeyRange> {
+        if self.scanned_in_chunk < GO_MPP_DEFAULT_BATCH_SIZE {
+            return None;
+        }
+        self.produced += self.produced_in_chunk;
+        self.scanned_in_chunk = 0;
+        self.produced_in_chunk = 0;
+        (self.produced > self.size).then(|| self.scanned_range())
+    }
+
+    fn scanned(&mut self, key: &[u8]) {
+        self.scanned_in_chunk += 1;
+        self.last_key = Some(key.to_vec());
+    }
+
+    fn produced_row(&mut self) {
+        self.produced_in_chunk += 1;
+    }
+
+    /// Go `tableScanExec.next`'s range after the chunk holding `last_key`:
+    /// everything up to it ascending (its `Next()`), down to it descending.
+    fn scanned_range(&self) -> coprocessor::KeyRange {
+        let key = self.last_key.clone().unwrap_or_default();
+        if self.descending {
+            coprocessor::KeyRange {
+                start: key,
+                ..coprocessor::KeyRange::default()
+            }
+        } else {
+            let mut end = key;
+            end.push(0);
+            coprocessor::KeyRange {
+                end,
+                ..coprocessor::KeyRange::default()
+            }
+        }
+    }
+
+    /// The range of a scan that ran out: a final full chunk past the page
+    /// size answers its own range, as Go's chunk-full event does; otherwise
+    /// the whole request range (`e.kvRanges[len-1]`), which leaves nothing.
+    fn finish(mut self, ranges: &[coprocessor::KeyRange]) -> coprocessor::KeyRange {
+        if let Some(range) = self.before_key() {
+            return range;
+        }
+        if self.descending {
+            coprocessor::KeyRange {
+                start: ranges
+                    .first()
+                    .map(|range| range.start.clone())
+                    .unwrap_or_default(),
+                ..coprocessor::KeyRange::default()
+            }
+        } else {
+            coprocessor::KeyRange {
+                end: ranges
+                    .last()
+                    .map(|range| range.end.clone())
+                    .unwrap_or_default(),
+                ..coprocessor::KeyRange::default()
+            }
+        }
+    }
+}
+
 /// The table-scan executor over the MVCC store: each range scanned at the
 /// request's start ts, each surviving row decoded into the REQUESTED columns
 /// in request order, datum-encoded into default-format chunks — the shape a
@@ -983,6 +1101,8 @@ fn exec_table_scan(
     // last-to-first, each one reversed, so rows leave in descending record
     // order and a Limit above stops after the LARGEST keys.
     let descending = tbl_scan.desc();
+    let mut paging = PagingCut::new(context, descending, aggregator.is_some() || topn.is_some());
+    let mut page_end: Option<coprocessor::KeyRange> = None;
     let mut ordered_ranges: Vec<_> = context.key_ranges.iter().collect();
     if descending {
         ordered_ranges.reverse();
@@ -1005,6 +1125,13 @@ fn exec_table_scan(
             reverse: descending,
         });
         for pair in pairs {
+            if let Some(page) = paging.as_mut() {
+                if let Some(range) = page.before_key() {
+                    page_end = Some(range);
+                    break 'ranges;
+                }
+                page.scanned(&pair.key);
+            }
             if let Some(err) = pair.error {
                 // Go: the FIRST lock met answers the whole response.
                 if let crate::mvcc_store::KvError::Locked(lock) = *err {
@@ -1154,6 +1281,9 @@ fn exec_table_scan(
             }
             rows.push(projected);
             emitted += 1;
+            if let Some(page) = paging.as_mut() {
+                page.produced_row();
+            }
             // Go `e.rowCount == e.limit` (`closure_exec.go:597`).
             if emitted == limit {
                 break 'ranges;
@@ -1195,13 +1325,17 @@ fn exec_table_scan(
         }
     }
     produced.output = emitted as u64;
-    encode_select_rows(
+    let mut response = encode_select_rows(
         rows,
         output_types.as_deref(),
         context,
         &timezone,
         Vec::new(),
-    )
+    );
+    if let Some(page) = paging {
+        response.range = Some(page_end.unwrap_or_else(|| page.finish(&context.key_ranges)));
+    }
+    response
 }
 
 /// Go's live `aggExec` shares typed group evaluation and first-seen group
@@ -1720,6 +1854,7 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
         expression_context: Arc::new(expression_context),
         key_ranges: req.ranges.clone(),
         start_ts: req.start_ts,
+        paging_size: req.paging_size,
         flags: dag_req.flags.unwrap_or(0),
         time_zone,
         // Go `buildDAG`: the session default is 4 when the request omits

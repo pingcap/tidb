@@ -249,6 +249,24 @@ pub struct UnistoreClusterStack {
     pub _async_stats_loader: tidb_exec::stats_watch::AsyncStatsLoader,
     /// See [`InProcessStack::rpc`].
     pub rpc: tidb_unistore::rpc::RpcClient,
+    /// Go `initResourceGroupsController` over unistore's mock PD client.
+    pub _resource_groups: EmbeddedResourceGroups,
+}
+
+/// The embedded store's resource-groups controller, stopped when the stack
+/// drops (Go `Domain.Close`).
+pub struct EmbeddedResourceGroups {
+    store: Arc<TikvStore<tidb_unistore::mock::StorePdClient>>,
+    controller: Arc<tikv_client::pd_resource_group::controller::ResourceGroupsController>,
+}
+
+impl Drop for EmbeddedResourceGroups {
+    fn drop(&mut self) {
+        crate::domain::cluster_stack::stop_resource_groups_controller(
+            &self.store,
+            &self.controller,
+        );
+    }
 }
 
 /// Builds the wide cluster-session factory over the embedded store:
@@ -474,6 +492,31 @@ pub fn unistore_cluster_session_stack_from(
     tidb_executor::label_manager::init_label_rule_manager(None);
     // Go `initResourceManagerClient(nil)`: the mock resource manager.
     tidb_domain::resource_manager_client::init_resource_manager_client(None);
+    // Go `initDomainSysVars` registering `setGlobalResourceControl` for every
+    // store, before any global variable loads: `tidb_enable_resource_control`
+    // turns client-rust's resource-control dispatch on and off.
+    *crate::vars::SET_GLOBAL_RESOURCE_CONTROL
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(|enable| {
+        if enable {
+            tikv_client::enable_resource_control();
+        } else {
+            tikv_client::disable_resource_control();
+        }
+    }));
+    // Go `initResourceGroupsController(ctx, store.GetPDClient(), serverID)`:
+    // unistore's PD client embeds that mock, and the controller over it
+    // prices every request and response into the statement's RU details.
+    let resource_groups = EmbeddedResourceGroups {
+        controller: crate::domain::cluster_stack::start_resource_groups_controller_over(
+            &tikv_store,
+            0,
+            Arc::new(
+                crate::domain::embedded_resource_groups::EmbeddedResourceGroupProvider::default(),
+            ),
+        )?,
+        store: Arc::clone(&tikv_store),
+    };
 
     // The bootstrap: every boot, because the store is empty every boot --
     // unless it starts from a bootstrapped image, whose resource manager
@@ -720,6 +763,7 @@ pub fn unistore_cluster_session_stack_from(
         _binding_reloader: binding_reloader,
         _async_stats_loader: async_stats_loader,
         rpc,
+        _resource_groups: resource_groups,
     })
 }
 
