@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -576,7 +575,7 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	}
 	// Validate the codec before dropping the old table metadata. A failed
 	// affinity setup must leave TRUNCATE TABLE cancellable without data loss.
-	if kerneltype.IsNextGen() && tblInfo.Affinity != nil {
+	if tblInfo.Affinity != nil {
 		if err := validateAffinityCodec(jobCtx.store.GetCodec()); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
@@ -730,6 +729,10 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	// Create new affinity groups first (critical operation - must succeed)
 	if tblInfo.Affinity != nil {
 		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+			// PD may have committed the groups even when its response failed.
+			if deleteErr := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, nil); deleteErr != nil {
+				logutil.DDLLogger().Warn("failed to delete replacement table affinity groups", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+			}
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}

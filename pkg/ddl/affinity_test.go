@@ -52,6 +52,8 @@ type truncateAffinityPDClient struct {
 	failCreate       atomic.Bool
 	failDelete       atomic.Bool
 	failOnce         atomic.Bool
+	failAfterCreate  atomic.Bool
+	lastCreatedIDs   atomic.Value
 	createCalls      atomic.Int64
 	createFailures   atomic.Int64
 	nilDeleteContext atomic.Bool
@@ -63,7 +65,18 @@ func (c *truncateAffinityPDClient) CreateAffinityGroups(ctx context.Context, gro
 		c.createFailures.Add(1)
 		return nil, fmt.Errorf("injected affinity creation failure")
 	}
-	return nil, c.manager.CreateAffinityGroupsIfNotExists(ctx, groups)
+	err := c.manager.CreateAffinityGroupsIfNotExists(ctx, groups)
+	if err == nil {
+		ids := make([]string, 0, len(groups))
+		for id := range groups {
+			ids = append(ids, id)
+		}
+		c.lastCreatedIDs.Store(ids)
+		if c.failAfterCreate.Swap(false) {
+			return nil, fmt.Errorf("injected response loss after affinity creation")
+		}
+	}
+	return nil, err
 }
 
 func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context, ids []string, _ bool) error {
@@ -80,6 +93,110 @@ func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context
 
 func (c *truncateAffinityPDClient) GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
 	return c.manager.GetAffinityGroups(ctx, ids)
+}
+
+func TestAffinityTruncatePartitionCreateResponseLoss(t *testing.T) {
+	for _, failDelete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delete_failure=%v", failDelete), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
+			affinity.InitManager(cli)
+			t.Cleanup(func() { affinity.InitManager(nil) })
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table p(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+			tk.MustExec("insert into p values (1),(11)")
+			before, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("p"))
+			require.NoError(t, err)
+			beforeMeta := before.Meta().Clone()
+			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+			require.True(t, ok)
+			persistedBefore, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+			require.NoError(t, err)
+			initialIDs := cli.lastCreatedIDs.Load().([]string)
+			cli.failAfterCreate.Store(true)
+			cli.failDelete.Store(failDelete)
+			require.ErrorContains(t, tk.ExecToErr("alter table p truncate partition p0"), "injected response loss")
+			cli.failDelete.Store(false)
+			after, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("p"))
+			require.NoError(t, err)
+			require.Equal(t, beforeMeta, after.Meta().Clone())
+			persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+			require.NoError(t, err)
+			require.Equal(t, persistedBefore, persisted)
+			tk.MustQuery("select * from p order by a").Check(testkit.Rows("1", "11"))
+			queryIDs := append(append([]string{}, initialIDs...), cli.lastCreatedIDs.Load().([]string)...)
+			groups, err := cli.manager.GetAffinityGroups(context.Background(), queryIDs)
+			require.NoError(t, err)
+			for _, id := range initialIDs {
+				require.Contains(t, groups, id, "cleanup must preserve both original partition groups")
+			}
+			if failDelete {
+				require.Len(t, groups, 3, "failed cleanup must not prevent cancellation")
+			} else {
+				require.Len(t, groups, 2, "cancelled preparation must remove the replacement group")
+			}
+		})
+	}
+}
+
+func TestAffinityTruncateTableFailureAtomicity(t *testing.T) {
+	for _, withPolicy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("masking_policy=%v", withPolicy), func(t *testing.T) {
+			store, dom := testkit.CreateMockStoreAndDomain(t)
+			cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
+			affinity.InitManager(cli)
+			t.Cleanup(func() { affinity.InitManager(nil) })
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("create table t(a int) affinity='table'")
+			tk.MustExec("insert into t values (1)")
+			if withPolicy {
+				tk.MustExec("create masking policy mp on t(a) as a")
+			}
+			before, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+			require.NoError(t, err)
+			beforeMeta := before.Meta().Clone()
+			db, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+			require.True(t, ok)
+			persistedBefore, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+			require.NoError(t, err)
+			for _, afterCreate := range []bool{false, true} {
+				t.Run(fmt.Sprintf("response_loss=%v", afterCreate), func(t *testing.T) {
+					cli.failCreate.Store(!afterCreate)
+					cli.failAfterCreate.Store(afterCreate)
+					failure := "injected affinity creation failure"
+					if afterCreate {
+						failure = "injected response loss after affinity creation"
+					}
+					require.ErrorContains(t, tk.ExecToErr("truncate table t"), failure)
+					cli.failCreate.Store(false)
+					persisted, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).GetTable(db.ID, beforeMeta.ID)
+					require.NoError(t, err)
+					require.Equal(t, persistedBefore, persisted, "failed truncate must preserve persistent table metadata")
+					tables, err := meta.NewReader(store.GetSnapshot(kv.MaxVersion)).ListTables(context.Background(), db.ID)
+					require.NoError(t, err)
+					for _, tbl := range tables {
+						if tbl.Name.L == "t" {
+							require.Equal(t, beforeMeta.ID, tbl.ID, "failed truncate must not persist a replacement table")
+						}
+					}
+					if withPolicy {
+						tk.MustQuery("select table_id from mysql.tidb_masking_policy where policy_name='mp'").Check(testkit.Rows(fmt.Sprint(beforeMeta.ID)))
+					}
+					tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+					checkAffinityGroupsInPD(t, dom, "test", "t", true)
+					if afterCreate {
+						groups, err := cli.manager.GetAffinityGroups(context.Background(), cli.lastCreatedIDs.Load().([]string))
+						require.NoError(t, err)
+						require.Empty(t, groups, "failed truncate must clean up any new table groups")
+					}
+				})
+			}
+			tk.MustExec("truncate table t")
+			tk.MustQuery("select * from t").Check(testkit.Rows())
+		})
+	}
 }
 
 func TestAffinityTruncatePartitionFailure(t *testing.T) {

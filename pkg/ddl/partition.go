@@ -2643,8 +2643,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 				}
 			}
 			if err = createTableAffinityGroupsInPD(jobCtx, replacement); err != nil {
-				job.State = model.JobStateCancelled
-				return ver, errors.Trace(err)
+				return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, err, tblInfo)
 			}
 		}
 		// This work as a flag to ignore Global Index entries from the new partitions!
