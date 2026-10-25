@@ -158,6 +158,16 @@ fn read_staleness_leaves_writes_and_current_reads_alone() {
         row_text(session.run("batch on a limit 1 update t set b = b + 1")),
         vec![vec!["2", "all succeeded"]]
     );
+    // An autocommit SELECT IS a stale read: 100 seconds ago the table did not
+    // exist yet (oracle: 1146). The in-process tier has no store history.
+    if !crate::tests_support::in_process_tier() {
+        crate::tests_support::assert_err(
+            session.run("select a, b from t order by a"),
+            1146,
+            "Table 'test.t' doesn't exist",
+        );
+    }
+    session.run("set @@tidb_read_staleness = 0").unwrap();
     assert_eq!(
         row_text(session.run("select a, b from t order by a")),
         vec![vec!["1", "3"], vec!["3", "5"]]

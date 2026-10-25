@@ -241,11 +241,15 @@ where
             }
             (catalog, registry_from_cluster(&loaded).registry)
         };
+        // The image before the statement: the plan writes only what the
+        // statement moves away from it.
+        let baseline = cluster_image_from_registry(&scratch);
         Ok(Box::new(RealPendingAccountChange {
             opener: Arc::clone(&self.opener),
             transaction: Some(transaction),
             catalog,
             scratch,
+            baseline,
             live: self.live.clone(),
             timeout: self.timeout,
             notifier: self.notifier.clone(),
@@ -263,6 +267,8 @@ where
     transaction: Option<RealTransaction<S>>,
     catalog: ClusterCatalog,
     scratch: PrivilegeRegistry,
+    /// [`cluster_image_from_registry`] of `scratch` as it was seeded.
+    baseline: tidb_exec::cluster_privilege_load::ClusterPrivileges,
     live: PrivilegeRegistry,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
@@ -287,6 +293,10 @@ where
             .take()
             .ok_or_else(|| SqlQueryError::unknown("the account change was already committed"))?;
         let desired = cluster_image_from_registry(&self.scratch);
+        let hints = AccountWriteHints {
+            baseline: Some(std::mem::take(&mut self.baseline)),
+            ..self.hints.clone()
+        };
         let plan = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             plan_account_write_with_hints(
@@ -294,7 +304,7 @@ where
                 &self.catalog,
                 &desired,
                 utc_now_timestamp(),
-                &self.hints,
+                &hints,
                 &mut |db, table, minimum, count| {
                     reserve_account_ids(&self.opener, self.timeout, db, table, minimum, count)
                 },

@@ -965,6 +965,16 @@ impl Session {
         stmt: Stmt,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::StatementExecution<'a>, DriverError> {
+        // On a node a write commits through the node, as Go's
+        // `ExecutePreparedStmt` does on its store; privileges are checked
+        // there against the schema the bound statement resolves to now.
+        if !matches!(stmt, Stmt::Query(_)) {
+            if let Some(mut node) = self.node.take() {
+                let output = node.run_bound_prepared_write(self, stmt, prepared);
+                self.node = Some(node);
+                return Ok(crate::StatementExecution::Complete(output?));
+            }
+        }
         Ok(self.open_bound_record_set_for(stmt, prepared)?.attach(self))
     }
 
@@ -974,6 +984,7 @@ impl Session {
         stmt: Stmt,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::OpenedStatement, DriverError> {
+        self.bind_node_snapshot_for_open_statement()?;
         self.begin_statement_execution(prepared.sql())?;
         let result =
             self.prepare_bound_execution(prepared.sql(), stmt, prepared.privilege_requests());

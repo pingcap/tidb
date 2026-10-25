@@ -413,16 +413,16 @@ fn alter_database_charset_settles_the_pair_and_no_ops_when_already_true() {
         DdlPlan::Write(_) => panic!("a no-op charset must publish nothing"),
     }
 
-    // A collation that does not belong to the written charset is refused at
-    // admission, under Go's own 1253 rather than the generic 1105.
+    // A collation of another charset is refused at admission: Go
+    // `AlterSchema` walks the options in order and answers 1302 (oracle).
     let parsed = tidb_parser::parse("ALTER DATABASE u6 CHARACTER SET latin1 COLLATE utf8mb4_bin")
         .expect("the fixture SQL parses");
     let error = lower_ddl(&parsed, "u6").expect_err("a mismatched pair is refused");
-    assert_eq!(error.code, 1253, "{error:?}");
+    assert_eq!(error.code, 1302, "{error:?}");
     assert!(
-        error
-            .reason
-            .contains("COLLATION 'utf8mb4_bin' is not valid for CHARACTER SET 'latin1'"),
+        error.reason.contains(
+            "Conflicting declarations: 'CHARACTER SET latin1' and 'CHARACTER SET utf8mb4'"
+        ),
         "{error:?}"
     );
 

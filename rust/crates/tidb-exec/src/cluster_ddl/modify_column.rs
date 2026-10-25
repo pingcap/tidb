@@ -1224,7 +1224,7 @@ fn update_index_col(part: &mut tidb_model::index::IndexColumn, column: &tidb_mod
 fn adjust_foreign_key_children(
     catalog: &ClusterCatalog,
     active: &crate::ddl_job_table::ActiveDdlJob,
-    info: &TableInfo,
+    info: &mut TableInfo,
     new: &tidb_model::ColumnInfo,
     old: &tidb_model::ColumnInfo,
 ) -> Result<Vec<(i64, TableInfo)>, DdlPlanError> {
@@ -1234,6 +1234,37 @@ fn adjust_foreign_key_children(
         return Ok(Vec::new());
     }
     let schema = active.job.schema_name.to_string();
+    let table_name = info.name.lowercase().to_owned();
+    let rename_ref_cols = |fk: &mut tidb_model::table::FKInfo| -> bool {
+        if fk.version < tidb_model::table::FK_VERSION1
+            || fk.ref_schema.lowercase() != schema
+            || fk.ref_table.lowercase() != table_name
+        {
+            return false;
+        }
+        let mut changed = false;
+        let columns: Vec<CiString> = fk
+            .ref_cols
+            .snapshot()
+            .into_iter()
+            .map(|column| {
+                if column.lowercase() == old.name.lowercase() {
+                    changed = true;
+                    new.name.clone()
+                } else {
+                    column.clone()
+                }
+            })
+            .collect();
+        fk.ref_cols = GoSharedSlice::from_vec(columns);
+        changed
+    };
+    // Go seeds its foreign-key helper with the table being modified
+    // (`fkh.addLoadedTable`), so a self-referencing constraint is rewritten
+    // in that same `TableInfo` rather than as a separate child write.
+    for fk in info.foreign_keys.iter_deref() {
+        rename_ref_cols(&mut *fk.write());
+    }
     let mut children: Vec<(i64, TableInfo)> = Vec::new();
     for database in &catalog.databases {
         for child in &database.tables {
@@ -1243,27 +1274,7 @@ fn adjust_foreign_key_children(
             let mut changed = false;
             let child_info = child.clone_like_go();
             for fk in child_info.foreign_keys.iter_deref() {
-                let mut fk = fk.write();
-                if fk.version < tidb_model::table::FK_VERSION1
-                    || fk.ref_schema.lowercase() != schema
-                    || fk.ref_table.lowercase() != info.name.lowercase()
-                {
-                    continue;
-                }
-                let columns: Vec<CiString> = fk
-                    .ref_cols
-                    .snapshot()
-                    .into_iter()
-                    .map(|column| {
-                        if column.lowercase() == old.name.lowercase() {
-                            changed = true;
-                            new.name.clone()
-                        } else {
-                            column.clone()
-                        }
-                    })
-                    .collect();
-                fk.ref_cols = GoSharedSlice::from_vec(columns);
+                changed |= rename_ref_cols(&mut *fk.write());
             }
             if changed {
                 children.push((database.info.id, child_info));
@@ -1295,7 +1306,7 @@ fn finish_modify_column_without_reorg(
         active.job.state = JobState::ROLLINGBACK;
         return Err(error);
     }
-    let children = adjust_foreign_key_children(catalog, active, &target.info, new, &old)?;
+    let children = adjust_foreign_key_children(catalog, active, &mut target.info, new, &old)?;
     if let Err(error) = check_table_info_valid(&target.info) {
         // Go: the NOT NULL change was already in the definition.
         active.job.state = JobState::ROLLINGBACK;

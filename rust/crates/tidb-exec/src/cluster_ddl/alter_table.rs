@@ -1447,6 +1447,8 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
             } else {
                 old.del_flag(no_default);
             }
+            crate::table_info_build::recheck_column_default_in_reorg_context(&old)
+                .map_err(|error| cancel_ddl_job(active, DdlPlanError::Admission(error)))?;
         }
         ActionType::ACTION_SHARD_ROW_ID => {
             let args = tidb_model::get_shard_row_id_args(&mut active.job)

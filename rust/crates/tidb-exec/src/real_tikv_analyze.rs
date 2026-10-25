@@ -280,9 +280,10 @@ pub struct ClusterAnalyzeReport {
     analyzed_index_ids: Vec<i64>,
     historical_stats_table_ids: Vec<i64>,
     cache_update_physical_ids: Vec<i64>,
-    /// go `builder.go:3194`'s build-time sample-rate NOTE, drained to the
-    /// session as Note-level 1105 rows.
-    pub sample_rate_notes: Vec<(u16, String)>,
+    /// Go's build-time diagnostics as `(is_note, code, message)`: the
+    /// planner's missing-explicit-columns WARNING and `builder.go:3185`/
+    /// `3194`'s sample-rate NOTEs.
+    pub build_diagnostics: Vec<(bool, u16, String)>,
 }
 
 impl ClusterAnalyzeReport {
@@ -315,9 +316,8 @@ pub struct ResolvedClusterAnalyze {
     ignored_partition_overrides: bool,
     run_full_sampling: bool,
     independent_index_ids: Vec<i64>,
-    /// go `builder.go:3194`'s build-time sample-rate NOTE (generic 1105),
-    /// one per auto-rated physical table.
-    sample_rate_notes: Vec<(u16, String)>,
+    /// See [`ClusterAnalyzeReport::build_diagnostics`].
+    build_diagnostics: Vec<(bool, u16, String)>,
 }
 
 impl ResolvedClusterAnalyze {
@@ -529,14 +529,28 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         !statement.persist_options || statement.partitions.is_empty(),
         statement.dynamic_partition_prune,
     );
-    let mut sample_rate_notes = Vec::new();
+    let mut build_diagnostics = Vec::new();
     let pseudo_info = crate::cluster_stats_load::StatsTableSchema::of_table_info(&table)
         .pseudo_table_info(table.id);
     // Go `Handle.isSystemTable`: `filter.IsSystemSchema(db.Name.L)`.
     let pseudo_cacheable = table.temp_table_type == tidb_model::TempTableType::NONE
         && !tidb_util::filter::is_system_schema(&tidb_hack::go_to_lower(&statement.schema));
     for options in &mut resolution.physical {
-        options.columns = final_column_choice(&table, &options.columns)?;
+        let (columns, missing) = final_column_choice(&table, &options.columns)?;
+        options.columns = columns;
+        // Go's planner warns once, while it builds the column list.
+        if let Some(missing) = missing {
+            if build_diagnostics.is_empty() {
+                build_diagnostics.push((
+                    false,
+                    1105,
+                    format!(
+                        "Columns {missing} are missing in ANALYZE but their stats are needed \
+                         for calculating stats for indexes/primary key/extended stats"
+                    ),
+                ));
+            }
+        }
         if options.effective.num_samples == 0 && options.effective.sample_rate.is_none() {
             let partition = partition_names
                 .get(&options.physical_id)
@@ -568,18 +582,27 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
                 partition,
             );
             options.effective.sample_rate = Some(rate);
-            // go appends this as a NOTE at build time
-            // (`builder.go:3194`, `sc.AppendNote`, generic 1105). The
-            // partition-named variant (builder.go:3185) has no cluster
-            // caller yet.
-            sample_rate_notes.push((
-                1105,
+            // Go appends this NOTE per sampling task at build time
+            // (`builder.go:3185`/`3194`, `sc.AppendNote`, generic 1105). A
+            // partitioned table's logical entry is no task of its own, and a
+            // partition's task names the partition.
+            if table.partition.is_some() && options.physical_id == table.id {
+                continue;
+            }
+            let message = if partition.is_empty() {
                 format!(
                     "Analyze use auto adjusted sample rate {:.6} for table {}.{}, \
                      reason to use this rate is \"{}\"",
                     rate, statement.schema, statement.table, reason
-                ),
-            ));
+                )
+            } else {
+                format!(
+                    "Analyze use auto adjusted sample rate {:.6} for table {}.{}'s partition {}, \
+                     reason to use this rate is \"{}\"",
+                    rate, statement.schema, statement.table, partition, reason
+                )
+            };
+            build_diagnostics.push((true, 1105, message));
         }
     }
     let mut selection_transaction = opener
@@ -641,7 +664,7 @@ pub fn resolve_cluster_analyze_statement<S: StoreClient>(
         ignored_partition_overrides: resolution.ignored_partition_overrides,
         run_full_sampling: index_tasks.run_full_sampling,
         independent_index_ids: index_tasks.independent_index_ids,
-        sample_rate_notes,
+        build_diagnostics,
     })
 }
 
@@ -848,12 +871,15 @@ fn analyze_partition_ids(
         .collect()
 }
 
+/// The explicit column list plus the columns an index, the handle or an
+/// extended statistic needs; the second value names those added columns in
+/// table order (Go `getMustAnalyzedColumns`' warning), when there are any.
 fn final_column_choice(
     table: &tidb_model::table_info::TableInfo,
     columns: &AnalyzeColumnChoice,
-) -> Result<AnalyzeColumnChoice, ClusterAnalyzeError> {
+) -> Result<(AnalyzeColumnChoice, Option<String>), ClusterAnalyzeError> {
     let AnalyzeColumnChoice::Explicit(names) = columns else {
-        return Ok(columns.clone());
+        return Ok((columns.clone(), None));
     };
     let mut selected = HashSet::new();
     for name in names {
@@ -869,8 +895,18 @@ fn final_column_choice(
             })?;
         selected.insert(column.read().id);
     }
+    let explicit = selected.clone();
     add_mandatory_columns(table, &mut selected, false);
-    Ok(AnalyzeColumnChoice::Explicit(
+    let missing: Vec<String> = table
+        .cols()
+        .iter_deref()
+        .filter_map(|column| {
+            let column = column.read();
+            (selected.contains(&column.id) && !explicit.contains(&column.id))
+                .then(|| column.name.original().to_owned())
+        })
+        .collect();
+    let choice = AnalyzeColumnChoice::Explicit(
         table
             .cols()
             .iter_deref()
@@ -881,7 +917,8 @@ fn final_column_choice(
                     .then(|| column.name.original().to_owned())
             })
             .collect(),
-    ))
+    );
+    Ok((choice, (!missing.is_empty()).then(|| missing.join(","))))
 }
 
 /// Saves the merged raw options in Go's later, independent restricted
@@ -947,6 +984,22 @@ fn find_statement_table<'catalog>(
         })
         .ok_or_else(|| {
             ClusterAnalyzeError::MissingTable(format!("{}.{}", statement.schema, statement.table))
+        })
+        .and_then(|table| {
+            // Go `buildAnalyzeTable` refuses both by the name as written.
+            if table.is_view() {
+                return Err(ClusterAnalyzeError::Other(format!(
+                    "analyze view {} is not supported now",
+                    statement.table
+                )));
+            }
+            if table.is_sequence() {
+                return Err(ClusterAnalyzeError::Other(format!(
+                    "analyze sequence {} is not supported now",
+                    statement.table
+                )));
+            }
+            Ok(table)
         })
 }
 
@@ -1116,7 +1169,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
                 predicate_columns_empty,
                 killer,
                 resource_group,
-                &resolved.sample_rate_notes,
+                &resolved.build_diagnostics,
                 row_ids,
             )
         }));
@@ -1159,7 +1212,7 @@ pub fn commit_cluster_analyze<S: StoreClient>(
         analyzed_index_ids: Vec::new(),
         historical_stats_table_ids: Vec::new(),
         cache_update_physical_ids: Vec::new(),
-        sample_rate_notes: Vec::new(),
+        build_diagnostics: Vec::new(),
     });
     for next in reports {
         merge_analyze_report(&mut report, next);
@@ -2306,7 +2359,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
     predicate_columns_empty_for_task: bool,
     killer: &SqlKiller,
     resource_group: &str,
-    sample_rate_notes: &[(u16, String)],
+    build_diagnostics: &[(bool, u16, String)],
     row_ids: Option<&std::sync::Arc<dyn crate::table_from_meta::TableAutoIds>>,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let mut sample_transaction = opener
@@ -2446,7 +2499,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
                 analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
                 historical_stats_table_ids: Vec::new(),
                 cache_update_physical_ids: Vec::new(),
-                sample_rate_notes: sample_rate_notes.to_vec(),
+                build_diagnostics: build_diagnostics.to_vec(),
             });
         }
         return Err(ClusterAnalyzeError::Other(
@@ -2472,7 +2525,7 @@ fn commit_cluster_analyze_target<S: StoreClient>(
         analyzed_index_ids: report.stats.indexes.iter().map(|item| item.id).collect(),
         historical_stats_table_ids: vec![report.stats.table_id],
         cache_update_physical_ids: Vec::new(),
-        sample_rate_notes: sample_rate_notes.to_vec(),
+        build_diagnostics: build_diagnostics.to_vec(),
     };
     // The commit mints its own deadline here rather than inheriting one from
     // function entry: everything above it -- the catalog read, the previous
@@ -2560,7 +2613,7 @@ fn commit_cluster_independent_index<S: StoreClient>(
         (report, write, inserted_meta)
     };
     let mut receipt = ClusterAnalyzeReport {
-        sample_rate_notes: Vec::new(),
+        build_diagnostics: Vec::new(),
         table_id: report.stats.table_id,
         version: start_ts,
         scanned_rows: report.scanned_rows,
@@ -3573,7 +3626,12 @@ mod tests {
         assert_eq!(
             final_column_choice(&table, &AnalyzeColumnChoice::Explicit(vec!["c".to_owned()]))
                 .expect("the final LIST is valid"),
-            AnalyzeColumnChoice::Explicit(vec!["a".to_owned(), "b".to_owned(), "c".to_owned(),])
+            (
+                AnalyzeColumnChoice::Explicit(
+                    vec!["a".to_owned(), "b".to_owned(), "c".to_owned(),]
+                ),
+                Some("a,b".to_owned())
+            )
         );
     }
 

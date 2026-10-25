@@ -300,6 +300,33 @@ impl MockStoreConnection {
         result
     }
 
+    /// Runs a bound prepared write through the node connection with
+    /// `session` inside it; see [`ClusterServerSession::run_bound_prepared_write`].
+    pub(crate) fn run_bound_prepared_write(
+        &mut self,
+        session: &mut Session,
+        bound: tidb_ast::Stmt,
+        prepared: &crate::PreparedAst,
+    ) -> Result<StmtOutput, tidb_executor::DriverError> {
+        std::mem::swap(session, self.connection.driver_session_mut());
+        let result = self.connection.run_bound_prepared_write(bound, prepared);
+        std::mem::swap(session, self.connection.driver_session_mut());
+        result
+    }
+
+    /// Rebuilds `session`'s catalog from the node when its schema is stale.
+    pub(crate) fn refresh_catalog(&mut self, session: &mut Session) {
+        std::mem::swap(session, self.connection.driver_session_mut());
+        self.connection.refresh_catalog();
+        std::mem::swap(session, self.connection.driver_session_mut());
+    }
+
+    /// Runs the domain binding owner's GC; see
+    /// [`ClusterServerSession::gc_global_bindings`].
+    pub(crate) fn gc_global_bindings(&self) -> Result<(), tidb_executor::DriverError> {
+        self.connection.gc_global_bindings()
+    }
+
     /// Puts `session` back inside the connection, which then closes with it
     /// (Go `session.Close`: roll back, release table locks and pins).
     pub(crate) fn close(mut self, session: &mut Session) {

@@ -568,12 +568,21 @@ fn show_table_regions_lists_split_regions_as_go_does() {
         .run("create table t(a int primary key, b int, c varchar(10), key ib(b), unique key uc(c))")
         .unwrap();
     // One region for everything, and the column set Go builds.
+    // The ids and the WRITTEN_BYTES of a real store are its own (oracle: a
+    // region the store split earlier, bytes from the bootstrap); only the
+    // in-process tier's fresh mock region has fixed values.
+    let in_process = crate::tests_support::in_process_tier();
     let one = rows(&mut session, "show table t regions");
     assert_eq!(one.len(), 1);
-    assert_eq!(
-        one[0],
-        vec!["2", "", "", "3", "1", "3", "0", "0", "0", "0", "0", "", ""]
-    );
+    if in_process {
+        assert_eq!(
+            one[0],
+            vec!["2", "", "", "3", "1", "3", "0", "0", "0", "0", "0", "", ""]
+        );
+    } else {
+        assert_eq!(one[0].len(), 13);
+        assert_eq!(one[0][3], one[0][5], "a single peer is the leader");
+    }
     assert_eq!(rows(&mut session, "show table t index ib regions"), one);
     assert_eq!(
         split(
@@ -584,7 +593,11 @@ fn show_table_regions_lists_split_regions_as_go_does() {
     );
     let index = rows(&mut session, "show table t index ib regions");
     let ids: Vec<&str> = index.iter().map(|row| row[0].as_str()).collect();
-    assert_eq!(ids, vec!["2", "4", "6"]);
+    if in_process {
+        assert_eq!(ids, vec!["2", "4", "6"]);
+    } else {
+        assert_eq!(ids.len(), 3);
+    }
     // Region 4 starts where region 2 ends, and the decoded keys carry the
     // table id, the index id and the hex of the encoded value.
     assert_eq!(index[0][2], index[1][1]);
@@ -593,12 +606,25 @@ fn show_table_regions_lists_split_regions_as_go_does() {
     // The table's own listing adds the record range, whose region was
     // created last (the split key `t{id}_i2` cuts off the unique index).
     let all = rows(&mut session, "show table t regions");
-    assert_eq!(all[0][0], "8");
     assert_eq!(all.len(), 4);
+    assert_eq!(all[0][1], index[2][2], "the record range follows the index");
+    if in_process {
+        assert_eq!(all[0][0], "8");
+    }
     // `WHERE` filters the listing like any SHOW.
+    let last_index_region = index[2][0].clone();
+    let expected: Vec<String> = all
+        .iter()
+        .filter(|row| row[0].parse::<u64>().unwrap() > index[1][0].parse::<u64>().unwrap())
+        .map(|row| row[0].clone())
+        .collect();
+    assert!(expected.contains(&last_index_region));
     assert_eq!(
-        column(&mut session, "show table t regions where region_id > 4"),
-        vec!["8", "6"]
+        column(
+            &mut session,
+            &format!("show table t regions where region_id > {}", index[1][0])
+        ),
+        expected
     );
     assert_eq!(
         code(&mut session, "show table t index nope regions"),

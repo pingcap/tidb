@@ -49,10 +49,12 @@ fn key_shapes(session: &mut Session, table: &str) -> Vec<&'static str> {
         };
         Ok(std::sync::Arc::make_mut(kv).stored_keys().unwrap())
     };
-    // A node session reads the committed keys through a fresh snapshot; the
-    // in-process tier's committed keys are the shared catalog's.
+    // On the store the committed keys are what ANOTHER session's snapshot
+    // reads -- the session's own reads see its transaction's buffer, as in
+    // Go. The in-process tier's committed keys are the shared catalog's.
     let keys = if session.node.is_some() {
-        session.with_catalog_mut(read).unwrap()
+        let mut witness = Session::with_catalog(session.shared_catalog());
+        witness.with_catalog_mut(read).unwrap()
     } else {
         read(&mut session.shared_catalog().lock().unwrap()).unwrap()
     };

@@ -327,6 +327,34 @@ fn analyze_persists_effective_column_list_and_reuses_raw_options() {
             vec!["Note", "1105", "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""],
         ]
     );
+    if !crate::tests_support::in_process_tier() {
+        // Go persists the options in `mysql.analyze_options`.
+        let saved = |session: &mut Session| {
+            row_text(session.run(
+                "SELECT o.buckets, o.column_choice, o.column_ids FROM mysql.analyze_options o \
+                 JOIN information_schema.tables t ON o.table_id = t.tidb_table_id \
+                 WHERE t.table_schema = 'test' AND t.table_name = 't'",
+            ))
+        };
+        assert_eq!(saved(&mut session), [["7", "LIST", "1,2,3"]]);
+        session.run("ANALYZE TABLE t").unwrap();
+        assert_eq!(
+            saved(&mut session)[0][0],
+            "7",
+            "a statement without BUCKETS reuses the persisted raw value"
+        );
+        session
+            .run("SET GLOBAL tidb_persist_analyze_options = OFF")
+            .unwrap();
+        session
+            .run("ANALYZE TABLE t ALL COLUMNS WITH 9 BUCKETS")
+            .unwrap();
+        assert_eq!(saved(&mut session), [["7", "LIST", "1,2,3"]]);
+        session
+            .run("SET GLOBAL tidb_persist_analyze_options = ON")
+            .unwrap();
+        return;
+    }
     let table_id = session
         .with_catalog_mut(|catalog| {
             let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t") else {

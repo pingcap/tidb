@@ -2537,6 +2537,68 @@ pub(crate) fn set_column_default(
     persist_column_default(name, info, staged, context)
 }
 
+/// Go `updateColumnDefaultValue`'s owner-side recheck: the installed default
+/// runs `checkColumnDefaultValue` and then `checkDefaultValue` again under
+/// `newReorgExprCtx()`, which is ModeNone plus the default statement flags,
+/// not the session's SQL mode. That is why `SET DEFAULT '2999-00-00'` is 1067
+/// under STRICT_TRANS_TABLES even though MODIFY COLUMN accepts the same
+/// spelling.
+pub(crate) fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()> {
+    // An expression default or a clock marker has no literal to convert;
+    // Go's `getColDefaultValue` evaluates it (`GetTimeValue` takes
+    // CURRENT_TIMESTAMP and CURRENT_DATE on a time column), which cannot fail
+    // here once the session pass admitted it.
+    if info.default_is_expr || crate::table_from_meta::stored_clock_marker(info).is_some() {
+        return Ok(());
+    }
+    let Some(text) = info.get_default_value().builtin_string().cloned() else {
+        return Ok(());
+    };
+    if matches!(
+        info.field_type.code(),
+        FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+    ) && text.as_bytes().eq_ignore_ascii_case(b"CURRENT_DATE")
+    {
+        return Ok(());
+    }
+    let name = info.name.original();
+    let collation = tidb_datatype::Collation::from_name(info.field_type.collation_name())
+        .unwrap_or(tidb_datatype::Collation::Binary);
+    let value = tidb_datatype::Datum::String(tidb_datatype::StringDatum::new(
+        text.as_bytes().to_vec(),
+        collation,
+    ));
+    let zone = tidb_datatype::SessionTimeZone::utc();
+    let reorg_context = tidb_executor::StmtContext::for_dml(false, false, false);
+    let (has_default, _) = tidb_executor::ddl::check_column_default_value(
+        value.clone(),
+        &info.field_type,
+        name,
+        &reorg_context,
+        &zone,
+    )
+    .map_err(default_admission_error)?;
+    if !has_default {
+        return Err(default_admission_error(
+            tidb_executor::DriverError::InvalidDefault(name.to_owned()),
+        ));
+    }
+    // `checkDefaultValue` runs only when the column keeps a default.
+    if info.field_type.has_flag(FieldTypeFlags::NO_DEFAULT_VALUE) {
+        return Ok(());
+    }
+    tidb_executor::ddl::validate_column_default(
+        &value,
+        &info.field_type,
+        name,
+        info.version,
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+        &zone,
+    )
+    .map_err(default_admission_error)?;
+    Ok(())
+}
+
 /// Go `removeOnUpdateNowFlag`.
 fn remove_on_update_now(field_type: &mut FieldType) {
     if field_type.has_flag(FieldTypeFlags::TIMESTAMP) {

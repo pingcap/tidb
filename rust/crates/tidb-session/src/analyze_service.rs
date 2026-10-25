@@ -236,6 +236,11 @@ impl Session {
         statement: &AnalyzeStatement,
         report: &ClusterAnalyzeReport,
     ) {
+        // Go's planner raises these while it builds the plan, before any
+        // execution diagnostic.
+        for (_, code, warning) in report.build_diagnostics.iter().filter(|(note, ..)| !note) {
+            self.append_routed_warning(*code, warning.clone());
+        }
         if report.predicate_columns_empty {
             self.append_routed_warning(
                 1105,
@@ -271,8 +276,8 @@ impl Session {
         for (code, warning) in &report.global_stats_warnings {
             self.append_routed_warning(*code, warning.clone());
         }
-        // Go `builder.go:3194`: the sample-rate notice is a NOTE.
-        for (code, note) in &report.sample_rate_notes {
+        // Go `builder.go:3185`/`3194`: the sample-rate notice is a NOTE.
+        for (_, code, note) in report.build_diagnostics.iter().filter(|(note, ..)| *note) {
             self.append_routed_note(*code, note.clone());
         }
     }

@@ -1238,7 +1238,7 @@ fn clustered_handle_offsets(
 /// Whether a stored declared default is Go's clock marker on a temporal
 /// column: the word `CURRENT_TIMESTAMP`, optionally with the column's
 /// fractional precision (`CURRENT_TIMESTAMP(3)`).
-fn stored_clock_marker(column: &tidb_model::ColumnInfo) -> Option<Option<String>> {
+pub(crate) fn stored_clock_marker(column: &tidb_model::ColumnInfo) -> Option<Option<String>> {
     if !matches!(
         column.field_type.code(),
         tidb_datatype::FieldTypeCode::Timestamp | tidb_datatype::FieldTypeCode::Datetime

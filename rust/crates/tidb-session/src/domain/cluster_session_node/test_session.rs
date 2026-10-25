@@ -149,6 +149,66 @@ impl ClusterServerSession {
         self.run_parsed_statement_output(sql, parsed)
     }
 
+    /// A bound prepared write, as [`Self::execute_general`] runs one for
+    /// COM_STMT_EXECUTE: inside the store's statement attempt, with the
+    /// retained definition supplying the parameter values the plan reads.
+    pub(crate) fn run_bound_prepared_write(
+        &mut self,
+        bound: Stmt,
+        prepared: &crate::PreparedAst,
+    ) -> Result<StmtOutput, tidb_executor::DriverError> {
+        self.rebuild_catalog_if_stale();
+        let resource_group = self
+            .store
+            .session
+            .statement_resource_group(&bound)
+            .into_owned();
+        let shape = self.store.session.statement_read_shape_bound(&bound);
+        self.store
+            .session
+            .begin_prepared_routed_statement_observation(prepared.sql(), &bound);
+        self.store.session.set_binary_prepared_execution(true);
+        self.store.activate_statement_txn = self.activates_txn_at_build(&bound);
+        let attempt = self.with_prelocked_statement(shape, &resource_group, true, |session| {
+            session
+                .run_parsed_bound_owned_for(bound.clone(), prepared)
+                .map_err(super::map_error)
+        });
+        self.store.activate_statement_txn = false;
+        self.store.session.set_binary_prepared_execution(false);
+        let affected_rows = match &attempt {
+            Ok(StmtOutput::Affected(count)) => *count,
+            _ => 0,
+        };
+        self.store
+            .session
+            .finish_routed_statement_observation_with_error(
+                attempt.is_ok(),
+                affected_rows,
+                attempt.as_ref().err().map(|error| error.error_string()),
+            );
+        let output = attempt.map_err(driver_error)?;
+        self.store.session.add_statement_read_keys(affected_rows);
+        Ok(output)
+    }
+
+    /// Rebuilds the session's catalog when the node's schema moved on.
+    pub(crate) fn refresh_catalog(&mut self) {
+        self.rebuild_catalog_if_stale();
+    }
+
+    /// Go `Domain.globalBindHandleWorkerLoop`'s GC tick: the binding owner
+    /// deletes aged `deleted` tombstones through its internal session, on
+    /// the internal session's own clock.
+    pub(crate) fn gc_global_bindings(&self) -> Result<(), tidb_executor::DriverError> {
+        match &self.bindings {
+            Some(bindings) => bindings
+                .gc()
+                .map_err(tidb_executor::DriverError::unsupported),
+            None => Ok(()),
+        }
+    }
+
     /// [`Self::run_statement_output`] over a statement the caller already
     /// parsed and bound (a parameterized statement's markers replaced by its
     /// values), which re-parsing `sql` would lose.

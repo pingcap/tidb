@@ -788,6 +788,13 @@ fn dropped_binding_tombstones_are_swept_after_ten_leases() {
         ),
         "1"
     );
+    // Go stamps binding rows with the wall clock (`time.Now()` in
+    // `binding_operator.go`), so on a store `set timestamp` cannot age a
+    // tombstone; the node's owner GC is covered over aged rows in
+    // `unistore_cop`. The pinned-clock sweep below is the in-process tier's.
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     // An ordinary write no longer performs Domain maintenance. The owner
     // invokes GC after the ten-lease visibility window.
     session

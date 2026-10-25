@@ -2751,6 +2751,17 @@ impl Session {
         result
     }
 
+    /// Brings a node session's catalog up to the node's latest schema, as
+    /// every statement through the node does first; a no-op elsewhere.
+    pub(crate) fn refresh_node_catalog(&mut self) -> Result<(), DriverError> {
+        let Some(mut node) = self.node.take() else {
+            return Ok(());
+        };
+        node.refresh_catalog(self);
+        self.node = Some(node);
+        Ok(())
+    }
+
     /// One statement through this session's node connection.
     fn run_on_node(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
         let mut node = self.node.take().expect("a node-backed session");

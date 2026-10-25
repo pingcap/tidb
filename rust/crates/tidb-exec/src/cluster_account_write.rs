@@ -120,6 +120,13 @@ pub struct AccountWriteHints {
     /// and inserts the new set, so the surviving rows take fresh row ids and
     /// read back in the new set's order.
     pub rewrite_default_roles: bool,
+    /// The image the statement started from, read from the same snapshot.
+    /// Go's account executors write only the rows their statement changes
+    /// (CREATE USER inserts one row); with a baseline the plan likewise
+    /// leaves every row whose image did not move, so a value the image
+    /// models lossily (an empty `plugin` the privilege cache reads as the
+    /// default) is never rewritten by an unrelated statement.
+    pub baseline: Option<ClusterPrivileges>,
 }
 
 /// One planned account change: the mutations that make the cluster's rows
@@ -216,6 +223,81 @@ pub fn plan_account_write_with_hints<S: MetaSnapshot>(
 ) -> Result<AccountWritePlan, AccountWriteError> {
     let mut plan = AccountWritePlan::default();
     let mut changed = std::collections::BTreeSet::new();
+    let policy_values = account_policy_values(desired)?;
+    let baseline = hints
+        .baseline
+        .as_ref()
+        .map(|baseline| {
+            account_policy_values(baseline).map(|policies| (logical_tables(baseline), policies))
+        })
+        .transpose()?;
+    for (position, (table, desired_rows)) in logical_tables(desired).into_iter().enumerate() {
+        let scope = baseline.as_ref().map(|(tables, policies)| {
+            let base_rows = &tables[position].1;
+            // Go's `SET DEFAULT ROLE` rewrites a moved account's rows whole,
+            // so none of that account's rows is left in place.
+            let rewritten_accounts: std::collections::BTreeSet<(String, String)> =
+                if hints.rewrite_default_roles && table.name == DEFAULT_ROLES_TABLE {
+                    desired_rows
+                        .keys()
+                        .filter(|identity| !base_rows.contains_key(*identity))
+                        .chain(
+                            base_rows
+                                .keys()
+                                .filter(|identity| !desired_rows.contains_key(*identity)),
+                        )
+                        .map(|identity| (identity[0].clone(), identity[1].clone()))
+                        .collect()
+                } else {
+                    std::collections::BTreeSet::new()
+                };
+            BaselineScope {
+                unchanged: desired_rows
+                    .iter()
+                    .filter(|(identity, values)| {
+                        base_rows.get(*identity) == Some(*values)
+                            && policies.get(*identity) == policy_values.get(*identity)
+                            && !rewritten_accounts
+                                .contains(&(identity[0].clone(), identity[1].clone()))
+                    })
+                    .map(|(identity, _)| identity.clone())
+                    .collect(),
+                baseline_keys: base_rows.keys().cloned().collect(),
+            }
+        });
+        reconcile(
+            snapshot,
+            catalog,
+            &table,
+            &desired_rows,
+            &policy_values,
+            scope.as_ref(),
+            now,
+            hints,
+            &mut plan,
+            &mut changed,
+            reserve_ids,
+        )?;
+    }
+
+    plan.changed_users = changed.into_iter().collect();
+    Ok(plan)
+}
+
+/// Which rows of one table a baselined plan may touch.
+struct BaselineScope {
+    /// Desired rows identical, values and policy alike, to the baseline's.
+    unchanged: std::collections::BTreeSet<Vec<String>>,
+    /// Every row the baseline image holds: a stored row outside it is one
+    /// the statement never saw, so its absence from the image removes nothing.
+    baseline_keys: std::collections::BTreeSet<Vec<String>>,
+}
+
+/// The per-row policy columns each `mysql.user`/`password_history` row of
+/// `desired` stores.
+fn account_policy_values(
+    desired: &ClusterPrivileges,
+) -> Result<AccountPolicyValues, AccountWriteError> {
     let mut policy_values: AccountPolicyValues = desired
         .users
         .iter()
@@ -285,7 +367,12 @@ pub fn plan_account_write_with_hints<S: MetaSnapshot>(
         );
     }
 
-    for (table, desired_rows) in [
+    Ok(policy_values)
+}
+
+/// Every account table this writer reconciles, with `desired`'s rows for it.
+fn logical_tables(desired: &ClusterPrivileges) -> Vec<(AccountTable, LogicalRows)> {
+    vec![
         (user_table(), user_rows(desired)),
         (
             AccountTable {
@@ -331,23 +418,7 @@ pub fn plan_account_write_with_hints<S: MetaSnapshot>(
         (default_roles_table(), default_role_rows(desired)),
         (tables_priv_table(), table_grant_rows(desired)),
         (columns_priv_table(), column_grant_rows(desired)),
-    ] {
-        reconcile(
-            snapshot,
-            catalog,
-            &table,
-            &desired_rows,
-            &policy_values,
-            now,
-            hints,
-            &mut plan,
-            &mut changed,
-            reserve_ids,
-        )?;
-    }
-
-    plan.changed_users = changed.into_iter().collect();
-    Ok(plan)
+    ]
 }
 
 fn user_table() -> AccountTable {
@@ -728,6 +799,7 @@ fn reconcile<S: MetaSnapshot>(
     account_table: &AccountTable,
     desired: &LogicalRows,
     policy_values: &AccountPolicyValues,
+    scope: Option<&BaselineScope>,
     now: Time,
     hints: &AccountWriteHints,
     plan: &mut AccountWritePlan,
@@ -795,6 +867,23 @@ fn reconcile<S: MetaSnapshot>(
             .collect::<Result<Vec<_>, _>>()?;
         by_key.insert(identity, row);
     }
+    // A baselined plan writes the statement's delta alone: rows it left as
+    // they were, and stored rows it never saw, stay exactly as stored.
+    let owned_desired;
+    let desired = match scope {
+        Some(scope) => {
+            by_key.retain(|identity, _| {
+                scope.baseline_keys.contains(identity) && !scope.unchanged.contains(identity)
+            });
+            owned_desired = desired
+                .iter()
+                .filter(|(identity, _)| !scope.unchanged.contains(*identity))
+                .map(|(identity, values)| (identity.clone(), values.clone()))
+                .collect::<LogicalRows>();
+            &owned_desired
+        }
+        None => desired,
+    };
     // Go's `SET DEFAULT ROLE` rewrites an account's rows whole. An account
     // whose stored set differs from the desired one is taken out of `by_key`
     // here, so every desired row of it is inserted afresh (in the set's own

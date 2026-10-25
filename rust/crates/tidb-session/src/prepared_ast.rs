@@ -291,7 +291,10 @@ impl Session {
     }
 
     /// Parses and retains the statement under this session's current SQL mode.
-    pub fn prepare_ast(&self, sql: &str) -> Result<PreparedAst, DriverError> {
+    pub fn prepare_ast(&mut self, sql: &str) -> Result<PreparedAst, DriverError> {
+        // Go `PrepareExec` resolves names against the domain's latest schema;
+        // a node session's catalog is refreshed by its node first.
+        self.refresh_node_catalog()?;
         let statement = self.parse_statement(sql)?;
         self.prepare_ast_parsed(sql, statement)
     }

@@ -207,6 +207,11 @@ fn raw_and_parsed_state_are_atomic_across_session_global_and_default_writes() {
         [["52592:ON"]]
     );
 
+    // A node session takes its globals from the store's sysvar cache, never
+    // from an attached snapshot (`attach_globals` is a no-op there).
+    if !crate::tests_support::in_process_tier() {
+        return;
+    }
     let mut connected = Session::new();
     connected
         .run("SET @@tidb_opt_fix_control = '1:ON'")
@@ -503,13 +508,23 @@ fn fix_52592_disables_point_and_batch_paths_for_select_update_and_delete() {
         session.run("SELECT a FROM fix_path WHERE a IN (1,2)")
     });
     assert_eq!(row_text(rows), [["1"], ["2"]]);
-    assert_eq!((batch.gets, batch.scans), (2, 0));
+    // A store answers Go's BatchPointGet with ONE BatchGet request; the
+    // in-process tier reads each key on its own.
+    let batch_gets = if crate::tests_support::in_process_tier() {
+        2
+    } else {
+        1
+    };
+    assert_eq!((batch.gets, batch.scans), (batch_gets, 0));
     let (updated, point_update) = tidb_executor::storage::capture_storage_ops(|| {
         session.run("UPDATE fix_path SET c=c WHERE a=3")
     });
     updated.unwrap();
     assert_eq!(point_update.scans, 0);
 
+    // A store's coprocessor reads run on its workers, outside this thread's
+    // storage probe; the absent point get is what holds on both tiers.
+    let in_process = crate::tests_support::in_process_tier();
     session
         .run("SET @@tidb_opt_fix_control = '52592:ON'")
         .unwrap();
@@ -518,18 +533,18 @@ fn fix_52592_disables_point_and_batch_paths_for_select_update_and_delete() {
     });
     assert_eq!(row_text(rows), [["1"]]);
     assert_eq!(range.gets, 0);
-    assert!(range.scans > 0);
+    assert!(!in_process || range.scans > 0);
     let (rows, batch_ranges) = tidb_executor::storage::capture_storage_ops(|| {
         session.run("SELECT a FROM fix_path WHERE a IN (1,2)")
     });
     assert_eq!(row_text(rows), [["1"], ["2"]]);
     assert_eq!(batch_ranges.gets, 0);
-    assert!(batch_ranges.scans > 0);
+    assert!(!in_process || batch_ranges.scans > 0);
     let (updated, update_range) = tidb_executor::storage::capture_storage_ops(|| {
         session.run("UPDATE fix_path SET b=b+10 WHERE a=1")
     });
     updated.unwrap();
-    assert!(update_range.scans > 0);
+    assert!(!in_process || update_range.scans > 0);
     assert_eq!(
         row_text(session.run("SELECT b FROM fix_path WHERE a=1")),
         [["11"]]
@@ -545,7 +560,7 @@ fn fix_52592_disables_point_and_batch_paths_for_select_update_and_delete() {
         )
     });
     updated.unwrap();
-    assert!(hinted_update_range.scans > 0);
+    assert!(!in_process || hinted_update_range.scans > 0);
     let (deleted, hinted_delete_range) = tidb_executor::storage::capture_storage_ops(|| {
         session.run(
             "DELETE /*+ SET_VAR(tidb_opt_fix_control='52592:ON') */ \
@@ -553,7 +568,7 @@ fn fix_52592_disables_point_and_batch_paths_for_select_update_and_delete() {
         )
     });
     deleted.unwrap();
-    assert!(hinted_delete_range.scans > 0);
+    assert!(!in_process || hinted_delete_range.scans > 0);
     assert_eq!(
         row_text(session.run("SELECT a,c FROM fix_path ORDER BY a")),
         [["1", "1"], ["2", "9"]]
