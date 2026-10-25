@@ -22,7 +22,7 @@ impl ClusterSessionFactory {
     /// session, without retaining a client connection or transaction.
     pub fn peer_session_builder(self: &Arc<Self>) -> Arc<dyn Fn() -> Session + Send + Sync> {
         let catalog = Arc::clone(&self.catalog);
-        let stats = Arc::clone(&self.stats);
+        let statistics_view = Arc::clone(&self.statistics_view);
         let auto_ids = Arc::clone(&self.auto_ids);
         let index_usage = self.stats_usage.index_usage_collector();
         let templates = Arc::clone(&self.session_kv_cache);
@@ -36,12 +36,12 @@ impl ClusterSessionFactory {
             let built = cluster_session_catalog_with_templates(
                 &loaded,
                 &storage,
-                Some(&stats.load()),
+                Some(Arc::clone(&statistics_view)),
                 auto_ids.as_ref(),
                 &storage,
                 Some(&mut templates),
             );
-            let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+            let mut session = Session::over_catalog(Arc::new(Mutex::new(built.catalog)));
             session.set_index_usage_collector(Arc::clone(&index_usage));
             session
         })

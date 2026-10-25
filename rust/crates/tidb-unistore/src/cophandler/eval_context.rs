@@ -284,15 +284,14 @@ mod tests {
             let expr = call(sig, vec![column(0, 8), column(1, tp)], tp);
             let converted = convert_expr_with_context(&expr, &ctx).unwrap();
             assert_eq!(
-                super::super::eval_expr(&converted, &[Datum::Int(1), value], 8, &ctx.zone).unwrap(),
+                super::super::eval_expr(&converted, &[Datum::Int(1), value]).unwrap(),
                 expected
             );
         }
         let expr = call(tipb::ScalarFuncSig::Lower, vec![column(0, 253)], 253);
         let converted = convert_expr_with_context(&expr, &ctx).unwrap();
         assert_eq!(
-            super::super::eval_expr(&converted, &[Datum::Bytes(b"1tail".to_vec())], 8, &ctx.zone)
-                .unwrap(),
+            super::super::eval_expr(&converted, &[Datum::Bytes(b"1tail".to_vec())]).unwrap(),
             Some(1)
         );
         let warnings = ctx.take_warnings();
@@ -453,32 +452,11 @@ mod child_error_tests {
             0,
         ));
         let converted = super::super::convert_expr_with_context(&expr, &ctx).unwrap();
-        let result = super::super::eval_expr(&converted, &[], 4, &ctx.zone);
+        let result = super::super::eval_expr(&converted, &[]);
         assert!(
             result.is_err(),
             "strict cast error must propagate, got {result:?}"
         );
-        // Each legacy channel must preserve errors before inspecting the result's kind.
-        let child = super::super::convert_expr_with_context(&expr.children[0], &ctx).unwrap();
-        assert!(super::super::eval_real(Some(&child), &[], 4, &ctx.zone).is_err());
-        assert!(super::super::eval_decimal(Some(&child), &[], 4, &ctx.zone).is_err());
-        assert!(super::super::eval_bytes(Some(&child), &[], 4, &ctx.zone).is_err());
-        assert!(super::super::eval_json(Some(&child), &[], 4, &ctx.zone).is_err());
-        assert!(super::super::eval_time(Some(&child), &[], 4, &ctx.zone).is_err());
-        assert!(super::super::eval_duration(Some(&child), &[], 4, &ctx.zone).is_err());
-        for (sig, left, expected) in [
-            (super::super::SimpleSig::LogicalAnd, 0, 0),
-            (super::super::SimpleSig::LogicalOr, 1, 1),
-        ] {
-            let lazy = super::super::SimpleExpr::Func(
-                sig,
-                vec![super::super::SimpleExpr::Int(left), child.clone()],
-            );
-            assert_eq!(
-                super::super::eval_expr(&lazy, &[], 4, &ctx.zone).unwrap(),
-                Some(expected)
-            );
-        }
     }
 }
 #[cfg(test)]
@@ -814,17 +792,11 @@ mod next_boundary_audit {
         let ctx = ctx();
         let child = call(tipb::ScalarFuncSig::GtReal, vec![real(1.0), real(0.0)]);
         let alone = super::super::convert_expr_with_context(&child, &ctx).unwrap();
-        assert_eq!(
-            super::super::eval_expr(&alone, &[], 4, &ctx.zone).unwrap(),
-            Some(1)
-        );
+        assert_eq!(super::super::eval_expr(&alone, &[]).unwrap(), Some(1));
         let parent = call(tipb::ScalarFuncSig::IfInt, vec![child, int(1), int(0)]);
         let expr = super::super::convert_expr_with_context(&parent, &ctx)
             .expect("Go recursively decodes supported signatures");
-        assert_eq!(
-            super::super::eval_expr(&expr, &[], 4, &ctx.zone).unwrap(),
-            Some(1)
-        );
+        assert_eq!(super::super::eval_expr(&expr, &[]).unwrap(), Some(1));
     }
     #[test]
     fn empty_value_list_returns_false_like_go() {
@@ -837,10 +809,7 @@ mod next_boundary_audit {
         let pb = call(tipb::ScalarFuncSig::InInt, vec![int(1), list]);
         let expr = super::super::convert_expr_with_context(&pb, &ctx)
             .expect("Go expands ValueList into constant arguments");
-        assert_eq!(
-            super::super::eval_expr(&expr, &[], 4, &ctx.zone).unwrap(),
-            Some(0)
-        );
+        assert_eq!(super::super::eval_expr(&expr, &[]).unwrap(), Some(0));
     }
     #[test]
     fn null_comparison_still_reports_the_other_operands_error() {
@@ -853,7 +822,7 @@ mod next_boundary_audit {
         };
         let cast = call(tipb::ScalarFuncSig::CastStringAsInt, vec![bad]);
         let alone = super::super::convert_expr_with_context(&cast, &ctx).unwrap();
-        assert!(super::super::eval_expr(&alone, &[], 4, &ctx.zone).is_err());
+        assert!(super::super::eval_expr(&alone, &[]).is_err());
         let null = tipb::Expr {
             tp: Some(tipb::ExprType::Null as i32),
             ..Default::default()
@@ -872,7 +841,7 @@ mod next_boundary_audit {
             ] {
                 let pb = call(sig, args);
                 let expr = super::super::convert_expr_with_context(&pb, &ctx).unwrap();
-                let result = super::super::eval_expr(&expr, &[], 4, &ctx.zone);
+                let result = super::super::eval_expr(&expr, &[]);
                 assert!(
                     result.is_err(),
                     "Go evaluates both comparison operands, {sig:?}: {result:?}"
@@ -888,10 +857,7 @@ mod next_boundary_audit {
                 &ctx,
             )
             .unwrap();
-            assert_eq!(
-                super::super::eval_expr(&expr, &[], 4, &ctx.zone).unwrap(),
-                Some(expected)
-            );
+            assert_eq!(super::super::eval_expr(&expr, &[]).unwrap(), Some(expected));
         }
     }
     #[test]

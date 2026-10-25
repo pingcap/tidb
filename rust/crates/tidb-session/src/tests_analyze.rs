@@ -10,42 +10,9 @@
 //! so the assertions are on the ESTIMATES Go produced, not merely on
 //! `stats:pseudo` disappearing.
 
-use crate::analyze_arm::AnalyzePanicPhase;
 use crate::tests_support::*;
 use crate::*;
 use tidb_executor::TableEntry;
-
-struct AnalyzeUsage(
-    std::collections::HashMap<
-        tidb_model::TableItemID,
-        (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
-    >,
-);
-
-impl ColumnStatsUsageProvider for AnalyzeUsage {
-    fn load_column_stats_usage(
-        &self,
-        _location: &tidb_datatype::SessionTimeZone,
-        _resource_group: &str,
-    ) -> Result<
-        std::collections::HashMap<
-            tidb_model::TableItemID,
-            (Option<tidb_datatype::Time>, Option<tidb_datatype::Time>),
-        >,
-        String,
-    > {
-        Ok(self.0.clone())
-    }
-}
-
-fn analyze_usage_item(table_id: i64, column_id: i64) -> tidb_model::TableItemID {
-    tidb_model::TableItemID {
-        table_id,
-        id: column_id,
-        is_index: false,
-        is_sync_load_failed: false,
-    }
-}
 
 /// The scan row's `estRows` and `operator info`, which is where the statistics
 /// show up.
@@ -91,14 +58,50 @@ fn top_est_rows(session: &mut Session, sql: &str) -> String {
 /// TopN, every value of `a` is a TopN entry, so Go's selectivity is a count of
 /// rows rather than an interpolation. That is what makes them worth asserting
 /// -- a histogram that merely "looks analyzed" would not reproduce them.
+/// `(partition, name, is_index, distinct_count, null_count)` per
+/// `SHOW STATS_HISTOGRAMS` row of `table`: what Go's statistics tests read
+/// once a table is analyzed.
+fn stats_histograms(session: &mut Session, table: &str) -> Vec<[String; 5]> {
+    row_text(session.run(&format!(
+        "SHOW STATS_HISTOGRAMS WHERE table_name = '{table}'"
+    )))
+    .into_iter()
+    .map(|row| {
+        [
+            row[2].clone(),
+            row[3].clone(),
+            row[4].clone(),
+            row[6].clone(),
+            row[7].clone(),
+        ]
+    })
+    .collect()
+}
+
+/// The column names `SHOW STATS_HISTOGRAMS` lists for `table`'s own (not a
+/// partition's) statistics.
+fn histogram_columns(session: &mut Session, table: &str) -> std::collections::BTreeSet<String> {
+    stats_histograms(session, table)
+        .into_iter()
+        .filter(|row| row[2] == "0" && (row[0].is_empty() || row[0] == "global"))
+        .map(|row| row[1].clone())
+        .collect()
+}
+
+/// `(partition, row_count)` per `SHOW STATS_META` row of `table`.
+fn stats_meta_rows(session: &mut Session, table: &str) -> Vec<(String, String)> {
+    row_text(session.run(&format!("SHOW STATS_META WHERE table_name = '{table}'")))
+        .into_iter()
+        .map(|row| (row[2].clone(), row[5].clone()))
+        .collect()
+}
+
+fn names(list: &[&str]) -> std::collections::BTreeSet<String> {
+    list.iter().map(|name| (*name).to_owned()).collect()
+}
+
 #[test]
 fn first_analyze_without_cached_statistics_collects_small_table_distribution() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session.run("CREATE TABLE fresh_stats (a INT)").unwrap();
     session
@@ -150,14 +153,10 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
 
     // After: the real row count, and no `stats:pseudo` -- Go drops the token
     // once a table has one initialized histogram.
-    // On the store the freshly analyzed index `kb` is still evicted, which
-    // the Go server marks (asked of it: `stats:partial[kb:allEvicted]`); the
-    // in-process tier loads every histogram eagerly.
-    let expected = if crate::tests_support::in_process_tier() {
-        "keep order:false"
-    } else {
-        "keep order:false, stats:partial[kb:allEvicted]"
-    };
+    // Go testkit's store (stats lease disabled) holds every histogram the
+    // ANALYZE wrote fully loaded, so no item is marked partial (testkit
+    // probe; a server with a lease would mark `kb` allEvicted).
+    let expected = "keep order:false";
     assert_eq!(
         scan_row(&mut session, "EXPLAIN SELECT * FROM t"),
         ("10.00".to_owned(), expected.to_owned())
@@ -205,12 +204,6 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
 /// range into a partition-local Batch Point Get.
 #[test]
 fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("SET @@tidb_partition_prune_mode = 'static'")
@@ -226,30 +219,22 @@ fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
         .unwrap();
     session.run("ANALYZE TABLE t").unwrap();
 
-    session
-        .with_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
-                panic!("t is not stored as table bytes")
-            };
-            assert!(
-                catalog.table_statistics(table.table_id).is_none(),
-                "static ANALYZE must not invent global table statistics"
-            );
-            let primary = table
-                .indexes()
+    // Static mode analyzes the partitions alone (testkit probe): no global
+    // `stats_meta` row, and every partition has its PRIMARY histogram.
+    let meta = stats_meta_rows(&mut session, "t");
+    assert!(
+        meta.iter().all(|(partition, _)| partition != "global"),
+        "static ANALYZE must not invent global table statistics: {meta:?}"
+    );
+    let histograms = stats_histograms(&mut session, "t");
+    for partition in ["p0", "p1", "p2"] {
+        assert!(
+            histograms
                 .iter()
-                .find(|index| index.name.eq_ignore_ascii_case("primary"))
-                .expect("the nonclustered primary key is an index")
-                .id;
-            for partition in &table.partition().expect("t is partitioned").definitions {
-                let statistics = catalog
-                    .table_statistics(partition.id)
-                    .unwrap_or_else(|| panic!("partition {} was not analyzed", partition.name));
-                assert!(statistics.indexes.contains_key(&primary));
-            }
-            Ok(())
-        })
-        .unwrap();
+                .any(|row| row[0] == partition && row[1] == "PRIMARY" && row[2] == "1"),
+            "partition {partition} was not analyzed: {histograms:?}"
+        );
+    }
 
     let static_plan =
         row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2) AND a LIKE '%a%'"));
@@ -281,20 +266,10 @@ fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
     );
 
     session.run("ANALYZE TABLE t").unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
-                panic!("t is not stored as table bytes")
-            };
-            let statistics = catalog
-                .table_statistics(table.table_id)
-                .expect("dynamic ANALYZE publishes global table statistics");
-            assert_eq!(statistics.row_count, 6);
-            assert_eq!(statistics.stats_ver, 2);
-            assert!(!statistics.cache_pseudo);
-            Ok(())
-        })
-        .unwrap();
+    assert!(
+        stats_meta_rows(&mut session, "t").contains(&("global".to_owned(), "6".to_owned())),
+        "dynamic ANALYZE publishes global table statistics"
+    );
     let analyzed_dynamic_plan = row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"));
     assert!(
         analyzed_dynamic_plan
@@ -327,91 +302,28 @@ fn analyze_persists_effective_column_list_and_reuses_raw_options() {
             vec!["Note", "1105", "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""],
         ]
     );
-    if !crate::tests_support::in_process_tier() {
-        // Go persists the options in `mysql.analyze_options`.
-        let saved = |session: &mut Session| {
-            row_text(session.run(
-                "SELECT o.buckets, o.column_choice, o.column_ids FROM mysql.analyze_options o \
-                 JOIN information_schema.tables t ON o.table_id = t.tidb_table_id \
-                 WHERE t.table_schema = 'test' AND t.table_name = 't'",
-            ))
-        };
-        assert_eq!(saved(&mut session), [["7", "LIST", "1,2,3"]]);
-        session.run("ANALYZE TABLE t").unwrap();
-        assert_eq!(
-            saved(&mut session)[0][0],
-            "7",
-            "a statement without BUCKETS reuses the persisted raw value"
-        );
-        session
-            .run("SET GLOBAL tidb_persist_analyze_options = OFF")
-            .unwrap();
-        session
-            .run("ANALYZE TABLE t ALL COLUMNS WITH 9 BUCKETS")
-            .unwrap();
-        assert_eq!(saved(&mut session), [["7", "LIST", "1,2,3"]]);
-        session
-            .run("SET GLOBAL tidb_persist_analyze_options = ON")
-            .unwrap();
-        return;
-    }
-    let table_id = session
-        .with_catalog_mut(|catalog| {
-            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
-                panic!("t is not a table")
-            };
-            let saved = catalog
-                .analyze_options(table.table_id)
-                .expect("ANALYZE persists its options by default");
-            assert_eq!(saved.raw.num_buckets, Some(7));
-            assert_eq!(
-                saved.columns,
-                tidb_executor::analyze::AnalyzeColumnChoice::Explicit(vec![
-                    "a".to_owned(),
-                    "b".to_owned(),
-                    "c".to_owned(),
-                ]),
-                "Go persists the requested column plus mandatory PK/index columns in schema order"
-            );
-            Ok(table.table_id)
-        })
-        .unwrap();
-
+    // Go persists the options in `mysql.analyze_options`.
+    let saved = |session: &mut Session| {
+        row_text(session.run(
+            "SELECT o.buckets, o.column_choice, o.column_ids FROM mysql.analyze_options o \
+             JOIN information_schema.tables t ON o.table_id = t.tidb_table_id \
+             WHERE t.table_schema = 'test' AND t.table_name = 't'",
+        ))
+    };
+    assert_eq!(saved(&mut session), [["7", "LIST", "1,2,3"]]);
     session.run("ANALYZE TABLE t").unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            assert_eq!(
-                catalog
-                    .analyze_options(table_id)
-                    .expect("the saved row remains present")
-                    .raw
-                    .num_buckets,
-                Some(7),
-                "a statement without BUCKETS reuses the persisted raw value"
-            );
-            Ok(())
-        })
-        .unwrap();
-
+    assert_eq!(
+        saved(&mut session)[0][0],
+        "7",
+        "a statement without BUCKETS reuses the persisted raw value"
+    );
     session
         .run("SET GLOBAL tidb_persist_analyze_options = OFF")
         .unwrap();
     session
         .run("ANALYZE TABLE t ALL COLUMNS WITH 9 BUCKETS")
         .unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            let saved = catalog
-                .analyze_options(table_id)
-                .expect("disabling persistence does not delete an existing row");
-            assert_eq!(saved.raw.num_buckets, Some(7));
-            assert!(matches!(
-                saved.columns,
-                tidb_executor::analyze::AnalyzeColumnChoice::Explicit(_)
-            ));
-            Ok(())
-        })
-        .unwrap();
+    assert_eq!(saved(&mut session), [["7", "LIST", "1,2,3"]]);
     session
         .run("SET GLOBAL tidb_persist_analyze_options = ON")
         .unwrap();
@@ -419,12 +331,6 @@ fn analyze_persists_effective_column_list_and_reuses_raw_options() {
 
 #[test]
 fn static_partition_analyze_inherits_and_updates_only_named_partition_options() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("SET @@tidb_partition_prune_mode = 'static'")
@@ -439,85 +345,43 @@ fn static_partition_analyze_inherits_and_updates_only_named_partition_options() 
         .unwrap();
     session.run("INSERT INTO p VALUES (1,1),(11,11)").unwrap();
     session.run("ANALYZE TABLE p WITH 7 BUCKETS").unwrap();
-
-    let (table_id, p0_id, p1_id) = session
-        .with_catalog_mut(|catalog| {
-            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "p") else {
-                panic!("p is not a table")
-            };
-            let definitions = &table.partition().expect("p is partitioned").definitions;
-            let p0 = definitions
-                .iter()
-                .find(|partition| partition.name.eq_ignore_ascii_case("p0"))
-                .expect("p0 exists")
-                .id;
-            let p1 = definitions
-                .iter()
-                .find(|partition| partition.name.eq_ignore_ascii_case("p1"))
-                .expect("p1 exists")
-                .id;
-            for physical_id in [table.table_id, p0, p1] {
-                assert_eq!(
-                    catalog
-                        .analyze_options(physical_id)
-                        .expect("whole-table ANALYZE saves every static physical row")
-                        .raw
-                        .num_buckets,
-                    Some(7)
-                );
-            }
-            Ok((table.table_id, p0, p1))
-        })
-        .unwrap();
+    // `(partition, buckets)` per `mysql.analyze_options` row of p, the table
+    // itself under the empty name.
+    let options = |session: &mut Session| {
+        row_text(session.run(
+            "SELECT t.partition_name, o.buckets FROM mysql.analyze_options o JOIN (\
+               SELECT tidb_table_id id, '' partition_name FROM information_schema.tables \
+                 WHERE table_schema = 'test' AND table_name = 'p' \
+               UNION ALL SELECT tidb_partition_id, partition_name FROM information_schema.partitions \
+                 WHERE table_schema = 'test' AND table_name = 'p') t \
+             ON o.table_id = t.id ORDER BY t.partition_name",
+        ))
+    };
+    assert_eq!(
+        options(&mut session),
+        [["", "7"], ["p0", "7"], ["p1", "7"]],
+        "whole-table ANALYZE saves every static physical row"
+    );
 
     session.run("INSERT INTO p VALUES (2,2),(12,12)").unwrap();
     session
         .run("ANALYZE TABLE p PARTITION p0 WITH 9 BUCKETS")
         .unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            assert_eq!(
-                catalog
-                    .table_statistics(p0_id)
-                    .expect("p0 was refreshed")
-                    .row_count,
-                2
-            );
-            assert_eq!(
-                catalog
-                    .table_statistics(p1_id)
-                    .expect("p1 remains analyzed")
-                    .row_count,
-                1,
-                "a named static ANALYZE does not refresh an unrequested partition"
-            );
-            assert_eq!(
-                catalog.analyze_options(table_id).unwrap().raw.num_buckets,
-                Some(7)
-            );
-            assert_eq!(
-                catalog.analyze_options(p0_id).unwrap().raw.num_buckets,
-                Some(9)
-            );
-            assert_eq!(
-                catalog.analyze_options(p1_id).unwrap().raw.num_buckets,
-                Some(7)
-            );
-            Ok(())
-        })
-        .unwrap();
+    assert_eq!(
+        stats_meta_rows(&mut session, "p"),
+        [
+            ("p0".to_owned(), "2".to_owned()),
+            ("p1".to_owned(), "1".to_owned())
+        ],
+        "a named static ANALYZE does not refresh an unrequested partition"
+    );
+    assert_eq!(options(&mut session), [["", "7"], ["p0", "9"], ["p1", "7"]]);
 }
 
 /// The row decoder used by `ANALYZE` evaluates generated columns instead of
 /// refusing the table or sampling the stored placeholder for a virtual one.
 #[test]
 fn analyze_publishes_stored_but_not_virtual_generated_column_histograms() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run(
@@ -536,47 +400,16 @@ fn analyze_publishes_stored_but_not_virtual_generated_column_histograms() {
         session.run("ANALYZE TABLE generated_stats").unwrap(),
         StmtResult::Affected(0)
     );
-
-    session
-        .with_catalog_mut(|catalog| {
-            let (table_id, column_ids) = {
-                let Some(tidb_executor::TableEntry::Kv(table)) =
-                    catalog.table_in("test", "generated_stats")
-                else {
-                    panic!("generated_stats is not stored as table bytes")
-                };
-                (
-                    table.table_id,
-                    table
-                        .columns
-                        .iter()
-                        .map(|column| {
-                            (
-                                column.id,
-                                column
-                                    .generated
-                                    .as_ref()
-                                    .is_some_and(|generated| !generated.stored),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            };
-            let statistics = catalog
-                .table_statistics(table_id)
-                .expect("ANALYZE publishes table statistics");
-            assert_eq!(statistics.row_count, 4);
-            assert_eq!(column_ids.len(), 3);
-            for (column_id, virtual_column) in column_ids {
-                assert_eq!(
-                    statistics.columns.contains_key(&column_id),
-                    !virtual_column,
-                    "unexpected histogram for generated column id {column_id}"
-                );
-            }
-            Ok(())
-        })
-        .unwrap();
+    // Go testkit: a histogram for `a` and the stored generated column, none
+    // for the virtual one.
+    assert_eq!(
+        histogram_columns(&mut session, "generated_stats"),
+        names(&["a", "stored_value"])
+    );
+    assert_eq!(
+        stats_meta_rows(&mut session, "generated_stats"),
+        [(String::new(), "4".to_owned())]
+    );
 }
 
 /// Pinned Go warns when predicate-column storage has no row for the table,
@@ -605,12 +438,6 @@ fn analyze_predicate_columns_without_collected_usage_warns() {
 
 #[test]
 fn analyze_default_predicate_columns_follow_usage_and_mandatory_index_columns() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t (a INT, b INT, c INT, KEY ib(b))")
@@ -618,66 +445,24 @@ fn analyze_default_predicate_columns_follow_usage_and_mandatory_index_columns() 
     session
         .run("INSERT INTO t VALUES (1,1,1),(2,2,2),(3,3,3)")
         .unwrap();
-    let (table_id, a, b, c) = session
-        .with_catalog_mut(|catalog| {
-            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
-                panic!("t is a table")
-            };
-            Ok((
-                table.table_id,
-                table.columns[0].id,
-                table.columns[1].id,
-                table.columns[2].id,
-            ))
-        })
-        .unwrap();
     session
         .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
         .unwrap();
-    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
-        [(analyze_usage_item(table_id, a), (None, None))]
-            .into_iter()
-            .collect(),
-    )));
+    // Go records a predicate column when a query filters on it, and
+    // `h.DumpColStatsUsageToKV()` persists it for ANALYZE to read; the
+    // index column is mandatory whatever the usage says (testkit probe).
+    session.run("SELECT * FROM t WHERE a > 0").unwrap();
+    session.dump_col_stats_usage_for_test();
     session.run("ANALYZE TABLE t").unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            let statistics = catalog.table_statistics(table_id).expect("t was analyzed");
-            assert_eq!(
-                statistics
-                    .columns
-                    .keys()
-                    .copied()
-                    .collect::<std::collections::HashSet<_>>(),
-                std::collections::HashSet::from([a, b])
-            );
-            Ok(())
-        })
-        .unwrap();
+    assert_eq!(histogram_columns(&mut session, "t"), names(&["a", "b"]));
 
-    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
-        [
-            (analyze_usage_item(table_id, a), (None, None)),
-            (analyze_usage_item(table_id, c), (None, None)),
-        ]
-        .into_iter()
-        .collect(),
-    )));
+    session.run("SELECT * FROM t WHERE c > 0").unwrap();
+    session.dump_col_stats_usage_for_test();
     session.run("ANALYZE TABLE t").unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            let statistics = catalog.table_statistics(table_id).expect("t was analyzed");
-            assert_eq!(
-                statistics
-                    .columns
-                    .keys()
-                    .copied()
-                    .collect::<std::collections::HashSet<_>>(),
-                std::collections::HashSet::from([a, b, c])
-            );
-            Ok(())
-        })
-        .unwrap();
+    assert_eq!(
+        histogram_columns(&mut session, "t"),
+        names(&["a", "b", "c"])
+    );
     session
         .run("SET GLOBAL tidb_analyze_column_options = 'ALL'")
         .unwrap();
@@ -685,12 +470,6 @@ fn analyze_default_predicate_columns_follow_usage_and_mandatory_index_columns() 
 
 #[test]
 fn analyze_empty_predicate_usage_keeps_only_go_mandatory_columns() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session.run("CREATE TABLE plain (a INT, b INT)").unwrap();
     session
@@ -707,97 +486,19 @@ fn analyze_empty_predicate_usage_keeps_only_go_mandatory_columns() {
     session
         .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
         .unwrap();
-    session.set_column_stats_usage_provider(std::sync::Arc::new(AnalyzeUsage(
-        std::collections::HashMap::new(),
-    )));
-
-    for table in ["plain", "indexed", "primary_key"] {
+    // No predicate column was ever recorded: Go analyzes only the index
+    // columns, so a table without an index gets no column histogram.
+    for (table, expected) in [
+        ("plain", names(&[])),
+        ("indexed", names(&["a", "b"])),
+        ("primary_key", names(&["a", "b"])),
+    ] {
         session.run(&format!("ANALYZE TABLE {table}")).unwrap();
+        assert_eq!(histogram_columns(&mut session, table), expected, "{table}");
     }
-    session
-        .with_catalog_mut(|catalog| {
-            for (table_name, expected_offsets) in [
-                ("plain", Vec::<usize>::new()),
-                ("indexed", vec![0, 1]),
-                ("primary_key", vec![0, 1]),
-            ] {
-                let Some(TableEntry::Kv(table)) = catalog.table_in("test", table_name) else {
-                    panic!("{table_name} is a table")
-                };
-                let expected = expected_offsets
-                    .into_iter()
-                    .map(|offset| table.columns[offset].id)
-                    .collect::<std::collections::HashSet<_>>();
-                let actual = catalog
-                    .table_statistics(table.table_id)
-                    .expect("table was analyzed")
-                    .columns
-                    .keys()
-                    .copied()
-                    .collect::<std::collections::HashSet<_>>();
-                assert_eq!(actual, expected, "{table_name}");
-            }
-            Ok(())
-        })
-        .unwrap();
     session
         .run("SET GLOBAL tidb_analyze_column_options = 'ALL'")
         .unwrap();
-}
-
-/// The in-process session is the second production consumer of the shared
-/// analyze engine. Go's two failpoints live in separate goroutines; this tier
-/// is synchronous, so both enter through one panic boundary but remain two
-/// cases here to preserve the complete source-test disposition.
-#[test]
-fn analyze_internal_panics_become_errors_and_leave_the_in_process_session_usable() {
-    // The failpoint arms the in-process analyze engine; a store session's
-    // analyze recovers its panics at the node's own boundary.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    for (source_test, phase) in [
-        (
-            "TestPanicInHandleResultErrorWithSingleGoroutine",
-            AnalyzePanicPhase::Result,
-        ),
-        (
-            "TestPanicInHandleAnalyzeWorkerPanic",
-            AnalyzePanicPhase::Worker,
-        ),
-    ] {
-        let mut session = Session::new();
-        session.run("CREATE TABLE t (a INT)").unwrap();
-        session.run("INSERT INTO t VALUES (1)").unwrap();
-        crate::analyze_arm::panic_next_analyze_for_test(phase, source_test);
-
-        let error = session
-            .run("ANALYZE TABLE t")
-            .expect_err("an internal ANALYZE panic must become a statement error");
-        assert!(
-            matches!(&error, DriverError::Unsupported(message) if message == "analyze worker panic"),
-            "source test {source_test} mapped to {error:?}"
-        );
-        let wire_error = error.to_mysql_error();
-        assert_eq!(wire_error.code, 1105, "source test: {source_test}");
-        assert_eq!(wire_error.state, *b"HY000", "source test: {source_test}");
-        assert_eq!(
-            wire_error.message, "analyze worker panic",
-            "source test: {source_test}"
-        );
-
-        assert_eq!(
-            row_text(session.run("SELECT * FROM t")),
-            vec![vec!["1"]],
-            "recovering the statement must keep the session catalog usable: {source_test}"
-        );
-        assert!(
-            scan_row(&mut session, "EXPLAIN SELECT * FROM t")
-                .1
-                .contains("stats:pseudo"),
-            "a failed result phase must not publish statistics: {source_test}"
-        );
-    }
 }
 
 /// An ANALYZED EMPTY table stays pseudo.
@@ -875,21 +576,17 @@ fn a_zero_count_table_plans_from_a_fresh_pseudo_table() {
     let meta = row_text(session.run("SHOW STATS_META WHERE table_name = 'z'"));
     assert_eq!(meta.len(), 1, "{meta:?}");
     assert_eq!(meta[0][5], "0", "the row count stays zero: {meta:?}");
-    if crate::tests_support::in_process_tier() {
-        assert_ne!(meta[0][4], "0", "the modifications are recorded: {meta:?}");
-    } else {
-        // A Go server's SHOW STATS_META answers its stats cache, which the
-        // flush does not refresh; the durable row has the delta (oracle:
-        // cached 0, `mysql.stats_meta` 6).
-        assert_eq!(
-            row_text(session.run(
-                "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = \
-                 (SELECT tidb_table_id FROM information_schema.tables \
-                 WHERE table_schema = 'test' AND table_name = 'z')"
-            )),
-            [["0", "6"]]
-        );
-    }
+    // A Go server's SHOW STATS_META answers its stats cache, which the
+    // flush does not refresh; the durable row has the delta (oracle:
+    // cached 0, `mysql.stats_meta` 6).
+    assert_eq!(
+        row_text(session.run(
+            "SELECT count, modify_count FROM mysql.stats_meta WHERE table_id = \
+             (SELECT tidb_table_id FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 'z')"
+        )),
+        [["0", "6"]]
+    );
 
     let plan = |session: &mut Session, sql: &str| {
         row_text(session.run(sql))
@@ -1035,13 +732,9 @@ fn outdated_statistics_are_judged_on_the_determinate_copy() {
     session
         .run("SET tidb_opt_objective = 'determinate'")
         .unwrap();
-    // A server loads only the columns a query needs, so the unused index
-    // stays evicted (oracle); testkit's capture had it loaded.
-    let scan = if crate::tests_support::in_process_tier() {
-        "  └─TableFullScan 10.00 keep order:false"
-    } else {
-        "  └─TableFullScan 10.00 keep order:false, stats:partial[ia:allEvicted]"
-    };
+    // Go testkit holds the analyzed index loaded (no stats lease), so no
+    // partial marker; a server would leave the unused `ia` evicted.
+    let scan = "  └─TableFullScan 10.00 keep order:false";
     assert_eq!(
         plan(&mut session),
         [
@@ -1074,12 +767,6 @@ fn outdated_statistics_are_judged_on_the_determinate_copy() {
 /// count; carrying that bit onto the copy marked the determinate plan pseudo.
 #[test]
 fn determinate_mode_plans_an_emptied_table_from_its_analyze_count() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE d (a INT, b INT, KEY ia(a))")
@@ -1090,6 +777,9 @@ fn determinate_mode_plans_an_emptied_table_from_its_analyze_count() {
     session.run("ANALYZE TABLE d ALL COLUMNS").unwrap();
     session.run("DELETE FROM d").unwrap();
     session.run("FLUSH STATS_DELTA test.d").unwrap();
+    // Go's tests follow a flush with `h.Update`; until then SHOW STATS_META
+    // answers the cached counts.
+    session.update_stats_cache().unwrap();
     let meta = row_text(session.run("SHOW STATS_META WHERE table_name = 'd'"));
     assert_eq!(
         (meta[0][4].as_str(), meta[0][5].as_str()),
@@ -1097,19 +787,7 @@ fn determinate_mode_plans_an_emptied_table_from_its_analyze_count() {
         "{meta:?}"
     );
     // The cluster loader (`table_statistics_from_table_schema`) bakes rule 2
-    // into the cached `pseudo` bit for a zero count; give the embedded
-    // catalog's object the same shape.
-    {
-        let shared = session.shared_catalog();
-        let mut catalog = shared.lock().unwrap();
-        let TableEntry::Kv(table) = catalog.table_in("test", "d").unwrap() else {
-            panic!("d is not a stored table");
-        };
-        let table_id = table.table_id;
-        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
-        statistics.pseudo = true;
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
-    }
+    // into the planner copy's `pseudo` bit for a zero count.
 
     let plan = |session: &mut Session, sql: &str| {
         row_text(session.run(sql))
@@ -1296,12 +974,6 @@ fn ordinary_index_target_collects_all_statistics() {
 /// existing table row count, and it cannot be scoped to one partition.
 #[test]
 fn special_global_index_uses_the_independent_analyze_task() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run(
@@ -1313,18 +985,10 @@ fn special_global_index_uses_the_independent_analyze_task() {
         .run("INSERT INTO only_special VALUES (1,'aa')")
         .unwrap();
     session.run("ANALYZE TABLE only_special INDEX").unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "only_special") else {
-                panic!("only_special is not stored as table bytes")
-            };
-            assert!(
-                catalog.table_statistics(table.table_id).is_none(),
-                "pinned Go's empty-name all-special branch creates no task"
-            );
-            Ok(())
-        })
-        .unwrap();
+    assert!(
+        stats_histograms(&mut session, "only_special").is_empty(),
+        "pinned Go's empty-name all-special branch creates no task"
+    );
 
     session
         .run(
@@ -1340,49 +1004,28 @@ fn special_global_index_uses_the_independent_analyze_task() {
     session.run("INSERT INTO sg VALUES (5,'ee')").unwrap();
     session.run("ANALYZE TABLE sg INDEX gb").unwrap();
     assert!(warnings_of(&session).is_empty());
-    session
-        .with_catalog_mut(|catalog| {
-            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "sg") else {
-                panic!("sg is not stored as table bytes")
-            };
-            let index_id = table
-                .indexes()
-                .iter()
-                .find(|index| index.name.eq_ignore_ascii_case("gb"))
-                .expect("gb exists")
-                .id;
-            let statistics = catalog
-                .table_statistics(table.table_id)
-                .expect("the independent task writes logical-table statistics");
-            assert_eq!(
-                statistics.row_count, 4,
-                "an independent index task preserves existing stats_meta.count"
-            );
-            assert_eq!(statistics.stats_ver, 2);
-            assert!(!statistics.cache_pseudo);
-            assert_eq!(
-                statistics
-                    .index_fm_sketches
-                    .get(&index_id)
-                    .expect("independent analysis publishes its FM sketch")
-                    .ndv(),
-                5
-            );
-            let index = statistics
-                .indexes
-                .get(&index_id)
-                .expect("the independent task publishes gb");
-            assert_eq!(
-                index.histogram.total_row_count()
-                    + index
-                        .topn
-                        .as_ref()
-                        .map_or(0.0, |topn| topn.total_count() as f64),
-                5.0
-            );
-            Ok(())
-        })
-        .unwrap();
+    // Go testkit: the independent index task keeps the global count of the
+    // whole-table ANALYZE (4) and publishes gb over all five rows.
+    let meta = stats_meta_rows(&mut session, "sg");
+    assert!(
+        meta.contains(&("global".to_owned(), "4".to_owned())),
+        "an independent index task preserves existing stats_meta.count: {meta:?}"
+    );
+    let gb = stats_histograms(&mut session, "sg")
+        .into_iter()
+        .find(|row| row[0] == "global" && row[1] == "gb" && row[2] == "1")
+        .expect("the independent task publishes gb");
+    assert_eq!((gb[3].as_str(), gb[4].as_str()), ("5", "0"));
+    let topn = row_text(session.run(
+        "SHOW STATS_TOPN WHERE table_name = 'sg' AND partition_name = 'global' \
+         AND column_name = 'gb'",
+    ));
+    assert_eq!(
+        topn.iter()
+            .map(|row| row[6].parse::<i64>().unwrap())
+            .sum::<i64>(),
+        5
+    );
 
     let error = session
         .run("ANALYZE TABLE sg PARTITION p0 INDEX gb")
@@ -1515,12 +1158,6 @@ fn analyzed_selectivity_estimates_a_disjunction_and_never_drops_below_one_row() 
 /// newly resident handle statistics.
 #[test]
 fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
-    // Installs statistics objects straight into the in-process catalog; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     std::thread::Builder::new()
         .name("statistics-load-statement-boundary".to_owned())
         // The workspace's configured thread stack (`.cargo/config.toml`'s
@@ -1570,8 +1207,12 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                 .unwrap();
 
             let ctx = session.statement_context(false);
-            let shared = session.shared_catalog();
-            let mut catalog = shared.lock().unwrap();
+            // The sampled distributions are read from the committed rows
+            // (`with_catalog_mut` binds a snapshot), scaled, and installed
+            // in the node's statistics cache as Go's tests install theirs.
+            let mut published = Vec::new();
+            session
+                .with_catalog_mut(|catalog| {
             for (table_name, row_count, requested_ndvs) in [
                 (
                     "customer",
@@ -1675,41 +1316,51 @@ fn physical_statistics_loads_become_shared_at_the_next_statement_boundary() {
                     }};
                 }
 
-                for (column_id, column) in &mut statistics.columns {
-                    scale_histogram!(&mut column.histogram, column_ndvs[column_id]);
-                }
-                if table_name == "customer" {
-                    statistics
-                        .columns
-                        .values_mut()
-                        .find(|column| column.histogram.ndv == 5)
-                        .and_then(|column| column.histogram.buckets.last_mut())
-                        .expect("customer.c_mktsegment histogram")
-                        .count = 149_998;
-                }
-                for (index_id, index_columns) in indexes {
-                    let index_ndv = index_columns
-                        .iter()
-                        .try_fold(1_i64, |ndv, column_id| {
-                            ndv.checked_mul(column_ndvs[column_id])
-                        })
-                        .unwrap_or(row_count)
-                        .min(row_count)
-                        .max(1);
-                    scale_histogram!(
-                        &mut statistics.indexes.get_mut(&index_id).unwrap().histogram,
-                        index_ndv
-                    );
-                }
-                statistics.row_count = row_count;
-                catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+                        for (column_id, column) in &mut statistics.columns {
+                            scale_histogram!(&mut column.histogram, column_ndvs[column_id]);
+                        }
+                        if table_name == "customer" {
+                            statistics
+                                .columns
+                                .values_mut()
+                                .find(|column| column.histogram.ndv == 5)
+                                .and_then(|column| column.histogram.buckets.last_mut())
+                                .expect("customer.c_mktsegment histogram")
+                                .count = 149_998;
+                        }
+                        for (index_id, index_columns) in indexes {
+                            let index_ndv = index_columns
+                                .iter()
+                                .try_fold(1_i64, |ndv, column_id| {
+                                    ndv.checked_mul(column_ndvs[column_id])
+                                })
+                                .unwrap_or(row_count)
+                                .min(row_count)
+                                .max(1);
+                            scale_histogram!(
+                                &mut statistics.indexes.get_mut(&index_id).unwrap().histogram,
+                                index_ndv
+                            );
+                        }
+                        statistics.row_count = row_count;
+                        published.push((table_id, statistics));
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let shared = session.shared_catalog();
+            for (table_id, statistics) in &published {
+                session.publish_table_statistics_for_test(
+                    &shared.lock().unwrap(),
+                    *table_id,
+                    statistics,
+                );
             }
-            drop(catalog);
 
             let q3 = "EXPLAIN SELECT * FROM customer, orders \
         WHERE c_mktsegment = 'AUTOMOBILE' AND c_custkey = o_custkey";
             assert!(!row_text(session.run(q3)).is_empty());
-            let mut peer = Session::with_catalog(shared);
+            let mut peer = Session::with_catalog(session.shared_catalog());
             let q7 = "EXPLAIN SELECT supp_nation, cust_nation, l_year, SUM(volume) AS revenue \
         FROM (SELECT n1.n_name AS supp_nation, n2.n_name AS cust_nation, \
                      EXTRACT(YEAR FROM l_shipdate) AS l_year, 1 AS volume \
@@ -1815,15 +1466,12 @@ fn a_case_insensitive_column_estimates_off_the_collation_sort_key() {
 
 #[test]
 fn analyze_expression_index_samples_keep_physical_column_positions() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    for analyze in [
-        "ANALYZE TABLE expr_samples ALL COLUMNS",
-        "ANALYZE TABLE expr_samples COLUMNS a",
+    for (analyze, columns) in [
+        (
+            "ANALYZE TABLE expr_samples ALL COLUMNS",
+            names(&["a", "unused"]),
+        ),
+        ("ANALYZE TABLE expr_samples COLUMNS a", names(&["a"])),
     ] {
         let mut session = Session::new();
         session.run("CREATE TABLE expr_samples(a INT, unused INT, v INT AS (a+1), KEY iv(v), KEY ie(a,(a+2)))").unwrap();
@@ -1831,38 +1479,42 @@ fn analyze_expression_index_samples_keep_physical_column_positions() {
             .run("INSERT INTO expr_samples(a,unused) VALUES(1,10),(2,20),(2,30),(3,40)")
             .unwrap();
         session.run(analyze).unwrap();
-        let shared = session.shared_catalog();
-        let catalog = shared.lock().unwrap();
-        let TableEntry::Kv(table) = catalog.table_in("test", "expr_samples").unwrap() else {
-            panic!("expected KV table")
-        };
-        let stats = catalog.table_statistics(table.table_id).unwrap();
-        for column in table.columns() {
-            if column.generated.as_ref().is_some_and(|value| !value.stored) {
-                assert!(!stats.columns.contains_key(&column.id));
-            }
-        }
-        assert_eq!(stats.indexes.len(), 2);
-        for index in table.indexes() {
-            let built = &stats.indexes[&index.id];
-            assert_eq!(built.histogram.ndv, 3);
-            assert_eq!(built.histogram.null_count, 0);
-            let topn = built.topn.as_ref().unwrap();
-            assert_eq!(topn.total_count(), 4);
-            for (a, count) in [(1, 1), (2, 2), (3, 1)] {
-                let values = if index.name == "iv" {
-                    vec![Datum::Int(a + 1)]
-                } else {
-                    vec![Datum::Int(a), Datum::Int(a + 2)]
-                };
-                assert_eq!(
-                    topn.query_bytes(&tidb_codec::encode_key(&values).unwrap()),
-                    Some(count),
-                    "{analyze}: {}",
-                    index.name
-                );
-            }
-        }
+        // No histogram for the virtual column `v`; both indexes sample the
+        // values their expressions take (testkit probe).
+        assert_eq!(
+            histogram_columns(&mut session, "expr_samples"),
+            columns,
+            "{analyze}"
+        );
+        let indexes = stats_histograms(&mut session, "expr_samples")
+            .into_iter()
+            .filter(|row| row[2] == "1")
+            .map(|row| (row[1].clone(), row[3].clone(), row[4].clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            indexes,
+            [
+                ("iv".to_owned(), "3".to_owned(), "0".to_owned()),
+                ("ie".to_owned(), "3".to_owned(), "0".to_owned())
+            ],
+            "{analyze}"
+        );
+        let topn = row_text(
+            session.run("SHOW STATS_TOPN WHERE table_name = 'expr_samples' AND is_index = 1"),
+        )
+        .into_iter()
+        .map(|row| (row[3].clone(), row[5].clone(), row[6].clone()))
+        .collect::<Vec<_>>();
+        let expected = [
+            ("iv", "2", "1"),
+            ("iv", "3", "2"),
+            ("iv", "4", "1"),
+            ("ie", "(1, 3)", "1"),
+            ("ie", "(2, 4)", "2"),
+            ("ie", "(3, 5)", "1"),
+        ]
+        .map(|(index, value, count)| (index.to_owned(), value.to_owned(), count.to_owned()));
+        assert_eq!(topn, expected, "{analyze}");
     }
 }
 
@@ -1902,12 +1554,6 @@ fn partial_analyze_replaces_unanalyzed_table_metadata() {
 /// Go globalstats retains exact local-unique NDVs but no global FM sketch.
 #[test]
 fn stats_ndv_batch_unique_partition_lifecycle() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE exact_ndv (a INT, UNIQUE INDEX i(a)) PARTITION BY HASH(a) PARTITIONS 2")
@@ -1918,27 +1564,36 @@ fn stats_ndv_batch_unique_partition_lifecycle() {
     session
         .run("ANALYZE TABLE exact_ndv ALL COLUMNS WITH 0 TOPN, 1 SAMPLERATE")
         .unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            let Some(TableEntry::Kv(table)) = catalog.table_in("test", "exact_ndv") else {
-                panic!("table missing")
-            };
-            let stats = catalog.table_statistics(table.table_id).unwrap();
-            assert_eq!(stats.row_count, 8);
-            let column = &stats.columns[&table.columns()[0].id];
-            assert_eq!((column.histogram.ndv, column.histogram.null_count), (6, 2));
-            let index = &stats.indexes[&table.indexes()[0].id];
-            assert_eq!((index.histogram.ndv, index.histogram.null_count), (6, 2));
-            assert!(stats.column_fm_sketches.is_empty());
-            assert!(stats.index_fm_sketches.is_empty());
-            for partition in &table.partition().unwrap().definitions {
-                let stats = catalog.table_statistics(partition.id).unwrap();
-                assert!(!stats.column_fm_sketches.is_empty());
-                assert!(!stats.index_fm_sketches.is_empty());
-            }
-            Ok(())
-        })
-        .unwrap();
+    assert!(
+        stats_meta_rows(&mut session, "exact_ndv").contains(&("global".to_owned(), "8".to_owned()))
+    );
+    let global = stats_histograms(&mut session, "exact_ndv")
+        .into_iter()
+        .filter(|row| row[0] == "global")
+        .map(|row| (row[1].clone(), row[3].clone(), row[4].clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        global,
+        [
+            ("a".to_owned(), "6".to_owned(), "2".to_owned()),
+            ("i".to_owned(), "6".to_owned(), "2".to_owned())
+        ]
+    );
+    // FM sketches are each partition's; the merged global statistics keep
+    // none (testkit probe: `mysql.stats_fm_sketch` rows for p0 and p1 only).
+    let sketches = row_text(session.run(
+        "SELECT p.partition_name, f.is_index FROM mysql.stats_fm_sketch f \
+         LEFT JOIN information_schema.partitions p ON f.table_id = p.tidb_partition_id \
+         WHERE f.table_id IN (\
+           SELECT tidb_table_id FROM information_schema.tables WHERE table_name = 'exact_ndv' \
+           UNION SELECT tidb_partition_id FROM information_schema.partitions \
+             WHERE table_name = 'exact_ndv') \
+         ORDER BY 1, 2",
+    ));
+    assert_eq!(
+        sketches,
+        [["p0", "0"], ["p0", "1"], ["p1", "0"], ["p1", "1"]]
+    );
 }
 
 /// Go `buildAnalyzeSamplingPushdown`'s note, as a Go server on this branch
@@ -2011,11 +1666,7 @@ fn analyze_saves_statistics_and_finishes_its_job_row() {
     // Go's save transaction stamps `version` after the analyze snapshot it
     // records (oracle: `version > snapshot`); the in-process tier writes
     // both from one clock reading.
-    let version_vs_snapshot = if crate::tests_support::in_process_tier() {
-        "version = snapshot"
-    } else {
-        "version > snapshot"
-    };
+    let version_vs_snapshot = "version > snapshot";
     assert_eq!(
         row_text(session.run(&format!(
             "select count, modify_count, {version_vs_snapshot} from mysql.stats_meta \

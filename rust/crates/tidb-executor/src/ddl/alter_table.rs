@@ -215,6 +215,26 @@ fn reload_altered_table_from_meta_json(
     }
 }
 
+/// Go `CompactTableTiFlashExec` for a parsed `ALTER TABLE ... COMPACT`, which
+/// Go parses as its own `CompactTableStmt`: a session statement, not a job.
+pub fn run_compact_table_in(
+    alter: &tidb_ast::AlterTableStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let [tidb_ast::AlterTableAction::Compact {
+        partitions,
+        replica_kind,
+    }] = alter.actions.as_slice()
+    else {
+        return Err(DriverError::unsupported(
+            "only ALTER TABLE ... COMPACT is a compact statement",
+        ));
+    };
+    run_compact_table(alter, partitions, *replica_kind, catalog, current_db, ctx)
+}
+
 /// Go's `CompactTableStmt`, which is not an ALTER TABLE job: `buildCompactTable`
 /// resolves the table, `executorBuilder.buildCompactTable` checks the replica
 /// kind and the partition list, and `CompactTableTiFlashExec` skips a table

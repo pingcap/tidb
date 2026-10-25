@@ -193,7 +193,17 @@ fn skip_unknown_current_user_is_not_the_explicit_self_shortcut() {
     let registry = session.privileges.clone().unwrap();
     let actual = ("missing".to_owned(), "127.0.0.1".to_owned());
     let sentinel = ("sentinel".to_owned(), "%".to_owned());
-    registry.set_default_roles(&actual, std::slice::from_ref(&sentinel));
+    // The cache is rebuilt from `mysql.default_roles` on every privilege
+    // notify (Go `LoadAll`), so the sentinel lives in the table, not only in
+    // the cache.
+    session
+        .run(
+            "INSERT INTO mysql.default_roles (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) \
+             VALUES ('127.0.0.1','missing','%','sentinel')",
+        )
+        .unwrap();
+    session.run("FLUSH PRIVILEGES").unwrap();
+    assert_eq!(registry.default_roles(&actual), [sentinel.clone()]);
 
     crate::tests_support::assert_err(
         session.run("SET DEFAULT ROLE no_such_role TO CURRENT_USER"),

@@ -25,8 +25,16 @@ use tidb_protocol::{
 use tidb_server::handshake::CLIENT_ZSTD_COMPRESSION_ALGORITHM;
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionReport,
-    ConnectionTracker, MysqlConnectionError, PipelineSessionFactory,
+    ConnectionTracker, MysqlConnectionError,
 };
+use tidb_session::domain::mock_store::MockStoreDomain;
+
+/// Go's server over a mock store whose node authenticates against, and keeps
+/// its accounts in, `store`: connections are served from its session factory.
+fn node_over(store: &ConfiguredUserStore) -> std::sync::Arc<MockStoreDomain> {
+    MockStoreDomain::create_with_users(std::sync::Arc::new(store.clone()))
+        .expect("boot the server's store")
+}
 
 const CLIENT_COMPRESS: u32 = 1 << 5;
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
@@ -56,7 +64,7 @@ fn start_server() -> (
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &tracker,
             DEFAULT_MAX_ALLOWED_PACKET,

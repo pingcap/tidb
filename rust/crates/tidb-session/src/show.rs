@@ -1220,15 +1220,15 @@ impl Session {
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
-            // `ANALYZE TABLE`, over this session's own catalog. See
-            // `crate::analyze_arm` for why an in-process session runs it here
-            // rather than routing it at a cluster node that can write
-            // `mysql.stats_*`.
-            tidb_ast::AdminStmt::AnalyzeTable(_) | tidb_ast::AdminStmt::AnalyzeIncremental(_) => {
-                self.analyze_stmt(admin)
-            }
-            tidb_ast::AdminStmt::LoadStats(load) => self.load_stats_stmt(&load.path).map(Some),
-            tidb_ast::AdminStmt::DropStats(drop) => self.drop_stats_stmt(drop).map(Some),
+            // ANALYZE, LOAD STATS and DROP STATS write the statistics storage
+            // and the domain's cache: the session's node runs them
+            // (`StatementRoute::Analyze` / `LoadStats` / `DropStats`).
+            tidb_ast::AdminStmt::AnalyzeTable(_)
+            | tidb_ast::AdminStmt::AnalyzeIncremental(_)
+            | tidb_ast::AdminStmt::LoadStats(_)
+            | tidb_ast::AdminStmt::DropStats(_) => Err(DriverError::unsupported(
+                "statistics statements run on the session's node",
+            )),
             tidb_ast::AdminStmt::LockStats(lock) => self.stats_lock_stmt(lock, true),
             tidb_ast::AdminStmt::UnlockStats(unlock) => self.stats_lock_stmt(unlock, false),
             tidb_ast::AdminStmt::CreateWorkloadSnapshot => {

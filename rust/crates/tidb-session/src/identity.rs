@@ -855,6 +855,13 @@ impl Session {
         self.pushdown_blacklists = blacklists;
     }
 
+    /// Go `privilege.GetPrivilegeManager(sctx)`: the privilege cache this
+    /// session checks against -- its domain's, for a session on a store.
+    #[must_use]
+    pub fn privilege_manager(&self) -> Option<privilege::PrivilegeRegistry> {
+        self.privileges.clone()
+    }
+
     pub fn attach_privileges(&mut self, registry: privilege::PrivilegeRegistry) {
         // A session on the store reads its domain's privilege cache, as a Go
         // session does; a private registry would hide every account

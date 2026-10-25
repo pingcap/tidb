@@ -376,7 +376,6 @@ fn create_temporary_tables_shows_the_schema_and_no_table() {
 fn user_attributes_rows_follow_go_visibility_rules() {
     let privs = privilege::PrivilegeRegistry::default();
     let mut boot = bootstrap_session(&privs);
-    boot.bootstrap_fresh_store();
     boot.run(
         "CREATE USER uanobody, uaroot, uaselectonmysqluser, uaselectonmysql, \
          uacreateonly, uasystemholder",

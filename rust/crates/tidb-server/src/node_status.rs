@@ -23,10 +23,14 @@ use tidb_session::domain::cluster_session_node::ClusterSessionFactory;
 /// The peer coprocessor service of this node (Go `tikvHandlerTool`'s
 /// coprocessor over the node's own sessions).
 pub(crate) fn peer_service(factory: &Arc<ClusterSessionFactory>) -> crate::peer_rpc::PeerService {
-    crate::peer_rpc::PeerService::new(factory.processes(), factory.privileges(), factory.server_info())
-        .with_session_factory(factory.peer_session_builder())
-        .with_cluster_peer_client(factory.cluster_peer())
-        .with_broadcast_query_runner(factory.broadcast_query_runner())
+    crate::peer_rpc::PeerService::new(
+        factory.peer_session_builder(),
+        factory.processes(),
+        factory.privileges(),
+        factory.server_info(),
+    )
+    .with_cluster_peer_client(factory.cluster_peer())
+    .with_broadcast_query_runner(factory.broadcast_query_runner())
 }
 
 /// The HTTP GLOBAL settings handler of this node.

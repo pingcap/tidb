@@ -11,7 +11,6 @@
 
 use super::super::*;
 use super::node_fixture::*;
-use crate::domain::cluster_account_seam::PendingAccountChange;
 use crate::domain::session_api::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
@@ -582,78 +581,38 @@ fn mock_unlock_tables(
 }
 
 /// The account seam without a cluster: the "stored" accounts are one
-/// registry, and a change is persisted by publishing the scratch copy into
-/// it. That is the whole routing contract -- read the stored table, run
-/// the statement against a scratch copy, publish only on a successful
-/// persist -- with the 2PC replaced by a switch a test can flip.
+/// registry, which an account statement validates against, and the live
+/// table reloads from it after a committed statement (Go
+/// `NotifyUpdatePrivilege`). Statements that write rows need a store with
+/// `mysql.*` tables; the unistore fixtures run those.
 pub(super) struct MockAccountWriter {
     /// What the "cluster" stores.
     pub(super) stored: PrivilegeRegistry,
-    /// The node's live table, which only a committed change reaches.
+    /// The node's live table.
     pub(super) live: PrivilegeRegistry,
-    /// Whether the persist step succeeds, so a test can prove that a
-    /// failed persist changes neither side.
-    pub(super) persists: Arc<AtomicBool>,
 }
 
 impl MockAccountWriter {
     pub(super) fn new() -> Self {
-        let stored = PrivilegeRegistry::default();
-        let live = PrivilegeRegistry::default();
         Self {
-            stored,
-            live,
-            persists: Arc::new(AtomicBool::new(true)),
+            stored: PrivilegeRegistry::default(),
+            live: PrivilegeRegistry::default(),
         }
     }
 }
 
 impl ClusterAccountWriter for MockAccountWriter {
-    fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
-        // The scratch table starts as a copy of what the cluster stores,
-        // which is what makes the statement validate against the cluster's
-        // truth rather than this node's.
-        let scratch = PrivilegeRegistry::default();
-        scratch.replace_from(&clone_registry(&self.stored));
-        Ok(Box::new(MockPendingChange {
-            scratch,
-            stored: self.stored.clone(),
-            live: self.live.clone(),
-            persists: Arc::clone(&self.persists),
-        }))
+    fn load_accounts(&self) -> Result<PrivilegeRegistry, String> {
+        Ok(clone_registry(&self.stored))
+    }
+
+    fn notify_update_privilege(&self) -> Result<(), String> {
+        self.live.replace_from(&clone_registry(&self.stored));
+        Ok(())
     }
 }
 
-pub(super) struct MockPendingChange {
-    pub(super) scratch: PrivilegeRegistry,
-    pub(super) stored: PrivilegeRegistry,
-    pub(super) live: PrivilegeRegistry,
-    pub(super) persists: Arc<AtomicBool>,
-}
-
-impl PendingAccountChange for MockPendingChange {
-    fn registry(&self) -> PrivilegeRegistry {
-        self.scratch.clone()
-    }
-
-    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
-        if !self.persists.load(Ordering::Acquire) {
-            return Err(SqlQueryError::unknown("the persist was rejected"));
-        }
-        let changed: Vec<String> = self
-            .scratch
-            .accounts()
-            .into_iter()
-            .map(|(user, host)| format!("'{user}'@'{host}'"))
-            .collect();
-        self.stored.replace_from(&clone_registry(&self.scratch));
-        self.live.replace_from(&clone_registry(&self.scratch));
-        Ok(changed)
-    }
-}
-
-/// The sysvar seam without a cluster, mirroring [`MockAccountWriter`]
-/// exactly: the "stored" overrides are one [`GlobalSysvars`] table, and a
+/// The sysvar seam without a cluster: the "stored" overrides are one [`GlobalSysvars`] table, and a
 /// change is persisted by publishing the scratch copy into it.
 pub(super) struct MockSysvarWriter {
     pub(super) stored: GlobalSysvars,

@@ -8,26 +8,15 @@
 use crate::tests_support::*;
 use crate::*;
 
-/// Two sessions sharing one [`vars::GlobalSysvars`] table, standing in for
-/// two connections through the same [`crate::PipelineSessionFactory`
-/// (`tidb-server`)]. Root is bootstrapped with every privilege on both, so a
-/// `SET GLOBAL` is not itself blocked by the privilege gate under test
-/// elsewhere in this file.
+/// Two connections to one store, which share its [`vars::GlobalSysvars`]
+/// table as Go's sessions share their domain's. Root is bootstrapped with
+/// every privilege on both, so a `SET GLOBAL` is not itself blocked by the
+/// privilege gate under test elsewhere in this file.
 fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
-    let globals = vars::GlobalSysvars::new();
     let registry = privilege::PrivilegeRegistry::default();
-    let catalog: SharedCatalog = std::sync::Arc::new(std::sync::Mutex::new(Catalog::default()));
-
-    let mut first = Session::with_catalog(catalog.clone());
-    first.set_user("root@%".to_owned(), "root@%".to_owned());
-    first.attach_privileges(registry.clone());
-    first.attach_globals(globals.clone()).unwrap();
-
-    let mut second = Session::with_catalog(catalog);
-    second.set_user("root@%".to_owned(), "root@%".to_owned());
-    second.attach_privileges(registry);
-    second.attach_globals(globals.clone()).unwrap();
-
+    let first = authenticated_session(&registry, "root", "%");
+    let second = session_as(&registry, first.shared_catalog(), "root", "%");
+    let globals = first.vars.global_sysvars();
     (first, second, globals)
 }
 
@@ -688,8 +677,8 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     );
 
     // A brand new session opened AFTER the SET GLOBAL inherits it as its own
-    // session default -- the same snapshot-at-connect step
-    // `PipelineSessionFactory::open_session` performs via `attach_globals`.
+    // session default -- the snapshot-at-connect step a new connection to
+    // the store performs.
     let mut fresh = Session::with_catalog(first.shared_catalog());
     fresh.attach_globals(globals).unwrap();
     assert_eq!(
@@ -802,9 +791,8 @@ fn reading_at_global_scope_on_a_session_only_variable_is_rejected() {
 #[test]
 fn set_global_requires_super_or_system_variables_admin() {
     let registry = privilege::PrivilegeRegistry::default();
-    let catalog: SharedCatalog = std::sync::Arc::new(std::sync::Mutex::new(Catalog::default()));
-
-    let mut root = session_as(&registry, catalog.clone(), "root", "%");
+    let mut root = authenticated_session(&registry, "root", "%");
+    let catalog = root.shared_catalog();
     root.run("CREATE USER 'plain'@'%'").unwrap();
 
     let mut plain = session_as(&registry, catalog, "plain", "%");

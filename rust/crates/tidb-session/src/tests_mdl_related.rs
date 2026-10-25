@@ -40,11 +40,7 @@ fn view_query_records_base_table_ids_for_mdl() {
     // Go's preprocessor locks the view's own id (`handleTableName` ->
     // `tryLockMDLAndUpdateSchemaIfNecessary`), then `buildDataSource` locks
     // the base table; the in-process tier records the base table alone.
-    let expected = if crate::tests_support::in_process_tier() {
-        1
-    } else {
-        2
-    };
+    let expected = 2;
     assert_eq!(
         tables.len(),
         expected,
@@ -97,16 +93,12 @@ fn view_body_tables_are_locked_as_the_planner_resolves_them() {
     session.run("SELECT * FROM cte_view").unwrap();
     let mut locked: Vec<i64> = sink.tables.lock().unwrap().iter().map(|(id, _)| *id).collect();
     locked.dedup();
-    if crate::tests_support::in_process_tier() {
-        assert_eq!(locked, [base]);
-    } else {
-        // The view itself first (preprocess), then what its body resolves.
-        let rows = crate::tests_support::row_text(session.run(
-            "SELECT tidb_table_id FROM information_schema.tables \
-             WHERE table_schema = 'test' AND table_name = 'cte_view'",
-        ));
-        let view: i64 = rows[0][0].parse().unwrap();
-        assert_eq!(locked, [view, base]);
-    }
+    // The view itself first (preprocess), then what its body resolves.
+    let rows = crate::tests_support::row_text(session.run(
+        "SELECT tidb_table_id FROM information_schema.tables \
+         WHERE table_schema = 'test' AND table_name = 'cte_view'",
+    ));
+    let view: i64 = rows[0][0].parse().unwrap();
+    assert_eq!(locked, [view, base]);
     assert_eq!(*sink.unresolved.lock().unwrap(), 0);
 }

@@ -12,29 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Writing a cluster's accounts and grants back into `mysql.*`.
+//! Writing an account image into a cluster's `mysql.*` tables.
 //!
-//! This is the write half of the bridge [`crate::cluster_privilege_load`]
-//! reads: whatever a `CREATE USER`/`GRANT` did to this node's account table
-//! is written back as the very rows a Go TiDB reads.
-//!
-//! # Why this plans a whole image rather than one statement's delta
-//!
-//! An account statement's *meaning* already lives in
-//! [`tidb_session::privilege::PrivilegeRegistry`] -- it validates `GRANT
-//! SELECT ON *.*`, decides that `CREATE USER IF NOT EXISTS` is a no-op, knows
-//! that `DROP USER` also drops the grantee's role edges. Re-deriving all of
-//! that from the AST here would be a second, divergent implementation of the
-//! same rules.
-//!
-//! So this path takes the *result* instead: the caller hands over the account
-//! table as it should now be, and this module makes the cluster's rows match
-//! it. Every statement shape collapses into one operation, and the invariant
-//! is exact and testable: after applying this plan,
+//! Account statements do not come through here: like Go's `simple.go` and
+//! `grant.go` executors, they write their own rows as SQL on a system session
+//! (`tidb_session::user_table`). This planner makes the rows match a whole
+//! image, which only the node's boot needs: provisioning the startup
+//! identities of `--auth-file` into a fresh store
+//! (`tidb_session::domain::cluster_account_seam::seed_cluster_accounts`).
+//! After applying a plan,
 //! [`crate::cluster_privilege_load::load_cluster_privileges`] reads back the
-//! image that was planned. Because the desired image is itself built from a
-//! registry seeded from *this same snapshot*, the diff is precisely the
-//! statement's own effect and never reverts a change another node made.
+//! image that was planned.
 //!
 //! # What it writes
 //!
@@ -104,29 +92,6 @@ impl From<crate::cluster_catalog::ClusterCatalogError> for AccountWriteError {
     fn from(error: crate::cluster_catalog::ClusterCatalogError) -> Self {
         Self::Read(SystemTableError::Snapshot(error.to_string()))
     }
-}
-
-/// What the statement that produced the desired image says about HOW Go
-/// writes it. The image is a state, so two writes Go distinguishes by their
-/// statement alone -- who granted, and whether a row was rewritten -- are
-/// recorded here instead.
-#[derive(Clone, Debug, Default)]
-pub struct AccountWriteHints {
-    /// Go `composeTablePrivUpdateForGrant` records the session's
-    /// `User.String()` as `Grantor` on every table-scope row a GRANT writes.
-    /// Set only for a GRANT: REVOKE leaves the column alone.
-    pub grantor: Option<String>,
-    /// Go `SET DEFAULT ROLE` deletes the account's `mysql.default_roles` rows
-    /// and inserts the new set, so the surviving rows take fresh row ids and
-    /// read back in the new set's order.
-    pub rewrite_default_roles: bool,
-    /// The image the statement started from, read from the same snapshot.
-    /// Go's account executors write only the rows their statement changes
-    /// (CREATE USER inserts one row); with a baseline the plan likewise
-    /// leaves every row whose image did not move, so a value the image
-    /// models lossily (an empty `plugin` the privilege cache reads as the
-    /// default) is never rewritten by an unrelated statement.
-    pub baseline: Option<ClusterPrivileges>,
 }
 
 /// One planned account change: the mutations that make the cluster's rows
@@ -201,96 +166,24 @@ pub fn plan_account_write<S: MetaSnapshot>(
     now: Time,
     reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
 ) -> Result<AccountWritePlan, AccountWriteError> {
-    plan_account_write_with_hints(
-        snapshot,
-        catalog,
-        desired,
-        now,
-        &AccountWriteHints::default(),
-        reserve_ids,
-    )
-}
-
-/// [`plan_account_write`] for a statement whose own kind decides some values
-/// (see [`AccountWriteHints`]).
-pub fn plan_account_write_with_hints<S: MetaSnapshot>(
-    snapshot: &mut S,
-    catalog: &ClusterCatalog,
-    desired: &ClusterPrivileges,
-    now: Time,
-    hints: &AccountWriteHints,
-    reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
-) -> Result<AccountWritePlan, AccountWriteError> {
     let mut plan = AccountWritePlan::default();
     let mut changed = std::collections::BTreeSet::new();
     let policy_values = account_policy_values(desired)?;
-    let baseline = hints
-        .baseline
-        .as_ref()
-        .map(|baseline| {
-            account_policy_values(baseline).map(|policies| (logical_tables(baseline), policies))
-        })
-        .transpose()?;
-    for (position, (table, desired_rows)) in logical_tables(desired).into_iter().enumerate() {
-        let scope = baseline.as_ref().map(|(tables, policies)| {
-            let base_rows = &tables[position].1;
-            // Go's `SET DEFAULT ROLE` rewrites a moved account's rows whole,
-            // so none of that account's rows is left in place.
-            let rewritten_accounts: std::collections::BTreeSet<(String, String)> =
-                if hints.rewrite_default_roles && table.name == DEFAULT_ROLES_TABLE {
-                    desired_rows
-                        .keys()
-                        .filter(|identity| !base_rows.contains_key(*identity))
-                        .chain(
-                            base_rows
-                                .keys()
-                                .filter(|identity| !desired_rows.contains_key(*identity)),
-                        )
-                        .map(|identity| (identity[0].clone(), identity[1].clone()))
-                        .collect()
-                } else {
-                    std::collections::BTreeSet::new()
-                };
-            BaselineScope {
-                unchanged: desired_rows
-                    .iter()
-                    .filter(|(identity, values)| {
-                        base_rows.get(*identity) == Some(*values)
-                            && policies.get(*identity) == policy_values.get(*identity)
-                            && !rewritten_accounts
-                                .contains(&(identity[0].clone(), identity[1].clone()))
-                    })
-                    .map(|(identity, _)| identity.clone())
-                    .collect(),
-                baseline_keys: base_rows.keys().cloned().collect(),
-            }
-        });
+    for (table, desired_rows) in logical_tables(desired) {
         reconcile(
             snapshot,
             catalog,
             &table,
             &desired_rows,
             &policy_values,
-            scope.as_ref(),
             now,
-            hints,
             &mut plan,
             &mut changed,
             reserve_ids,
         )?;
     }
-
     plan.changed_users = changed.into_iter().collect();
     Ok(plan)
-}
-
-/// Which rows of one table a baselined plan may touch.
-struct BaselineScope {
-    /// Desired rows identical, values and policy alike, to the baseline's.
-    unchanged: std::collections::BTreeSet<Vec<String>>,
-    /// Every row the baseline image holds: a stored row outside it is one
-    /// the statement never saw, so its absence from the image removes nothing.
-    baseline_keys: std::collections::BTreeSet<Vec<String>>,
 }
 
 /// The per-row policy columns each `mysql.user`/`password_history` row of
@@ -799,9 +692,7 @@ fn reconcile<S: MetaSnapshot>(
     account_table: &AccountTable,
     desired: &LogicalRows,
     policy_values: &AccountPolicyValues,
-    scope: Option<&BaselineScope>,
     now: Time,
-    hints: &AccountWriteHints,
     plan: &mut AccountWritePlan,
     changed: &mut std::collections::BTreeSet<String>,
     reserve_ids: &mut dyn FnMut(i64, &TableInfo, i64, usize) -> Result<i64, AccountWriteError>,
@@ -851,13 +742,6 @@ fn reconcile<S: MetaSnapshot>(
         })
         .collect::<Result<_, _>>()?;
 
-    // `Grantor` is no value column of this writer's: only the statement that
-    // GRANTs knows it, so it is stamped on the rows that statement writes.
-    let grantor = match (&hints.grantor, account_table.name == TABLES_PRIV_TABLE) {
-        (Some(grantor), true) => Some((column_id(table, "grantor")?, grantor.clone())),
-        _ => None,
-    };
-
     let stored = read_rows(snapshot, table)?;
     let mut by_key: BTreeMap<Vec<String>, StoredRow> = BTreeMap::new();
     for row in stored {
@@ -867,51 +751,6 @@ fn reconcile<S: MetaSnapshot>(
             .collect::<Result<Vec<_>, _>>()?;
         by_key.insert(identity, row);
     }
-    // A baselined plan writes the statement's delta alone: rows it left as
-    // they were, and stored rows it never saw, stay exactly as stored.
-    let owned_desired;
-    let desired = match scope {
-        Some(scope) => {
-            by_key.retain(|identity, _| {
-                scope.baseline_keys.contains(identity) && !scope.unchanged.contains(identity)
-            });
-            owned_desired = desired
-                .iter()
-                .filter(|(identity, _)| !scope.unchanged.contains(*identity))
-                .map(|(identity, values)| (identity.clone(), values.clone()))
-                .collect::<LogicalRows>();
-            &owned_desired
-        }
-        None => desired,
-    };
-    // Go's `SET DEFAULT ROLE` rewrites an account's rows whole. An account
-    // whose stored set differs from the desired one is taken out of `by_key`
-    // here, so every desired row of it is inserted afresh (in the set's own
-    // order) and the old rows are deleted below.
-    let mut rewritten: Vec<(Vec<String>, StoredRow)> = Vec::new();
-    if hints.rewrite_default_roles && account_table.name == DEFAULT_ROLES_TABLE {
-        let accounts: std::collections::BTreeSet<(String, String)> = desired
-            .keys()
-            .filter(|identity| !by_key.contains_key(*identity))
-            .chain(
-                by_key
-                    .keys()
-                    .filter(|identity| !desired.contains_key(*identity)),
-            )
-            .map(|identity| (identity[0].clone(), identity[1].clone()))
-            .collect();
-        let moved: Vec<Vec<String>> = by_key
-            .keys()
-            .filter(|identity| accounts.contains(&(identity[0].clone(), identity[1].clone())))
-            .cloned()
-            .collect();
-        for identity in moved {
-            if let Some(row) = by_key.remove(&identity) {
-                rewritten.push((identity, row));
-            }
-        }
-    }
-
     // A clustered table's rows are keyed by their primary key and take no
     // `_tidb_rowid`, so none is reserved for them.
     let clustered = is_clustered(table);
@@ -958,10 +797,6 @@ fn reconcile<S: MetaSnapshot>(
                     &mut row.values,
                 )?;
                 if moved {
-                    if let Some((id, grantor)) = &grantor {
-                        row.values
-                            .insert(*id, Datum::Bytes(grantor.clone().into_bytes()));
-                    }
                     plan.mutations
                         .extend(update_row(table, &row.key, &existing, &row.values)?);
                     note_changed(changed, account_table, identity);
@@ -989,9 +824,6 @@ fn reconcile<S: MetaSnapshot>(
                     let wanted = values.get(column).cloned().unwrap_or_default();
                     fresh.insert(*id, Datum::Bytes(wanted.into_bytes()));
                 }
-                if let Some((id, grantor)) = &grantor {
-                    fresh.insert(*id, Datum::Bytes(grantor.clone().into_bytes()));
-                }
                 apply_policy_values(table, account_table, identity, policy_values, &mut fresh)?;
                 if clustered {
                     plan.mutations
@@ -1004,7 +836,7 @@ fn reconcile<S: MetaSnapshot>(
         }
     }
     // Whatever the desired image did not claim is a row the change removed.
-    for (identity, row) in rewritten.into_iter().chain(by_key) {
+    for (identity, row) in by_key {
         if clustered {
             plan.mutations
                 .extend(delete_clustered_row(table, &row.values)?);

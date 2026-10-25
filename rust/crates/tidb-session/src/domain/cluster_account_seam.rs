@@ -20,38 +20,25 @@
 //! in-memory account table would change a *read* of somebody else's state and
 //! answer `OK` to a client whose account does not exist anywhere.
 //!
-//! # Which half runs first, and what a failure leaves behind
+//! # What one account statement does, as Go's executors do it
 //!
-//! The registry already knows what every account statement MEANS -- it
-//! validates `GRANT SELECT ON *.*`, refuses a `DROP USER` of an account that
-//! is not there, decides that `CREATE USER IF NOT EXISTS` is a no-op. Deriving
-//! the same rules a second time from the AST, in the persist layer, would be
-//! two implementations of `GRANT` that drift.
+//! Go's `executeCreateUser`, `GrantExec` and the other account executors take
+//! a system session, run their own `mysql.*` SQL in one `BEGIN PESSIMISTIC`
+//! .. `COMMIT`, then call `Domain.NotifyUpdatePrivilege`, which reloads the
+//! privilege cache from the tables and tells the peers. Here:
 //!
-//! So the registry runs first -- but not the LIVE one. One account statement
-//! is:
+//! 1. [`ClusterAccountWriter::load_accounts`] reads the cluster's accounts,
+//!    which the session's executor validates the statement against and
+//!    applies its meaning to (the registry knows what `GRANT SELECT ON *.*`
+//!    and `CREATE USER IF NOT EXISTS` mean);
+//! 2. the executor writes the statement's own rows on a system session
+//!    (`crate::user_table`, the SQL Go's executors issue);
+//! 3. after the commit, [`ClusterAccountWriter::notify_update_privilege`]
+//!    reloads the node's live table from the tables and announces the change
+//!    on etcd.
 //!
-//! 1. open one transaction and read the cluster's own `mysql.*` through it,
-//!    building a *scratch* registry that is the cluster's current truth (not
-//!    this node's possibly-stale copy);
-//! 2. run the statement against that scratch registry, which validates it and
-//!    applies its meaning;
-//! 3. plan the row mutations that make `mysql.*` equal the scratch registry's
-//!    new state, and commit them on that same transaction;
-//! 4. only then publish the scratch registry into the node's live one, and
-//!    announce the change on etcd.
-//!
-//! The failure invariant falls straight out of the order: nothing the node
-//! serves from is touched until the 2PC has committed. A statement that fails
-//! to validate never reaches storage; a statement whose commit is rejected --
-//! including a write conflict with a Go TiDB that granted something at the
-//! same time -- leaves the live registry exactly as it was, and the client is
-//! told. There is no rollback path to get wrong, because there is nothing to
-//! roll back.
-//!
-//! Reading the cluster at step 1 is also what makes the whole-image persist
-//! safe: the diff is between the cluster's rows and those same rows plus this
-//! statement, so it can never revert a change another node made.
+//! Nothing the node serves from is touched before the commit: a statement
+//! that fails to validate or to commit leaves the live table as it was.
 //!
 //! [`ClusterDdl`]: crate::domain::cluster_session_node::ClusterDdl
 
@@ -59,9 +46,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tidb_txnkv::transaction::StoreClient;
 
-use tidb_exec::cluster_account_write::{
-    plan_account_write, plan_account_write_with_hints, AccountWriteError, AccountWriteHints,
-};
+use tidb_exec::cluster_account_write::{plan_account_write, AccountWriteError};
 use tidb_exec::cluster_auto_id::ClusterAutoIdStore;
 use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use tidb_exec::cluster_privilege_load::{load_cluster_privileges, read_bootstrap_state};
@@ -71,7 +56,7 @@ use tidb_executor::kv_table::AutoIdStore;
 use tidb_pd_client::EtcdClient;
 use crate::privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{RealOptimisticTransactionOpener, RealTransaction};
+use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 use crate::domain::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
 use crate::domain::session_api::{cluster_commit_error, SqlQueryError};
@@ -129,9 +114,11 @@ where
 /// without a cluster. The production implementation is
 /// [`RealClusterAccountWriter`].
 pub trait ClusterAccountWriter: Send + Sync {
-    /// Reads the cluster's accounts and hands back the scratch table one
-    /// statement is to be applied to.
-    fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String>;
+    /// The cluster's accounts as of now: what one statement validates against.
+    fn load_accounts(&self) -> Result<PrivilegeRegistry, String>;
+    /// Go `Domain.NotifyUpdatePrivilege` after a committed account statement:
+    /// the live table reloads from the cluster's tables and peers are told.
+    fn notify_update_privilege(&self) -> Result<(), String>;
     /// Announce a committed automatic lock/unlock; counter-only writes stay local.
     fn notify_login_lock_change(&self, _user: &str, _host: &str) {}
     /// Go `NotifyUpdateAllUsersPrivilege`'s etcd PUT after FLUSH PRIVILEGES:
@@ -139,39 +126,15 @@ pub trait ClusterAccountWriter: Send + Sync {
     fn notify_all_privileges_changed(&self) {}
 }
 
-/// One account statement in flight: the cluster read that opened it, waiting
-/// for the statement's effect to be persisted.
-///
-/// Dropping one without committing abandons the change, which is exactly what
-/// a statement that failed to validate needs.
-pub trait PendingAccountChange {
-    /// The scratch account table the statement is to run against. It holds
-    /// the cluster's accounts as of this change's own snapshot.
-    fn registry(&self) -> PrivilegeRegistry;
-
-    /// What the statement says about how Go writes its rows (the grantor of
-    /// a GRANT, the rewrite of `SET DEFAULT ROLE`), which the scratch table
-    /// alone cannot tell. A pending change that persists nothing ignores it.
-    fn set_write_hints(&mut self, _hints: AccountWriteHints) {}
-
-    /// Persists whatever the statement did to [`Self::registry`], publishes it
-    /// into the node's live table, and announces it.
-    ///
-    /// The `'user'@'host'` identities whose rows changed are answered for the
-    /// log; an empty answer means the statement was a no-op the cluster
-    /// already satisfied, and nothing was written or announced.
-    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError>;
-}
-
-/// The production account writer: one real transaction per statement, the
-/// optimistic 2PC, then the live table and the etcd announcement.
+/// The production account writer: reads of the cluster's tables, the live
+/// table's reload and the etcd announcement.
 pub struct RealClusterAccountWriter<S = tikv_client::PdRpcClient>
 where
     S: StoreClient,
 {
     opener: Arc<RealOptimisticTransactionOpener<S>>,
     /// The node's LIVE account table -- the one every session, the login path
-    /// and `SHOW GRANTS` already hold a clone of. Published into only after a
+    /// and `SHOW GRANTS` already hold a clone of. Reloaded only after a
     /// commit.
     live: PrivilegeRegistry,
     timeout: Duration,
@@ -186,7 +149,7 @@ where
     S: StoreClient,
 {
     /// Binds the writer to an already-connected authority and the live
-    /// account table a successful change publishes into.
+    /// account table a successful change reloads.
     #[must_use]
     pub fn new(
         opener: Arc<RealOptimisticTransactionOpener<S>>,
@@ -215,9 +178,9 @@ where
         notify_privilege_update(self.notifier.as_deref(), &[]);
     }
 
-    fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
+    fn load_accounts(&self) -> Result<PrivilegeRegistry, String> {
         let mut transaction = self.opener.begin().map_err(|error| error.to_string())?;
-        let (catalog, scratch) = {
+        let registry = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
             let bootstrap =
@@ -229,112 +192,19 @@ where
             }
             let loaded =
                 load_cluster_privileges(&mut snapshot, &catalog).map_err(|e| e.to_string())?;
-            // Writing the table back writes what this node modelled, so a row
-            // it could not model would be dropped from the cluster. Refusing
-            // is the only honest answer, and it names what stopped it.
-            let unwritable = crate::domain::cluster_privileges::unwritable_account_rows(&loaded);
-            if !unwritable.is_empty() {
-                return Err(format!(
-                    "this node cannot write the cluster's accounts back: {}",
-                    unwritable.join("; ")
-                ));
-            }
-            (catalog, registry_from_cluster(&loaded).registry)
+            registry_from_cluster(&loaded).registry
         };
-        // The image before the statement: the plan writes only what the
-        // statement moves away from it.
-        let baseline = cluster_image_from_registry(&scratch);
-        Ok(Box::new(RealPendingAccountChange {
-            opener: Arc::clone(&self.opener),
-            transaction: Some(transaction),
-            catalog,
-            scratch,
-            baseline,
-            live: self.live.clone(),
-            timeout: self.timeout,
-            notifier: self.notifier.clone(),
-            hints: AccountWriteHints::default(),
-        }))
-    }
-}
-
-struct RealPendingAccountChange<S>
-where
-    S: StoreClient,
-{
-    opener: Arc<RealOptimisticTransactionOpener<S>>,
-    /// `None` only after [`PendingAccountChange::commit`] has taken it.
-    transaction: Option<RealTransaction<S>>,
-    catalog: ClusterCatalog,
-    scratch: PrivilegeRegistry,
-    /// [`cluster_image_from_registry`] of `scratch` as it was seeded.
-    baseline: tidb_exec::cluster_privilege_load::ClusterPrivileges,
-    live: PrivilegeRegistry,
-    timeout: Duration,
-    notifier: Option<Arc<EtcdClient>>,
-    hints: AccountWriteHints,
-}
-
-impl<S> PendingAccountChange for RealPendingAccountChange<S>
-where
-    S: StoreClient,
-{
-    fn registry(&self) -> PrivilegeRegistry {
-        self.scratch.clone()
+        transaction
+            .finish_without_writes()
+            .map_err(|error| error.to_string())?;
+        Ok(registry)
     }
 
-    fn set_write_hints(&mut self, hints: AccountWriteHints) {
-        self.hints = hints;
-    }
-
-    fn commit(mut self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
-        let mut transaction = self
-            .transaction
-            .take()
-            .ok_or_else(|| SqlQueryError::unknown("the account change was already committed"))?;
-        let desired = cluster_image_from_registry(&self.scratch);
-        let hints = AccountWriteHints {
-            baseline: Some(std::mem::take(&mut self.baseline)),
-            ..self.hints.clone()
-        };
-        let plan = {
-            let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
-            plan_account_write_with_hints(
-                &mut snapshot,
-                &self.catalog,
-                &desired,
-                utc_now_timestamp(),
-                &hints,
-                &mut |db, table, minimum, count| {
-                    reserve_account_ids(&self.opener, self.timeout, db, table, minimum, count)
-                },
-            )
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?
-        };
-        if plan.is_empty() {
-            // A statement the cluster already satisfies -- `CREATE USER IF NOT
-            // EXISTS` for an account that exists, a `GRANT` of a privilege
-            // already held -- spends no commit and announces nothing, exactly
-            // as an `IF EXISTS` DDL no-op does.
-            transaction
-                .finish_without_writes()
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-            return Ok(Vec::new());
-        }
-        let changed = plan.changed_users;
-        let call = UnaryCallContext::with_timeout(self.timeout);
-        let outcome = transaction
-            .commit(plan.mutations, &call)
-            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        if let Some(error) = cluster_commit_error(&outcome, "account change") {
-            return Err(error);
-        }
-        // Published only now: every clone of the live table -- every open
-        // session, the login path -- sees the change the instant it is durable
-        // in the cluster, and never before.
-        self.live.replace_from(&self.scratch);
-        notify_privilege_update(self.notifier.as_deref(), &changed);
-        Ok(changed)
+    fn notify_update_privilege(&self) -> Result<(), String> {
+        let loaded = self.load_accounts()?;
+        self.live.replace_from(&loaded);
+        notify_privilege_update(self.notifier.as_deref(), &[]);
+        Ok(())
     }
 }
 
@@ -364,9 +234,8 @@ pub fn notify_privilege_update(notifier: Option<&EtcdClient>, _changed: &[String
 /// and writes it back. This port also provisions a startup identity from
 /// `--auth-file`, WITH a password, into the node's live table only — so the
 /// two disagreed about root's credential. The first `CREATE USER` opened its
-/// scratch from the cluster, added one row, committed, and
-/// [`PendingAccountChange::commit`] then REPLACED the live table with that
-/// scratch. Root's password reverted to the bootstrap's empty one and the
+/// scratch from the cluster, added one row, committed, and the live table was
+/// then REPLACED with what the cluster held. Root's password reverted to the bootstrap's empty one and the
 /// administrator could no longer authenticate: one `CREATE USER` locked the
 /// server's owner out of it.
 ///

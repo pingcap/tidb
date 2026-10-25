@@ -1200,6 +1200,28 @@ impl ClusterSessionFactory {
         }))
     }
 
+    /// Go `Domain.SysSessionPool().Get()` for one internal statement: a
+    /// session over this node with the internal identity, whose SQL an
+    /// account executor runs in its own transaction.
+    pub(crate) fn open_system_session(&self) -> Result<ClusterServerSession, SqlQueryError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // Apart from client connections and the advanced pool's range.
+        static NEXT_SYSTEM_CONNECTION_ID: AtomicU64 = AtomicU64::new(1_u64 << 62);
+        let connection_id = NEXT_SYSTEM_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
+        let mut session = self.open_session(SessionContext {
+            connection_id,
+            peer_addr: "127.0.0.1:0".parse().expect("loopback socket address"),
+            identity: crate::domain::configured_user_store::AuthenticatedIdentity::internal(),
+            client_found_rows: false,
+            secure_transport: false,
+            tls_status: None,
+            cancellation: crate::domain::session_api::ConnectionCancellation::default(),
+            close: crate::domain::session_api::ConnectionClose::default(),
+        })?;
+        session.store.session.set_restricted_sql(true);
+        Ok(session)
+    }
+
     /// Returns Go Domain's single advanced internal-session pool.
     fn advanced_sys_session_pool(
         self: &Arc<Self>,
@@ -3519,7 +3541,7 @@ impl ClusterSessionFactory {
                 global_vars: self.global_vars.clone(),
             }));
         statistics_loading.attach(&mut built.catalog);
-        let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        let mut session = Session::over_catalog(Arc::new(Mutex::new(built.catalog)));
         session.set_restricted_sql(true);
         {
             // Go `Txn(true)`: asking the bound statement snapshot for its
@@ -3540,6 +3562,8 @@ impl ClusterSessionFactory {
             let historical_slot = Arc::clone(&slot);
             let auto_ids = Arc::clone(&self.auto_ids);
             let globals = self.global_vars.clone();
+            // Go plans a stale read from the domain's current statistics.
+            let statistics_view = Arc::clone(&self.statistics_view);
             session.set_historical_read_provider(Arc::new(move |ts, resource_group, schema| {
                 let hold = Arc::new(tidb_txnkv::ACTIVE_START_TS.hold(ts));
                 let snapshot = transactions
@@ -3560,7 +3584,7 @@ impl ClusterSessionFactory {
                     let built = cluster_session_catalog_with_templates(
                         &loaded,
                         &historical_storage,
-                        None,
+                        Some(Arc::clone(&statistics_view)),
                         auto_ids.as_ref(),
                         &historical_storage,
                         None,
@@ -3586,6 +3610,7 @@ impl ClusterSessionFactory {
             let connection_storage = storage.snapshot_only();
             let auto_ids = Arc::clone(&self.auto_ids);
             let globals = self.global_vars.clone();
+            let statistics_view = Arc::clone(&self.statistics_view);
             session.set_snapshot_schema_provider(Arc::new(move |ts, resource_group, validate| {
                 let hold = tidb_txnkv::ACTIVE_START_TS.hold(ts);
                 let snapshot = transactions
@@ -3607,12 +3632,12 @@ impl ClusterSessionFactory {
                     let built = cluster_session_catalog_with_templates(
                         &catalogs.load(),
                         &current_storage,
-                        None,
+                        Some(Arc::clone(&statistics_view)),
                         auto_ids.as_ref(),
                         &current_storage,
                         None,
                     );
-                    let mut restricted = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+                    let mut restricted = Session::over_catalog(Arc::new(Mutex::new(built.catalog)));
                     restricted.validate_snapshot_gc(ts)?;
                 }
                 let mut metadata = SnapshotMetaSnapshot::new(snapshot);
@@ -3627,7 +3652,7 @@ impl ClusterSessionFactory {
                 let built = cluster_session_catalog_with_templates(
                     &loaded,
                     &connection_storage,
-                    None,
+                    Some(Arc::clone(&statistics_view)),
                     auto_ids.as_ref(),
                     &connection_storage,
                     None,
@@ -3768,6 +3793,7 @@ impl ClusterSessionFactory {
             transactions: Arc::clone(&self.transactions),
             ddl: Arc::clone(&self.ddl),
             accounts: Arc::clone(&self.accounts),
+            system_sessions: self.binding_session_factory.clone(),
             sysvars: Arc::clone(&self.sysvars),
             analyze: Arc::clone(&self.analyze),
             approximate_table_counts: Arc::clone(&self.approximate_table_counts),
@@ -4887,6 +4913,9 @@ pub struct ClusterServerSession {
     /// The route a stored-account change takes; see
     /// [`crate::domain::cluster_account_seam`].
     accounts: Arc<dyn ClusterAccountWriter>,
+    /// This node, whose domain pool an account statement takes its system
+    /// session from (Go `GetSysSession`).
+    system_sessions: Weak<ClusterSessionFactory>,
     /// The route a `SET GLOBAL` change takes; see
     /// [`crate::domain::cluster_sysvar_seam`].
     sysvars: Arc<dyn ClusterSysvarWriter>,
@@ -5938,7 +5967,13 @@ impl ClusterServerSession {
         self.record_new_txn_in_stmt();
         // Go logs nothing for a successful account statement.
         self.store.session
-            .run_account_statement_with(sql, &ClusterAccountService(Arc::clone(&self.accounts)))
+            .run_account_statement_with(
+                sql,
+                &ClusterAccountService {
+                    accounts: Arc::clone(&self.accounts),
+                    factory: self.system_sessions.clone(),
+                },
+            )
             .map_err(map_error)?;
         // Go answers an account statement with an OK packet carrying no rows,
         // whether it changed anything or was an `IF [NOT] EXISTS` no-op.
@@ -6705,9 +6740,19 @@ impl ClusterServerSession {
             StatementRoute::Analyze(tables) => {
                 self.observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))
             }
-            StatementRoute::LoadStats => Err(SqlQueryError::unknown(
-                "LOAD STATS requires client-local file transfer",
-            )),
+            // Go `LoadStatsExec` records the path and the connection reads the
+            // file from the client; a session's own reader is that transfer.
+            StatementRoute::LoadStats => {
+                let path = prepare_cluster_load_stats_parsed(stmt)
+                    .map(|statement| statement.path)
+                    .unwrap_or_default();
+                let data = self
+                    .store
+                    .session
+                    .read_client_local_file(&path)
+                    .map_err(map_error)?;
+                self.run_load_stats(&data)
+            }
             StatementRoute::FlushStatsDelta(targets) => {
                 self.observe_routed_write(sql, stmt, |node| node.run_flush_stats_delta(&targets))
             }
@@ -7699,39 +7744,85 @@ fn global_lock_wait_timeout(vars: &GlobalSysvars) -> Duration {
 /// The cluster's [`ClusterDdl`] as the session's [`crate::ddl_service::DdlService`]:
 /// the same publish-and-refresh call, with its client error carried across the
 /// crate boundary as the already-classified `(code, state, message)` triple.
-/// The cluster account writer as the session's [`AccountService`].
+/// The cluster account writer and this node's system sessions as the
+/// session's [`AccountService`].
 ///
 /// [`AccountService`]: crate::stored_state_service::AccountService
-struct ClusterAccountService(Arc<dyn ClusterAccountWriter>);
-
-struct ClusterPendingAccountChange(Box<dyn crate::domain::cluster_account_seam::PendingAccountChange>);
+struct ClusterAccountService {
+    accounts: Arc<dyn ClusterAccountWriter>,
+    /// The node, whose domain pool Go's executor takes its system session
+    /// from (`GetSysSession`).
+    factory: Weak<ClusterSessionFactory>,
+}
 
 impl crate::stored_state_service::AccountService for ClusterAccountService {
-    fn begin(
+    fn load_accounts(&self) -> Result<PrivilegeRegistry, tidb_executor::DriverError> {
+        self.accounts
+            .load_accounts()
+            .map_err(tidb_executor::DriverError::unsupported)
+    }
+
+    fn system_session(
         &self,
-    ) -> Result<
-        Box<dyn crate::stored_state_service::PendingAccountChange>,
-        tidb_executor::DriverError,
-    > {
-        let pending = self
-            .0
-            .begin()
-            .map_err(tidb_executor::DriverError::unsupported)?;
-        Ok(Box::new(ClusterPendingAccountChange(pending)))
+    ) -> Result<Box<dyn crate::user_table::AccountSqlSession>, tidb_executor::DriverError> {
+        let factory = self.factory.upgrade().ok_or_else(|| {
+            tidb_executor::DriverError::unsupported("cluster session factory is stopped")
+        })?;
+        let session = factory
+            .open_system_session()
+            .map_err(sql_query_error_to_driver)?;
+        Ok(Box::new(AccountSystemSession(session)))
+    }
+
+    fn notify_update_privilege(&self) -> Result<(), tidb_executor::DriverError> {
+        self.accounts
+            .notify_update_privilege()
+            .map_err(tidb_executor::DriverError::unsupported)
     }
 }
 
-impl crate::stored_state_service::PendingAccountChange for ClusterPendingAccountChange {
-    fn registry(&self) -> PrivilegeRegistry {
-        self.0.registry()
-    }
+/// A system session running an account executor's SQL.
+struct AccountSystemSession(ClusterServerSession);
 
-    fn set_write_hints(&mut self, hints: tidb_exec::cluster_account_write::AccountWriteHints) {
-        self.0.set_write_hints(hints);
-    }
-
-    fn commit(self: Box<Self>) -> Result<Vec<String>, tidb_executor::DriverError> {
-        self.0.commit().map_err(sql_query_error_to_driver)
+impl crate::user_table::AccountSqlSession for AccountSystemSession {
+    fn execute(
+        &mut self,
+        sql: &str,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::DriverError> {
+        // The connection's own entry points: transaction control, then a
+        // write, then a query, as the server's dispatch tries them.
+        if self
+            .0
+            .control_transaction(sql)
+            .map_err(sql_query_error_to_driver)?
+            .is_some()
+        {
+            return Ok(Vec::new());
+        }
+        if self
+            .0
+            .execute_write(sql)
+            .map_err(sql_query_error_to_driver)?
+            .is_some()
+        {
+            return Ok(Vec::new());
+        }
+        let mut result = self.0.execute(sql).map_err(sql_query_error_to_driver)?;
+        let source = result.source();
+        let drained = (|| {
+            let mut rows = Vec::new();
+            loop {
+                let batch = source.next_batch(1024)?;
+                if batch.is_empty() {
+                    break;
+                }
+                rows.extend(batch);
+            }
+            source.finish()?;
+            source.close()?;
+            Ok(rows)
+        })();
+        drained.map_err(tidb_executor::DriverError::Mysql)
     }
 }
 

@@ -5,51 +5,6 @@
 use crate::tests_support::*;
 use crate::*;
 
-#[test]
-fn delegated_account_storage_restores_local_mirrors_after_success_and_error() {
-    // A front end's scratch-registry hook; a session on the store persists
-    // its own account writes.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let registry = privilege::PrivilegeRegistry::default();
-    let mut session = Session::on_accounts(&registry);
-    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
-    session
-        .run_with_delegated_account_storage("CREATE USER 'delegated'@'%'")
-        .unwrap();
-    assert!(registry.user_exists("delegated", "%"));
-    assert_eq!(
-        query_text(
-            &mut session,
-            "SELECT COUNT(*) FROM mysql.user WHERE User='delegated'"
-        )
-        .1,
-        [["0"]]
-    );
-    assert!(session
-        .run_with_delegated_account_storage("DROP USER 'absent'@'%'")
-        .is_err());
-    session.run("CREATE USER 'local_after_error'@'%'").unwrap();
-    assert_eq!(
-        query_text(
-            &mut session,
-            "SELECT COUNT(*) FROM mysql.user WHERE User='local_after_error'"
-        )
-        .1,
-        [["1"]]
-    );
-    session.run("DROP USER 'local_after_error'@'%'").unwrap();
-    assert_eq!(
-        query_text(
-            &mut session,
-            "SELECT COUNT(*) FROM mysql.user WHERE User='local_after_error'"
-        )
-        .1,
-        [["0"]]
-    );
-}
-
 /// CAPTURED: `CREATE USER ... IDENTIFIED BY` stores Go
 /// `auth.EncodePassword`'s `*<40 UPPERCASE HEX>` double-SHA-1 in
 /// `mysql.user.authentication_string`; a passwordless account stores the

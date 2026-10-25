@@ -527,44 +527,17 @@ fn read_staleness_reads_the_present_and_a_snapshot_pin_is_refused() {
     session.run("INSERT INTO t VALUES (1, 10)").unwrap();
 
     session.run("SET @@tidb_read_staleness = -1").unwrap();
-    if !crate::tests_support::in_process_tier() {
-        // Go reads the schema a second back as well, where the table just
-        // created does not exist yet (asked of the Go server: 1146).
-        assert_eq!(
-            crate::tests_support::err_code(session.run("SELECT b FROM t")),
-            1146
-        );
-        session.run("SET @@tidb_read_staleness = 0").unwrap();
-        assert_eq!(
-            crate::tests_support::row_text(session.run("SELECT b FROM t")),
-            vec![vec!["10"]]
-        );
-        return;
-    }
+    // Go reads the schema a second back as well, where the table just
+    // created does not exist yet (asked of the Go server: 1146).
+    assert_eq!(
+        crate::tests_support::err_code(session.run("SELECT b FROM t")),
+        1146
+    );
+    session.run("SET @@tidb_read_staleness = 0").unwrap();
     assert_eq!(
         crate::tests_support::row_text(session.run("SELECT b FROM t")),
         vec![vec!["10"]]
     );
-    session.run("INSERT INTO t VALUES (2, 20)").unwrap();
-    session.run("SET @@tidb_read_staleness = 0").unwrap();
-    assert_eq!(
-        crate::tests_support::row_text(session.run("SELECT b FROM t ORDER BY a")),
-        vec![vec!["10"], vec!["20"]]
-    );
-
-    // The in-process tier keeps no history to read a pinned snapshot from.
-    session
-        .run("SET @@tidb_snapshot = '2020-01-01 00:00:00'")
-        .unwrap();
-    let error = session.run("SELECT b FROM t").unwrap_err();
-    assert!(
-        format!("{error:?}").contains("tidb_snapshot"),
-        "a snapshot-pinned read must name what it refused, got {error:?}"
-    );
-    // Unpinning is always possible: `SET` and transaction control sit above
-    // the guard.
-    session.run("SET @@tidb_snapshot = ''").unwrap();
-    session.run("SELECT b FROM t").unwrap();
 }
 
 /// `AS OF TIMESTAMP` on a table reference reads the store's history --
@@ -724,57 +697,6 @@ fn start_transaction_read_only_takes_the_noop_functions_gate() {
     session.run("START TRANSACTION READ ONLY").unwrap();
     assert!(session.in_transaction());
     session.run("ROLLBACK").unwrap();
-}
-
-/// `START TRANSACTION READ ONLY AS OF TIMESTAMP` is Go's stale transaction:
-/// its `StartTS` IS the as-of timestamp -- `@@tidb_current_ts` reports it,
-/// which is the exact equality the corpus's last divergence tested -- every
-/// read inside sees the store as of it, and its COMMIT publishes nothing.
-/// The spelling is exempt from the `READ ONLY` noop gate (`executeBegin`
-/// checks `s.AsOf == nil` first), so no noop toggle is needed.
-#[test]
-fn start_transaction_as_of_timestamp_pins_the_transaction() {
-    let mut session = Session::new();
-    session.run("CREATE TABLE t (a INT PRIMARY KEY)").unwrap();
-    session.run("INSERT INTO t VALUES (1)").unwrap();
-    session.run("INSERT INTO t VALUES (2)").unwrap();
-    session
-        .run("SET @last_commit_ts = json_extract(@@tidb_last_txn_info, '$.commit_ts')")
-        .unwrap();
-
-    session
-        .run("START TRANSACTION READ ONLY AS OF TIMESTAMP @last_commit_ts")
-        .unwrap();
-    assert!(session.in_transaction());
-    assert_eq!(
-        session
-            .run("SELECT @@tidb_current_ts = CAST(@last_commit_ts AS UNSIGNED) AS ts_matches")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(1)]]),
-        "the stale transaction's StartTS is the as-of timestamp"
-    );
-    assert_eq!(
-        session.run("SELECT count(*) FROM t").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(2)]]),
-        "reads inside see the store as of the pin"
-    );
-    session.run("COMMIT").unwrap();
-    assert!(!session.in_transaction());
-
-    // The in-process tier's retained ring refuses an older timestamp rather
-    // than silently opening at the present; on the store, Go's refusal is the
-    // GC safe point's.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let error = session
-        .run("START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-01-01 00:00:00'")
-        .unwrap_err();
-    assert!(
-        format!("{error:?}").contains("retained history"),
-        "got {error:?}"
-    );
-    assert!(!session.in_transaction());
 }
 
 #[test]

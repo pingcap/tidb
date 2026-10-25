@@ -29,12 +29,12 @@ use tidb_config::configtypes::parse_go_duration;
 use tidb_executor::{DriverError, MysqlError};
 use tidb_hack::GoToLower;
 use tidb_model::{
-    ActionType, ResourceGroupBackgroundSettings, ResourceGroupInfo,
+    ResourceGroupBackgroundSettings, ResourceGroupInfo,
     ResourceGroupRunawayAction as RunawayAction, ResourceGroupRunawaySettings,
     ResourceGroupSettings, ResourceGroupShared, DEFAULT_RESOURCE_GROUP_NAME,
 };
 
-use crate::{Session, StmtOutput};
+use crate::Session;
 
 /// Go `resourcegroup.MaxGroupNameLength`.
 const MAX_GROUP_NAME_LENGTH: usize = 32;
@@ -269,30 +269,6 @@ fn check_resource_group_validation(group: &ResourceGroupInfo) -> Result<(), Driv
 }
 
 impl Session {
-    /// The bootstrap's `ALTER RESOURCE GROUP default BACKGROUND=
-    /// (TASK_TYPES='stats')`. Go runs it as internal SQL, which the
-    /// resource-control switch does not gate (`InRestrictedSQL`).
-    pub(crate) fn bootstrap_default_resource_group_background(
-        &mut self,
-    ) -> Result<(), DriverError> {
-        let default = self
-            .lock_catalog()?
-            .resource_group(DEFAULT_RESOURCE_GROUP_NAME)
-            .cloned()
-            .expect("the catalog always holds the default group");
-        let group = build_resource_group(
-            &default,
-            &[ResourceGroupOption::Background(vec![
-                ResourceGroupBackgroundOption::TaskTypes("stats".to_owned()),
-            ])],
-        )?;
-        check_resource_group_validation(&group)?;
-        self.with_catalog_mut(|catalog| {
-            catalog.put_resource_group(group);
-            Ok(())
-        })
-    }
-
     /// Go `executeCreateUser`/`executeAlterUser`'s RESOURCE GROUP arm: the
     /// lowercase name the account's `user_attributes` records under
     /// `resource_group`, after the feature gate, the role refusal
@@ -318,19 +294,6 @@ impl Session {
             return Err(resource_group_not_exists(&lower));
         }
         Ok(lower)
-    }
-
-    /// Go `DDLExec.executeCreateResourceGroup` and `executor.AddResourceGroup`.
-    pub(crate) fn execute_create_resource_group(
-        &mut self,
-        stmt: &CreateResourceGroupStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        match self.admit_create_resource_group(stmt)? {
-            Some(group) => {
-                self.submit_resource_group_job(ActionType::ACTION_CREATE_RESOURCE_GROUP, group)
-            }
-            None => Ok(StmtOutput::Done(false)),
-        }
     }
 
     /// Go `executor.AddResourceGroup` up to its job: the group to create, or
@@ -359,19 +322,6 @@ impl Session {
         Ok(Some(group))
     }
 
-    /// Go `DDLExec.executeAlterResourceGroup` and `executor.AlterResourceGroup`.
-    pub(crate) fn execute_alter_resource_group(
-        &mut self,
-        stmt: &AlterResourceGroupStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        match self.admit_alter_resource_group(stmt)? {
-            Some(group) => {
-                self.submit_resource_group_job(ActionType::ACTION_ALTER_RESOURCE_GROUP, group)
-            }
-            None => Ok(StmtOutput::Done(false)),
-        }
-    }
-
     /// Go `executor.AlterResourceGroup` up to its job.
     fn admit_alter_resource_group(
         &mut self,
@@ -390,19 +340,6 @@ impl Session {
         let group = build_resource_group(&existing, &stmt.options)?;
         check_resource_group_validation(&group)?;
         Ok(Some(group))
-    }
-
-    /// Go `DDLExec.executeDropResourceGroup` and `executor.DropResourceGroup`.
-    pub(crate) fn execute_drop_resource_group(
-        &mut self,
-        stmt: &DropResourceGroupStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        match self.admit_drop_resource_group(stmt)? {
-            Some(group) => {
-                self.submit_resource_group_job(ActionType::ACTION_DROP_RESOURCE_GROUP, group)
-            }
-            None => Ok(StmtOutput::Done(false)),
-        }
     }
 
     /// Go `executor.DropResourceGroup` up to its job.
@@ -470,40 +407,5 @@ impl Session {
                 }),
             _ => None,
         })
-    }
-
-    /// The resource-group job: BDR admission (`doDDLJob2`) and the meta edit
-    /// `onCreateResourceGroup`/`onAlterResourceGroup`/`onDropResourceGroup`
-    /// makes.
-    fn submit_resource_group_job(
-        &mut self,
-        action: ActionType,
-        group: ResourceGroupInfo,
-    ) -> Result<StmtOutput, DriverError> {
-        let context = self.ddl_statement_context();
-        self.with_catalog_mut(|catalog| {
-            tidb_executor::ddl::admit_bdr_job(
-                catalog,
-                context.ddl_cdc_write_source(),
-                group.name.lowercase(),
-                action,
-            )?;
-            // Go's resource-group job carries the group as its schema.
-            context.submit_ddl_job(
-                tidb_executor::ddl::job_history::SubmittedDdlJob::new(
-                    action,
-                    group.name.lowercase(),
-                    "",
-                )
-                .with_ids(Some(group.id), None),
-            );
-            if action == ActionType::ACTION_DROP_RESOURCE_GROUP {
-                catalog.drop_resource_group(group.name.lowercase());
-            } else {
-                catalog.put_resource_group(group);
-            }
-            Ok(())
-        })?;
-        Ok(StmtOutput::Done(false))
     }
 }

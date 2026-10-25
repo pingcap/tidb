@@ -526,114 +526,6 @@ fn password_history_uses_live_defaults_last_options_and_plugin_changes() {
     );
 }
 
-#[test]
-fn password_history_protects_union_of_recent_count_and_reuse_time() {
-    // Drives the registry's own clock, which only the in-process tier reads;
-    // on the store the check reads `mysql.password_history` against real time
-    // (`password_history_checks_the_stored_rows` backdates those rows).
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let mut session = session_with_privileges();
-    let registry = session.privileges.clone().unwrap();
-    session.run("CREATE USER history_window IDENTIFIED BY 'first' PASSWORD HISTORY 1 PASSWORD REUSE INTERVAL 2 DAY").unwrap();
-    session
-        .run("ALTER USER history_window IDENTIFIED BY 'second'")
-        .unwrap();
-    // Outside count=1, but inside the two-day window.
-    assert_eq!(
-        session
-            .run("SET PASSWORD FOR history_window = 'first'")
-            .unwrap_err()
-            .to_mysql_error()
-            .code,
-        3638
-    );
-    assert_eq!(
-        registry
-            .account_password_history("history_window", "%")
-            .len(),
-        2
-    );
-    registry.clock().advance(3 * 86400);
-    // Outside both windows; prune the old rows only after successful verification.
-    session
-        .run("SET PASSWORD FOR history_window = 'first'")
-        .unwrap();
-    assert_eq!(
-        registry
-            .account_password_history("history_window", "%")
-            .len(),
-        1
-    );
-    registry.clock().advance(3 * 86400);
-    // Old in time, but still the most recent password.
-    assert_eq!(
-        session
-            .run("SET PASSWORD FOR history_window = 'first'")
-            .unwrap_err()
-            .to_mysql_error()
-            .code,
-        3638
-    );
-}
-
-#[test]
-fn password_history_cutoff_follows_go_local_text_and_session_timestamp_conversion() {
-    // Drives the registry's own clock, which only the in-process tier reads;
-    // on the store the check reads `mysql.password_history` against real time
-    // (`password_history_checks_the_stored_rows` backdates those rows).
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let mut session = session_with_privileges();
-    let registry = session.privileges.clone().unwrap();
-    session.run("SET time_zone = '+08:00'").unwrap();
-    session.run("CREATE USER history_zone IDENTIFIED BY 'first' PASSWORD HISTORY 0 PASSWORD REUSE INTERVAL 2 DAY").unwrap();
-    let mut expected = registry.account_password_history("history_zone", "%")[0].timestamp;
-    expected
-        .convert_time_zone(
-            &tidb_datatype::SessionTimeZone::utc(),
-            &session.vars.session_time_zone(),
-        )
-        .unwrap();
-    assert_eq!(
-        row_text(session.run(
-            "SELECT Password_timestamp FROM mysql.password_history WHERE User='history_zone'"
-        )),
-        [[expected.to_string()]]
-    );
-    // getValidTime renders the two-day cutoff as process-local text, which
-    // the TIMESTAMP comparison reads at the session's +08:00: the credential
-    // stays protected 2 days + 8 hours minus the process zone's UTC offset
-    // at the cutoff (56 hours where the process runs in UTC).
-    let created = registry.clock().now_unix();
-    let local_offset = |instant: i64| {
-        i64::from(
-            chrono::TimeZone::timestamp_opt(&chrono::Local, instant, 0)
-                .single()
-                .expect("an unambiguous instant")
-                .offset()
-                .local_minus_utc(),
-        )
-    };
-    let mut window = 56 * 3600 - local_offset(created + 8 * 3600);
-    window = 56 * 3600 - local_offset(created + window - 48 * 3600);
-    registry.clock().advance(window - 3600);
-    assert_eq!(
-        session
-            .run("SET PASSWORD FOR history_zone = 'first'")
-            .unwrap_err()
-            .to_mysql_error()
-            .code,
-        3638
-    );
-    registry.clock().advance(2 * 3600);
-    session
-        .run("SET PASSWORD FOR history_zone = 'first'")
-        .unwrap();
-}
-
 /// Go `checkPasswordReusePolicy` reads `mysql.password_history` on every
 /// statement, so the stored rows are what it checks -- captured in
 /// `executor/password_management`: after `UPDATE mysql.password_history SET
@@ -645,7 +537,6 @@ fn password_history_cutoff_follows_go_local_text_and_session_timestamp_conversio
 fn password_history_checks_the_stored_rows() {
     let privs = privilege::PrivilegeRegistry::default();
     let mut session = bootstrap_session(&privs);
-    session.bootstrap_fresh_store();
     session
         .run("set global password_reuse_interval = 1")
         .unwrap();

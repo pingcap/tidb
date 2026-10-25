@@ -2582,22 +2582,6 @@ impl Session {
                 }
             }
             Stmt::Ddl(ddl) => match &**ddl {
-                DdlStmt::RenameTable(_) => {
-                    let context = self
-                        .ddl_statement_context()
-                        .with_parser_config(self.vars.build_parser_config());
-                    let current_db = self.current_db.clone();
-                    self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_rename_table_in(
-                            sql,
-                            catalog,
-                            &current_db,
-                            sql_mode,
-                            &context,
-                        )?;
-                        Ok(StmtOutput::Affected(0))
-                    })
-                }
                 DdlStmt::TruncateTable(name) => {
                     let context = self
                         .ddl_statement_context()
@@ -2708,126 +2692,6 @@ impl Session {
                     })?;
                     self.hypo_tiflash_replicas = std::sync::Arc::new(replicas);
                     Ok(StmtOutput::Affected(0))
-                }
-                DdlStmt::CreateIndex(create) => {
-                    let if_not_exists = create.if_not_exists;
-                    let current_db = self.current_db.clone();
-                    // An index backfill WRITES the entries it computes, so it
-                    // evaluates at the write level: captured from TiDB,
-                    // `alter table t add index i((100/a))` over a row with
-                    // `a = 0` is 1365 under the default SQL mode and succeeds
-                    // under `sql_mode = ''`, exactly as the INSERT of such a
-                    // row does.
-                    let ctx = self
-                        .statement_context(true)
-                        .with_parser_config(self.vars.build_parser_config());
-                    let result = self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_create_index_in(sql, catalog, &current_db, &ctx)?;
-                        Ok(StmtOutput::Affected(0))
-                    });
-                    // A DDL action raises notes of its own -- an `IF EXISTS`
-                    // that skipped something files the error it swallowed as
-                    // Go's `Note`, from inside the executor. Draining after
-                    // the call rather than after a successful one is what Go
-                    // does too: the buffer belongs to the statement, not to
-                    // its outcome.
-                    self.drain_eval_warnings(&ctx);
-                    // Go `executor.go`'s `CreateIndex`:
-                    //
-                    //     if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
-                    //         ctx.GetSessionVars().StmtCtx.AppendNote(err)
-                    //         return nil
-                    //     }
-                    //
-                    // The note carries the SUPPRESSED ERROR itself, so its
-                    // code and text are 1061's and cannot drift from it --
-                    // which is exactly what `append_suppressed` files. Only
-                    // 1061 is swallowed: `IF NOT EXISTS` says the index may
-                    // already be there, not that any failure is acceptable.
-                    match result {
-                        Err(DriverError::DuplicateKeyName(name)) if if_not_exists => {
-                            self.append_suppressed(DriverError::DuplicateKeyName(name));
-                            Ok(StmtOutput::Affected(0))
-                        }
-                        other => other,
-                    }
-                }
-                DdlStmt::DropIndex(_) => {
-                    let current_db = self.current_db.clone();
-                    // `DROP INDEX` REBUILDS each entry's key to delete it, so
-                    // it needs the session's `@@time_zone` for the same reason
-                    // writing the entry did.
-                    let ctx = self.statement_context(true);
-                    let result = self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_index_in(sql, catalog, &current_db, &ctx)?;
-                        Ok(StmtOutput::Affected(0))
-                    });
-                    // A DDL action raises notes of its own -- an `IF EXISTS`
-                    // that skipped something files the error it swallowed as
-                    // Go's `Note`, from inside the executor. Draining after
-                    // the call rather than after a successful one is what Go
-                    // does too: the buffer belongs to the statement, not to
-                    // its outcome.
-                    self.drain_eval_warnings(&ctx);
-                    result
-                }
-                DdlStmt::AlterTable(alter) => {
-                    let discarded_checks = if self.enable_check_constraint() {
-                        0
-                    } else {
-                        tidb_executor::discarded_check_constraint_actions(alter)
-                    };
-                    let current_db = self.current_db.clone();
-                    // `ADD INDEX` backfills, so the same write level applies.
-                    // The executor re-parses the client's text, in the
-                    // client's encodings (Go parses it once, so).
-                    let ctx = self
-                        .statement_context(true)
-                        .with_ddl_query(sql)
-                        .with_parser_config(self.vars.build_parser_config());
-                    let exchanged_local_temporary = alter.actions.iter().find_map(|action| {
-                        let tidb_ast::AlterTableAction::Partition(
-                            tidb_ast::AlterPartitionAction::Exchange { table, .. },
-                        ) = action
-                        else {
-                            return None;
-                        };
-                        let (database, name) =
-                            tidb_executor::driver::split_table_path_pub(table, &current_db).ok()?;
-                        self.local_temporary_table_name(database, name)
-                    });
-                    let result = self.with_persistent_catalog_mut(|catalog| {
-                        if let Ok((database, name)) =
-                            tidb_executor::driver::split_table_path_pub(&alter.name, &current_db)
-                        {
-                            Self::exchange_local_temporary_refusal(
-                                catalog,
-                                (database, name),
-                                exchanged_local_temporary.as_deref(),
-                            )?;
-                        }
-                        tidb_executor::run_alter_table_in(sql, catalog, &current_db, &ctx)?;
-                        Ok(StmtOutput::Affected(0))
-                    });
-                    // One `tidb_enable_check_constraint is off` warning per
-                    // discarded action, the same rule CREATE TABLE follows.
-                    if result.is_ok() {
-                        for _ in 0..discarded_checks {
-                            self.append_warning(
-                                WarningLevel::Warning,
-                                CHECK_CONSTRAINT_IS_OFF_CODE,
-                                CHECK_CONSTRAINT_IS_OFF_MESSAGE.to_owned(),
-                            );
-                        }
-                    }
-                    // A DDL action raises notes of its own -- an `IF EXISTS`
-                    // that skipped something files the error it swallowed as
-                    // Go's `Note`, from inside the executor. Draining after
-                    // the call rather than after a successful one is what Go
-                    // does too: the buffer belongs to the statement, not to
-                    // its outcome.
-                    self.drain_eval_warnings(&ctx);
-                    result
                 }
                 DdlStmt::DropTable(drop) => {
                     let context = self.ddl_statement_context();
@@ -2949,126 +2813,23 @@ impl Session {
                     self.drain_eval_warnings(&ctx);
                     done
                 }
-                DdlStmt::CreateView(create) => {
+                // Go's `CompactTableStmt` (`CompactTableTiFlashExec`): the
+                // parser spells it as a lone `ALTER TABLE ... COMPACT`, and
+                // it is a session statement, not a DDL job.
+                DdlStmt::AlterTable(alter) if crate::classify::is_compact_table(ddl) => {
                     let current_db = self.current_db.clone();
                     let ctx = self.statement_context(false);
-                    let create = create.clone();
-                    self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_create_view_in(&create, catalog, &current_db, &ctx)?;
-                        Ok(StmtOutput::Affected(0))
-                    })
+                    let result = self.with_persistent_catalog_mut(|catalog| {
+                        tidb_executor::run_compact_table_in(alter, catalog, &current_db, &ctx)
+                    });
+                    self.drain_eval_warnings(&ctx);
+                    result.map(|()| StmtOutput::Affected(0))
                 }
-                // Go answers every sequence DDL with a zero affected-row
-                // count, as it does every other DDL.
-                DdlStmt::CreateSequence(create) => {
-                    let context = self.ddl_statement_context();
-                    let current_db = self.current_db.clone();
-                    let create = create.clone();
-                    self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_create_sequence_in(
-                            &create,
-                            catalog,
-                            &current_db,
-                            &context,
-                        )?;
-                        Ok(StmtOutput::Affected(0))
-                    })
-                }
-                DdlStmt::AlterSequence(alter) => {
-                    let context = self.ddl_statement_context();
-                    let current_db = self.current_db.clone();
-                    let alter = alter.clone();
-                    self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_alter_sequence_in(
-                            &alter,
-                            catalog,
-                            &current_db,
-                            &context,
-                        )?;
-                        Ok(StmtOutput::Affected(0))
-                    })
-                }
-                DdlStmt::DropSequence(drop) => {
-                    let context = self.ddl_statement_context();
-                    let current_db = self.current_db.clone();
-                    let drop = drop.clone();
-                    self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_sequence_in(&drop, catalog, &current_db, &context)?;
-                        Ok(StmtOutput::Affected(0))
-                    })
-                }
-                // A placement policy is a schema object, not a table
-                // attribute: Go handles it through its own executor methods
-                // (`ddl/executor.go:6802` onward) rather than the table DDL
-                // pipeline, and so does this.
-                DdlStmt::CreatePlacementPolicy(create) => {
-                    let create = (**create).clone();
-                    let context = self.ddl_statement_context();
-                    self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_create_placement_policy(catalog, &create, &context)
-                    })?;
-                    self.drain_context_warnings(&context);
-                    Ok(StmtOutput::Done(false))
-                }
-                DdlStmt::AlterPlacementPolicy(alter) => {
-                    let alter = (**alter).clone();
-                    let context = self.ddl_statement_context();
-                    self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_alter_placement_policy(catalog, &alter, &context)
-                    })?;
-                    self.drain_context_warnings(&context);
-                    Ok(StmtOutput::Done(false))
-                }
-                DdlStmt::DropPlacementPolicy(drop) => {
-                    let drop = (**drop).clone();
-                    let context = self.ddl_statement_context();
-                    self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_placement_policy(catalog, &drop, &context)
-                    })?;
-                    self.drain_context_warnings(&context);
-                    Ok(StmtOutput::Done(false))
-                }
-                DdlStmt::DropView { if_exists, names } => {
-                    let context = self.ddl_statement_context();
-                    let current_db = self.current_db.clone();
-                    let (if_exists, names) = (*if_exists, names.clone());
-                    let missing = self.with_persistent_catalog_mut(|catalog| {
-                        tidb_executor::run_drop_view_in(
-                            if_exists,
-                            &names,
-                            catalog,
-                            &current_db,
-                            &context,
-                        )
-                    })?;
-                    // Same demotion as `DROP TABLE IF EXISTS`, same code:
-                    // a view that was not there is `Note 1051`.
-                    for name in missing {
-                        self.append_suppressed(DriverError::Schema(SchemaErrorKind::BadTable(
-                            name,
-                        )));
-                    }
-                    Ok(StmtOutput::Affected(0))
-                }
-                DdlStmt::LockTables(locks) => {
-                    let locks = (**locks).clone();
-                    self.execute_lock_tables(&locks)
-                }
-                DdlStmt::UnlockTables => self.execute_unlock_tables(),
-                DdlStmt::CreateResourceGroup(create) => {
-                    let create = (**create).clone();
-                    self.execute_create_resource_group(&create)
-                }
-                DdlStmt::AlterResourceGroup(alter) => {
-                    let alter = (**alter).clone();
-                    self.execute_alter_resource_group(&alter)
-                }
-                DdlStmt::DropResourceGroup(drop) => {
-                    let drop = (**drop).clone();
-                    self.execute_drop_resource_group(&drop)
-                }
+                // Every other DDL is a job the session's node runs (Go's
+                // `DDLExec` over the domain's DDL); only a local temporary
+                // table and a hypothetical index belong to the session.
                 other => Err(DriverError::unsupported(format!(
-                    "this DDL statement kind ({}) is not supported yet",
+                    "{} is a DDL job, which the session's node runs",
                     variant_name(other)
                 ))),
             },

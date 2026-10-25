@@ -82,7 +82,7 @@
 use std::time::{Duration, Instant};
 
 use tidb_datatype::Datum;
-use tidb_session::{Session, SharedCatalog};
+use tidb_session::Session;
 
 /// The tables in the order `TestMultiJoin` lists them, which is the order the
 /// left-deep join tree is built in.
@@ -130,7 +130,7 @@ const CONTROL_TABLES: usize = 13;
 const BUDGET: Duration = Duration::from_secs(5);
 
 fn open() -> Session {
-    let mut session = Session::with_catalog(SharedCatalog::default());
+    let mut session = Session::new();
     session
         .run("create database if not exists many_table_join")
         .expect("create database");

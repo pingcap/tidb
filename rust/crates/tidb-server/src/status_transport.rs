@@ -251,6 +251,7 @@ mod tests {
                 .unwrap()
                 .unwrap()
         };
+        let store = tidb_session::Session::new();
         let mut roots = rustls::RootCertStore::empty();
         for cert in certs("ca.crt") {
             roots.add(cert).unwrap();
@@ -276,6 +277,7 @@ mod tests {
                 crate::http_status::StatusRoutes {
                     security,
                     peer: Some(crate::peer_rpc::PeerService::new(
+                        crate::peer_rpc::store_sessions(&store),
                         Default::default(),
                         Default::default(),
                         None,

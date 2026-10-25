@@ -537,11 +537,7 @@ fn tidb_trx_reads_live_transactions_with_go_visibility_and_digest_history() {
 /// least one, and the in-process tier, which has no RPCs, issues none.
 #[track_caller]
 fn assert_kv_requests(kv_req_total: u64) {
-    if crate::tests_support::in_process_tier() {
-        assert_eq!(kv_req_total, 0, "in-process scans issue no KV RPCs");
-    } else {
-        assert!(kv_req_total > 0, "a store read issues KV requests");
-    }
+    assert!(kv_req_total > 0, "a store read issues KV requests");
 }
 
 /// Pinned Go `setDataFromIndexUsage` enumerates the catalog's integer-handle
@@ -1185,11 +1181,7 @@ fn tidb_index_usage_records_a_partition_local_index_read() {
     // A server's point and batch-point reads carry no used statistics, so
     // their samples size against `MaxInt32` and land in (0, 1%) (oracle:
     // both in PERCENTAGE_ACCESS_0_1); the in-process tier sizes them.
-    let expected = if crate::tests_support::in_process_tier() {
-        [0, 3, 3, 0, 3, 3, 3]
-    } else {
-        [0, 6, 0, 0, 3, 3, 3]
-    };
+    let expected = [0, 6, 0, 0, 3, 3, 3];
     assert_eq!(usage.percentage_access, expected);
 }
 
@@ -2053,33 +2045,18 @@ fn trace_reports_go_spans() {
     // Go drains the record set under the trace span after `ExecuteStmt`
     // returns (oracle: `TRACE SELECT 1`), which is what a store session
     // does; the in-process tier drains inside `session.runStmt`.
-    let expected: &[&str] = if crate::tests_support::in_process_tier() {
-        &[
-            "trace",
-            "  └─session.ExecuteStmt",
-            "    ├─executor.Compile",
-            "    │ ├─planner.Preprocess",
-            "    │ └─planner.Optimize",
-            "    └─session.runStmt",
-            "      ├─*executor.ProjectionExec.Next",
-            "      │ └─*executor.TableDualExec.Next",
-            "      └─*executor.ProjectionExec.Next",
-            "        └─*executor.TableDualExec.Next",
-        ]
-    } else {
-        &[
-            "trace",
-            "  ├─session.ExecuteStmt",
-            "  │ ├─executor.Compile",
-            "  │ │ ├─planner.Preprocess",
-            "  │ │ └─planner.Optimize",
-            "  │ └─session.runStmt",
-            "  ├─*executor.ProjectionExec.Next",
-            "  │ └─*executor.TableDualExec.Next",
-            "  └─*executor.ProjectionExec.Next",
-            "    └─*executor.TableDualExec.Next",
-        ]
-    };
+    let expected: &[&str] = &[
+        "trace",
+        "  ├─session.ExecuteStmt",
+        "  │ ├─executor.Compile",
+        "  │ │ ├─planner.Preprocess",
+        "  │ │ └─planner.Optimize",
+        "  │ └─session.runStmt",
+        "  ├─*executor.ProjectionExec.Next",
+        "  │ └─*executor.TableDualExec.Next",
+        "  └─*executor.ProjectionExec.Next",
+        "    └─*executor.TableDualExec.Next",
+    ];
     assert_eq!(operations, expected);
     let log = row_text(session.run("TRACE FORMAT = 'log' SELECT 1"));
     assert_eq!(log[0][1], "--- start span trace ----");

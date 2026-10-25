@@ -110,24 +110,6 @@ fn process_admin_batch_connection_id_expression_bypasses_numeric_parser() {
 }
 
 #[test]
-fn process_admin_batch_no_manager_skips_numeric_parser() {
-    // Go `executeKillStmt` returns at once with no session manager; a
-    // session on the store always has one (the node's process list).
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let mut session = Session::new();
-    for sql in ["KILL 7", "KILL 9223372036854775808", "KILL CONNECTION_ID()"] {
-        session.run(sql).unwrap();
-        assert!(
-            session.warnings().is_empty(),
-            "{sql}: {:?}",
-            session.warnings()
-        );
-    }
-}
-
-#[test]
 fn process_admin_batch_authorization_precedes_numeric_parser() {
     let registry = process::ProcessRegistry::default();
     let privileges = privilege::PrivilegeRegistry::default();
@@ -737,39 +719,4 @@ fn cluster_lifecycle_batch_auto_analyze_kill_requires_connection_admin() {
     GLOBAL_AUTO_ANALYZE_PROCESS_LIST.untracker(id);
     crate::tests_support::assert_err(denied, 1227, "Access denied; you need (at least one of) the SUPER or CONNECTION_ADMIN privilege(s) for this operation");
     allowed.unwrap();
-}
-
-#[test]
-fn cluster_peer_batch_remote_id_never_uses_local_registry() {
-    // Injects the in-process tier's server id and process registry; a node
-    // session takes both from its node.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let registry = process::ProcessRegistry::default();
-    let target = Arc::new(KillCounter::default());
-    let mut session = Session::new();
-    session.server_id_getter = Arc::new(|| 1);
-    let remote = tidb_util::globalconn::Gcid {
-        server_id: 2,
-        local_conn_id: 42,
-        is_64bits: false,
-    }
-    .to_conn_id();
-    session.attach_process(
-        remote,
-        registry.register(
-            remote,
-            String::new(),
-            String::new(),
-            String::new(),
-            Some(target.clone()),
-        ),
-    );
-    session.run(&format!("KILL QUERY {remote}")).unwrap();
-    assert_eq!(target.0.load(std::sync::atomic::Ordering::SeqCst), 0);
-    assert!(session
-        .warnings()
-        .iter()
-        .any(|w| w.message.starts_with("KILL remote connection failed:")));
 }

@@ -545,8 +545,8 @@ fn sequence_metadata_uses_any_table_privilege_and_active_roles() {
 #[test]
 fn sequence_functions_check_the_sequence_privilege() {
     let registry = privilege::PrivilegeRegistry::default();
-    let catalog: SharedCatalog = std::sync::Arc::new(std::sync::Mutex::new(Catalog::default()));
-    let mut root = session_as(&registry, catalog.clone(), "root", "%");
+    let mut root = authenticated_session(&registry, "root", "%");
+    let catalog = root.shared_catalog();
     root.run("create sequence seq").unwrap();
     root.run("create table t (a int default next value for seq)")
         .unwrap();

@@ -403,16 +403,10 @@ fn measured_divergences_from_go_test_alter_column() {
 
     // 3. Two inline PRIMARY KEY clauses on one column: captured TiDB folds
     //    them into the single primary key the column already has, so
-    //    `create table (a int key primary key unique unique)` succeeds. This
-    //    tier refuses the second one outright.
-    // A session on the store accepts it, as Go does.
-    assert_eq!(
-        session
-            .run("CREATE TABLE mu2 (a INT KEY PRIMARY KEY UNIQUE UNIQUE)")
-            .is_err(),
-        crate::tests_support::in_process_tier(),
-        "captured TiDB accepts this and builds one PRIMARY KEY"
-    );
+    //    `create table (a int key primary key unique unique)` succeeds.
+    session
+        .run("CREATE TABLE mu2 (a INT KEY PRIMARY KEY UNIQUE UNIQUE)")
+        .expect("captured TiDB accepts this and builds one PRIMARY KEY");
 }
 
 /// Go's `checkIndexInModifiableColumns` re-runs the complete running-byte-sum

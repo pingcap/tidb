@@ -404,7 +404,7 @@ impl Session {
         let Some(registry) = self.privileges.clone() else {
             return Ok(());
         };
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() || self.account_sql.is_some() {
             return Ok(());
         }
         let ctx = self
@@ -427,7 +427,7 @@ impl Session {
         user: &str,
         host: &str,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() || self.account_sql.is_some() {
             return Ok(());
         }
         // The registry keeps UTC timestamps, which is how the TIMESTAMP

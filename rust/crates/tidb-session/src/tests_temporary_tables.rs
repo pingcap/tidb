@@ -34,7 +34,7 @@ use crate::*;
 /// A session with `test` selected, which is what every case below starts
 /// from.
 fn temporary_session() -> Session {
-    Session::default()
+    Session::new()
 }
 
 /// The error a refused statement reports on the wire.
@@ -947,25 +947,12 @@ fn local_rename_guard_precedes_all_persistent_job_validation() {
 }
 
 /// Go TestTruncateLocalTemporaryTable exercises a new identity and memory allocator
-/// after TRUNCATE. IDs come from the same owner on CREATE and CREATE LIKE.
+/// after TRUNCATE. IDs come from the same owner on CREATE and CREATE LIKE: the
+/// store's global ID allocator (`meta.GenGlobalIDs`), so consecutive local
+/// tables take consecutive ids and a TRUNCATE takes the next one.
 #[test]
 fn local_create_like_and_truncate_share_global_identity_owner() {
-    use std::sync::atomic::{AtomicI64, Ordering};
-    #[derive(Debug)]
-    struct Ids(AtomicI64);
-    impl tidb_executor::driver::LocalTemporaryTableIdAllocator for Ids {
-        fn allocate(&self) -> Result<i64, tidb_executor::DriverError> {
-            Ok(self.0.fetch_add(1, Ordering::SeqCst))
-        }
-    }
     let mut session = temporary_session();
-    session
-        .with_catalog_mut(|catalog| {
-            catalog
-                .set_local_temporary_id_allocator(std::sync::Arc::new(Ids(AtomicI64::new(900000))));
-            Ok(())
-        })
-        .unwrap();
     session
         .run("create table identity_template(a int)")
         .unwrap();
@@ -989,12 +976,18 @@ fn local_create_like_and_truncate_share_global_identity_owner() {
             })
             .unwrap()
     };
-    assert_eq!(ids(&mut session), (900000, 900001));
+    let (local, copy) = ids(&mut session);
+    assert_eq!(copy, local + 1, "CREATE LIKE takes the next global id");
     session.run("begin").unwrap();
     session.run("insert into identity_t values (6)").unwrap();
     session.run("truncate table identity_t").unwrap();
     session.run("rollback").unwrap();
-    assert_eq!(ids(&mut session), (900002, 900001));
+    let (truncated, kept) = ids(&mut session);
+    assert_eq!(kept, copy);
+    assert!(
+        truncated > copy,
+        "TRUNCATE takes a new global id: {truncated} after {copy}"
+    );
     assert!(row_text(session.run("select a from identity_t")).is_empty());
     session.run("insert into identity_t values (null)").unwrap();
     assert_eq!(

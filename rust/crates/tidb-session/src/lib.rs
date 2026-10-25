@@ -476,7 +476,9 @@ pub trait MdlRelatedTableSink: Send + Sync {
 pub struct Session {
     global_config_syncer: Option<Arc<tidb_domain::globalconfigsync::GlobalConfigSyncer>>,
     catalog: SharedCatalog,
-    account_storage_delegated: bool,
+    /// The system session an account statement's executor runs its
+    /// `mysql.*` SQL on while the statement runs (Go `GetSysSession`).
+    account_sql: Option<Box<dyn crate::user_table::AccountSqlSession>>,
     /// The live privilege cache while an account statement runs against a
     /// scratch registry read from `mysql.*`: Go's privilege manager, which
     /// `FindEdge` consults, is the cache, not the tables.
@@ -1049,7 +1051,7 @@ impl Session {
             .plan_cache_invalidation();
         Session {
             catalog,
-            account_storage_delegated: false,
+            account_sql: None,
             account_statement_privilege_cache: None,
             privilege_change_notifier: None,
             context_values: HashMap::new(),
@@ -1304,23 +1306,6 @@ impl tidb_util::context::ValueStoreContext for Session {
     }
 }
 
-impl Default for Session {
-    /// A session on its own empty catalog, with `test` selected as a fresh
-    /// TiDB connection has.
-    ///
-    /// The standalone in-memory session owns its fresh store, so it performs
-    /// the one store bootstrap that Go's `BootstrapSession` performs before
-    /// serving connections.
-    fn default() -> Self {
-        let mut session = Session::unbootstrapped(SharedCatalog::default());
-        // Go bootstraps the system tables the first time a store comes up
-        // (`pkg/session/bootstrap.go`); this catalog is born here, so its
-        // bootstrap runs here. See `crate::bootstrap`.
-        session.bootstrap_fresh_store();
-        session
-    }
-}
-
 impl Drop for Session {
     fn drop(&mut self) {
         // A session over a booted domain closes inside its node connection,
@@ -1403,7 +1388,6 @@ use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 mod resource_group;
 pub mod session_vars;
-mod stats_storage;
 mod store_helper;
 mod stmt_ctx;
 mod table_lock;
@@ -2010,22 +1994,9 @@ impl Session {
     /// A fresh session over a freshly booted embedded store, as Go's
     /// `testkit.CreateMockStoreAndDomain` + `CreateSession4Test`
     /// ([`Session::new_on_mock_store`]).
-    ///
-    /// `TIDB_SESSION_MOCK_STORE=0` keeps the in-process catalog tier instead
-    /// (a session with its own empty catalog) until stage 3 deletes it.
     #[must_use]
     pub fn new() -> Self {
-        if Session::mock_store_enabled() {
-            return Session::new_on_mock_store();
-        }
-        Session::default()
-    }
-
-    /// Whether [`Session::new`] builds over a booted embedded store: the
-    /// default, unless `TIDB_SESSION_MOCK_STORE=0` asks for the in-process
-    /// catalog tier.
-    pub(crate) fn mock_store_enabled() -> bool {
-        std::env::var_os("TIDB_SESSION_MOCK_STORE").is_none_or(|value| value != "0")
+        Session::new_on_mock_store()
     }
 
     /// A session on the store whose node keeps its accounts in `accounts`
@@ -2033,11 +2004,6 @@ impl Session {
     /// attached: Go testkit's session on the store whose privilege tables a
     /// test provisioned.
     pub(crate) fn on_accounts(accounts: &privilege::PrivilegeRegistry) -> Self {
-        if !Session::mock_store_enabled() {
-            let mut session = Session::default();
-            session.attach_privileges(accounts.clone());
-            return session;
-        }
         let domain = match crate::domain::mock_store::domain_of_accounts(accounts) {
             Some(domain) => domain,
             None => crate::domain::mock_store::MockStoreDomain::create_with_accounts(Some(
@@ -2309,17 +2275,27 @@ impl Session {
         self.vars.max_allowed_packet()
     }
 
-    /// A session sharing `catalog` with its peers.
+    /// A session over `catalog`, a schema the node built: Go
+    /// `createSessionWithOpt` over the domain's infoschema. The node's
+    /// connection path and internal sessions open theirs here.
+    pub(crate) fn over_catalog(catalog: SharedCatalog) -> Self {
+        Session::unbootstrapped(catalog)
+    }
+
+    /// Another connection to the store whose session `catalog` came from, as
+    /// Go's `testkit.NewTestKit(t, store)`: a node session's catalog names
+    /// its domain.
+    ///
+    /// # Panics
+    ///
+    /// When `catalog` is no store session's, or the store cannot open a
+    /// session.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
-        // A node session's catalog names its domain: the peer is another
-        // connection to that store, as Go's `testkit.NewTestKit(t, store)`.
-        if let Some(domain) = crate::domain::mock_store::domain_of_catalog(&catalog) {
-            return domain
-                .new_session()
-                .unwrap_or_else(|error| panic!("open a mock store session: {error}"));
-        }
-        Session::unbootstrapped(catalog)
+        crate::domain::mock_store::domain_of_catalog(&catalog)
+            .expect("a catalog of a session on a store")
+            .new_session()
+            .unwrap_or_else(|error| panic!("open a mock store session: {error}"))
     }
 
     /// Installs the server-owned spill policy for every statement created by
@@ -2689,19 +2665,6 @@ impl Session {
         })
     }
 
-    /// Applies an account statement to the installed scratch registry while
-    /// its caller owns persistence in a separate system transaction. Internal
-    /// mysql.user mirrors must not write through the user connection as well.
-    pub fn run_with_delegated_account_storage(
-        &mut self,
-        sql: &str,
-    ) -> Result<StmtResult, DriverError> {
-        let previous = std::mem::replace(&mut self.account_storage_delegated, true);
-        let result = self.run(sql);
-        self.account_storage_delegated = previous;
-        result
-    }
-
     /// Go `GetTxnWriteThroughputSLI`: returns the session's transaction-wide
     /// SLI accumulator.
     pub fn txn_write_throughput_sli(&mut self) -> &mut tidb_util::sli::TxnWriteThroughputSli {
@@ -2766,22 +2729,107 @@ impl Session {
         }
     }
 
-    /// Observes the requests a node session's store receives; `false` for an
-    /// in-process session, which sends none.
-    #[cfg(test)]
-    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) -> bool {
+    /// Go testkit's `dom.StatsHandle().UpdateStatsCache(statstypes.CacheUpdate{
+    /// Updated: tables})` on this session's node: the node's statistics
+    /// cache takes `tables` as they are, and every catalog over the node
+    /// plans from them.
+    ///
+    /// # Panics
+    ///
+    /// On a session with no node, which has no statistics cache.
+    #[doc(hidden)]
+    pub fn update_stats_cache_with(&self, tables: Vec<Arc<tidb_stats::Table>>) {
         self.node
             .as_ref()
-            .map(|node| node.set_store_send_hook(hook))
-            .is_some()
+            .expect("a session on the store")
+            .update_stats_cache_with(tables);
     }
 
-    /// Commits the delete of one raw key into a node session's store, as Go's
-    /// corruption tests do through a transaction of their own. `None` for
-    /// an in-process session, whose tests edit the catalog's bytes instead.
+    /// [`Session::update_stats_cache_with`] for statistics a test built in
+    /// the planner's form over `catalog`'s table (or partition)
+    /// `physical_id`, turned into Go's `statistics.Table` first.
+    ///
+    /// # Panics
+    ///
+    /// When `physical_id` is no table or partition of `catalog`.
+    #[doc(hidden)]
+    pub fn publish_table_statistics_for_test(
+        &self,
+        catalog: &tidb_executor::Catalog,
+        physical_id: i64,
+        statistics: &tidb_executor::access_cost::TableStatistics,
+    ) {
+        let (schema, name) = catalog
+            .table_names_by_id(physical_id)
+            .or_else(|| catalog.find_table_by_partition_id(physical_id))
+            .unwrap_or_else(|| panic!("{physical_id} is no table or partition of the catalog"));
+        let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in(&schema, &name) else {
+            panic!("{schema}.{name} is not a stored table");
+        };
+        self.update_stats_cache_with(vec![Arc::new(
+            tidb_executor::load_stats::statistics_table_from_planner_statistics(
+                table,
+                physical_id,
+                statistics,
+            ),
+        )]);
+    }
+
+    /// Go testkit's `dom.StatsHandle().DumpColStatsUsageToKV()` on this
+    /// session's node: the predicate columns recorded so far reach
+    /// `mysql.column_stats_usage`, where `ANALYZE ... PREDICATE` reads them.
     #[cfg(test)]
-    pub(crate) fn delete_store_key_for_test(&self, key: &[u8]) -> Option<Result<(), String>> {
-        self.node.as_ref().map(|node| node.delete_key_for_test(key))
+    pub(crate) fn dump_col_stats_usage_for_test(&self) {
+        self.node
+            .as_ref()
+            .expect("a session on the store")
+            .dump_col_stats_usage()
+            .unwrap_or_else(|error| panic!("dump column stats usage: {error}"));
+    }
+
+    /// Go `statstestutil.HandleNextDDLEventWithTxn` on this session's node:
+    /// the statistics subscriber handles every pending DDL event (the
+    /// `stats_meta` and placeholder histogram rows of a created table).
+    ///
+    /// # Panics
+    ///
+    /// On a session with no node, or when the events stay pending.
+    #[doc(hidden)]
+    pub fn handle_ddl_events_for_test(&self) {
+        self.node
+            .as_ref()
+            .expect("a session on the store")
+            .handle_ddl_events()
+            .unwrap_or_else(|error| panic!("handle DDL events: {error}"));
+    }
+
+    /// Go testkit's `dom.StatsHandle().GetPhysicalTableStats(id, tblInfo)`
+    /// on this session's node, without caching a miss's `PseudoTable`.
+    #[doc(hidden)]
+    pub fn stats_table_for_test(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
+        self.node
+            .as_ref()
+            .and_then(|node| node.stats_table(physical_id))
+    }
+
+    /// Observes the requests this session's store receives (`None` removes
+    /// the observer).
+    #[cfg(test)]
+    pub(crate) fn set_store_send_hook(&self, hook: Option<tidb_unistore::rpc::SendHook>) {
+        self.node
+            .as_ref()
+            .expect("a session on the store")
+            .set_store_send_hook(hook);
+    }
+
+    /// Commits the delete of one raw key into this session's store, as Go's
+    /// corruption tests do through a transaction of their own.
+    #[cfg(test)]
+    pub(crate) fn delete_store_key_for_test(&self, key: &[u8]) -> Result<(), String> {
+        self.node
+            .as_ref()
+            .expect("a session on the store")
+            .delete_key_for_test(key)
     }
 
     /// Brings a node session's catalog up to the node's latest schema, as
@@ -3234,7 +3282,7 @@ mod session_source_tests {
     fn statement_index_usage_collector_is_session_owned_and_flushed_on_close() {
         let global = tidb_stats_handle_usage_indexusage::Collector::new();
         global.start_worker();
-        let mut session = Session::default();
+        let mut session = Session::new();
         session.set_session_index_usage_collector(global.spawn_session_collector());
 
         let context = session.statement_context(false);

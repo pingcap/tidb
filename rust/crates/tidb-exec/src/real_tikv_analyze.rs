@@ -838,6 +838,22 @@ fn select_index_tasks(
     })
 }
 
+/// Go `buildAnalyze`'s answer for one statement: whether it builds a column
+/// (full-sampling) task, the only kind `collectStatsDeltaFlushObjectsForAnalyze`
+/// flushes deltas for. An index-only selection of special global indexes
+/// builds independent index tasks alone. A statement whose table or index is
+/// missing fails later in its own way; it keeps the flush.
+#[must_use]
+pub fn analyze_builds_column_task(
+    catalog: &crate::cluster_catalog::ClusterCatalog,
+    statement: &AnalyzeStatement,
+) -> bool {
+    let Ok(table) = find_statement_table(catalog, statement) else {
+        return true;
+    };
+    select_index_tasks(table, statement).map_or(true, |selection| selection.run_full_sampling)
+}
+
 fn analyze_partition_ids(
     table: &tidb_model::table_info::TableInfo,
     requested: &[String],

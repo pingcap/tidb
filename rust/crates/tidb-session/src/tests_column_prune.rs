@@ -2,14 +2,12 @@
 //! what each scan is asked to decode, and that every shape outside the slice
 //! keeps the unchanged full-width path.
 //!
-//! The decode set is read straight from the row codec's own input through
-//! [`tidb_executor::kv_table::capture_decoded_column_ids`], so "column `d` is
-//! never decoded" is measured rather than argued.
+//! The decode set is read off the DAG requests the store receives -- Go's
+//! pruned `TableScan.Columns` on the wire -- so "column `d` is never
+//! decoded" is measured rather than argued.
 #![cfg(test)]
 
 use std::collections::BTreeSet;
-
-use tidb_executor::kv_table::capture_decoded_column_ids;
 
 use crate::tests_support::row_text;
 use crate::Session;
@@ -48,7 +46,7 @@ fn prune_session() -> Session {
 fn rows_and_decoded(session: &mut Session, sql: &str) -> (Vec<Vec<String>>, BTreeSet<i64>) {
     let requested: std::sync::Arc<std::sync::Mutex<BTreeSet<i64>>> = std::sync::Arc::default();
     let recorded = std::sync::Arc::clone(&requested);
-    let observing = session.set_store_send_hook(Some(std::sync::Arc::new(move |request| {
+    session.set_store_send_hook(Some(std::sync::Arc::new(move |request| {
         use prost::Message;
         let Some(request) = request
             .as_any()
@@ -71,13 +69,9 @@ fn rows_and_decoded(session: &mut Session, sql: &str) -> (Vec<Vec<String>>, BTre
             }
         }
     })));
-    if observing {
-        let result = session.run(sql);
-        session.set_store_send_hook(None);
-        let ids = requested.lock().unwrap().clone();
-        return (row_text(result), ids);
-    }
-    let (result, ids) = capture_decoded_column_ids(|| session.run(sql));
+    let result = session.run(sql);
+    session.set_store_send_hook(None);
+    let ids = requested.lock().unwrap().clone();
     (row_text(result), ids)
 }
 

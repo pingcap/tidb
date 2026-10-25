@@ -21,7 +21,10 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::{privilege::PrivilegeRegistry, tests_support::row_text, vars::GlobalSysvars, Session};
+use crate::{
+    tests_support::{row_text, store_requests},
+    Session,
+};
 
 #[derive(Deserialize)]
 struct InputSuite {
@@ -117,127 +120,6 @@ fn go_fix_control_fixture_runs_through_the_session_writer() {
             assert_eq!(&actual, expected_fix, "{sql}; fix {key}");
         }
     }
-}
-
-#[test]
-fn raw_and_parsed_state_are_atomic_across_session_global_and_default_writes() {
-    let mut session = Session::new();
-    session.run("SET @@tidb_opt_fix_control = '1:ON'").unwrap();
-    assert_eq!(
-        session.vars().optimizer_fix_control().get_bool(1),
-        Some(true)
-    );
-
-    let error = session
-        .run("SET @@tidb_opt_fix_control = 'invalid'")
-        .unwrap_err()
-        .to_mysql_error();
-    assert_eq!(error.code, 1105);
-    assert_eq!(
-        error.message,
-        "invalid fix control: expected colon not found"
-    );
-    assert_eq!(
-        row_text(session.run("SELECT @@tidb_opt_fix_control")),
-        [["1:ON"]]
-    );
-    assert_eq!(
-        session.vars().optimizer_fix_control().get_bool(1),
-        Some(true)
-    );
-
-    let error = session
-        .run("SET INSTANCE tidb_opt_fix_control = 'invalid'")
-        .unwrap_err()
-        .to_mysql_error();
-    assert_eq!(error.code, 1228);
-    assert_eq!(
-        error.message,
-        "Variable 'tidb_opt_fix_control' is a SESSION variable and can't be used with SET GLOBAL"
-    );
-    assert_eq!(
-        row_text(session.run("SHOW WARNINGS")),
-        [[
-            "Error",
-            "1228",
-            "Variable 'tidb_opt_fix_control' is a SESSION variable and can't be used with SET GLOBAL"
-        ]],
-        "scope validation wins without leaking a fix-control parse warning"
-    );
-
-    session.run("SET @@tidb_opt_fix_control = DEFAULT").unwrap();
-    assert!(session.vars().optimizer_fix_control().as_map().is_empty());
-
-    let globals = GlobalSysvars::new();
-    session.set_user("root@%".to_owned(), "root@%".to_owned());
-    session.attach_privileges(PrivilegeRegistry::default());
-    session.attach_globals(globals.clone()).unwrap();
-    session
-        .run("SET GLOBAL tidb_opt_fix_control = '52592:ON'")
-        .unwrap();
-    assert!(session.vars().optimizer_fix_control().as_map().is_empty());
-    let error = session
-        .run("SET INSTANCE tidb_opt_fix_control = DEFAULT")
-        .unwrap_err()
-        .to_mysql_error();
-    assert_eq!(error.code, 1228);
-    assert_eq!(
-        row_text(session.run("SELECT @@global.tidb_opt_fix_control")),
-        [["52592:ON"]],
-        "wrong-scope DEFAULT must not clear the shared GLOBAL row"
-    );
-    let error = session
-        .run("SET GLOBAL tidb_opt_fix_control = 'invalid'")
-        .unwrap_err()
-        .to_mysql_error();
-    assert_eq!(error.code, 1105);
-    assert_eq!(
-        error.message,
-        "invalid fix control: expected colon not found"
-    );
-
-    let mut fresh = Session::with_catalog(session.shared_catalog());
-    fresh.attach_globals(globals.clone()).unwrap();
-    assert_eq!(
-        fresh.vars().optimizer_fix_control().get_bool(52592),
-        Some(true)
-    );
-    assert_eq!(
-        row_text(fresh.run("SELECT @@tidb_opt_fix_control")),
-        [["52592:ON"]]
-    );
-
-    // A node session takes its globals from the store's sysvar cache, never
-    // from an attached snapshot (`attach_globals` is a no-op there).
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let mut connected = Session::new();
-    connected
-        .run("SET @@tidb_opt_fix_control = '1:ON'")
-        .unwrap();
-    let foreign = GlobalSysvars::from_cluster_rows([
-        ("autocommit".to_owned(), "OFF".to_owned()),
-        ("tidb_opt_fix_control".to_owned(), "invalid".to_owned()),
-    ]);
-    let error = connected
-        .attach_globals(foreign)
-        .unwrap_err()
-        .to_mysql_error();
-    assert_eq!(error.code, 1105);
-    assert_eq!(
-        error.message,
-        "invalid fix control: expected colon not found"
-    );
-    assert_eq!(
-        row_text(connected.run("SELECT @@autocommit, @@tidb_opt_fix_control")),
-        [["1", "1:ON"]],
-        "a rejected cluster snapshot commits neither other raw rows nor the parsed map"
-    );
-    assert_eq!(
-        connected.vars().optimizer_fix_control().get_bool(1),
-        Some(true)
-    );
 }
 
 #[test]
@@ -499,52 +381,45 @@ fn fix_52592_disables_point_and_batch_paths_for_select_update_and_delete() {
         [["52592:OFF"]]
     );
 
-    let (rows, point) = tidb_executor::storage::capture_storage_ops(|| {
+    let (rows, point) = store_requests(&mut session, |session| {
         session.run("SELECT b FROM fix_path WHERE a=1")
     });
     assert_eq!(row_text(rows), [["1"]]);
-    assert_eq!((point.gets, point.scans), (1, 0));
-    let (rows, batch) = tidb_executor::storage::capture_storage_ops(|| {
+    assert_eq!((point.gets, point.coprocessor), (1, 0));
+    // Go's BatchPointGet is ONE BatchGet request.
+    let (rows, batch) = store_requests(&mut session, |session| {
         session.run("SELECT a FROM fix_path WHERE a IN (1,2)")
     });
     assert_eq!(row_text(rows), [["1"], ["2"]]);
-    // A store answers Go's BatchPointGet with ONE BatchGet request; the
-    // in-process tier reads each key on its own.
-    let batch_gets = if crate::tests_support::in_process_tier() {
-        2
-    } else {
-        1
-    };
-    assert_eq!((batch.gets, batch.scans), (batch_gets, 0));
-    let (updated, point_update) = tidb_executor::storage::capture_storage_ops(|| {
+    assert_eq!((batch.batch_gets, batch.coprocessor), (1, 0));
+    let (updated, point_update) = store_requests(&mut session, |session| {
         session.run("UPDATE fix_path SET c=c WHERE a=3")
     });
     updated.unwrap();
-    assert_eq!(point_update.scans, 0);
+    assert_eq!(point_update.coprocessor, 0);
 
-    // A store's coprocessor reads run on its workers, outside this thread's
-    // storage probe; the absent point get is what holds on both tiers.
-    let in_process = crate::tests_support::in_process_tier();
+    // Fix 52592 turns the point plans into table readers: no point get, a
+    // coprocessor request instead.
     session
         .run("SET @@tidb_opt_fix_control = '52592:ON'")
         .unwrap();
-    let (rows, range) = tidb_executor::storage::capture_storage_ops(|| {
+    let (rows, range) = store_requests(&mut session, |session| {
         session.run("SELECT b FROM fix_path WHERE a=1")
     });
     assert_eq!(row_text(rows), [["1"]]);
     assert_eq!(range.gets, 0);
-    assert!(!in_process || range.scans > 0);
-    let (rows, batch_ranges) = tidb_executor::storage::capture_storage_ops(|| {
+    assert!(range.coprocessor > 0, "{range:?}");
+    let (rows, batch_ranges) = store_requests(&mut session, |session| {
         session.run("SELECT a FROM fix_path WHERE a IN (1,2)")
     });
     assert_eq!(row_text(rows), [["1"], ["2"]]);
-    assert_eq!(batch_ranges.gets, 0);
-    assert!(!in_process || batch_ranges.scans > 0);
-    let (updated, update_range) = tidb_executor::storage::capture_storage_ops(|| {
+    assert_eq!(batch_ranges.batch_gets, 0);
+    assert!(batch_ranges.coprocessor > 0, "{batch_ranges:?}");
+    let (updated, update_range) = store_requests(&mut session, |session| {
         session.run("UPDATE fix_path SET b=b+10 WHERE a=1")
     });
     updated.unwrap();
-    assert!(!in_process || update_range.scans > 0);
+    assert!(update_range.coprocessor > 0, "{update_range:?}");
     assert_eq!(
         row_text(session.run("SELECT b FROM fix_path WHERE a=1")),
         [["11"]]
@@ -553,22 +428,28 @@ fn fix_52592_disables_point_and_batch_paths_for_select_update_and_delete() {
     session
         .run("SET @@tidb_opt_fix_control = '52592:OFF'")
         .unwrap();
-    let (updated, hinted_update_range) = tidb_executor::storage::capture_storage_ops(|| {
+    let (updated, hinted_update_range) = store_requests(&mut session, |session| {
         session.run(
             "UPDATE /*+ SET_VAR(tidb_opt_fix_control='52592:ON') */ \
              fix_path SET c=9 WHERE a=2",
         )
     });
     updated.unwrap();
-    assert!(!in_process || hinted_update_range.scans > 0);
-    let (deleted, hinted_delete_range) = tidb_executor::storage::capture_storage_ops(|| {
+    assert!(
+        hinted_update_range.coprocessor > 0,
+        "{hinted_update_range:?}"
+    );
+    let (deleted, hinted_delete_range) = store_requests(&mut session, |session| {
         session.run(
             "DELETE /*+ SET_VAR(tidb_opt_fix_control='52592:ON') */ \
              FROM fix_path WHERE a=3",
         )
     });
+    assert!(
+        hinted_delete_range.coprocessor > 0,
+        "{hinted_delete_range:?}"
+    );
     deleted.unwrap();
-    assert!(!in_process || hinted_delete_range.scans > 0);
     assert_eq!(
         row_text(session.run("SELECT a,c FROM fix_path ORDER BY a")),
         [["1", "1"], ["2", "9"]]

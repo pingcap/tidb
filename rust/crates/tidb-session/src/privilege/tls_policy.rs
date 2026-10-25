@@ -395,19 +395,10 @@ mod tests {
                 .unwrap();
             // Go keeps the policy in `mysql.global_priv.Priv`, which a store
             // session reads back; the in-process tier's registry holds it.
-            let stored = if crate::tests_support::in_process_tier() {
-                registry
-                    .global_priv_rows()
-                    .into_iter()
-                    .find(|row| row.user == user)
-                    .unwrap()
-                    .priv_json
-            } else {
-                crate::tests_support::row_text(session.run(&format!(
-                    "SELECT priv FROM mysql.global_priv WHERE user = '{user}' AND host = '%'"
-                )))[0][0]
-                    .clone()
-            };
+            let stored = crate::tests_support::row_text(session.run(&format!(
+                "SELECT priv FROM mysql.global_priv WHERE user = '{user}' AND host = '%'"
+            )))[0][0]
+                .clone();
             assert_eq!(stored, case["expected"].as_str().unwrap());
         }
     }

@@ -156,17 +156,6 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
     })
 }
 
-/// Go `fetchTableValues`' row reads: `row.GetString(0)`, `row.GetString(1)`
-/// over `SELECT variable_name, variable_value FROM mysql.global_variables`.
-pub(crate) fn global_variables_rows(rows: &[Vec<Datum>]) -> Vec<(String, String)> {
-    rows.iter()
-        .filter_map(|row| match row.as_slice() {
-            [name, value] => Some((datum_text(name)?, datum_text(value).unwrap_or_default())),
-            _ => None,
-        })
-        .collect()
-}
-
 /// The text form a system variable stores for a datum (Go keeps every system
 /// variable as a string).
 pub(crate) fn datum_text(value: &Datum) -> Option<String> {
@@ -481,74 +470,6 @@ impl Session {
         }
     }
 
-    /// Go `replaceGlobalVariablesTableValue`, for an in-process store whose
-    /// GLOBAL tier is its own `mysql.global_variables`
-    /// ([`crate::vars::GlobalSysvars::catalog_backed`]): every row the
-    /// assignment changed -- its own, and any its SetGlobal hook wrote
-    /// through `SetGlobalSysVarOnly` (an alias) -- is replaced with the
-    /// stored value.
-    fn replace_global_variables_table_value(
-        &mut self,
-        stored_before: &std::collections::HashMap<String, String>,
-    ) -> Result<(), DriverError> {
-        let escape = |text: &str| {
-            String::from_utf8(tidb_util::sqlescape::escape_string(text))
-                .expect("escaping keeps UTF-8 text UTF-8")
-        };
-        let mut changed = self
-            .vars
-            .global_sysvars()
-            .overrides()
-            .into_iter()
-            .filter(|(name, value)| stored_before.get(name) != Some(value))
-            .collect::<Vec<_>>();
-        changed.sort();
-        for (name, value) in changed {
-            self.run_internal_write(&format!(
-                "REPLACE INTO mysql.global_variables (variable_name, variable_value) \
-                 VALUES ('{}', '{}')",
-                escape(&name),
-                escape(&value)
-            ))?;
-        }
-        Ok(())
-    }
-
-    /// Go `Domain.NotifyUpdateSysVarCache(true)` for an in-process store,
-    /// which has no etcd to notify: the local `rebuildSysVarCache` re-reads
-    /// this store's `mysql.global_variables` and rebuilds the sysvar cache
-    /// from what the table holds -- a row another statement wrote directly
-    /// included. Go logs a failed rebuild and keeps the old cache.
-    pub(crate) fn notify_update_sys_var_cache(&mut self) {
-        match self.fetch_global_variables_table() {
-            Ok(rows) => self.vars.global_sysvars().load_from_cluster(rows),
-            Err(error) => tidb_util::logutil::bg_logger().error(
-                "rebuilding sysvar cache failed",
-                &[tidb_log::Field::new(
-                    "error",
-                    tidb_log::Value::Str(error.to_mysql_error().message),
-                )],
-            ),
-        }
-    }
-
-    /// Go `Domain.fetchTableValues` over this session's own catalog: `SELECT
-    /// variable_name, variable_value FROM mysql.global_variables`.
-    pub(crate) fn fetch_global_variables_table(
-        &mut self,
-    ) -> Result<Vec<(String, String)>, DriverError> {
-        let ctx = self.statement_context(false);
-        let (_columns, rows) = self.with_catalog_mut(|catalog| {
-            tidb_executor::run_select_meta_in(
-                tidb_domain::sysvar_cache::SYSVAR_TABLE_QUERY,
-                catalog,
-                "mysql",
-                &ctx,
-            )
-        })?;
-        Ok(global_variables_rows(&rows))
-    }
-
     fn resource_group_hint_rejection(&self) -> Option<ResourceGroupHintRejection> {
         let resource_control_enabled = self.vars.resource_control_enabled();
         if !resource_control_enabled {
@@ -784,8 +705,6 @@ impl Session {
                     )));
                 }
             }
-            let stored_before = (is_global && self.vars.global_sysvars().catalog_backed())
-                .then(|| self.vars.global_sysvars().overrides());
             let truncated = if is_global {
                 self.vars.set_global(&assignment.name, value.clone())
             } else {
@@ -804,10 +723,6 @@ impl Session {
                 let stored = self.vars.get_global(&assignment.name).map_err(var_error)?;
                 self.apply_workload_repository_global(&assignment.name, &stored)?;
                 self.notify_global_config_change(&assignment.name, &stored);
-            }
-            if let Some(stored_before) = stored_before {
-                self.replace_global_variables_table_value(&stored_before)?;
-                self.notify_update_sys_var_cache();
             }
             return Ok(());
         }

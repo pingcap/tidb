@@ -23,16 +23,16 @@
 //!
 //! | state | shared | why |
 //! | --- | --- | --- |
-//! | [`SharedCatalog`] | yes | the store: a peer reads committed writes |
-//! | [`GlobalSysvars`] | yes | `SET GLOBAL` on one connection, read at the next connect |
+//! | the store ([`tidb_session::domain::mock_store::MockStoreDomain`]) | yes | a peer reads committed writes; `SET GLOBAL` on one connection is read at the next connect |
 //! | [`PrivilegeRegistry`] | yes | `CREATE USER`/`GRANT` here, login there |
-//! | open transaction | NO | `tidb_session::Transaction` stages writes in a private catalog copy, so a peer sees nothing until commit |
+//! | open transaction | NO | each connection's transaction stages its writes in its own buffer, so a peer sees nothing until commit |
 //! | session variables, user variables, identity | NO | per-connection by definition |
 //!
 //! Every one of those handles already exists for the server front end, and
 //! this mirrors what [`tidb_server`'s `open_session`] does per accepted
-//! connection: set the identity, hand over the shared registries, seed the
-//! globals once. Nothing here is a test-only shortcut around the engine.
+//! connection: open the session on the store's node, set the identity, hand
+//! over the shared registries. Nothing here is a test-only shortcut around
+//! the engine.
 //!
 //! # The topic database
 //!
@@ -78,7 +78,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 
 use tidb_session::process::{ProcessKillTarget, ProcessRegistry};
-use tidb_session::{privilege::PrivilegeRegistry, GlobalSysvars, Session, SharedCatalog};
+use tidb_session::{privilege::PrivilegeRegistry, Session};
 use tidb_util::sqlkiller::KillSignal;
 
 /// The connection every script starts on, and the name `connection default`
@@ -93,8 +93,9 @@ const ANY_HOST: &str = "%";
 pub struct Connections {
     sessions: BTreeMap<String, Session>,
     current: String,
-    catalog: SharedCatalog,
-    globals: GlobalSysvars,
+    /// The server: one embedded store whose node opens every connection
+    /// and keeps its accounts in [`Self::privileges`].
+    domain: Arc<tidb_session::domain::mock_store::MockStoreDomain>,
     privileges: PrivilegeRegistry,
     /// Go's per-connection `ConnectionID`, which `CONNECTION_ID()` reports and
     /// which must differ between two live connections.
@@ -234,14 +235,22 @@ impl Connections {
     /// Opens the default connection for `topic`: `root` on the topic
     /// database, which is the connection mysql-tester starts every script on.
     pub fn open(topic: &str) -> Result<Self, String> {
-        let catalog = SharedCatalog::default();
         let processes = ProcessRegistry::default();
+        let privileges = PrivilegeRegistry::default();
+        // The server's process zone is part of the recording's environment
+        // (run-tests.sh exports TZ=Asia/Shanghai), and Go reads it where a
+        // session zone does not apply -- `getValidTime` formats the password
+        // history cutoff with `time.Unix`. Install it before the store's
+        // bootstrap first touches the local clock.
+        recording_server_time_zone();
+        let domain = tidb_session::domain::mock_store::MockStoreDomain::create_with_accounts(
+            Some(privileges.clone()),
+        )?;
         let mut pool = Connections {
             sessions: BTreeMap::new(),
             current: DEFAULT_CONNECTION.to_owned(),
-            catalog,
-            globals: GlobalSysvars::new(),
-            privileges: PrivilegeRegistry::default(),
+            domain,
+            privileges,
             next_connection_id: 1,
             pushdown_blacklists: tidb_session::blacklist::PushdownBlacklists::default(),
             _watchdog: Watchdog::start(&processes),
@@ -249,32 +258,6 @@ impl Connections {
             kill_targets: BTreeMap::new(),
         };
         let database = topic_database(topic);
-        // The catalog above was created here, so this IS a fresh store and
-        // the `mysql.*` system tables have to be created the way Go's
-        // `bootstrap()` creates them for one. A recording's own statements
-        // read and write them -- `black_list` inserts into
-        // `mysql.expr_pushdown_blacklist` and reloads it -- so a replay over
-        // an unbootstrapped catalog answers 1146 where TiDB answers rows.
-        //
-        // Go bootstraps in its own session before the server accepts any
-        // connection (`BootstrapSession`), and the domain then loads the
-        // seeded `mysql.global_variables` into the GLOBAL tier every
-        // connection copies at connect. Bootstrapping on the first
-        // connection instead would reseed it after mysql-tester's DSN
-        // settings (`tidb_hash_join_concurrency=1`, the chunk sizes) were
-        // applied, losing them.
-        // The server's process zone is part of the recording's environment
-        // (run-tests.sh exports TZ=Asia/Shanghai), and Go reads it where a
-        // session zone does not apply -- `getValidTime` formats the password
-        // history cutoff with `time.Unix`. Install it before the bootstrap
-        // session first touches the local clock.
-        recording_server_time_zone();
-        let mut bootstrap = Session::with_catalog(SharedCatalog::clone(&pool.catalog));
-        bootstrap
-            .attach_globals(pool.globals.clone())
-            .map_err(|error| error.to_string())?;
-        bootstrap.bootstrap_fresh_store();
-        drop(bootstrap);
         let (mut session, kill_target) = pool.new_session("root", ANY_HOST, None)?;
         session
             .run(&format!("create database if not exists `{database}`"))
@@ -403,7 +386,7 @@ impl Connections {
         initial_database: Option<&str>,
     ) -> Result<(Session, Arc<CommandCancellation>), String> {
         recording_server_time_zone();
-        let mut session = Session::with_catalog(SharedCatalog::clone(&self.catalog));
+        let mut session = self.domain.new_session()?;
         // mysql-tester answers the server's local-file request (`LOAD STATS
         // 's/x.json'`) with the file relative to `tests/integrationtest`,
         // the directory it runs in.
@@ -420,23 +403,17 @@ impl Connections {
         let connection_id = self.next_connection_id;
         session.set_connection_id(connection_id);
         self.next_connection_id += 1;
-        session
-            .attach_globals(self.globals.clone())
-            .map_err(|error| error.to_string())?;
-        // A mysqltest `connect (..., db)` puts `db` in the initial handshake;
-        // it is not a SQL `USE db`. The recording proves the distinction in
-        // `ddl/sequence`: an account with no visible privilege on the schema
-        // still authenticates with it as the current database, and the first
-        // table/sequence operation is where 1142 is raised. Select it before
-        // installing the privilege registry so the ordinary SQL `USE` path
-        // keeps its 1044 visibility gate.
+        // A mysqltest `connect (..., db)` puts `db` in the handshake; Go's
+        // `openSessionAndDoAuth` runs ``use `db` `` on the authenticated
+        // session (`clientConn.useDB`), so the schema must be visible to the
+        // account (`DBIsVisible`: any database, table or column grant in it).
         session.deselect_database();
+        session.attach_privileges(self.privileges.clone());
         if let Some(database) = initial_database {
             session
-                .select_database(database)
+                .run(&format!("use `{database}`"))
                 .map_err(|error| format!("initial database `{database}`: {error:?}"))?;
         }
-        session.attach_privileges(self.privileges.clone());
         for setup in MYSQL_TESTER_CONNECTION_SETUP {
             session
                 .run(setup)
@@ -646,24 +623,38 @@ mod tests {
         );
     }
 
+    /// Go's handshake selects the initial database with a SQL `USE` on the
+    /// authenticated session: a table grant makes the schema visible, and no
+    /// grant at all is 1044.
     #[test]
-    fn initial_database_is_selected_before_sql_use_privilege_checks() {
+    fn initial_database_is_selected_by_use_after_authentication() {
         let mut pool = Connections::open("driver/accounts").unwrap();
+        let database = topic_database("driver/accounts");
         pool.current()
-            .run("create user no_db_privilege@localhost")
+            .run("create user no_db_privilege@localhost, table_privilege@localhost")
             .unwrap();
-        pool.apply(&ConnectionCmd::Open {
-            name: "conn1".to_owned(),
-            host: "localhost".to_owned(),
-            user: "no_db_privilege".to_owned(),
-            password: String::new(),
-            db: topic_database("driver/accounts"),
-        })
-        .unwrap();
-        assert_eq!(
-            pool.current().current_database(),
-            topic_database("driver/accounts")
+        pool.current().run("create table t (a int)").unwrap();
+        pool.current()
+            .run(&format!(
+                "grant select on `{database}`.t to table_privilege@localhost"
+            ))
+            .unwrap();
+        let open = |pool: &mut Connections, user: &str| {
+            pool.apply(&ConnectionCmd::Open {
+                name: user.to_owned(),
+                host: "localhost".to_owned(),
+                user: user.to_owned(),
+                password: String::new(),
+                db: database.clone(),
+            })
+        };
+        let error = open(&mut pool, "no_db_privilege").unwrap_err();
+        assert!(
+            error.contains("1044") || error.contains("DbAccessDenied"),
+            "{error}"
         );
+        open(&mut pool, "table_privilege").unwrap();
+        assert_eq!(pool.current().current_database(), database);
     }
 
     #[test]

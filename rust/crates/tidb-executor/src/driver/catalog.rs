@@ -3483,15 +3483,17 @@ impl Catalog {
         context: &crate::StmtContext,
     ) -> Result<(), tidb_planner::plan_base::PlanError> {
         let wait = std::time::Duration::from_millis(context.stats_load_wait_ms());
-        let items = self.statistics_load_items(usage, !wait.is_zero());
-        if items.is_empty() {
+        if wait.is_zero() {
+            // Go `CollectPredicateColumnsPoint` without sync load queues every
+            // needed item as it is; only `SendLoadRequests` (the sync path)
+            // drops the ones the cache already holds.
+            for (item, full_load) in self.statistics_demand(usage) {
+                tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, full_load);
+            }
             return Ok(());
         }
-        if wait.is_zero() {
-            for item in &items {
-                tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
-                    .insert(item.table_item_id, item.full_load);
-            }
+        let items = self.statistics_load_items(usage, true);
+        if items.is_empty() {
             return Ok(());
         }
         let Some(service) = self.statistics.sync_load.get() else {

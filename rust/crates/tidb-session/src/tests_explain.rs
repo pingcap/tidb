@@ -20,7 +20,7 @@ fn install_cardinality_mock_statistics_for_table(
     use tidb_stats::histogram::Histogram;
 
     let shared = session.shared_catalog();
-    let mut catalog = shared.lock().unwrap();
+    let catalog = shared.lock().unwrap();
     let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", table_name).unwrap() else {
         panic!("{table_name} must be a KV table");
     };
@@ -87,7 +87,7 @@ fn install_cardinality_mock_statistics_for_table(
             .insert(index.id, tidb_stats::StatsLoadedStatus::full_load());
         statistics.index_stats_existence.insert(index.id, true);
     }
-    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
 }
 
 fn check_cardinality_query_fixture(session: &mut Session, name: &str) {
@@ -138,12 +138,6 @@ fn check_cardinality_query_fixture(session: &mut Session, name: &str) {
 /// scan estimate using loaded join-key NDV, separately from the access floor.
 #[test]
 fn index_join_inner_row_count_upper_bound_matches_go() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT, b INT, INDEX idx(b))")
@@ -154,12 +148,6 @@ fn index_join_inner_row_count_upper_bound_matches_go() {
 
 #[test]
 fn ordering_index_selectivity_threshold_matches_go_fixture() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT PRIMARY KEY, b INT, c INT, d INT, INDEX ib(b), INDEX ic(c))")
@@ -174,12 +162,6 @@ fn ordering_index_selectivity_threshold_matches_go_fixture() {
 
 #[test]
 fn index_merge_disjuncts_use_their_own_ranges_and_union_overlap() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT PRIMARY KEY,b INT,c INT,d INT,INDEX ib(b),INDEX ic(c))")
@@ -210,12 +192,6 @@ fn index_merge_disjuncts_use_their_own_ranges_and_union_overlap() {
 
 #[test]
 fn ordering_index_selectivity_ratio_matches_go_fixture() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT PRIMARY KEY, b INT, c INT, INDEX ib(b), INDEX ic(c))")
@@ -264,22 +240,7 @@ fn index_lookup_limit_and_topn_preserve_table_rows() {
 /// cached table's `stats_meta` version.
 #[test]
 fn process_stats_info_reports_the_get_stats_table_version() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let registry = process::ProcessRegistry::default();
     let mut session = Session::new();
-    let guard = registry.register(
-        42,
-        "root".to_owned(),
-        "127.0.0.1:4000".to_owned(),
-        "test".to_owned(),
-        None,
-    );
-    session.attach_process(42, guard);
     session
         .run("CREATE TABLE stats_info_src (a BIGINT)")
         .unwrap();
@@ -289,7 +250,7 @@ fn process_stats_info_reports_the_get_stats_table_version() {
     session.run("ANALYZE TABLE stats_info_src").unwrap();
     let table_id = {
         let shared = session.shared_catalog();
-        let mut catalog = shared.lock().unwrap();
+        let catalog = shared.lock().unwrap();
         let tidb_executor::TableEntry::Kv(table) =
             catalog.table_in("test", "stats_info_src").unwrap()
         else {
@@ -299,13 +260,16 @@ fn process_stats_info_reports_the_get_stats_table_version() {
         let statistics = (*catalog.table_statistics(table_id).unwrap())
             .clone()
             .with_stat_versions(77, 77);
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+        session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
         table_id
     };
+    // Go `ProcessInfo.StatsInfo`, which the session's process row shows.
     let stats_info = |session: &mut Session| {
         session.run("SELECT * FROM stats_info_src").unwrap();
-        tidb_util::memoryusagealarm::SessionManager::get_process_info(&registry, 42)
-            .expect("registered process")
+        session
+            .process_plan_info
+            .lock()
+            .unwrap()
             .stats_info
             .get("stats_info_src")
             .copied()
@@ -316,11 +280,11 @@ fn process_stats_info_reports_the_get_stats_table_version() {
     // comes from a fresh `PseudoTable`.
     {
         let shared = session.shared_catalog();
-        let mut catalog = shared.lock().unwrap();
+        let catalog = shared.lock().unwrap();
         let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
         statistics.row_count = 0;
         statistics.modify_count = 3;
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+        session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
     assert_eq!(stats_info(&mut session), Some(0));
 }
@@ -900,12 +864,6 @@ fn appended_integer_handle_range_keeps_the_declared_index_estimate() {
 /// execution range.
 #[test]
 fn appended_handle_range_uses_partial_column_statistics() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run(
@@ -945,12 +903,12 @@ fn appended_handle_range_uses_partial_column_statistics() {
         )
     };
     {
-        let mut catalog = shared.lock().unwrap();
+        let catalog = shared.lock().unwrap();
         let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
         statistics.indexes.remove(&index_id);
         statistics.index_load_status.remove(&index_id);
         statistics.index_stats_existence.remove(&index_id);
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+        session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
 
     let rows = row_text(session.run(
@@ -1223,12 +1181,6 @@ fn cross_validation_on_clustered_pk_range_matches_go() {
 /// before ANALYZE and analyzed counts after later modifications.
 #[test]
 fn determinate_objective_uses_analyzed_row_count_after_inserts() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE ignore_realtime_stats (a INT, b INT)")
@@ -1240,6 +1192,7 @@ fn determinate_objective_uses_analyzed_row_count_after_inserts() {
         )
         .unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session.update_stats_cache().unwrap();
 
     let explain = |session: &mut Session| {
         row_text(session.run(
@@ -1293,6 +1246,7 @@ fn determinate_objective_uses_analyzed_row_count_after_inserts() {
         .run("INSERT INTO ignore_realtime_stats VALUES (3,2),(3,3),(3,4),(3,5)")
         .unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session.update_stats_cache().unwrap();
     let shared = session.shared_catalog();
     {
         let catalog = shared.lock().unwrap();
@@ -1329,20 +1283,7 @@ fn determinate_objective_uses_analyzed_row_count_after_inserts() {
 /// `table` and its partitions: the counts FLUSH STATS_DELTA persists, read
 /// from the store as Go's tests do once the handle has dumped them.
 fn stats_meta_counts(session: &mut Session, table: &str) -> Vec<(String, i64, i64)> {
-    // The in-process tier keeps flushed deltas in its own statistics cache,
-    // which only SHOW STATS_META reads.
-    if crate::tests_support::in_process_tier() {
-        return row_text(session.run(&format!("SHOW STATS_META WHERE table_name = '{table}'")))
-            .into_iter()
-            .map(|row| {
-                (
-                    row[2].clone(),
-                    row[4].parse().unwrap(),
-                    row[5].parse().unwrap(),
-                )
-            })
-            .collect();
-    }
+    // The durable `mysql.stats_meta` rows a flush wrote.
     let mut rows = row_text(session.run(&format!(
         "SELECT '', m.modify_count, m.count FROM mysql.stats_meta m \
          JOIN information_schema.tables t ON m.table_id = t.tidb_table_id \
@@ -1486,12 +1427,6 @@ fn flush_stats_delta_restores_statement_and_savepoint_deltas() {
 /// the small remaining NDV bounds an out-of-range estimate after inserts.
 #[test]
 fn small_ndv_out_of_range_index_reader_rows_match_go() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE issue_64137 (a INT, KEY idx_a(a))")
@@ -1504,25 +1439,12 @@ fn small_ndv_out_of_range_index_reader_rows_match_go() {
     session
         .run("INSERT INTO issue_64137 SELECT * FROM issue_64137 LIMIT 2000")
         .unwrap();
-    let shared = session.shared_catalog();
-    {
-        let mut catalog = shared.lock().unwrap();
-        catalog.flush_stats_delta();
-        let table_id = match catalog.table_in("test", "issue_64137").unwrap() {
-            tidb_executor::TableEntry::Kv(table) => table.table_id,
-            _ => panic!("issue_64137 is not a KV table"),
-        };
-        // Go's source test flushes the session delta and calls
-        // StatsHandle.Update, so its cached stats_meta count/modify_count
-        // reflect the 2,000 committed inserts while the analyzed histogram
-        // remains unchanged. Session::new has no domain stats worker; model
-        // that refreshed metadata at the same boundary for this estimator
-        // parity test.
-        let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
-        statistics.row_count = 12_000;
-        statistics.modify_count = 2_000;
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
-    }
+    // Go's source test flushes the session delta and calls
+    // `StatsHandle.Update`, so its cached stats_meta count/modify_count
+    // reflect the 2,000 committed inserts while the analyzed histogram
+    // remains unchanged.
+    session.run("FLUSH STATS_DELTA test.issue_64137").unwrap();
+    session.update_stats_cache().unwrap();
 
     for (predicate, expected_rows) in [("a=99999999", "24.00"), ("a=1", "12000.00")] {
         let rows = row_text(session.run(&format!(
@@ -1827,13 +1749,11 @@ fn truncated_integer_handle_ranges_match_go_cardinality_estimates() {
 /// items are attached to the statement's scans without leaking to later SQL.
 #[test]
 fn explain_marks_missing_stats_for_selected_index() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
+    // Sync loading would bring the published evicted items back before
+    // planning; with it off, EXPLAIN shows the cache's own load status, as
+    // Go's does.
+    session.run("SET tidb_stats_load_sync_wait = 0").unwrap();
     session
         .run("CREATE TABLE explain_partial_index (a INT, b INT, payload INT, KEY idx_ab(a,b))")
         .unwrap();
@@ -1879,12 +1799,12 @@ fn explain_marks_missing_stats_for_selected_index() {
         "fully loaded index statistics must not be marked partial: {fully_loaded:?}"
     );
     {
-        let mut catalog = shared.lock().unwrap();
+        let catalog = shared.lock().unwrap();
         let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
         statistics.indexes.remove(&index_id);
         statistics.index_load_status.remove(&index_id);
         statistics.index_stats_existence.remove(&index_id);
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+        session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
 
     let rows = row_text(session.run(
@@ -1903,10 +1823,7 @@ fn explain_marks_missing_stats_for_selected_index() {
     statistics
         .index_load_status
         .insert(index_id, tidb_stats::StatsLoadedStatus::all_evicted());
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), table_id, &statistics);
     let rows = row_text(session.run(
         "EXPLAIN SELECT payload FROM explain_partial_index USE INDEX (idx_ab) WHERE a = 2 AND b = 2",
     ));
@@ -1923,10 +1840,7 @@ fn explain_marks_missing_stats_for_selected_index() {
     statistics.columns.remove(&column_b_id);
     statistics.column_load_status.remove(&column_b_id);
     statistics.column_stats_existence.remove(&column_b_id);
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), table_id, &statistics);
     let rows = row_text(session.run(
         "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
     ));
@@ -1943,10 +1857,7 @@ fn explain_marks_missing_stats_for_selected_index() {
     statistics.columns.remove(&column_b_id);
     statistics.column_load_status.remove(&column_b_id);
     statistics.column_stats_existence.insert(column_b_id, true);
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), table_id, &statistics);
     let rows = row_text(session.run(
         "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
     ));
@@ -1960,10 +1871,11 @@ fn explain_marks_missing_stats_for_selected_index() {
     );
 
     // A later statement must not inherit the preceding statement's statuses.
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(table_id, original_statistics);
+    session.publish_table_statistics_for_test(
+        &shared.lock().unwrap(),
+        table_id,
+        &original_statistics,
+    );
     let rows = row_text(session.run(
         "EXPLAIN SELECT payload FROM explain_partial_index IGNORE INDEX (idx_ab) WHERE b = 2",
     ));
@@ -1990,13 +1902,11 @@ fn explain_marks_missing_stats_for_selected_index() {
 /// prints the index's `stats:partial[...]` status.
 #[test]
 fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
+    // Sync loading would bring the published evicted items back before
+    // planning; with it off, EXPLAIN shows the cache's own load status, as
+    // Go's does.
+    session.run("SET tidb_stats_load_sync_wait = 0").unwrap();
     session
         .run("CREATE TABLE explain_determinate_pseudo (a INT, b INT, payload INT, KEY idx_ab(a,b))")
         .unwrap();
@@ -2008,7 +1918,7 @@ fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
         .unwrap();
     let shared = session.shared_catalog();
     {
-        let mut catalog = shared.lock().unwrap();
+        let catalog = shared.lock().unwrap();
         let table_id = match catalog
             .table_in("test", "explain_determinate_pseudo")
             .unwrap()
@@ -2024,7 +1934,7 @@ fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
         {
             *status = tidb_stats::StatsLoadedStatus::all_evicted();
         }
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+        session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
     let scan_info = |session: &mut Session| {
         let rows = row_text(session.run(
@@ -2056,13 +1966,11 @@ fn determinate_explain_reports_the_pseudo_table_get_stats_table_returns() {
 /// states by changing the cached item load statuses around the same queries.
 #[test]
 fn explain_partial_stats_match_go_plan_matrix() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
+    // Sync loading would bring the published evicted items back before
+    // planning; with it off, EXPLAIN shows the cache's own load status, as
+    // Go's does.
+    session.run("SET tidb_stats_load_sync_wait = 0").unwrap();
     session
         .run("CREATE TABLE t(a INT, b INT, c INT, PRIMARY KEY(a), KEY idx(b))")
         .unwrap();
@@ -2118,10 +2026,7 @@ fn explain_partial_stats_match_go_plan_matrix() {
     partial_tp.columns.remove(&tp_b_id);
     partial_tp.column_load_status.remove(&tp_b_id);
     partial_tp.column_stats_existence.remove(&tp_b_id);
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(tp_id, std::sync::Arc::new(partial_tp));
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), tp_id, &partial_tp);
     let plan = row_text(session.run(query_tp));
     let plan_text = plan
         .iter()
@@ -2132,10 +2037,7 @@ fn explain_partial_stats_match_go_plan_matrix() {
         plan_text.contains("stats:partial["),
         "missing partial marker: {plan_text}"
     );
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(tp_id, tp_original.clone());
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), tp_id, &tp_original);
     let plan = row_text(session.run(query_tp));
     let plan_text = plan
         .iter()
@@ -2171,10 +2073,7 @@ fn explain_partial_stats_match_go_plan_matrix() {
             .index_load_status
             .insert(id, tidb_stats::StatsLoadedStatus::all_evicted());
     }
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(t_id, std::sync::Arc::new(evicted_t.clone()));
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), t_id, &evicted_t);
     let plan = row_text(session.run(query_join));
     let plan_text = plan
         .iter()
@@ -2189,10 +2088,7 @@ fn explain_partial_stats_match_go_plan_matrix() {
         plan_text.contains("allEvicted"),
         "missing evicted status: {plan_text}"
     );
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(t_id, t_original.clone());
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), t_id, &t_original);
     let plan = row_text(session.run(query_join));
     let plan_text = plan
         .iter()
@@ -2217,10 +2113,7 @@ fn explain_partial_stats_match_go_plan_matrix() {
         plan_text.contains("IndexHashJoin"),
         "Go plan shape missing: {plan_text}"
     );
-    shared
-        .lock()
-        .unwrap()
-        .set_table_statistics(t_id, std::sync::Arc::new(evicted_t));
+    session.publish_table_statistics_for_test(&shared.lock().unwrap(), t_id, &evicted_t);
     let plan = row_text(session.run(query_partition_join));
     let plan_text = plan
         .iter()
@@ -2493,20 +2386,20 @@ fn dnf_selectivity_safety_cases_match_go_smoke_coverage() {
 /// floor, for either column, without inventing analyzed column statistics.
 #[test]
 fn builtin_in_estimate_without_stats_keeps_selection_floor() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("CREATE TABLE builtin_in_pseudo (a INT, b INT)")
         .unwrap();
+    // Go's source test: `statstestutil.HandleNextDDLEventWithTxn(h)`.
+    session.handle_ddl_events_for_test();
     session
         .run("INSERT INTO builtin_in_pseudo VALUES (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
         .unwrap();
-    session.shared_catalog().lock().unwrap().flush_stats_delta();
+    // Go's source test: `h.DumpStatsDeltaToKV(true)`, then `h.Update(is)`.
+    session
+        .run("FLUSH STATS_DELTA test.builtin_in_pseudo")
+        .unwrap();
+    session.update_stats_cache().unwrap();
     let shared = session.shared_catalog();
     let catalog = shared.lock().unwrap();
     let table_id = match catalog.table_in("test", "builtin_in_pseudo").unwrap() {
@@ -2704,12 +2597,6 @@ fn analyzed_ordering_threshold_preserves_go_cost_choice() {
 /// histogram must not remove the most selective dimension from the estimate.
 #[test]
 fn virtual_column_index_estimation_preserves_the_selective_suffix() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session.run("SET tidb_analyze_version = 2").unwrap();
     session.run("CREATE TABLE virtual_estimate(a INT, b INT, c INT, d INT AS (c + 1) VIRTUAL, INDEX iabd(a,b,d))").unwrap();
@@ -2725,31 +2612,22 @@ fn virtual_column_index_estimation_preserves_the_selective_suffix() {
     session
         .run("ANALYZE TABLE virtual_estimate WITH 8 BUCKETS, 0 TOPN")
         .unwrap();
-    session
-        .with_catalog_mut(|catalog| {
-            let Some(tidb_executor::TableEntry::Kv(table)) =
-                catalog.table_in("test", "virtual_estimate")
-            else {
-                panic!("missing test table");
-            };
-            let stats = catalog.table_statistics(table.table_id).unwrap();
-            let virtual_id = table
-                .columns
-                .iter()
-                .find(|column| column.name == "d")
-                .unwrap()
-                .id;
-            assert!(
-                !stats.columns.contains_key(&virtual_id),
-                "Go never publishes a virtual-column histogram"
-            );
-            assert!(
-                !stats.indexes.is_empty(),
-                "the composite index must retain statistics"
-            );
-            Ok(())
-        })
-        .unwrap();
+    // Go keeps no histogram for the virtual column, and the composite index
+    // over it has its own (testkit probe: a, b, c and iabd).
+    let histograms =
+        row_text(session.run("SHOW STATS_HISTOGRAMS WHERE table_name = 'virtual_estimate'"));
+    assert!(
+        histograms
+            .iter()
+            .all(|row| !(row[3] == "d" && row[4] == "0")),
+        "Go never publishes a virtual-column histogram: {histograms:?}"
+    );
+    assert!(
+        histograms
+            .iter()
+            .any(|row| row[3] == "iabd" && row[4] == "1"),
+        "the composite index must retain statistics: {histograms:?}"
+    );
     session
         .run("CREATE TABLE ordinary_estimate(a INT, b INT, c INT, d INT, INDEX iabd(a,b,d))")
         .unwrap();
@@ -4567,12 +4445,6 @@ fn a_full_table_scan_under_pseudo_stats_pays_gos_risk_penalty() {
 /// modifications cross Go's strict `> 0.7` threshold.
 #[test]
 fn outdated_statistics_follow_the_session_pseudo_switch() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     struct RestoreOutdatedRatio(f64);
     impl Drop for RestoreOutdatedRatio {
         fn drop(&mut self) {
@@ -4601,7 +4473,7 @@ fn outdated_statistics_follow_the_session_pseudo_switch() {
         let mut statistics = (*catalog.table_statistics(table_id).unwrap()).clone();
         statistics.row_count = 35;
         statistics.modify_count = 15;
-        catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+        session.publish_table_statistics_for_test(&catalog, table_id, &statistics);
     }
 
     let scan_info = |session: &mut Session| {
@@ -4998,12 +4870,6 @@ fn prepared_explain_index_probe_strings_match_go() {
 /// recreation through the production local session path.
 #[test]
 fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session
         .run("SET GLOBAL tidb_analyze_column_options = 'PREDICATE'")
@@ -5022,6 +4888,7 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
         )
         .unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session.update_stats_cache().unwrap();
     session
         .run("ANALYZE TABLE unknown_value_lifecycle")
         .unwrap();
@@ -5033,6 +4900,7 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
         )
         .unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session.update_stats_cache().unwrap();
 
     let estimate_column_range = |session: &Session, table: &str, low: i64, high: i64| {
         let catalog = session.shared_catalog();
@@ -5110,12 +4978,6 @@ fn unknown_value_estimates_follow_analyze_and_truncate_lifecycle() {
 /// estimate without replacing the analyzed histogram.
 #[test]
 fn unknown_value_estimates_follow_modify_delta_lifecycle() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     let prior_auto_analyze =
         row_text(session.run("SELECT @@global.tidb_enable_auto_analyze"))[0][0].clone();
@@ -5176,6 +5038,7 @@ fn unknown_value_estimates_follow_modify_delta_lifecycle() {
         .run("INSERT INTO unknown_modify_lifecycle SELECT a + 10 FROM unknown_modify_lifecycle WHERE a <= 10")
         .unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();
+    session.update_stats_cache().unwrap();
     let estimate = estimate_column_point(&session, 15);
     assert!(estimate > 1.0 && estimate < 10.0, "estimate was {estimate}");
 
@@ -5467,12 +5330,6 @@ fn ordering_ratio_increases_merge_join_cost() {
 /// mock index histogram and required correlated Apply shape.
 #[test]
 fn ordering_ratio_increases_apply_cost() {
-    // Reads or replaces the in-process catalog's statistics objects; a
-    // session on the store keeps statistics in its stats handle, which Go's
-    // tests feed through `UpdateStatsCache`.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
     let mut session = Session::new();
     session.run("CREATE TABLE t1(a INT, b INT, c INT, INDEX ibc(b,c))").unwrap();
     session.run("CREATE TABLE t2(a INT, b INT, c INT)").unwrap();
@@ -5547,32 +5404,22 @@ fn expression_index_statistics_remain_initialized() {
     assert!(!first.is_empty());
     let histograms = row_text(session.run("SHOW STATS_HISTOGRAMS"));
     assert!(!histograms.is_empty());
-    if crate::tests_support::in_process_tier() {
-        assert!(
-            !histograms
-                .iter()
-                .flatten()
-                .any(|cell| cell.contains("allEvicted")),
-            "{histograms:?}"
-        );
-    } else {
-        // A server loads what the query used and leaves the rest evicted
-        // (oracle: id, c1 allEvicted; c2, idx_expr allLoaded).
-        let status: Vec<(&str, &str)> = histograms
-            .iter()
-            .map(|row| (row[3].as_str(), row[10].as_str()))
-            .collect();
-        assert_eq!(
-            status,
-            [
-                ("id", "allEvicted"),
-                ("c1", "allEvicted"),
-                ("c2", "allLoaded"),
-                ("idx_expr", "allLoaded")
-            ],
-            "{histograms:?}"
-        );
-    }
+    // Go testkit (no stats lease) holds every analyzed item loaded; a server
+    // would leave the unused `id`, `c1` evicted.
+    let status: Vec<(&str, &str)> = histograms
+        .iter()
+        .map(|row| (row[3].as_str(), row[10].as_str()))
+        .collect();
+    assert_eq!(
+        status,
+        [
+            ("id", "allLoaded"),
+            ("c1", "allLoaded"),
+            ("c2", "allLoaded"),
+            ("idx_expr", "allLoaded")
+        ],
+        "{histograms:?}"
+    );
     let second = row_text(session.run(sql));
     assert!(!second.is_empty());
     assert!(

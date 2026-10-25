@@ -83,10 +83,7 @@ pub(crate) fn validation_var_error(name: &str, value: &str, error: ValidationErr
 /// session copies its session view (`Domain.GetSessionCache`). A cluster
 /// node persists `SET GLOBAL` through its sysvar seam and rebuilds from the
 /// cluster's table (`LoadSysVarCacheLoop` and the `/tidb/sysvars` etcd
-/// notify); an in-process store whose bootstrap loaded this table from its
-/// own `mysql.global_variables` ([`Self::catalog_backed`]) has each `SET
-/// GLOBAL` written back there by the session, which then rebuilds the cache
-/// from that table (`NotifyUpdateSysVarCache(true)`).
+/// notify).
 #[derive(Clone, Debug)]
 pub struct GlobalSysvars {
     pd_region_policy: Arc<RwLock<Option<Arc<dyn PdRegionPolicy>>>>,
@@ -131,17 +128,6 @@ pub struct GlobalSysvars {
     resolved: Arc<RwLock<Arc<ResolvedGlobals>>>,
     /// Serializes rebuilds of `resolved`; see `refresh_resolved`.
     refresh_lock: Arc<Mutex<()>>,
-    /// Set once an in-process store's bootstrap loaded this table from that
-    /// store's `mysql.global_variables` (Go `rebuildSysVarCache`): from then
-    /// on the cache is that store's, a `SET GLOBAL` must write its row back
-    /// (Go `replaceGlobalVariablesTableValue`), and the session then rebuilds
-    /// the cache from that table (`NotifyUpdateSysVarCache(true)`). Shared by
-    /// every clone; a cluster scratch or live table is never marked, since
-    /// its front end persists through the sysvar seam instead.
-    catalog_backed: Arc<std::sync::atomic::AtomicBool>,
-    /// Set once the store's `LoadSysVarCacheLoop` thread is running, so a
-    /// second bootstrap of the same table does not start another.
-    load_loop_started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Clone, Debug)]
@@ -224,8 +210,6 @@ impl Default for GlobalSysvars {
             publishes_runtime_settings: true,
             resolved: Arc::new(RwLock::new(EMPTY_RESOLVED.with(|it| it.clone()))),
             refresh_lock: Arc::default(),
-            catalog_backed: Arc::default(),
-            load_loop_started: Arc::default(),
         }
     }
 }
@@ -1557,76 +1541,6 @@ impl GlobalSysvars {
             .collect();
         *self.table.lock().expect("global sysvar lock poisoned") = rows;
         self.rebuild_sys_var_cache();
-    }
-
-    /// Go `Domain.LoadSysVarCacheLoop` for a store with no etcd client (an
-    /// in-process store): every 30 seconds the cache is rebuilt from the
-    /// store's committed `mysql.global_variables`, which `fetch` reads (Go
-    /// runs the loop on a system session of its own). `fetch` answers `None`
-    /// once the store is gone; the loop also ends once this thread holds the
-    /// table's last clone (Go's `do.exit`). A failed read is logged and the
-    /// cache kept, as Go does. Only the first call starts a thread.
-    pub(crate) fn start_load_sys_var_cache_loop(
-        &self,
-        fetch: Box<dyn FnMut() -> Option<Result<Vec<(String, String)>, String>> + Send>,
-    ) {
-        // Go `LoadSysVarCacheLoop`'s `duration`.
-        self.start_load_sys_var_cache_loop_every(std::time::Duration::from_secs(30), fetch);
-    }
-
-    fn start_load_sys_var_cache_loop_every(
-        &self,
-        duration: std::time::Duration,
-        mut fetch: Box<dyn FnMut() -> Option<Result<Vec<(String, String)>, String>> + Send>,
-    ) {
-        if self
-            .load_loop_started
-            .swap(true, std::sync::atomic::Ordering::AcqRel)
-        {
-            return;
-        }
-        // How often the sleeping loop looks for its exit.
-        let exit_poll = duration.min(std::time::Duration::from_secs(1));
-        let globals = self.clone();
-        let spawned = std::thread::Builder::new()
-            .name("sysvar-cache-loop".to_owned())
-            .spawn(move || loop {
-                let mut waited = std::time::Duration::ZERO;
-                while waited < duration {
-                    if Arc::strong_count(&globals.cache) == 1 {
-                        return;
-                    }
-                    std::thread::sleep(exit_poll);
-                    waited += exit_poll;
-                }
-                match fetch() {
-                    None => return,
-                    Some(Ok(rows)) => globals.load_from_cluster(rows),
-                    Some(Err(error)) => tidb_util::logutil::bg_logger().warn(
-                        "LoadSysVarCacheLoop failed",
-                        &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
-                    ),
-                }
-            });
-        if spawned.is_err() {
-            self.load_loop_started
-                .store(false, std::sync::atomic::Ordering::Release);
-        }
-    }
-
-    /// Marks this table (and every clone of it) as the sysvar cache of an
-    /// in-process store's `mysql.global_variables`; see the field.
-    pub(crate) fn mark_catalog_backed(&self) {
-        self.catalog_backed
-            .store(true, std::sync::atomic::Ordering::Release);
-    }
-
-    /// Whether a `SET GLOBAL` against this table must also write the row
-    /// into the session's own `mysql.global_variables`; see the field.
-    #[must_use]
-    pub(crate) fn catalog_backed(&self) -> bool {
-        self.catalog_backed
-            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// The `mysql.global_variables` rows this table holds (see the `table`
@@ -4612,40 +4526,6 @@ mod tests {
         assert_eq!(
             vars.set_global("debug_sync", "x".to_owned()),
             Err(VarError::SessionOnlyVariable("debug_sync".to_owned()))
-        );
-    }
-
-    /// Go `LoadSysVarCacheLoop` without etcd: each tick rebuilds the cache
-    /// from the store's table, so a row written behind the cache's back is
-    /// served after the next tick, and the loop ends with its table.
-    #[test]
-    fn the_sysvar_cache_loop_rebuilds_from_the_table_each_tick() {
-        let globals = GlobalSysvars::new();
-        let stored = Arc::new(Mutex::new(vec![(
-            "tidb_stmt_summary_history_size".to_owned(),
-            "24".to_owned(),
-        )]));
-        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let (table, counter) = (Arc::clone(&stored), Arc::clone(&reads));
-        globals.start_load_sys_var_cache_loop_every(
-            std::time::Duration::from_millis(10),
-            Box::new(move || {
-                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Some(Ok(table.lock().unwrap().clone()))
-            }),
-        );
-        stored.lock().unwrap()[0].1 = "23".to_owned();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while globals.get("tidb_stmt_summary_history_size").unwrap() != "23" {
-            assert!(std::time::Instant::now() < deadline, "the loop never reloaded");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        drop(globals);
-        let settled = reads.load(std::sync::atomic::Ordering::SeqCst);
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        assert!(
-            reads.load(std::sync::atomic::Ordering::SeqCst) <= settled + 1,
-            "the loop outlived its table"
         );
     }
 

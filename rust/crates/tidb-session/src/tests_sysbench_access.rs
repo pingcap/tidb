@@ -829,21 +829,20 @@ fn prepared_dml_scalar_subquery_rechecks_the_snapshot_on_every_execute() {
     );
 }
 
-/// The REQUEST KIND a write reads its records with, from the storage seam.
+/// The REQUEST KIND a write reads its records with, from the store's RPCs.
 ///
 /// This is the receipt `actRows` cannot give, and the reason this unit
 /// exists. A scan over the one-key range `[150,150]` and a lookup of key 150
-/// both print `1` row read; they are not the same request. Go's seam names
-/// the two kinds (`kv.Retriever.Get` -> `kv_get`,
-/// `kv.Retriever.Iter` -> `kv_scan`), a real cluster's gRPC counters count
-/// them separately, and the measured gap against Go was one `kv_scan` per
-/// write where Go sends a `kv_get`. So the assertion is on the count of
-/// ITERATORS OPENED, and for a point plan that count is zero: not a narrower
-/// scan, no scan.
+/// both print `1` row read; they are not the same request. A real cluster's
+/// gRPC counters count a point get and a coprocessor read separately, and
+/// the measured gap against Go was one range read per write where Go sends a
+/// `kv_get`. So the assertion is on the coprocessor requests sent, and for a
+/// point plan there are none: not a narrower read, no read of a range.
 ///
-/// The range shapes are the control. They must keep opening iterators -- a
-/// point plan that swallowed them would be reading one record where the
-/// statement names several, which is the silent-wrong-answer direction.
+/// The range shapes are the control. They must keep sending coprocessor
+/// requests -- a point plan that swallowed them would be reading one record
+/// where the statement names several, which is the silent-wrong-answer
+/// direction.
 #[test]
 fn a_point_write_opens_no_scan_at_all() {
     // (`WHERE`, iterators the statement may open)
@@ -869,19 +868,18 @@ fn a_point_write_opens_no_scan_at_all() {
             format!("DELETE FROM sbtest1 WHERE {predicate}"),
         ] {
             let mut session = sbtest1_with_rows();
-            let (result, ops) =
-                tidb_executor::storage::capture_storage_ops(|| session.run(&statement));
+            let (result, requests) =
+                crate::tests_support::store_requests(&mut session, |session| {
+                    session.run(&statement)
+                });
             result.unwrap();
-            // A store's range reads run as coprocessor requests on its
-            // workers, outside this thread's storage probe; a point plan's
-            // zero scans hold on both tiers.
-            if scans == 0 || crate::tests_support::in_process_tier() {
-                assert_eq!(
-                    ops.scans, scans,
-                    "iterators opened changed for `{statement}` (gets: {})",
-                    ops.gets
-                );
-            }
+            // A range read is a coprocessor request (one per region, whatever
+            // its range count); a point plan sends none.
+            assert_eq!(
+                requests.coprocessor > 0,
+                scans > 0,
+                "reads changed for `{statement}`: {requests:?}"
+            );
         }
     }
 }

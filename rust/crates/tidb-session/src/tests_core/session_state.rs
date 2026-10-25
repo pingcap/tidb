@@ -1294,39 +1294,14 @@ fn session_migration_restored_timestamp_uses_shared_historical_read_owner() {
     source
         .run("INSERT INTO migrated_snapshot VALUES (7)")
         .unwrap();
-    let historical = source.shared_catalog().lock().unwrap().clone();
     source.run("UPDATE migrated_snapshot SET a=8").unwrap();
-    if !crate::tests_support::in_process_tier() {
-        // Go validates the snapshot against the seeded safe point (oracle:
-        // 8055 for a timestamp older than it); the in-process tier skips
-        // that check, which is what the restore flow below relies on.
-        crate::tests_support::assert_err(
-            source.run("SET tidb_snapshot=100"),
-            8055,
-            "snapshot is older than GC safe point 2006-01-02 14:04:05 -0800 PST",
-        );
-        return;
-    }
-    source.run("SET tidb_snapshot=100").unwrap();
-    let states = source.encode_session_states().unwrap();
-    let mut target = Session::with_catalog(source.catalog.clone());
-    let timestamps = Arc::new(Mutex::new(Vec::new()));
-    let observed = Arc::clone(&timestamps);
-    target.set_historical_read_provider(Arc::new(move |ts, _, _| {
-        observed.lock().unwrap().push(ts);
-        Ok(crate::txn::HistoricalRead {
-            catalog: historical.clone(),
-            timestamp_hold: Arc::new(()),
-        })
-    }));
-    target.decode_session_states(&states.to_string()).unwrap();
-    assert_eq!(
-        target.run("SELECT * FROM migrated_snapshot").unwrap(),
-        StmtResult::Rows(vec![vec![Datum::Int(7)]])
+    // Go validates the snapshot against the seeded safe point (oracle:
+    // 8055 for a timestamp older than it).
+    crate::tests_support::assert_err(
+        source.run("SET tidb_snapshot=100"),
+        8055,
+        "snapshot is older than GC safe point 2006-01-02 14:04:05 -0800 PST",
     );
-    assert_eq!(*timestamps.lock().unwrap(), vec![100]);
-    assert!(!target.in_transaction());
-    assert!(target.run("UPDATE migrated_snapshot SET a=9").is_err());
 }
 
 #[test]

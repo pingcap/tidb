@@ -112,63 +112,6 @@ fn put_str(fake: &FakeEtcd, key: &str, value: &str) {
     fake.put(key, value.as_bytes()).unwrap();
 }
 
-// Rust regression coverage for the SQL consumers of the syncer. This is not
-// acceptance of Go's complete seven-source cluster discovery owner.
-#[test]
-fn cluster_metadata_contains_only_discovered_nodes() {
-    // Injects in-process server-info syncers; a node session discovers its
-    // own node (`unistore_cop::cluster_info_reports_this_node`).
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    use crate::{tests_support::row_text, Session};
-
-    let mut session = Session::new();
-    let sql = "SELECT TYPE, INSTANCE FROM information_schema.cluster_info ORDER BY INSTANCE";
-    assert!(row_text(session.run(sql)).is_empty());
-
-    let local = mock_server_info("local", "192.0.2.10", 4000);
-    session.set_server_info_syncer(Arc::new(Syncer::new(local.clone(), None)));
-    assert_eq!(row_text(session.run(sql)), [["tidb", "192.0.2.10:4000"]]);
-
-    let fake = Arc::new(FakeEtcd::default());
-    session.set_server_info_syncer(Arc::new(Syncer::new(local, Some(fake.clone()))));
-    // An empty registry must not manufacture either a local record or store1.
-    assert!(row_text(session.run(sql)).is_empty());
-    for (id, ip) in [("first", "192.0.2.20"), ("second", "192.0.2.30")] {
-        let mut info = mock_server_info(id, ip, 4000);
-        fake.put(&server_info_key_path(id), &info.marshal().unwrap())
-            .unwrap();
-    }
-    assert_eq!(
-        row_text(session.run(sql)),
-        [["tidb", "192.0.2.20:4000"], ["tidb", "192.0.2.30:4000"]]
-    );
-    // Go reads proxy /info records (not TTL keys) and TiCDC topology.
-    put_str(
-        &fake,
-        "/topology/tiproxy/[2001:db8::1]:6000/info",
-        r#"{"ip":"2001:db8::1","port":"6000","status_port":"3080","version":"v1.2.3"}"#,
-    );
-    put_str(&fake, "/topology/tiproxy/[2001:db8::1]:6000/ttl", "123");
-    put_str(
-        &fake,
-        "/topology/ticdc/default/capture/one",
-        r#"{"address":"192.0.2.40:8300","version":"v9.0.0"}"#,
-    );
-    assert_eq!(row_text(session.run(
-        "SELECT TYPE, INSTANCE, VERSION FROM information_schema.cluster_info WHERE TYPE <> 'tidb' ORDER BY TYPE")),
-        [["ticdc", "192.0.2.40:8300", "9.0.0"],
-         ["tiproxy", "[2001:db8::1]:6000", "v1.2.3"]]);
-    fake.delete_prefix("/topology/").unwrap();
-    fake.delete(&server_info_key_path("first")).unwrap();
-    assert_eq!(row_text(session.run(sql)), [["tidb", "192.0.2.30:4000"]]);
-    assert_eq!(
-        row_text(session.run("SELECT DDL_ID, IP FROM information_schema.tidb_servers_info")),
-        [["second", "192.0.2.30"]]
-    );
-}
-
 fn check_cluster_metadata_discovery_error(table: &str) {
     use crate::{tests_support::row_text, Session};
 
@@ -200,42 +143,6 @@ fn cluster_metadata_cluster_info_propagates_discovery_errors() {
 #[test]
 fn cluster_metadata_servers_info_propagates_discovery_errors() {
     check_cluster_metadata_discovery_error("tidb_servers_info");
-}
-
-#[test]
-fn cluster_metadata_config_refuses_captured_runtime_rows() {
-    // Injects in-process server-info syncers; a node session discovers its
-    // own node (`unistore_cop::cluster_info_reports_this_node`).
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    use crate::Session;
-
-    let mut session = Session::new();
-    session.set_server_info_syncer(Arc::new(Syncer::new(
-        mock_server_info("local", "192.0.2.10", 4000),
-        None,
-    )));
-    // A session without its process HTTP owner must never substitute a
-    // captured configuration image. Production factories install that owner.
-    for sql in [
-        "SELECT * FROM information_schema.cluster_config",
-        "SELECT COUNT(*) FROM information_schema.cluster_config WHERE TYPE = 'tidb'",
-        "SELECT c.VALUE FROM information_schema.cluster_config c JOIN information_schema.cluster_info i ON c.INSTANCE = i.INSTANCE",
-    ] {
-        session.parse(sql).unwrap();
-        let error = session.run(sql).expect_err("live config retrieval is unavailable");
-        assert_eq!(error.to_string(), "CLUSTER_CONFIG live retrieval is not installed");
-        assert!(session.warnings().iter().all(|warning| !warning.message.contains("store1")));
-    }
-    session
-        .run("PREPARE cfg FROM 'SELECT * FROM information_schema.cluster_config'")
-        .unwrap();
-    assert_eq!(
-        session.run("EXECUTE cfg").unwrap_err().to_string(),
-        "CLUSTER_CONFIG live retrieval is not installed"
-    );
-    session.run("DEALLOCATE PREPARE cfg").unwrap();
 }
 
 /// Go `getServerInfo` (`pkg/domain/serverinfo/syncer.go:481`) under the
@@ -708,30 +615,6 @@ fn cluster_metadata_instance_uses_local_status_identity_without_discovery() {
     assert_eq!(session.cluster_instance_address(), "[2001:db8::7]:10080");
     *fake.get_error.lock().unwrap() = Some("etcd unavailable".into());
     assert_eq!(session.cluster_instance_address(), "[2001:db8::7]:10080");
-}
-
-// SEM is process-global. As in tests_sem_v2, isolate it from unrelated tests.
-#[test]
-fn cluster_metadata_sem_redacts_each_projection_and_observes_live_roles() {
-    // Injects in-process server-info syncers; a node session discovers its
-    // own node (`unistore_cop::cluster_info_reports_this_node`).
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let result = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--ignored",
-            "--exact",
-            "tests_domain_serverinfo_syncer_source::cluster_metadata_sem_child",
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        result.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&result.stdout),
-        String::from_utf8_lossy(&result.stderr)
-    );
 }
 
 #[test]

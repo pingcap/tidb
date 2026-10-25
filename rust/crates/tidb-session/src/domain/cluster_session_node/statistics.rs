@@ -383,6 +383,10 @@ impl crate::analyze_service::AnalyzeService for ClusterAnalyzeService {
         .map_err(tidb_executor::DriverError::unsupported)
     }
 
+    fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool {
+        tidb_exec::real_tikv_analyze::analyze_builds_column_task(&self.catalog.load(), statement)
+    }
+
     fn execute(
         &self,
         statement: &AnalyzeStatement,

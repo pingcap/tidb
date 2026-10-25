@@ -119,9 +119,7 @@ pub use native_password::{
     HANDSHAKE_SALT_LEN, NATIVE_PASSWORD_HASH_LEN,
 };
 pub use node_config::{NodeConfig, NodeConfigError};
-pub use pipeline_session::{
-    MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
-};
+pub use pipeline_session::MaterializedResultSetSource;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;

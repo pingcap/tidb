@@ -8,49 +8,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use crate::privilege::PrivilegeRegistry;
-use crate::stored_state_service::{
-    AccountService, PendingAccountChange, PendingSysvarChange, SysvarService,
-};
+use crate::stored_state_service::{PendingSysvarChange, SysvarService};
 use crate::tests_support::*;
 use crate::*;
-
-struct FakeAccounts {
-    scratch: PrivilegeRegistry,
-    committed: Rc<Cell<bool>>,
-}
-
-struct FakePendingAccounts {
-    scratch: PrivilegeRegistry,
-    committed: Rc<Cell<bool>>,
-}
-
-impl AccountService for FakeAccounts {
-    fn begin(&self) -> Result<Box<dyn PendingAccountChange>, DriverError> {
-        Ok(Box::new(FakePendingAccounts {
-            scratch: self.scratch.clone(),
-            committed: Rc::clone(&self.committed),
-        }))
-    }
-}
-
-impl PendingAccountChange for FakePendingAccounts {
-    fn registry(&self) -> PrivilegeRegistry {
-        self.scratch.clone()
-    }
-
-    fn set_write_hints(&mut self, _hints: tidb_exec::cluster_account_write::AccountWriteHints) {}
-
-    fn commit(self: Box<Self>) -> Result<Vec<String>, DriverError> {
-        self.committed.set(true);
-        Ok(self
-            .scratch
-            .accounts()
-            .into_iter()
-            .map(|(user, host)| format!("{user}@{host}"))
-            .collect())
-    }
-}
 
 struct FakeSysvars {
     scratch: GlobalSysvars,
@@ -80,45 +40,6 @@ impl PendingSysvarChange for FakePendingSysvars {
         self.committed.set(true);
         Ok(vec!["tidb_mem_quota_query".to_owned()])
     }
-}
-
-#[test]
-fn account_statements_run_on_the_scratch_registry_and_commit_only_on_success() {
-    // A node session's account statements go through its node's own account
-    // seam on the store; this fake service is the in-process tier's door.
-    if !crate::tests_support::in_process_tier() {
-        return;
-    }
-    let mut session = Session::new();
-    session.attach_privileges(PrivilegeRegistry::default());
-    let committed = Rc::new(Cell::new(false));
-    let service = FakeAccounts {
-        scratch: PrivilegeRegistry::default(),
-        committed: Rc::clone(&committed),
-    };
-    let changed = session
-        .run_account_statement_with("CREATE USER svc_u1", &service)
-        .unwrap();
-    assert!(committed.get());
-    assert!(
-        changed.iter().any(|account| account == "svc_u1@%"),
-        "{changed:?}"
-    );
-    // The live registry was put back: the user exists only in the change.
-    assert!(!session
-        .swap_privileges(PrivilegeRegistry::default())
-        .unwrap()
-        .user_exists("svc_u1", "%"));
-
-    let committed = Rc::new(Cell::new(false));
-    let service = FakeAccounts {
-        scratch: PrivilegeRegistry::default(),
-        committed: Rc::clone(&committed),
-    };
-    session
-        .run_account_statement_with("DROP USER svc_missing", &service)
-        .expect_err("dropping a missing user fails");
-    assert!(!committed.get());
 }
 
 #[test]
@@ -172,6 +93,10 @@ mod analyze {
                 .borrow_mut()
                 .push(format!("flush {}", target_ids.len()));
             Ok(())
+        }
+
+        fn builds_column_task(&self, _statement: &AnalyzeStatement) -> bool {
+            true
         }
 
         fn execute(

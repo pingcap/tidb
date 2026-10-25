@@ -501,9 +501,9 @@ fn an_expired_password_reports_1862_or_opens_a_sandbox_session() {
 /// `Password_lifetime` against) never ages out while the global stays at
 /// its factory-default `0` -- and does, once `SET GLOBAL
 /// default_password_lifetime` sets a nonzero value and enough time has
-/// actually elapsed. `store.global_vars()` is the same table
-/// `PipelineSessionFactory::with_accounts_and_globals` would share with the
-/// SQL executor's `SET GLOBAL`, so writing through it here is exactly what
+/// actually elapsed. `store.global_vars()` is the same table a node booted
+/// over the store shares with the SQL executor's `SET GLOBAL`, so writing
+/// through it here is exactly what
 /// a real `SET GLOBAL default_password_lifetime = 1` on that shared
 /// executor would do to this store's next login.
 #[test]

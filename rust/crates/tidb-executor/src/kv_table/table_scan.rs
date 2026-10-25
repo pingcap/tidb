@@ -744,22 +744,29 @@ impl KvTable {
         } else {
             handle_index
         };
-        let response_physical_id_index = (physical_id && self.partition.is_some()).then(|| {
-            columns.push(PushdownScanColumn {
-                id: tidb_model::column::EXTRA_PHYS_TBL_ID,
-                field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                is_handle: false,
-                origin_default: None,
-            });
-            let position = columns.len() - 1;
-            match &mut response_offsets {
-                Some(offsets) => {
-                    offsets.push(position);
-                    offsets.len() - 1
+        // A dirty partitioned read also needs each row's physical table id:
+        // Go's UnionScan keys a snapshot row by its own partition
+        // (`getSnapshotRow` encodes the record key under `_tidb_tid`), and so
+        // does the staged-row merge below.
+        let dirty_partitioned =
+            self.partition.is_some() && self.has_dirty_content(&statement.staged_writes);
+        let response_physical_id_index =
+            ((physical_id || dirty_partitioned) && self.partition.is_some()).then(|| {
+                columns.push(PushdownScanColumn {
+                    id: tidb_model::column::EXTRA_PHYS_TBL_ID,
+                    field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    is_handle: false,
+                    origin_default: None,
+                });
+                let position = columns.len() - 1;
+                match &mut response_offsets {
+                    Some(offsets) => {
+                        offsets.push(position);
+                        offsets.len() - 1
+                    }
+                    None => position,
                 }
-                None => position,
-            }
-        });
+            });
         let primary_column_ids: Vec<i64> = common_primary
             .as_ref()
             .into_iter()
@@ -867,12 +874,6 @@ impl KvTable {
                 return Ok(None);
             };
             let mut scan = scan.map_err(KvTableError::from)?;
-            // Cluster storage can expose staged writes together with a remote
-            // snapshot.  The integer merge below reconstructs keys with one
-            // table id, so a partitioned staged row would be keyed under the
-            // logical table and could shadow the wrong partition.  Refuse the
-            // whole partitioned remote read in that case; the byte-level
-            // cursor has the exact UnionScan semantics and is safe.
             if (output_offsets.is_some() || !retain_identity) && !scan.staged.is_empty() {
                 // A projected or identity-free remote row may no longer
                 // contain the handle needed by UnionScan's staged-row merge.
@@ -887,7 +888,14 @@ impl KvTable {
                 }
                 return Ok(None);
             }
-            if partitioned && !scan.staged.is_empty() {
+            // An unordered read merges the staged rows by record key, which
+            // now carries each row's own partition. An ordered read merges
+            // the partitions by handle (`PartitionMergedPushdownStream`),
+            // whose order the partition-major staged slice does not follow.
+            if partitioned
+                && !scan.staged.is_empty()
+                && (response_physical_id_index.is_none() || keep_order || descending)
+            {
                 scan.stream.close();
                 for (_, opened_parts) in partition_scans.drain(..) {
                     for mut opened in opened_parts {
@@ -1463,14 +1471,40 @@ impl KvTable {
         desc: bool,
         keep_order: bool,
     ) -> Result<Option<Box<dyn PushdownRowStream>>, KvTableError> {
-        if self.has_dirty_content(&statement.staged_writes) || self.partition.is_some() {
+        // A partitioned table is one request per pruned partition, as Go's
+        // `PartitionTableReader` builds one per physical table; the partial
+        // results are chained for the final aggregation. An ORDERED partial
+        // result over several partitions would need them merged, so it stays
+        // local.
+        let partitioned = self.partition.is_some();
+        if self.has_dirty_content(&statement.staged_writes)
+            || (partitioned && keep_order && self.record_physical_ids().len() > 1)
+        {
             return Ok(None);
         }
         let ranges = self.record_key_ranges(handle_ranges, zone, false)?;
         if ranges.is_empty() {
             return Ok(None);
         }
-        let columns = keep
+        let request_groups: Vec<(i64, Vec<(Key, Key)>)> = if partitioned {
+            self.record_physical_ids()
+                .into_iter()
+                .filter_map(|physical_id| {
+                    let part = ranges
+                        .iter()
+                        .filter(|(start, _)| decode_table_id(start.as_bytes()) == physical_id)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    (!part.is_empty()).then_some((physical_id, part))
+                })
+                .collect()
+        } else {
+            vec![(self.table_id, ranges)]
+        };
+        if request_groups.is_empty() {
+            return Ok(None);
+        }
+        let columns: Vec<PushdownScanColumn> = keep
             .iter()
             .map(|offset| {
                 let column = &self.columns[*offset];
@@ -1492,14 +1526,14 @@ impl KvTable {
         // synthesized metadata (see handle_range::clustered_primary_metadata)
         // is the same reconstruction the row-cursor builder above sends.
         let common_primary = crate::handle_range::clustered_primary_metadata(self);
-        let primary_column_ids = common_primary
+        let primary_column_ids: Vec<i64> = common_primary
             .as_ref()
             .into_iter()
             .flat_map(|index| index.column_offsets.iter())
             .filter_map(|offset| self.columns.get(*offset))
             .map(|column| column.id)
             .collect();
-        let primary_prefix_column_ids = common_primary
+        let primary_prefix_column_ids: Vec<i64> = common_primary
             .as_ref()
             .into_iter()
             .flat_map(|index| {
@@ -1518,52 +1552,63 @@ impl KvTable {
         if remote_aggregate.bind_in(context).is_err() {
             return Ok(None);
         }
-        let request = PushdownScanRequest {
-            table_id: self.table_id,
-            index: None,
-            columns,
-            handle_index: None,
-            primary_column_ids,
-            primary_prefix_column_ids,
-            conditions: predicates.to_vec(),
-            output_offsets: None,
-            topn: None,
-            limit: None,
-            prefix_limit: None,
-            paging_min_size: None,
-            aggregate: Some(remote_aggregate),
-            desc,
-            keep_order,
-            // Order-free responses are opted into per call site below.
-            allow_unordered_response: false,
-            snapshot_ts: 0,
-            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
-            schema_version: 0,
-            ranges,
-            range_hints: Vec::new(),
-            statement: statement.clone(),
-        };
-        let Some(scan) = self.store.open_remote_scan(&request) else {
-            return Ok(None);
-        };
-        let mut scan = scan.map_err(KvTableError::from)?;
-        if !scan.staged.is_empty() {
-            scan.stream.close();
-            return Ok(None);
+        let mut streams = Vec::with_capacity(request_groups.len());
+        for (table_id, ranges) in request_groups {
+            let request = PushdownScanRequest {
+                table_id,
+                index: None,
+                columns: columns.clone(),
+                handle_index: None,
+                primary_column_ids: primary_column_ids.clone(),
+                primary_prefix_column_ids: primary_prefix_column_ids.clone(),
+                conditions: predicates.to_vec(),
+                output_offsets: None,
+                topn: None,
+                limit: None,
+                prefix_limit: None,
+                paging_min_size: None,
+                aggregate: Some(remote_aggregate.clone()),
+                desc,
+                keep_order,
+                // Order-free responses are opted into per call site below.
+                allow_unordered_response: false,
+                snapshot_ts: 0,
+                read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+                schema_version: 0,
+                ranges,
+                range_hints: Vec::new(),
+                statement: statement.clone(),
+            };
+            let Some(scan) = self.store.open_remote_scan(&request) else {
+                close_streams(&mut streams);
+                return Ok(None);
+            };
+            let mut scan = scan.map_err(KvTableError::from)?;
+            if !scan.staged.is_empty() {
+                scan.stream.close();
+                close_streams(&mut streams);
+                return Ok(None);
+            }
+            // An aggregate has no residual local re-check: once the rows are
+            // reduced, the columns a caller would re-filter with are gone. A
+            // predicate the backend did not confirm applying must therefore
+            // refuse the whole pushdown here, before anything is reduced --
+            // never here + "trust it anyway", per the "never a wrong answer,
+            // only slower" contract. A predicate-free aggregate has nothing to
+            // re-check and keeps the pushdown either way.
+            if !predicates.is_empty() && !scan.stream.predicates_applied() {
+                scan.stream.close();
+                close_streams(&mut streams);
+                return Ok(None);
+            }
+            crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+            streams.push(scan.stream);
         }
-        // An aggregate has no residual local re-check: once the rows are
-        // reduced, the columns a caller would re-filter with are gone. A
-        // predicate the backend did not confirm applying must therefore
-        // refuse the whole pushdown here, before anything is reduced --
-        // never here + "trust it anyway", per the "never a wrong answer,
-        // only slower" contract. A predicate-free aggregate has nothing to
-        // re-check and keeps the pushdown either way.
-        if !predicates.is_empty() && !scan.stream.predicates_applied() {
-            scan.stream.close();
-            return Ok(None);
-        }
-        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
-        Ok(Some(scan.stream))
+        Ok(Some(if streams.len() == 1 {
+            streams.pop().expect("one partial aggregate stream")
+        } else {
+            crate::remote_scan::ChainedPushdownStream::new(streams)
+        }))
     }
 
     /// Index-scan counterpart of [`Self::pushdown_partial_aggregate_cursor`].
@@ -1594,12 +1639,25 @@ impl KvTable {
         // covering index the planner picks post-ANALYZE (`count(*) FROM
         // bmsql_customer`), refusing into the local partial-aggregate walk.
         // Build Go's schema instead.
-        if self.has_dirty_content(&statement.staged_writes) || self.partition.is_some() {
+        if self.has_dirty_content(&statement.staged_writes) {
             return Ok(None);
         }
         let Some(index) = self.indexes.iter().find(|index| index.id == index_id) else {
             return Ok(None);
         };
+        // A local index of a partitioned table is one request per pruned
+        // partition (its keys live under each physical id), as Go's
+        // `PartitionTableReader` builds them; a GLOBAL index lives under the
+        // logical id and is one request. An ORDERED partial result over
+        // several partitions would need them merged, so it stays local.
+        let physical_ids = if self.partition.is_some() && !index.global {
+            self.record_physical_ids()
+        } else {
+            vec![self.table_id]
+        };
+        if keep_order && physical_ids.len() > 1 {
+            return Ok(None);
+        }
         if index.column_offsets.is_empty()
             || !matches!(
                 aggregate,
@@ -1649,27 +1707,30 @@ impl KvTable {
             tidb_codec::encode_key_in_timezone(zone, values)
                 .map_err(|error| KvTableError::Encode(format!("{error:?}")))
         };
-        let mut key_ranges = Vec::with_capacity(ranges.len());
-        for range in ranges {
-            let mut low = Key::from_bytes(encode_index_seek_key(
-                self.table_id,
-                index_id,
-                &encode(&range.low)?,
-            ));
-            if range.low_exclusive {
-                low = low.prefix_next();
+        let key_ranges_of = |physical_id: i64| -> Result<Vec<(Key, Key)>, KvTableError> {
+            let mut key_ranges = Vec::with_capacity(ranges.len());
+            for range in ranges {
+                let mut low = Key::from_bytes(encode_index_seek_key(
+                    physical_id,
+                    index_id,
+                    &encode(&range.low)?,
+                ));
+                if range.low_exclusive {
+                    low = low.prefix_next();
+                }
+                let mut high = Key::from_bytes(encode_index_seek_key(
+                    physical_id,
+                    index_id,
+                    &encode(&range.high)?,
+                ));
+                if !range.high_exclusive {
+                    high = high.prefix_next();
+                }
+                key_ranges.push((low, high));
             }
-            let mut high = Key::from_bytes(encode_index_seek_key(
-                self.table_id,
-                index_id,
-                &encode(&range.high)?,
-            ));
-            if !range.high_exclusive {
-                high = high.prefix_next();
-            }
-            key_ranges.push((low, high));
-        }
-        if key_ranges.is_empty() {
+            Ok(key_ranges)
+        };
+        if ranges.is_empty() {
             return Ok(None);
         }
         let mut remote_aggregate = aggregate.clone();
@@ -1754,57 +1815,69 @@ impl KvTable {
                 }
             }
         }
-        let request = PushdownScanRequest {
-            table_id: self.table_id,
-            index: Some(PushdownIndexScan {
-                index_id,
-                declared_unique,
-                index_column_count: index.column_offsets.len(),
+        let primary_column_ids: Vec<i64> = self
+            .common_handle_offsets
+            .iter()
+            .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
+            .collect();
+        let mut streams = Vec::with_capacity(physical_ids.len());
+        for physical_id in physical_ids {
+            let request = PushdownScanRequest {
+                table_id: physical_id,
+                index: Some(PushdownIndexScan {
+                    index_id,
+                    declared_unique,
+                    index_column_count: index.column_offsets.len(),
+                    desc,
+                }),
+                columns: columns.clone(),
+                handle_index: None,
+                primary_column_ids: primary_column_ids.clone(),
+                primary_prefix_column_ids: Vec::new(),
+                conditions: remote_predicates.clone(),
+                output_offsets: None,
+                topn: None,
+                limit: None,
+                prefix_limit: None,
+                paging_min_size: None,
+                aggregate: Some(remote_aggregate.clone()),
                 desc,
-            }),
-            columns,
-            handle_index: None,
-            primary_column_ids: self
-                .common_handle_offsets
-                .iter()
-                .filter_map(|offset| self.columns.get(*offset).map(|column| column.id))
-                .collect(),
-            primary_prefix_column_ids: Vec::new(),
-            conditions: remote_predicates,
-            output_offsets: None,
-            topn: None,
-            limit: None,
-            prefix_limit: None,
-            paging_min_size: None,
-            aggregate: Some(remote_aggregate),
-            desc,
-            keep_order,
-            // Order-free responses are opted into per call site below.
-            allow_unordered_response: false,
-            snapshot_ts: 0,
-            read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
-            schema_version: 0,
-            ranges: key_ranges,
-            range_hints: Vec::new(),
-            statement: statement.clone(),
-        };
-        let Some(scan) = self.store.open_remote_scan(&request) else {
-            return Ok(None);
-        };
-        let mut scan = scan.map_err(KvTableError::from)?;
-        if !scan.staged.is_empty() {
-            scan.stream.close();
-            return Ok(None);
+                keep_order,
+                // Order-free responses are opted into per call site below.
+                allow_unordered_response: false,
+                snapshot_ts: 0,
+                read_engine: crate::remote_scan::PushdownReadEngine::TiKv,
+                schema_version: 0,
+                ranges: key_ranges_of(physical_id)?,
+                range_hints: Vec::new(),
+                statement: statement.clone(),
+            };
+            let Some(scan) = self.store.open_remote_scan(&request) else {
+                close_streams(&mut streams);
+                return Ok(None);
+            };
+            let mut scan = scan.map_err(KvTableError::from)?;
+            if !scan.staged.is_empty() {
+                scan.stream.close();
+                close_streams(&mut streams);
+                return Ok(None);
+            }
+            // See the identical guard in `pushdown_partial_aggregate_cursor`: an
+            // aggregate's rows are already reduced, so a predicate the backend
+            // did not confirm applying must refuse the whole pushdown here.
+            if !request.conditions.is_empty() && !scan.stream.predicates_applied() {
+                scan.stream.close();
+                close_streams(&mut streams);
+                return Ok(None);
+            }
+            crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
+            streams.push(scan.stream);
         }
-        // See the identical guard in `pushdown_partial_aggregate_cursor`: an
-        // aggregate's rows are already reduced, so a predicate the backend
-        // did not confirm applying must refuse the whole pushdown here.
-        if !request.conditions.is_empty() && !scan.stream.predicates_applied() {
-            scan.stream.close();
-            return Ok(None);
-        }
-        crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
-        Ok(Some(scan.stream))
+        Ok(Some(if streams.len() == 1 {
+            streams.pop().expect("one partial aggregate stream")
+        } else {
+            crate::remote_scan::ChainedPushdownStream::new(streams)
+        }))
     }
 
     /// Materializes the index/handle columns in table-column order for an
@@ -5809,6 +5882,14 @@ impl crate::table_access::TableAccess for TableScanExec {
         // replace.
         self.keep = keep.iter().map(|offset| self.keep[*offset]).collect();
         true
+    }
+}
+
+/// Closes every partial stream opened before a refusal, so no request is
+/// left running for a pushdown the caller computes locally instead.
+fn close_streams(streams: &mut Vec<Box<dyn crate::remote_scan::PushdownRowStream>>) {
+    for mut stream in streams.drain(..) {
+        stream.close();
     }
 }
 

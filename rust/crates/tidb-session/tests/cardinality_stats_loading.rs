@@ -15,51 +15,8 @@
 //! Cardinality fixtures that drain the process-global async statistics queue.
 //! Isolate the domain lifecycle from other session tests' catalogs and queues.
 
-use std::sync::{Arc, Mutex};
-use tidb_executor::access_cost::TableStatistics;
-use tidb_executor::driver::{StatisticsItemLoader, StatisticsLoadWorkers};
+use std::sync::Arc;
 use tidb_session::{Session, StmtResult};
-
-/// Storage test double: only requested items become fully loaded. The real
-/// Catalog owns queue consumption, cache publication and subsequent planning.
-struct StoredStatistics {
-    table_id: i64,
-    analyzed: Arc<TableStatistics>,
-    loaded: Mutex<TableStatistics>,
-    requests: Mutex<Vec<tidb_model::StatsLoadItem>>,
-}
-
-impl StatisticsItemLoader for StoredStatistics {
-    fn load_items(
-        &self,
-        items: &[tidb_model::StatsLoadItem],
-        _: &str,
-    ) -> Result<Vec<(i64, Arc<TableStatistics>)>, String> {
-        let mut loaded = self.loaded.lock().unwrap();
-        for request in items {
-            let item = request.table_item_id;
-            assert_eq!(item.table_id, self.table_id);
-            assert!(request.full_load);
-            self.requests.lock().unwrap().push(*request);
-            if item.is_index {
-                loaded
-                    .indexes
-                    .insert(item.id, self.analyzed.indexes[&item.id].clone());
-                loaded
-                    .index_load_status
-                    .insert(item.id, tidb_stats::StatsLoadedStatus::full_load());
-            } else {
-                loaded
-                    .columns
-                    .insert(item.id, self.analyzed.columns[&item.id].clone());
-                loaded
-                    .column_load_status
-                    .insert(item.id, tidb_stats::StatsLoadedStatus::full_load());
-            }
-        }
-        Ok(vec![(self.table_id, Arc::new(loaded.clone()))])
-    }
-}
 
 fn rows(session: &mut Session, sql: &str) -> Vec<String> {
     let StmtResult::Rows(rows) = session.run(sql).unwrap() else {
@@ -77,9 +34,10 @@ fn rows(session: &mut Session, sql: &str) -> Vec<String> {
 
 #[test]
 fn subset_index_cardinality_after_async_statistics_load() {
-    // Reads the in-process catalog's statistics objects: the in-process
-    // tier (a store session keeps statistics in its stats handle).
-    let mut session = Session::default();
+    // Go `TestSubsetIdxCardinality`: ANALYZE leaves the histograms evicted
+    // in the node's statistics cache, planning queues them, and the node's
+    // loader (`h.LoadNeededHistograms`) brings them in.
+    let mut session = Session::new();
     session
         .run("CREATE TABLE t(a INT,b INT,c INT,INDEX iabc(a,b,c))")
         .unwrap();
@@ -97,45 +55,17 @@ fn subset_index_cardinality_after_async_statistics_load() {
     session.run("FLUSH STATS_DELTA *.*").unwrap();
     session.run("ANALYZE TABLE t").unwrap();
     let shared = session.shared_catalog();
-    let (table_id, column_ids, index_id, loader) = {
-        let mut catalog = shared.lock().unwrap();
+    let (table_id, column_ids, index_id) = {
+        let catalog = shared.lock().unwrap();
         let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
-        let table_id = table.table_id;
         let column_ids = table
             .columns
             .iter()
             .map(|column| column.id)
             .collect::<Vec<_>>();
-        let index_id = table.indexes()[0].id;
-        let analyzed = catalog.table_statistics(table_id).unwrap();
-        let mut evicted = (*analyzed).clone();
-        for column in evicted.columns.values_mut() {
-            column.histogram.buckets.clear();
-            column.topn = None;
-            column.cms = None;
-        }
-        for index in evicted.indexes.values_mut() {
-            index.histogram.buckets.clear();
-            index.topn = None;
-            index.cms = None;
-        }
-        for status in evicted.column_load_status.values_mut() {
-            *status = tidb_stats::StatsLoadedStatus::all_evicted();
-        }
-        for status in evicted.index_load_status.values_mut() {
-            *status = tidb_stats::StatsLoadedStatus::all_evicted();
-        }
-        let loader = Arc::new(StoredStatistics {
-            table_id,
-            analyzed,
-            loaded: Mutex::new(evicted.clone()),
-            requests: Mutex::new(Vec::new()),
-        });
-        catalog.set_table_statistics(table_id, Arc::new(evicted));
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        (table_id, column_ids, index_id, loader)
+        (table.table_id, column_ids, table.indexes()[0].id)
     };
     let queued = || {
         tidb_stats::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS
@@ -159,7 +89,6 @@ fn subset_index_cardinality_after_async_statistics_load() {
         assert!(loaded.index_load_status[&index_id].is_full_load());
     }
     assert!(!queued(), "domain loading must consume the demand");
-    assert_eq!(loader.requests.lock().unwrap().len(), 4);
     let output: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../pkg/planner/cardinality/testdata/cardinality_suite_out.json"
     ))
@@ -183,10 +112,9 @@ fn subset_index_cardinality_after_async_statistics_load() {
             .collect::<Vec<_>>();
         assert_eq!(rows(&mut session, sql), expected, "{sql}");
     }
-    assert!(
-        !queued(),
-        "fully loaded replans must not enqueue statistics again"
-    );
+    // Go asserts nothing about the queue after these replans: with sync load
+    // off it queues every needed item again, loaded or not
+    // (`CollectPredicateColumnsPoint`).
 }
 
 /// Storage bytes are in memory; bootstrap, DDL stats writes, delta writes,
@@ -260,9 +188,9 @@ fn builtin_in_estimate_survives_statistics_initialization() {
         load_initial_stats_snapshot_with_memory_limits, InitialStatsLoad, StatsTarget,
     };
 
-    // Reads the in-process catalog's statistics objects: the in-process
-    // tier (a store session keeps statistics in its stats handle).
-    let mut session = Session::default();
+    // The statistics storage is this test's own (`StatsStorage`), so the
+    // session plans through a view over it instead of its node's cache.
+    let mut session = Session::new();
     session.run("CREATE TABLE t(a INT,b INT)").unwrap();
     session
         .run("INSERT INTO t VALUES(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
@@ -432,40 +360,21 @@ fn builtin_in_estimate_survives_statistics_initialization() {
 /// enumeration rather than a small integer-only surrogate.
 #[test]
 fn datetime_range_overflow_survives_async_statistics_load() {
-    // Reads the in-process catalog's statistics objects: the in-process
-    // tier (a store session keeps statistics in its stats handle).
-    let mut session = Session::default();
+    // ANALYZE leaves the histogram evicted in the node's statistics cache;
+    // the node's loader brings it in once the query queued it.
+    let mut session = Session::new();
     session.run("CREATE TABLE t(col DATETIME)").unwrap();
     session.run("INSERT INTO t VALUES('3580-05-26 07:16:48'),('4055-03-06 22:27:16'),('4862-01-26 07:16:54')").unwrap();
     session.run("FLUSH STATS_DELTA *.*").unwrap();
     session.run("ANALYZE TABLE t").unwrap();
     session.run("SET tidb_stats_load_sync_wait=0").unwrap();
     let shared = session.shared_catalog();
-    let (table_id, column_id, loader) = {
-        let mut catalog = shared.lock().unwrap();
+    let (table_id, column_id) = {
+        let catalog = shared.lock().unwrap();
         let tidb_executor::TableEntry::Kv(table) = catalog.table_in("test", "t").unwrap() else {
             panic!("not KV")
         };
-        let table_id = table.table_id;
-        let column_id = table.columns[0].id;
-        let analyzed = catalog.table_statistics(table_id).unwrap();
-        let mut evicted = (*analyzed).clone();
-        let column = evicted.columns.get_mut(&column_id).unwrap();
-        column.histogram.buckets.clear();
-        column.topn = None;
-        column.cms = None;
-        evicted
-            .column_load_status
-            .insert(column_id, tidb_stats::StatsLoadedStatus::all_evicted());
-        let loader = Arc::new(StoredStatistics {
-            table_id,
-            analyzed,
-            loaded: Mutex::new(evicted.clone()),
-            requests: Mutex::new(Vec::new()),
-        });
-        catalog.set_table_statistics(table_id, Arc::new(evicted));
-        catalog.set_statistics_item_loader(loader.clone(), StatisticsLoadWorkers::new());
-        (table_id, column_id, loader)
+        (table.table_id, table.columns[0].id)
     };
     let sql = "SELECT * FROM t WHERE col BETWEEN '8499-1-23 2:14:38' AND '9961-7-23 18:35:26'";
     assert!(rows(&mut session, sql).is_empty());
@@ -486,7 +395,5 @@ fn datetime_range_overflow_survives_async_statistics_load() {
             .is_full_load());
     }
     assert!(!queued());
-    assert_eq!(loader.requests.lock().unwrap().len(), 1);
     assert!(rows(&mut session, sql).is_empty());
-    assert!(!queued(), "loaded statistics must not be requested again");
 }

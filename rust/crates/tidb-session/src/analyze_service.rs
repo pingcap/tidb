@@ -33,6 +33,9 @@ pub trait AnalyzeService {
     /// physical ids the session resolved (never empty: empty would mean
     /// every table).
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), DriverError>;
+    /// Whether `statement` builds a column task, the tables Go flushes
+    /// deltas for before sampling (`collectStatsDeltaFlushObjectsForAnalyze`).
+    fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool;
     /// Runs and persists one table's analysis.
     fn execute(
         &self,
@@ -71,7 +74,12 @@ impl Session {
         // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` before
         // sampling; this session's pending deltas are published first.
         self.publish_table_delta();
-        let target_ids = self.analyze_stats_delta_target_ids(tables);
+        let column_task_tables = tables
+            .iter()
+            .filter(|statement| service.builds_column_task(statement))
+            .cloned()
+            .collect::<Vec<_>>();
+        let target_ids = self.analyze_stats_delta_target_ids(&column_task_tables);
         if !target_ids.is_empty() {
             service.flush_stats_delta(&target_ids)?;
         }
@@ -116,7 +124,7 @@ impl Session {
     }
 
     /// Go `collectStatsDeltaFlushObjectsForAnalyze`: one table-scope object
-    /// per analyzed table, whatever partitions the statement names, resolved
+    /// per table with a column task, whatever partitions it names, resolved
     /// as `FLUSH STATS_DELTA` resolves it (the table and every partition).
     fn analyze_stats_delta_target_ids(&self, tables: &[AnalyzeStatement]) -> Vec<i64> {
         let catalog = self

@@ -4638,99 +4638,35 @@ fn locked_by_peer(session: &Session, table: &str, ids: &[i64]) -> Vec<bool> {
 #[test]
 fn partition_lock_batch_select() {
     // A store session locks through its node; a peer observes the locks.
-    // The in-process tier captures the keys it would lock instead.
-    if !tests_support::in_process_tier() {
-        for mode in ["static", "dynamic"] {
-            for access in ["IGNORE INDEX(iv)", "FORCE INDEX(iv)"] {
-                let mut session = partition_lock_batch_session(mode);
-                session
-                    .run(&format!(
-                        "SELECT c FROM lock_route {access} WHERE v>0 ORDER BY id FOR UPDATE"
-                    ))
-                    .unwrap();
-                assert_eq!(
-                    locked_by_peer(&session, "lock_route", &[1, 11]),
-                    [true, true],
-                    "{mode} {access}"
-                );
-                session.run("ROLLBACK").unwrap();
-            }
+    for mode in ["static", "dynamic"] {
+        for access in ["IGNORE INDEX(iv)", "FORCE INDEX(iv)"] {
             let mut session = partition_lock_batch_session(mode);
             session
-                .run("PREPARE lock_stmt FROM 'SELECT c FROM lock_route WHERE v > ? ORDER BY id FOR UPDATE'")
+                .run(&format!(
+                    "SELECT c FROM lock_route {access} WHERE v>0 ORDER BY id FOR UPDATE"
+                ))
                 .unwrap();
-            session.run("SET @bound=100").unwrap();
-            assert_eq!(
-                tests_support::row_text(session.run("EXECUTE lock_stmt USING @bound")),
-                [["8"]]
-            );
             assert_eq!(
                 locked_by_peer(&session, "lock_route", &[1, 11]),
-                [false, true],
-                "{mode}: only the matched partition row is locked"
+                [true, true],
+                "{mode} {access}"
             );
             session.run("ROLLBACK").unwrap();
         }
-        return;
-    }
-    for mode in ["static", "dynamic"] {
         let mut session = partition_lock_batch_session(mode);
-        let expected_keys = session
-            .with_catalog_mut(|catalog| {
-                let Some(tidb_executor::TableEntry::Kv(table)) =
-                    catalog.table_mut_in("test", "lock_route")
-                else {
-                    panic!("partitioned table");
-                };
-                let definitions = &table.partition().unwrap().definitions;
-                Ok(vec![
-                    tidb_codec::table_key::encode_row_key_with_handle(
-                        definitions[0].id,
-                        &tidb_codec::table_key::RecordHandle::Int(1),
-                    ),
-                    tidb_codec::table_key::encode_row_key_with_handle(
-                        definitions[1].id,
-                        &tidb_codec::table_key::RecordHandle::Int(11),
-                    ),
-                ])
-            })
+        session
+            .run("PREPARE lock_stmt FROM 'SELECT c FROM lock_route WHERE v > ? ORDER BY id FOR UPDATE'")
             .unwrap();
-        for (column, expected) in [("v", [["11"], ["111"]]), ("c", [["7"], ["8"]])] {
-            for access in ["IGNORE INDEX(iv)", "FORCE INDEX(iv)"] {
-                assert_eq!(
-                    tests_support::row_text(session.run(&format!(
-                        "SELECT {column} FROM lock_route {access} WHERE v>0 ORDER BY id FOR UPDATE"
-                    ))),
-                    expected
-                );
-                assert_eq!(
-                    session.take_selected_lock_keys(),
-                    expected_keys,
-                    "{mode} {access} {column}"
-                );
-            }
-        }
-        session.run("PREPARE lock_stmt FROM 'SELECT c FROM lock_route WHERE v > ? ORDER BY id FOR UPDATE'").unwrap();
-        for bound in [0, 100, 0] {
-            session.run(&format!("SET @bound={bound}")).unwrap();
-            let expected = if bound == 100 {
-                vec![vec!["8"]]
-            } else {
-                vec![vec!["7"], vec!["8"]]
-            };
-            assert_eq!(
-                tests_support::row_text(session.run("EXECUTE lock_stmt USING @bound")),
-                expected
-            );
-            assert_eq!(
-                session.take_selected_lock_keys(),
-                if bound == 100 {
-                    expected_keys[1..].to_vec()
-                } else {
-                    expected_keys.clone()
-                }
-            );
-        }
+        session.run("SET @bound=100").unwrap();
+        assert_eq!(
+            tests_support::row_text(session.run("EXECUTE lock_stmt USING @bound")),
+            [["8"]]
+        );
+        assert_eq!(
+            locked_by_peer(&session, "lock_route", &[1, 11]),
+            [false, true],
+            "{mode}: only the matched partition row is locked"
+        );
         session.run("ROLLBACK").unwrap();
     }
 }
@@ -4785,18 +4721,11 @@ fn partition_lock_batch_outer_join() {
         session.run("INSERT INTO lock_peer VALUES (1),(5)").unwrap();
         session.run("BEGIN PESSIMISTIC").unwrap();
         assert_eq!(tests_support::row_text(session.run("SELECT l.id, r.c FROM lock_peer l LEFT JOIN lock_route r ON l.id=r.id ORDER BY l.id FOR UPDATE")), [["1", "7"], ["5", "NULL"]]);
-        if !tests_support::in_process_tier() {
-            assert_eq!(locked_by_peer(&session, "lock_peer", &[1, 5]), [true, true]);
-            assert_eq!(
-                locked_by_peer(&session, "lock_route", &[1, 11]),
-                [true, false]
-            );
-            session.run("ROLLBACK").unwrap();
-            continue;
-        }
-        let keys = session.take_selected_lock_keys();
-        assert_eq!(keys.len(), 3);
-        assert!(keys.iter().all(|key| tidb_codec::decode_table_id(key) != 0));
+        assert_eq!(locked_by_peer(&session, "lock_peer", &[1, 5]), [true, true]);
+        assert_eq!(
+            locked_by_peer(&session, "lock_route", &[1, 11]),
+            [true, false]
+        );
         session.run("ROLLBACK").unwrap();
     }
 }

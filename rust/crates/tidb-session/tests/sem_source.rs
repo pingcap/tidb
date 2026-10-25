@@ -28,34 +28,18 @@ fn sem_policy_requires_explicit_restricted_privileges() {
 
     tidb_util::sem::disable();
     let _reset = DisableSemOnDrop;
-    tidb_util::sem::enable();
 
-    let registry = privilege::PrivilegeRegistry::default();
-    // Drives a private registry directly: the in-process tier, which a
-    // store session (whose privileges are its domain's) does not have.
-    let mut session = Session::default();
+    // The grants are made over SQL with SEM off, as an administrator
+    // provisions them before the restriction applies; Go keeps them in the
+    // privilege tables the session's domain reads.
+    let mut session = Session::new();
+    session.run("CREATE ROLE 'sem_role'@'%'").unwrap();
+    session.run("GRANT 'sem_role'@'%' TO 'root'@'%'").unwrap();
+    session
+        .run("GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'sem_role'@'%'")
+        .unwrap();
     session.set_user("root@%".to_owned(), "root@%".to_owned());
-    session.attach_privileges(registry.clone());
-
-    // SUPER remains the compatibility fallback for ordinary dynamic
-    // privileges, but SEM requires every RESTRICTED_* privilege to be an
-    // explicit grant.
-    assert!(registry.has_dynamic_priv("root", "%", "BACKUP_ADMIN", false));
-    assert!(!registry.has_dynamic_priv("root", "%", "RESTRICTED_TABLES_ADMIN", false));
-
-    // An explicit restricted privilege on an active role is just as valid as
-    // one on the account itself; only SUPER fallback is removed.
-    let sem_role = ("sem_role".to_owned(), "%".to_owned());
-    assert!(registry.create_role(&sem_role.0, &sem_role.1));
-    registry.grant_role(&sem_role, &("root".to_owned(), "%".to_owned()));
-    registry.grant_dynamic(&sem_role.0, &sem_role.1, "RESTRICTED_TABLES_ADMIN", false);
-    assert!(registry.has_dynamic_priv_with_roles(
-        "root",
-        "%",
-        std::slice::from_ref(&sem_role),
-        "RESTRICTED_TABLES_ADMIN",
-        false,
-    ));
+    tidb_util::sem::enable();
 
     // The same explicit RESTRICTED_TABLES_ADMIN gate owns schema/table
     // visibility and the SEM read-only rule for system schemas.
@@ -88,18 +72,20 @@ fn sem_policy_requires_explicit_restricted_privileges() {
         "SET tidb_general_log = 1",
         "SET GLOBAL tidb_general_log = 1",
     ] {
+        // Go `ErrSpecificAccessDenied` (1227) naming the privilege.
+        let error = session.run(sql).expect_err(sql).to_mysql_error();
+        assert_eq!(error.code, 1227, "{sql}: {error:?}");
         assert!(
-            matches!(
-                session.run(sql),
-                Err(tidb_executor::DriverError::SpecificAccessDenied(privilege))
-                    if privilege == "RESTRICTED_VARIABLES_ADMIN"
-            ),
-            "{sql}"
+            error.message.contains("RESTRICTED_VARIABLES_ADMIN"),
+            "{sql}: {error:?}"
         );
     }
 
-    registry.grant_dynamic("root", "%", "RESTRICTED_TABLES_ADMIN", false);
-    registry.grant_dynamic("root", "%", "RESTRICTED_VARIABLES_ADMIN", false);
+    tidb_util::sem::disable();
+    session
+        .run("GRANT RESTRICTED_TABLES_ADMIN, RESTRICTED_VARIABLES_ADMIN ON *.* TO 'root'@'%'")
+        .unwrap();
+    tidb_util::sem::enable();
     assert!(session.database_is_visible("METRICS_ScHEma"));
     assert!(session.has_scoped_privilege("mysql", "tidb", privilege::GlobalPriv::Select));
     assert!(session.has_scoped_privilege("mysql", "user", privilege::GlobalPriv::Insert));

@@ -15,13 +15,12 @@
 //! Privilege checks and SHOW GRANTS as `privilege/privileges.test` records
 //! them on this branch's Go.
 
-use crate::tests_support::{row_text, session_as};
-use crate::{privilege, Catalog, Session, SharedCatalog};
+use crate::tests_support::{authenticated_session, row_text, session_as};
+use crate::{privilege, Session};
 
 fn setup() -> (privilege::PrivilegeRegistry, Session) {
     let registry = privilege::PrivilegeRegistry::default();
-    let catalog: SharedCatalog = std::sync::Arc::new(std::sync::Mutex::new(Catalog::default()));
-    let root = session_as(&registry, catalog, "root", "%");
+    let root = authenticated_session(&registry, "root", "%");
     (registry, root)
 }
 

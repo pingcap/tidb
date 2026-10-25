@@ -36,13 +36,16 @@ pub struct PeerService {
 }
 
 impl PeerService {
+    /// `session_factory` opens a session on the node's store for each
+    /// request, as Go's `rpcServer.createSession` does.
     pub(crate) fn new(
+        session_factory: Arc<dyn Fn() -> Session + Send + Sync>,
         processes: ProcessRegistry,
         privileges: PrivilegeRegistry,
         server_info: Option<Arc<tidb_domain::serverinfo_syncer::Syncer>>,
     ) -> Self {
         Self {
-            session_factory: Arc::new(Session::new),
+            session_factory,
             processes,
             privileges,
             cluster_peer: None,
@@ -55,16 +58,6 @@ impl PeerService {
     /// statement on this instance (Go `IsFromRemote` plans).
     pub(crate) fn with_broadcast_query_runner(mut self, runner: BroadcastQueryRunner) -> Self {
         self.broadcast_query = Some(runner);
-        self
-    }
-
-    /// Supplies fresh metadata and the existing usage collector without retaining
-    /// a client connection, transaction, or the whole server session factory.
-    pub(crate) fn with_session_factory(
-        mut self,
-        factory: Arc<dyn Fn() -> Session + Send + Sync>,
-    ) -> Self {
-        self.session_factory = factory;
         self
     }
 
@@ -148,26 +141,9 @@ impl PeerService {
                 SessionTimeZone::Fixed { name, offset_secs }
             }
         };
-        // Only key/index diagnostics need a catalog snapshot. KILL and the
-        // registry/counter readers must not rebuild schema metadata.
-        let needs_catalog = executor.tp == Some(tipb::ExecType::TypeTableScan as i32)
-            && executor.tbl_scan.as_ref().is_some_and(|scan| {
-                scan.table_id
-                    == tidb_session::infoschema::memory_table_id("CLUSTER_TIDB_INDEX_USAGE")
-                    || (scan.table_id
-                        == tidb_session::infoschema::memory_table_id("CLUSTER_DEADLOCKS")
-                        && scan
-                            .columns
-                            .iter()
-                            .any(|column| column.column_id == Some(9)))
-            });
-        // A request that reads no catalog needs only a bare session (not a
-        // booted store): the memory tables it serves are the node's own.
-        let mut session = if needs_catalog {
-            (self.session_factory)()
-        } else {
-            Session::default()
-        };
+        // Go `rpcServer.handleCopRequest` serves every request on a fresh
+        // session over the node's store (`createSession`).
+        let mut session = (self.session_factory)();
         if let Some(user) = &dag.user {
             let name = user.user_name.as_deref().unwrap_or("");
             let host = user.user_host.as_deref().unwrap_or("");
@@ -768,6 +744,14 @@ fn error_response(error: String) -> coprocessor::Response {
     }
 }
 
+/// Go `rpcServer.createSession` in Go's tests: every request opens a fresh
+/// session on `store`'s domain.
+#[cfg(test)]
+pub(crate) fn store_sessions(store: &Session) -> Arc<dyn Fn() -> Session + Send + Sync> {
+    let catalog = store.shared_catalog();
+    Arc::new(move || Session::with_catalog(catalog.clone()))
+}
+
 #[tonic::async_trait]
 impl tikvpb::tikv_server::Tikv for PeerService {
     async fn coprocessor(
@@ -844,9 +828,8 @@ impl tikvpb::tikv_server::Tikv for PeerService {
 
 #[cfg(test)]
 mod tests {
-    // The fixtures are bare in-process sessions (`Session::default()`): the
-    // peer host serves a catalog-free request on one, and these tests drive
-    // its diagnostics state directly. Stage 3 replaces them with the node's.
+    // The fixtures are sessions on embedded stores (`Session::new()`), as
+    // Go's tests open theirs on a mock store.
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tidb_datatype::Datum;
@@ -1013,7 +996,7 @@ mod tests {
         } else {
             summary.add(&info);
         }
-        let mut session = Session::default();
+        let mut session = Session::new();
         session.set_user(
             "diagnostic_reader@%".into(),
             "diagnostic_reader@localhost".into(),
@@ -1032,7 +1015,12 @@ mod tests {
                 processes.transaction_started(71, 123 << 18);
                 processes.statement_started_with_digest(71, text, Some(digest), "Running");
                 if lazy {
-                    let service = PeerService::new(processes, PrivilegeRegistry::default(), None);
+                    let service = PeerService::new(
+                        store_sessions(&session),
+                        processes,
+                        PrivilegeRegistry::default(),
+                        None,
+                    );
                     let response = service.handle(request(tipb::DagRequest {
                         executors: vec![tipb::Executor {
                             tp: Some(tipb::ExecType::TypeTableScan as i32),
@@ -1088,16 +1076,18 @@ mod tests {
                 if lazy {
                     let metadata_reads = Arc::new(AtomicUsize::new(0));
                     let observed = metadata_reads.clone();
+                    let catalog = session.shared_catalog();
                     let service = PeerService::new(
+                        Arc::new(move || {
+                            observed.fetch_add(1, Ordering::SeqCst);
+                            Session::with_catalog(catalog.clone())
+                        }),
                         ProcessRegistry::default(),
                         PrivilegeRegistry::default(),
                         None,
-                    )
-                    .with_session_factory(Arc::new(move || {
-                        observed.fetch_add(1, Ordering::SeqCst);
-                        Session::default()
-                    }));
-                    for (column, expected_reads) in [(6, 0), (9, 1)] {
+                    );
+                    // Every request opens a session, as Go's `createSession`.
+                    for (column, expected_reads) in [(6, 1), (9, 2)] {
                         let mut dag = scan(None, tipb::EncodeType::TypeDefault);
                         dag.output_offsets = vec![0];
                         dag.executors[0].tbl_scan = Some(tipb::TableScan {
@@ -1187,7 +1177,13 @@ mod tests {
             "test".into(),
             None,
         );
-        let service = PeerService::new(processes, PrivilegeRegistry::default(), None);
+        let store = Session::new();
+        let service = PeerService::new(
+            store_sessions(&store),
+            processes,
+            PrivilegeRegistry::default(),
+            None,
+        );
         for encoding in [tipb::EncodeType::TypeDefault, tipb::EncodeType::TypeChunk] {
             let mut dag = scan(None, encoding);
             dag.output_offsets = vec![1, 1]; // ID repeated; USER retained only for the predicate.
@@ -1404,7 +1400,7 @@ mod tests {
         let mut local = tidb_domain::serverinfo::ServerInfo::default();
         local.static_info.id = "digest-local".into();
         local.static_info.ip = "127.0.0.1".into();
-        let mut session = Session::default();
+        let mut session = Session::new();
         session.set_user("digest_reader@%".into(), "digest_reader@localhost".into());
         session.set_process_privilege(true);
         let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
@@ -1540,13 +1536,11 @@ mod tests {
                 }],
             });
             let receiver = PeerService::new(
+                store_sessions(&session),
                 ProcessRegistry::default(),
                 PrivilegeRegistry::default(),
                 Some(syncer),
             )
-            .with_session_factory(Arc::new(|| {
-                panic!("text-only scan must not construct metadata")
-            }))
             .with_cluster_peer_client(Some(peer));
             let mut dag = scan(None, tipb::EncodeType::TypeDefault);
             dag.output_offsets = vec![0];
@@ -1652,27 +1646,30 @@ mod tests {
 
     #[test]
     fn cluster_diagnostics_batch_transaction_sql() {
-        Session::default()
+        Session::new()
             .run("SELECT * FROM information_schema.CLUSTER_TIDB_TRX")
             .unwrap();
     }
 
     #[test]
     fn cluster_diagnostics_batch_deadlock_admission() {
-        let mut session = Session::default();
+        let mut session = Session::new();
         session.set_user("diagnostic@%".into(), "diagnostic@localhost".into());
         let error = session
             .run("SELECT * FROM information_schema.CLUSTER_DEADLOCKS")
             .unwrap_err();
+        let error = error.to_mysql_error();
+        assert_eq!(error.code, 1227, "{}", error.message);
         assert!(
-            matches!(error, tidb_executor::DriverError::SpecificAccessDenied(ref privilege) if privilege == "PROCESS"),
-            "{error:?}"
+            error.message.contains("the PROCESS privilege(s)"),
+            "{}",
+            error.message
         );
     }
 
     #[test]
     fn cluster_diagnostics_batch_memory_sql() {
-        let mut session = Session::default();
+        let mut session = Session::new();
         let tidb_session::StmtResult::Rows(rows) = session
             .run("SELECT MEMORY_TOTAL FROM information_schema.CLUSTER_MEMORY_USAGE")
             .unwrap()
@@ -1687,7 +1684,7 @@ mod tests {
 
     #[test]
     fn cluster_diagnostics_batch_index_sql() {
-        let mut session = Session::default();
+        let mut session = Session::new();
         session.run("CREATE DATABASE diagnostic_batch").unwrap();
         session
             .run("CREATE TABLE diagnostic_batch.t (id INT PRIMARY KEY, v INT, KEY ix(v))")
@@ -1702,7 +1699,9 @@ mod tests {
 
     #[test]
     fn cluster_diagnostics_batch_generated_receiver() {
+        let store = Session::new();
         let service = PeerService::new(
+            store_sessions(&store),
             ProcessRegistry::default(),
             PrivilegeRegistry::default(),
             None,
@@ -1755,10 +1754,10 @@ mod tests {
         );
         processes.transaction_started(41, 100 << 18);
         processes.transaction_started(42, 200 << 18);
-        let privileges = PrivilegeRegistry::default();
-        privileges.create_user("diagnostic_alice", "%", "");
-        let mut producer = Session::default();
+        let mut producer = Session::new();
+        producer.run("CREATE USER diagnostic_alice").unwrap();
         producer.run("CREATE DATABASE diagnostic_batch").unwrap();
+        let privileges = producer.privilege_manager().unwrap();
         let catalog = producer.shared_catalog();
         let collector = Arc::new(tidb_stats_handle_usage_indexusage::Collector::new());
         collector.start_worker();
@@ -1771,12 +1770,16 @@ mod tests {
         let _collector = CloseCollector(collector.clone());
         let metadata = catalog.clone();
         let counters = collector.clone();
-        let service = PeerService::new(processes.clone(), privileges.clone(), None)
-            .with_session_factory(Arc::new(move || {
+        let service = PeerService::new(
+            Arc::new(move || {
                 let mut session = Session::with_catalog(metadata.clone());
                 session.set_index_usage_collector(counters.clone());
                 session
-            }));
+            }),
+            processes.clone(),
+            privileges,
+            None,
+        );
         // Construct the service first: subsequent DDL must be visible to it.
         producer
             .run("CREATE TABLE diagnostic_batch.t (id BIGINT PRIMARY KEY, v INT, KEY ix(v))")
@@ -1879,12 +1882,9 @@ mod tests {
             read("CLUSTER_TIDB_INDEX_USAGE").unwrap().1.is_empty(),
             "ungranted tables must stay hidden"
         );
-        privileges.grant(
-            "diagnostic_alice",
-            "%",
-            tidb_session::privilege::GlobalPriv::Process.mask()
-                | tidb_session::privilege::GlobalPriv::Select.mask(),
-        );
+        producer
+            .run("GRANT PROCESS, SELECT ON *.* TO diagnostic_alice")
+            .unwrap();
         assert_eq!(read("CLUSTER_TIDB_TRX").unwrap().1.len(), 2);
         let (columns, rows) = read("CLUSTER_DEADLOCKS").unwrap();
         let key = columns
@@ -1943,7 +1943,7 @@ mod tests {
     // distributed readers consume the same live summary owners.
     #[test]
     fn cluster_summary_batch_sql_tables_share_completed_statements() {
-        let mut session = Session::default();
+        let mut session = Session::new();
         session.set_user("summary_reader@%".into(), "summary_reader@localhost".into());
         session.run("SELECT 918273 + 4").unwrap();
         for table in [
@@ -1967,14 +1967,17 @@ mod tests {
 
     #[test]
     fn cluster_summary_batch_evicted_requires_process() {
-        let mut session = Session::default();
+        let mut session = Session::new();
         session.set_user("summary_reader@%".into(), "summary_reader@localhost".into());
         let error = session
             .run("SELECT * FROM information_schema.STATEMENTS_SUMMARY_EVICTED")
             .unwrap_err();
+        let error = error.to_mysql_error();
+        assert_eq!(error.code, 1227, "{}", error.message);
         assert!(
-            matches!(error, tidb_executor::DriverError::SpecificAccessDenied(ref privilege) if privilege == "PROCESS"),
-            "{error:?}"
+            error.message.contains("the PROCESS privilege(s)"),
+            "{}",
+            error.message
         );
         session.set_process_privilege(true);
         session
@@ -1987,7 +1990,9 @@ mod tests {
 
     #[test]
     fn cluster_summary_batch_incoming_transaction_summary() {
+        let store = Session::new();
         let service = PeerService::new(
+            store_sessions(&store),
             ProcessRegistry::default(),
             PrivilegeRegistry::default(),
             None,
@@ -2002,10 +2007,12 @@ mod tests {
 
     #[test]
     fn cluster_summary_batch_shared_client_reads_live_summaries_and_admission() {
-        let privileges = PrivilegeRegistry::default();
-        privileges.create_user("summary_alice", "%", "");
-        privileges.create_user("summary_bob", "%", "");
-        let mut producer = Session::default();
+        // `admin` is unauthenticated, hence unrestricted: it provisions the
+        // accounts the way a deployment does before anybody logs in.
+        let mut admin = Session::new();
+        admin.run("CREATE USER summary_alice, summary_bob").unwrap();
+        let privileges = admin.privilege_manager().unwrap();
+        let mut producer = Session::with_catalog(admin.shared_catalog());
         producer.set_user("summary_alice@%".into(), "summary_alice@localhost".into());
         producer.run("SELECT 73 + 8").unwrap();
         producer.set_user("summary_bob@%".into(), "summary_bob@localhost".into());
@@ -2015,8 +2022,12 @@ mod tests {
         identity.static_info.ip = "192.0.2.7".into();
         identity.static_info.status_port = 10080;
         let syncer = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(identity, None));
-        let service =
-            PeerService::new(ProcessRegistry::default(), privileges.clone(), Some(syncer));
+        let service = PeerService::new(
+            store_sessions(&admin),
+            ProcessRegistry::default(),
+            privileges.clone(),
+            Some(syncer),
+        );
         let server = crate::http_status::start_status_listener_with_routes(
             "127.0.0.1",
             0,
@@ -2178,16 +2189,16 @@ mod tests {
         };
         assert!(scan_evicted().unwrap_err().to_string().contains("PROCESS"));
         // The receiver loads the account's default roles before admission.
-        let role = ("summary_observer".to_owned(), "%".to_owned());
-        let account = ("summary_alice".to_owned(), "%".to_owned());
-        privileges.create_role(&role.0, &role.1);
-        privileges.grant(
-            &role.0,
-            &role.1,
-            tidb_session::privilege::GlobalPriv::Process.mask(),
-        );
-        privileges.grant_role(&role, &account);
-        privileges.set_default_roles(&account, &[role]);
+        for sql in [
+            "CREATE ROLE summary_observer",
+            "GRANT PROCESS ON *.* TO summary_observer",
+            "GRANT summary_observer TO summary_alice",
+            "SET DEFAULT ROLE summary_observer TO summary_alice",
+        ] {
+            admin
+                .run(sql)
+                .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        }
         scan_evicted().unwrap();
         // Exercise SQL -> discovered peer -> receiver, excluding an unpublished
         // local identity. This is a discovery fixture, not another RPC harness.
@@ -2199,7 +2210,7 @@ mod tests {
         let mut local = tidb_domain::serverinfo::ServerInfo::default();
         local.static_info.id = "unpublished-local".into();
         local.static_info.ip = "127.0.0.1".into();
-        let mut origin = Session::default();
+        let mut origin = Session::with_catalog(admin.shared_catalog());
         origin.set_user("summary_alice@%".into(), "summary_alice@127.0.0.1".into());
         origin.attach_privileges(privileges.clone());
         origin.set_server_info_syncer(Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
@@ -2238,7 +2249,7 @@ mod tests {
         // The store comes up first: its bootstrap's sysvar-cache rebuild
         // publishes tidb_stmt_summary_max_stmt_count's default into the
         // process-global summary, as a new Go domain does.
-        let mut session = Session::default();
+        let mut session = Session::new();
         let config = tidb_config::config_tree::config::get_global_config();
         let previous = global_stmt_summary();
         let summary = StmtSummary::new_for_test(1);
@@ -2273,10 +2284,8 @@ mod tests {
         let error = session
             .run("SELECT * FROM information_schema.CLUSTER_TIDB_STATEMENTS_STATS")
             .unwrap_err();
-        assert!(
-            matches!(error, tidb_executor::DriverError::NotSupportedYet(_)),
-            "{error:?}"
-        );
+        let error = error.to_mysql_error();
+        assert_eq!(error.code, 1235, "{}", error.message);
         session
             .run("SELECT DIGEST_TEXT FROM information_schema.CLUSTER_STATEMENTS_SUMMARY")
             .unwrap();
@@ -2297,9 +2306,9 @@ mod tests {
     #[test]
     fn peer_host_batch_generated_protocol_kill_scan_stream_and_batch() {
         let processes = ProcessRegistry::default();
-        let privileges = PrivilegeRegistry::default();
-        privileges.create_user("alice", "%", "");
-        privileges.create_user("bob", "%", "");
+        let mut store = Session::new();
+        store.run("CREATE USER alice, bob").unwrap();
+        let privileges = store.privilege_manager().unwrap();
         let target = Arc::new(Target::default());
         let _alice = processes.register(
             10,
@@ -2309,7 +2318,12 @@ mod tests {
             Some(target.clone()),
         );
         let _bob = processes.register(12, "bob".into(), "127.0.0.1:2".into(), "test".into(), None);
-        let service = PeerService::new(processes.clone(), privileges.clone(), None);
+        let service = PeerService::new(
+            store_sessions(&store),
+            processes.clone(),
+            privileges.clone(),
+            None,
+        );
         let server = crate::http_status::start_status_listener_with_routes(
             "127.0.0.1",
             0,
@@ -2386,16 +2400,21 @@ mod tests {
                 tidb_chunk::codec::Codec::new(fields).encode(&chunk)
             );
             // The incoming identity loads default roles from the shared registry.
-            let role = ("observer".to_owned(), "%".to_owned());
-            let account = ("alice".to_owned(), "%".to_owned());
-            privileges.create_role(&role.0, &role.1);
-            privileges.grant(
-                &role.0,
-                &role.1,
-                tidb_session::privilege::GlobalPriv::Process.mask(),
-            );
-            privileges.grant_role(&role, &account);
-            privileges.set_default_roles(&account, &[role]);
+            // A store session blocks on its own runtime, so it runs off this one.
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    for sql in [
+                        "CREATE ROLE observer",
+                        "GRANT PROCESS ON *.* TO observer",
+                        "GRANT observer TO alice",
+                        "SET DEFAULT ROLE observer TO alice",
+                    ] {
+                        store
+                            .run(sql)
+                            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+                    }
+                });
+            });
             let reply = client
                 .coprocessor(request(dag.clone()))
                 .await
@@ -2582,13 +2601,11 @@ mod tests {
     #[test]
     fn peer_executor_chains_follow_go_pb_plan_builder() {
         let processes = ProcessRegistry::default();
-        let privileges = PrivilegeRegistry::default();
-        privileges.create_user("alice", "%", "");
-        privileges.grant(
-            "alice",
-            "%",
-            tidb_session::privilege::GlobalPriv::Process.mask(),
-        );
+        let mut store = Session::new();
+        for sql in ["CREATE USER alice", "GRANT PROCESS ON *.* TO alice"] {
+            store.run(sql).unwrap();
+        }
+        let privileges = store.privilege_manager().unwrap();
         let _alice = processes.register(
             10,
             "alice".into(),
@@ -2597,7 +2614,7 @@ mod tests {
             None,
         );
         let _bob = processes.register(12, "bob".into(), "127.0.0.1:2".into(), "test".into(), None);
-        let service = PeerService::new(processes, privileges, None);
+        let service = PeerService::new(store_sessions(&store), processes, privileges, None);
         // Scan columns: USER (offset 0, varchar 15) then ID (offset 1, bigint 8).
         let run = |tail: Vec<tipb::Executor>, offsets: Vec<u32>| {
             let mut dag = scan(Some("alice"), tipb::EncodeType::TypeDefault);
@@ -2742,7 +2759,9 @@ mod tests {
             };
             service.handle(request(dag)).other_error
         };
+        let store = Session::new();
         let bare = PeerService::new(
+            store_sessions(&store),
             ProcessRegistry::default(),
             PrivilegeRegistry::default(),
             None,

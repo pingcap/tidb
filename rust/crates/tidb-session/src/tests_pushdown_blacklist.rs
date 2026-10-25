@@ -253,11 +253,10 @@ fn blacklisting_an_aggregate_function_keeps_the_whole_aggregate_at_the_root() {
 #[test]
 fn a_reload_on_one_session_changes_what_another_plans() {
     let shared = crate::blacklist::PushdownBlacklists::default();
-    let catalog = crate::SharedCatalog::default();
 
-    let mut writer = Session::with_catalog(crate::SharedCatalog::clone(&catalog));
+    let mut writer = Session::new();
+    let catalog = writer.shared_catalog();
     writer.attach_pushdown_blacklists(shared.clone());
-    writer.bootstrap_fresh_store();
     writer
         .run("CREATE TABLE t(a enum('a','b','c'), b int, index ia(a))")
         .unwrap();

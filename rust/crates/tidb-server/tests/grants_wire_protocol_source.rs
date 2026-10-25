@@ -33,9 +33,9 @@
 //! INITIAL provisioning and `CREATE USER ... IDENTIFIED BY` / `DROP USER`
 //! write the very rows a login is verified against -- exactly as Go has one
 //! `mysql.user` carrying both `authentication_string` and the privilege
-//! columns. `PipelineSessionFactory::with_configured_store(&store)` is what
-//! ties the wire authenticator and the SQL executor to that one table and to
-//! the same process-wide GLOBAL-variable authority;
+//! columns. A node booted over the store (`node_over(&store)`) is what ties
+//! the wire authenticator and the SQL executor to that one table and to the
+//! same process-wide GLOBAL-variable authority;
 //! nothing seeds accounts at login time any more, because an identity the
 //! handshake matched IS a registry row by construction.
 //!
@@ -49,8 +49,16 @@ use std::sync::Arc;
 use tidb_protocol::{PacketReader, PacketWriter, COM_QUERY, DEFAULT_MAX_ALLOWED_PACKET};
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, PipelineSessionFactory,
+    ConnectionTracker,
 };
+use tidb_session::domain::mock_store::MockStoreDomain;
+
+/// Go's server over a mock store whose node authenticates against, and keeps
+/// its accounts in, `store`: connections are served from its session factory.
+fn node_over(store: &ConfiguredUserStore) -> std::sync::Arc<MockStoreDomain> {
+    MockStoreDomain::create_with_users(std::sync::Arc::new(store.clone()))
+        .expect("boot the server's store")
+}
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -191,11 +199,14 @@ fn skip_grant_table_still_rejects_insecure_transport_before_auth_switch() {
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users().with_skip_grant_table(true));
     let _restore_transport = RestoreRequireSecureTransport::snapshot();
+    // Set on the running server, as Go's `SET GLOBAL`: the store's bootstrap
+    // rebuilds the sysvar cache from `mysql.global_variables`.
+    let node = node_over(&store);
     store
         .global_vars()
         .set("require_secure_transport", "ON".to_owned())
         .expect("valid process-wide transport policy");
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let factory = Arc::clone(node.factory());
     let acceptor = {
         let factory = Arc::clone(&factory);
         let store = Arc::clone(&store);
@@ -346,7 +357,8 @@ fn skip_grant_table_authentication_and_role_chain_reach_the_wire() {
         let address = listener.local_addr().unwrap();
         let tracker = Arc::new(ConnectionTracker::default());
         let store = Arc::new(users());
-        let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+        let node = node_over(&store);
+        let factory = Arc::clone(node.factory());
         let acceptor = {
             let factory = Arc::clone(&factory);
             let store = Arc::clone(&store);
@@ -385,7 +397,8 @@ fn skip_grant_table_authentication_and_role_chain_reach_the_wire() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users().with_skip_grant_table(true));
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
     let acceptor = {
         let factory = Arc::clone(&factory);
         let store = Arc::clone(&store);
@@ -630,7 +643,7 @@ fn skip_grant_table_authentication_and_role_chain_reach_the_wire() {
 }
 
 /// The full grants lifecycle over TWO real, independently authenticated TCP
-/// connections sharing one server (one `PipelineSessionFactory`, exactly as
+/// connections sharing one server (one node's session factory, exactly as
 /// one TiDB instance shares one `Domain`):
 ///
 /// root `CREATE USER ... IDENTIFIED BY` + a scoped `GRANT SELECT ON test.*`
@@ -655,7 +668,8 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     let store = Arc::new(users());
     // One table: the accounts this factory's `CREATE USER` writes are the
     // accounts `store` authenticates logins against.
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -892,7 +906,8 @@ fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -1038,7 +1053,8 @@ fn a_caching_sha2_password_account_creates_and_then_logs_in() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -1145,7 +1161,8 @@ fn an_account_lock_rejects_the_next_login_with_3118_and_unlock_restores_it() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -1266,7 +1283,8 @@ fn failed_login_attempts_auto_lock_reports_3955_over_the_wire_until_unlocked() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -1394,21 +1412,19 @@ fn failed_login_attempts_auto_lock_reports_3955_over_the_wire_until_unlocked() {
 /// proof of the rule `tidb_session::vars` documents and the in-process
 /// `tidb_session::tests_global_vars` module unit-tests: two independently
 /// authenticated connections must actually share ONE `GlobalSysvars` table
-/// (`PipelineSessionFactory::with_accounts_and_globals`), not two private
-/// copies that happen to start equal.
+/// (the node's, booted over the store), not two private copies that happen
+/// to start equal.
 #[test]
 fn set_global_is_visible_to_a_peer_only_through_the_global_form_over_tcp() {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    // Same pairing `run_configured_node` uses in production: one
-    // `PipelineSessionFactory` sharing the SAME `GlobalSysvars` this store's
-    // own login path reads `default_password_lifetime` from.
-    let factory = Arc::new(PipelineSessionFactory::with_accounts_and_globals(
-        store.accounts(),
-        store.global_vars(),
-    ));
+    // Same pairing `run_configured_node` uses in production: one node
+    // sharing the SAME `GlobalSysvars` this store's own login path reads
+    // `default_password_lifetime` from.
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -1551,10 +1567,8 @@ fn character_set_results_changes_the_metadata_charset_and_the_row_bytes_over_tcp
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_accounts_and_globals(
-        store.accounts(),
-        store.global_vars(),
-    ));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);

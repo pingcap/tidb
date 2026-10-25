@@ -44,24 +44,6 @@ fn check_table_locked(
     table_lock::check_table_locked(&go_to_lower(&table.name), table.lock(), tp, info)
 }
 
-/// Go `ddl.lockTable` and the state step `onLockTables` takes, applied in
-/// one catalog mutation; this tier has no meta transaction to stamp `TS`.
-fn lock_table(
-    table: &mut KvTable,
-    tp: TableLockType,
-    info: &SessionInfo,
-) -> Result<(), DriverError> {
-    let next = table_lock::lock_table_in_one_step(
-        &go_to_lower(&table.name),
-        table.lock(),
-        tp,
-        info,
-        0,
-    )?;
-    table.set_lock(Some(next));
-    Ok(())
-}
-
 /// Go `ddl.unlockTable` over an in-process table.
 fn unlock_table(table: &mut KvTable, info: &SessionInfo, is_cleanup: bool) {
     if let Some(next) = table_lock::unlock_table(table.lock(), info, is_cleanup) {
@@ -583,63 +565,6 @@ impl Session {
         }
     }
 
-    /// Go `DDLExec.executeLockTables` and `executor.LockTables`, with the job
-    /// `onLockTables` runs.
-    pub(crate) fn execute_lock_tables(
-        &mut self,
-        locks: &[tidb_ast::TableLock],
-    ) -> Result<StmtOutput, DriverError> {
-        if !table_lock_enabled() {
-            let warning =
-                DriverError::FuncNotEnabled("LOCK TABLES", "enable-table-lock").to_mysql_error();
-            self.append_warning(crate::WarningLevel::Warning, warning.code, warning.message);
-            return Ok(StmtOutput::Done(false));
-        }
-        let context = self.ddl_statement_context();
-        let unlock = self.get_all_table_locks();
-        let (info, lock_tables, first_schema) = self.lock_tables_args(locks)?;
-        // Go adds the locks before the job, so a session killed after the
-        // job succeeded still releases them on close.
-        self.add_table_lock(&lock_tables);
-        self.with_persistent_catalog_mut(|catalog| {
-            tidb_executor::ddl::submit_ddl_job(
-                catalog,
-                &context,
-                &first_schema,
-                "",
-                tidb_model::ActionType::ACTION_LOCK_TABLE,
-            )?;
-            // `onLockTables`: the session's earlier locks are released first.
-            unlock_tables(catalog, &unlock, &info, false);
-            let targets: Vec<(String, String)> = lock_tables
-                .iter()
-                .map(|lock| {
-                    catalog.table_names_by_id(lock.table_id).ok_or_else(|| {
-                        DriverError::Schema(SchemaErrorKind::UnknownTable(
-                            lock.table_id.to_string(),
-                        ))
-                    })
-                })
-                .collect::<Result<_, _>>()?;
-            // Checked once more at the job's first step.
-            for ((schema, name), lock) in targets.iter().zip(&lock_tables) {
-                if let Some(TableEntry::Kv(table)) = catalog.table_in(schema, name) {
-                    check_table_locked(table, lock.tp, &info)?;
-                }
-            }
-            for ((schema, name), lock) in targets.iter().zip(&lock_tables) {
-                if let Some(TableEntry::Kv(table)) = catalog.table_mut_in(schema, name) {
-                    lock_table(std::sync::Arc::make_mut(table), lock.tp, &info)?;
-                }
-            }
-            catalog.mark_has_table_locks();
-            Ok(())
-        })?;
-        self.release_table_locks(&unlock);
-        self.add_table_lock(&lock_tables);
-        Ok(StmtOutput::Done(false))
-    }
-
     /// Go `DDLExec.executeCleanupTableLock`'s local-temporary refusal and
     /// `executor.CleanupTableLock`'s checks: the tables to clean, `None`
     /// when none is locked (Go submits no job).
@@ -743,19 +668,6 @@ impl Session {
                 is_cleanup: true,
             }
         }))
-    }
-
-    /// Go `DDLExec.executeUnlockTables` and `executor.UnlockTables`, with the
-    /// job `onUnlockTables` runs.
-    pub(crate) fn execute_unlock_tables(&mut self) -> Result<StmtOutput, DriverError> {
-        if !table_lock_enabled() {
-            let warning =
-                DriverError::FuncNotEnabled("UNLOCK TABLES", "enable-table-lock").to_mysql_error();
-            self.append_warning(crate::WarningLevel::Warning, warning.code, warning.message);
-            return Ok(StmtOutput::Done(false));
-        }
-        self.unlock_tables(self.get_all_table_locks())?;
-        Ok(StmtOutput::Done(false))
     }
 
     /// Go `executor.UnlockTables`.

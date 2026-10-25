@@ -275,6 +275,22 @@ pub fn statistics_table_from_planner_statistics(
                 .unwrap_or(true),
         );
     }
+    // Go keeps `ColAndIdxExistenceMap` independently of resident histograms:
+    // an analyzed item whose payload is not in memory is still known.
+    for column in &schema.columns {
+        if !statistics.columns.contains_key(&column.id) {
+            if let Some(&analyzed) = statistics.column_stats_existence.get(&column.id) {
+                existence.insert_column(column.id, analyzed);
+            }
+        }
+    }
+    for index in &schema.indexes {
+        if !statistics.indexes.contains_key(&index.id) {
+            if let Some(&analyzed) = statistics.index_stats_existence.get(&index.id) {
+                existence.insert_index(index.id, analyzed);
+            }
+        }
+    }
 
     Table {
         existence_map: Some(Arc::new(RwLock::new(existence))),

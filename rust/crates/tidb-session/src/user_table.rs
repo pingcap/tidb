@@ -18,31 +18,33 @@
 //! `executeDropUser` / `executeRenameUser`) and `executor/grant.go` /
 //! `executor/revoke.go` issue through their system session.
 //!
-//! # Deviation from Go, stated once
+//! # Where the statement's rows go
 //!
-//! Go's `mysql.user` IS the storage: the privilege cache
-//! (`privileges.MySQLPrivilege`) is rebuilt FROM it (`LoadUserTable`), so a
-//! direct `UPDATE mysql.user` plus `FLUSH PRIVILEGES` changes logins. This
-//! tier's [`crate::privilege::PrivilegeRegistry`] remains the authoritative,
-//! cross-session account store (it also serves sessions that never
-//! bootstrapped a catalog), and every account-mutating statement writes BOTH:
-//! the registry as before, and the table rows exactly as Go writes them. The
-//! full inversion -- registry as a cache reloaded from the table -- is the
-//! documented follow-up; what this module guarantees meanwhile is that the
-//! table is never fabricated at read time: a `SELECT ... FROM mysql.user`
-//! reads only what bootstrap and the statements above actually wrote.
+//! On a node, as in Go, `mysql.user` IS the storage: an account statement
+//! validates against the stored accounts, writes these rows on a system
+//! session (an installed [`AccountSqlSession`]) inside its own pessimistic
+//! transaction, and after the commit the node's live privilege cache reloads
+//! from the tables (Go `NotifyUpdatePrivilege`). A session without one writes
+//! the rows into its own catalog through [`Session::run_internal_write`].
 //!
 //! Consequences kept deliberately Go-shaped:
 //!  * a session whose catalog was never bootstrapped (no `mysql.user` table)
-//!    skips the mirror -- reads there keep answering `UnknownTable`, exactly
-//!    what they answered before this module existed;
+//!    skips the rows -- reads there keep answering `UnknownTable`;
 //!  * direct DML against `mysql.user` executes (it is a real table) but does
-//!    not reach the registry, which is Go's own behavior BEFORE
-//!    `FLUSH PRIVILEGES`;
+//!    not reach the privilege cache until `FLUSH PRIVILEGES`, Go's own
+//!    behavior.
 
 use crate::*;
 use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
+
+/// Go `sysSession.GetSQLExecutor()` as an account executor uses it: the
+/// system session its `mysql.*` SQL runs on, inside the statement's own
+/// `BEGIN PESSIMISTIC` .. `COMMIT` (Go `executeCreateUser` and friends).
+pub trait AccountSqlSession: Send {
+    /// Runs one statement and answers its rows (none for a write).
+    fn execute(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
+}
 
 /// Renders one SQL string literal under the default (backslash-escaping)
 /// SQL mode, for values interpolated into the internal DML below -- the role
@@ -62,10 +64,10 @@ pub(crate) fn sql_str(value: &str) -> String {
 }
 
 /// Renders one JSON string literal -- the role Go's `json.Marshal(oldPwd)`
-/// plays in `buildAdditionalPasswordEntry`. Escapes exactly what RFC 8259
-/// requires (quote, backslash, control characters); a stored hash is ASCII,
-/// but a `caching_sha2_password` salt byte range makes the control-character
-/// arm reachable in principle.
+/// plays in `buildAdditionalPasswordEntry` and `GlobalPrivValue`. Escapes what
+/// `encoding/json` escapes: quote, backslash, control characters (`\b`, `\f`,
+/// `\n`, `\r`, `\t` short forms), and the HTML-safe set `<`, `>`, `&`,
+/// U+2028 and U+2029.
 pub(crate) fn json_string_literal(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
@@ -76,6 +78,11 @@ pub(crate) fn json_string_literal(value: &str) -> String {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '<' | '>' | '&' | '\u{2028}' | '\u{2029}' => {
+                out.push_str(&format!("\\u{:04x}", ch as u32));
+            }
             control if (control as u32) < 0x20 => {
                 out.push_str(&format!("\\u{:04x}", control as u32));
             }
@@ -159,7 +166,7 @@ impl Session {
         user: &str,
         host: &str,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         self.run_user_table_write(&format!(
@@ -176,7 +183,7 @@ impl Session {
         new_user: &str,
         new_host: &str,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         self.run_user_table_write(&format!(
@@ -194,7 +201,7 @@ impl Session {
         user: &str,
         host: &str,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let (count, days) = registry.password_reuse_policy(user, host);
@@ -222,11 +229,12 @@ impl Session {
         Ok(())
     }
 
-    /// Whether the shared catalog holds `mysql.user` -- true after
-    /// [`Session::bootstrap_fresh_store`], false for a bare catalog a caller
-    /// installed without bootstrapping (see the module doc's deviation
-    /// note).
+    /// Whether the shared catalog holds `mysql.user`, which a bootstrapped
+    /// store's does.
     pub(crate) fn user_table_present(&mut self) -> bool {
+        if self.account_sql.is_some() {
+            return true;
+        }
         self.with_catalog_mut(|catalog| Ok(catalog.contains_in("mysql", "user")))
             .unwrap_or(false)
     }
@@ -238,8 +246,8 @@ impl Session {
     /// table exists, so an error here is a real defect rather than a missing
     /// bootstrap.
     pub(crate) fn run_user_table_write(&mut self, sql: &str) -> Result<(), DriverError> {
-        if self.account_storage_delegated {
-            return Ok(());
+        if let Some(system) = self.account_sql.as_mut() {
+            return system.execute(sql).map(|_| ());
         }
         self.run_internal_write(sql).map(|_| ())
     }
@@ -446,6 +454,9 @@ impl Session {
     /// executors read their tables through the system session (inside the
     /// statement's own writes).
     pub(crate) fn user_table_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
+        if let Some(system) = self.account_sql.as_mut() {
+            return system.execute(sql);
+        }
         let ctx = self.statement_context(false);
         self.with_staged_catalog(|catalog| {
             tidb_executor::run_select_meta_in(sql, catalog, "mysql", &ctx).map(|(_, rows)| rows)
@@ -471,7 +482,7 @@ impl Session {
         grant: bool,
     ) -> Result<(), DriverError> {
         // Go's `revokePriv` returns before `revokeDBPriv` for USAGE.
-        if !self.user_table_present() || self.account_storage_delegated || (!grant && mask == 0) {
+        if !self.user_table_present() || (!grant && mask == 0) {
             return Ok(());
         }
         let key = format!(
@@ -535,7 +546,7 @@ impl Session {
         all: bool,
         grant: bool,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let key = format!(
@@ -630,7 +641,7 @@ impl Session {
         columns: &[(String, u64)],
         grant: bool,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         for (column, mask) in columns {
@@ -691,7 +702,7 @@ impl Session {
         name: &str,
         grant_option: Option<bool>,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let name = tidb_hack::go_to_upper(name);
@@ -720,7 +731,7 @@ impl Session {
         user: &str,
         host: &str,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         self.run_user_table_write(&format!(
@@ -742,7 +753,7 @@ impl Session {
         json: &str,
         write: GlobalPrivWrite,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let privilege = sql_str(&go_global_priv_json(json));
@@ -784,7 +795,7 @@ impl Session {
         user: (&str, &str),
         grant: bool,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let (role_user, role_host) = (sql_str(role.0), sql_str(role.1));
@@ -813,7 +824,7 @@ impl Session {
         host: &str,
         roles: Option<&[(String, String)]>,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let (user_lit, host_lit) = (sql_str(user), sql_str(host));
@@ -848,7 +859,7 @@ impl Session {
         user: &str,
         host: &str,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let (user, host) = (sql_str(user), sql_str(host));
@@ -880,7 +891,7 @@ impl Session {
         new_user: &str,
         new_host: &str,
     ) -> Result<(), DriverError> {
-        if !self.user_table_present() || self.account_storage_delegated {
+        if !self.user_table_present() {
             return Ok(());
         }
         let (old_user, old_host) = (sql_str(old_user), sql_str(&old_host.go_to_lower()));

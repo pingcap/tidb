@@ -72,12 +72,48 @@ pub(crate) fn harvest_err<T: std::fmt::Debug>(result: &Result<T, DriverError>, s
     file.write_all(line.as_bytes()).unwrap();
 }
 
-/// Whether this run's sessions are the in-process tier rather than sessions
-/// on the embedded store (Go's testkit). An assertion of Go behavior that
-/// tier never had returns early under it, and one of a behavior only that
-/// tier has runs only under it; the guard goes with the tier (Milestone 3e).
-pub(crate) fn in_process_tier() -> bool {
-    !Session::mock_store_enabled()
+/// The table-data requests a statement sent its store, by kind: what Go's
+/// tests read off the store's RPC client (a point get is one `Get`, a batch
+/// point get one `BatchGet`, a reader coprocessor requests).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StoreRequests {
+    pub(crate) gets: usize,
+    pub(crate) batch_gets: usize,
+    pub(crate) coprocessor: usize,
+}
+
+/// Runs `body` on `session` and counts the requests for table data (keys of
+/// the `t` prefix) its store received meanwhile; the node's own reads of
+/// meta keys are not the statement's.
+pub(crate) fn store_requests<R>(
+    session: &mut Session,
+    body: impl FnOnce(&mut Session) -> R,
+) -> (R, StoreRequests) {
+    use tikv_client::proto::{coprocessor, kvrpcpb};
+    let counted = std::sync::Arc::new(std::sync::Mutex::new(StoreRequests::default()));
+    let recorder = std::sync::Arc::clone(&counted);
+    session.set_store_send_hook(Some(std::sync::Arc::new(move |request| {
+        let any = request.as_any();
+        let table_key = |key: &[u8]| key.first() == Some(&b't');
+        let mut counted = recorder.lock().unwrap();
+        if let Some(get) = any.downcast_ref::<kvrpcpb::GetRequest>() {
+            if table_key(&get.key) {
+                counted.gets += 1;
+            }
+        } else if let Some(get) = any.downcast_ref::<kvrpcpb::BatchGetRequest>() {
+            if get.keys.iter().any(|key| table_key(key)) {
+                counted.batch_gets += 1;
+            }
+        } else if let Some(request) = any.downcast_ref::<coprocessor::Request>() {
+            if request.ranges.iter().any(|range| table_key(&range.start)) {
+                counted.coprocessor += 1;
+            }
+        }
+    })));
+    let result = body(session);
+    session.set_store_send_hook(None);
+    let counted = *counted.lock().unwrap();
+    (result, counted)
 }
 
 /// RENAME TABLE, checked against captured TiDB behavior.
@@ -272,8 +308,8 @@ pub(crate) fn interval_session() -> Session {
 }
 
 /// A session with a GLOBAL-scope privilege registry attached, over a
-/// fresh catalog. Root is bootstrapped with every privilege, matching
-/// what `PipelineSessionFactory` gives every connection.
+/// fresh store. Root is bootstrapped with every privilege, as a Go
+/// testkit store's root is.
 pub(crate) fn session_with_privileges() -> Session {
     Session::on_accounts(&privilege::PrivilegeRegistry::default())
 }
@@ -305,9 +341,9 @@ pub(crate) fn authenticated_session(
 
 /// A second connection to the same server, authenticated as `user`@`host`.
 ///
-/// The identity is installed BEFORE the registry, which is the order
-/// `PipelineSessionFactory` uses and the order that makes the account's
-/// DEFAULT roles activate -- exactly as Go's `Auth` does at login.
+/// The identity is installed BEFORE the registry, which is the order that
+/// makes the account's DEFAULT roles activate -- exactly as Go's `Auth`
+/// does at login.
 pub(crate) fn session_as(
     registry: &privilege::PrivilegeRegistry,
     catalog: SharedCatalog,

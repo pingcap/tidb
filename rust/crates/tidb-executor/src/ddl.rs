@@ -366,8 +366,8 @@ pub mod table_partition_range;
 
 pub use alter_table::{
     check_column_default_value, check_multi_schema_names, normalize_column_default,
-    prepare_column_default, run_alter_table_in, settle_column_default, validate_column_default,
-    PreparedColumnDefault, SettledColumnDefault,
+    prepare_column_default, run_alter_table_in, run_compact_table_in, settle_column_default,
+    validate_column_default, PreparedColumnDefault, SettledColumnDefault,
 };
 pub use placement_policy::{
     run_alter_placement_policy, run_create_placement_policy, run_drop_placement_policy,

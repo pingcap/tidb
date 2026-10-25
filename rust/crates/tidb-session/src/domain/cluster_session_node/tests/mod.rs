@@ -9,7 +9,6 @@ mod mock_seams;
 mod node_fixture;
 mod observation_batch;
 
-mod accounts;
 mod autocommit_transactions;
 mod global_variables;
 mod point_get_max_ts;

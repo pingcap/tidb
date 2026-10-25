@@ -53,24 +53,14 @@ use tidb_executor::analyze::kv::{
 };
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::analyze::{
-    lower_analyze_admin, resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement,
-    PhysicalAnalyzeOptions, SampleMemoryQuota, SavedAnalyzeOptions, MEM_QUOTA_ANALYZE_VARIABLE,
+    resolve_analyze_options, AnalyzeColumnChoice, AnalyzeStatement, PhysicalAnalyzeOptions,
+    SampleMemoryQuota, SavedAnalyzeOptions, MEM_QUOTA_ANALYZE_VARIABLE,
 };
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
 use crate::{Session, StmtOutput};
 use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
-
-/// The source goroutine boundary at which a test injects its one-shot panic.
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum AnalyzePanicPhase {
-    /// Go's analyze worker, before it computes statistics.
-    Worker,
-    /// Go's result handler, after statistics are computed but before publish.
-    Result,
-}
 
 /// Publish merged ANALYZE items as a real cache table. Go's storage loader
 /// derives the table format from histogram rows; these local results bypass
@@ -690,80 +680,7 @@ fn saved_options(
     }
 }
 
-#[cfg(test)]
-std::thread_local! {
-    /// A one-shot, thread-local equivalent of the two Go failpoints in
-    /// `pkg/executor/test/analyzetest/panictest`.
-    ///
-    /// Keeping the injection local to the test thread makes the real
-    /// `Session::run` path deterministic while other session tests execute in
-    /// parallel.
-    static ANALYZE_PANIC_FOR_TEST: std::cell::Cell<Option<(AnalyzePanicPhase, &'static str)>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// Arms the in-process analyze path's one-shot source-shaped panic injection.
-#[cfg(test)]
-pub(crate) fn panic_next_analyze_for_test(phase: AnalyzePanicPhase, message: &'static str) {
-    ANALYZE_PANIC_FOR_TEST.with(|pending| pending.set(Some((phase, message))));
-}
-
-#[cfg(test)]
-fn inject_analyze_panic_for_test(phase: AnalyzePanicPhase) {
-    ANALYZE_PANIC_FOR_TEST.with(|pending| {
-        if let Some((pending_phase, message)) = pending.get() {
-            if pending_phase == phase {
-                pending.set(None);
-                panic!("{message}");
-            }
-        }
-    });
-}
-
 impl Session {
-    /// Runs `ANALYZE TABLE t [, u ...]`, one table at a time.
-    ///
-    /// Returns `None` when the statement is not an `ANALYZE` this arm owns, so
-    /// the caller falls through to the rest of the admin dispatch.
-    pub(crate) fn analyze_stmt(
-        &mut self,
-        admin: &tidb_ast::AdminStmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        let Some(tables) =
-            lower_analyze_admin(admin, &self.current_db).map_err(DriverError::from)?
-        else {
-            return Ok(None);
-        };
-        let memory_quota = self.analyze_memory_quota();
-        let persist_options = self
-            .vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
-        let default_columns = if self
-            .vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
-        {
-            AnalyzeColumnChoice::Predicate
-        } else {
-            AnalyzeColumnChoice::All
-        };
-        for statement in &tables {
-            let mut statement = statement.clone();
-            statement.persist_options = persist_options;
-            statement.default_columns = default_columns.clone();
-            statement.skip_column_types = self
-                .vars()
-                .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
-                .map(|value| crate::varsutil::parse_analyze_skip_column_types(&value))
-                .unwrap_or_default();
-            statement.options.memory_quota = memory_quota;
-            self.analyze_one_table(&statement)?;
-        }
-        // Go answers `ANALYZE TABLE` with an OK packet carrying no rows.
-        Ok(Some(StmtOutput::Affected(0)))
-    }
-
     /// Runs one `ANALYZE` through the session catalog when its resolved table
     /// is temporary.
     ///
@@ -820,13 +737,6 @@ impl Session {
         let usage_provider = self.column_stats_usage.clone();
         let session_time_zone = self.session_time_zone();
         let resource_group = self.active_resource_group.clone();
-        // What the storage writes after the analysis need: each table task's
-        // `mysql.analyze_jobs` identity, the analyzed table, and which columns
-        // each physical table's analysis rebuilt.
-        let mut jobs: Vec<(i64, crate::stats_storage::AnalyzeJob)> = Vec::new();
-        let mut analyzed_table: Option<tidb_executor::KvTable> = None;
-        let mut rebuilt_columns: std::collections::HashMap<i64, Option<HashSet<i64>>> =
-            std::collections::HashMap::new();
         let result = self.with_catalog_mut(|catalog| {
             let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
                 Some(TableEntry::Kv(kv)) => {
@@ -1004,67 +914,8 @@ impl Session {
                     ),
                 );
             }
-            // Go's `AnalyzeJob` per table task: the table itself, or each
-            // partition of a partitioned table.
-            if index_tasks.run_full_sampling {
-                let indexes: Vec<String> = table
-                    .indexes()
-                    .iter()
-                    .filter(|index| !index_tasks.independent_index_ids.contains(&index.id))
-                    .map(|index| index.name.clone())
-                    .collect();
-                for options in resolution
-                    .physical
-                    .iter()
-                    .filter(|options| options.is_partition != partition_ids.is_empty())
-                {
-                    let columns = executed
-                        .get(&options.physical_id)
-                        .and_then(Option::as_ref)
-                        .map(|selected| {
-                            table
-                                .visible_columns()
-                                .iter()
-                                .filter(|column| selected.contains(&column.id))
-                                .map(|column| column.name.clone())
-                                .collect::<Vec<_>>()
-                        });
-                    let partition = table
-                        .partition()
-                        .and_then(|partition| {
-                            partition
-                                .definitions
-                                .iter()
-                                .find(|definition| definition.id == options.physical_id)
-                        })
-                        .map_or_else(String::new, |definition| definition.name.clone());
-                    jobs.push((
-                        options.physical_id,
-                        crate::stats_storage::AnalyzeJob {
-                            schema: schema.clone(),
-                            table: name.clone(),
-                            partition,
-                            job_info: tidb_exec::real_tikv_analyze::analyze_table_job_info(
-                                false,
-                                &indexes,
-                                table.indexes().len(),
-                                columns.as_deref(),
-                                table.visible_columns().len(),
-                                options,
-                            ),
-                        },
-                    ));
-                }
-            }
-            for (physical_id, selected) in &executed {
-                rebuilt_columns.insert(*physical_id, selected.clone());
-            }
-            analyzed_table = Some((*table).clone());
             let mut analyzed = std::collections::HashMap::new();
             let execution: Result<(), DriverError> = recover_analyze_panic(|| {
-                #[cfg(test)]
-                inject_analyze_panic_for_test(AnalyzePanicPhase::Worker);
-
                 if index_tasks.run_full_sampling {
                     if partition_ids.is_empty() {
                         let mut scan_table = (*table).clone();
@@ -1082,8 +933,6 @@ impl Session {
                             selected.as_ref(),
                         )
                         .map_err(DriverError::from)?;
-                        #[cfg(test)]
-                        inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
                         let statistics = merge_partial_statistics(
                             catalog.table_statistics(table_id),
                             statistics,
@@ -1159,8 +1008,6 @@ impl Session {
                                 )?))
                             }
                         };
-                        #[cfg(test)]
-                        inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
                         for (physical_id, statistics) in partition_statistics {
                             analyzed.insert(physical_id, statistics);
                         }
@@ -1194,8 +1041,7 @@ impl Session {
             })
             .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?;
             execution?;
-            for (&physical_id, statistics) in &analyzed {
-                catalog.set_table_statistics(physical_id, Arc::clone(statistics));
+            for &physical_id in analyzed.keys() {
                 catalog.clear_stats_modify_count(physical_id);
             }
             if statement.persist_options {
@@ -1215,80 +1061,7 @@ impl Session {
             Ok(analyzed)
         });
         self.drain_context_warnings(&ctx);
-        // Go saves each task's result (`SaveAnalyzeResultToStorage`, or the
-        // merged global statistics), then finishes its job row; a failed
-        // analysis leaves its jobs failed with the reason.
-        match &result {
-            Ok(analyzed) => {
-                if let Some(table) = &analyzed_table {
-                    self.persist_analyzed_statistics(table, analyzed, &rebuilt_columns)?;
-                }
-                for (physical_id, job) in &jobs {
-                    let processed = analyzed
-                        .get(physical_id)
-                        .map_or(0, |statistics| statistics.row_count);
-                    self.record_analyze_job(job, processed, None);
-                }
-            }
-            Err(error) => {
-                // Go `finishAnalyzeJob`: `analyzeErr.Error()`, class prefix included.
-                let reason = error.error_string();
-                for (_, job) in &jobs {
-                    self.record_analyze_job(job, 0, Some(&reason));
-                }
-            }
-        }
         result
-    }
-
-    /// The storage half of one `ANALYZE`: each analyzed physical table's
-    /// result, or for a partitioned table's logical id the merged global
-    /// statistics, written as Go writes them. Only the histograms this
-    /// analysis rebuilt are written; the rest keep their stored rows.
-    fn persist_analyzed_statistics(
-        &mut self,
-        table: &tidb_executor::KvTable,
-        analyzed: &std::collections::HashMap<i64, Arc<tidb_executor::access_cost::TableStatistics>>,
-        rebuilt_columns: &std::collections::HashMap<i64, Option<HashSet<i64>>>,
-    ) -> Result<(), DriverError> {
-        let mut physical_ids: Vec<i64> = analyzed.keys().copied().collect();
-        physical_ids.sort_unstable();
-        for physical_id in physical_ids {
-            let statistics = &analyzed[&physical_id];
-            let stats_table = tidb_executor::load_stats::statistics_table_from_planner_statistics(
-                table,
-                physical_id,
-                statistics,
-            );
-            let (columns, indexes) =
-                tidb_exec::cluster_load_stats::stats_items_from_table(&stats_table);
-            let selected = rebuilt_columns.get(&physical_id).cloned().flatten();
-            let items: Vec<_> = columns
-                .into_iter()
-                .filter(|item| selected.as_ref().is_none_or(|ids| ids.contains(&item.id)))
-                .chain(indexes)
-                .collect();
-            if table.partition().is_some() && physical_id == table.table_id {
-                self.save_global_stats_to_storage(
-                    physical_id,
-                    statistics.row_count,
-                    statistics.modify_count,
-                    statistics.version,
-                    statistics.stats_ver,
-                    &items,
-                )?;
-            } else {
-                self.save_analyze_result_to_storage(
-                    physical_id,
-                    statistics.row_count,
-                    statistics.version,
-                    statistics.stats_ver,
-                    &items,
-                    physical_id != table.table_id,
-                )?;
-            }
-        }
-        Ok(())
     }
 
     /// Go's analyze memory quota, as one `ANALYZE` reads it.

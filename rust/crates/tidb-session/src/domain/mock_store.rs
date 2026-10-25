@@ -55,25 +55,33 @@ impl MockStoreDomain {
     pub fn create_with_accounts(
         accounts: Option<crate::privilege::PrivilegeRegistry>,
     ) -> Result<Arc<Self>, String> {
-        let config = crate::domain::node_config::NodeConfig::parse([
-            "tidb-server",
-            "--store",
-            "unistore",
-            "--port",
-            "0",
-            "--lease-ms",
-            "500",
-            // Parse-time requirement only: the user store below is the one
-            // the bootstrap seeds.
-            "--auth-file",
-            "/dev/null",
-        ])
-        .map_err(|error| format!("node config: {error:?}"))?;
+        let config = testkit_config()?;
         let users = Arc::new(match accounts {
             Some(accounts) => ConfiguredUserStore::from_accounts(accounts),
             None => ConfiguredUserStore::parse("root\t%\tmysql_native_password\t\n")
                 .map_err(|error| format!("configured user store: {error:?}"))?,
         });
+        Self::boot(config, users)
+    }
+
+    /// [`Self::create`] whose node authenticates and keeps its accounts in
+    /// `users`, as a server boots over its configured user store: what a
+    /// wire-protocol test serves its connections from.
+    pub fn create_with_users(users: Arc<ConfiguredUserStore>) -> Result<Arc<Self>, String> {
+        Self::boot(testkit_config()?, users)
+    }
+
+    /// The session factory of this domain's node: Go's server, which opens
+    /// each connection's session on the store.
+    #[must_use]
+    pub fn factory(&self) -> &Arc<crate::domain::cluster_session_node::ClusterSessionFactory> {
+        &self.stack.factory
+    }
+
+    fn boot(
+        config: crate::domain::node_config::NodeConfig,
+        users: Arc<ConfiguredUserStore>,
+    ) -> Result<Arc<Self>, String> {
         let image = bootstrap_image(&config.cluster_security)?;
         let stack = unistore_cluster_session_stack_from(&config, &users, None, None, Some(&image))
             .map_err(|error| format!("unistore stack: {error:?}"))?;
@@ -103,6 +111,30 @@ impl MockStoreDomain {
         }));
         Ok(session)
     }
+}
+
+/// The node configuration Go's testkit boots its store with: a 500ms schema
+/// lease (`vardef.SetSchemaLease(500 * time.Millisecond)`) and a negative
+/// stats lease (`session.DisableStats4Test()`). With it Go loads every
+/// histogram an ANALYZE or `h.Update` reads (`columnStatsFromStorage`'s
+/// `lease > 0` condition), and no background worker reloads statistics.
+fn testkit_config() -> Result<crate::domain::node_config::NodeConfig, String> {
+    let mut config = crate::domain::node_config::NodeConfig::parse([
+        "tidb-server",
+        "--store",
+        "unistore",
+        "--port",
+        "0",
+        "--lease-ms",
+        "500",
+        // Parse-time requirement only: the node's user store is the one the
+        // bootstrap seeds.
+        "--auth-file",
+        "/dev/null",
+    ])
+    .map_err(|error| format!("node config: {error:?}"))?;
+    config.stats_lease = crate::domain::node_config::StatsLease::Disabled;
+    Ok(config)
 }
 
 /// Go testkit's `tryMakeImage` + the image's use: the bootstrapped store
@@ -319,6 +351,59 @@ impl MockStoreConnection {
         self.connection.update_stats_cache()
     }
 
+    /// See [`ClusterServerSession::update_stats_cache_with`].
+    pub(crate) fn update_stats_cache_with(&self, tables: Vec<Arc<tidb_stats::Table>>) {
+        self.connection.update_stats_cache_with(tables);
+    }
+
+    /// Go `statstestutil.HandleNextDDLEventWithTxn`: runs the node's DDL
+    /// notifier until the statistics subscriber has committed every pending
+    /// event (its bit in `mysql.tidb_ddl_notifier.processed_by_flag`).
+    pub(crate) fn handle_ddl_events(&self) -> Result<(), String> {
+        let notifier = self.domain.stack.factory.owned_ddl_notifier_for_test();
+        let stats_bit = 1_u64 << tidb_ddl_notifier::STATS_META_HANDLER_ID.0;
+        let pending_sql = format!(
+            "SELECT count(*) FROM mysql.tidb_ddl_notifier WHERE processed_by_flag & {stats_bit} = 0"
+        );
+        let mut probe = self.domain.new_session()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let result = loop {
+            let pending = match probe.run(&pending_sql) {
+                Ok(crate::StmtResult::Rows(rows)) => {
+                    rows.first().and_then(|row| row.first()).cloned()
+                }
+                Ok(other) => break Err(format!("pending events read {other:?}")),
+                Err(error) => break Err(format!("pending events read: {error:?}")),
+            };
+            if pending == Some(tidb_datatype::Datum::Int(0)) {
+                break Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                break Err(format!(
+                    "DDL notifier left statistics events pending: {pending:?}"
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        notifier.stop();
+        result
+    }
+
+    /// Go `h.DumpColStatsUsageToKV()`: the node persists the predicate
+    /// columns its sessions recorded into `mysql.column_stats_usage`.
+    #[cfg(test)]
+    pub(crate) fn dump_col_stats_usage(&self) -> Result<(), String> {
+        self.domain
+            .stack
+            .factory
+            .dump_col_stats_usage_to_kv("default")
+    }
+
+    /// See [`ClusterServerSession::stats_table`].
+    pub(crate) fn stats_table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
+        self.connection.stats_table(physical_id)
+    }
+
     /// Rebuilds `session`'s catalog from the node when its schema is stale.
     pub(crate) fn refresh_catalog(&mut self, session: &mut Session) {
         std::mem::swap(session, self.connection.driver_session_mut());
@@ -336,6 +421,7 @@ impl MockStoreConnection {
     /// Go's corruption tests delete one of a table's keys in a committed
     /// transaction of their own (`indexOpr.Delete` + `txn.Commit`): this
     /// commits the delete of `key` straight into the embedded store.
+    #[cfg(test)]
     pub(crate) fn delete_key_for_test(&self, key: &[u8]) -> Result<(), String> {
         use tidb_proto::{KvrpcMutation, KvrpcOp};
         let start = self.connection.fresh_timestamp_for_test()?;

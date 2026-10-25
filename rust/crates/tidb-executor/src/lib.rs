@@ -234,10 +234,10 @@ pub use cte_storage::CteStorage;
 pub use ddl::{
     append_partition_defs, check_constraint_count, discarded_check_constraint_actions,
     escape_identifier, linear_partitioning_warning, partition_placement_text,
-    resolve_database_charset, run_alter_placement_policy, run_alter_table_in, run_create_index_in,
-    run_create_placement_policy, run_create_system_table_in, run_create_table_in,
-    run_create_table_on, run_drop_index_in, run_drop_placement_policy, run_drop_table_in,
-    run_drop_table_stmt_in, run_rename_table_in, run_truncate_table_in,
+    resolve_database_charset, run_alter_placement_policy, run_alter_table_in, run_compact_table_in,
+    run_create_index_in, run_create_placement_policy, run_create_system_table_in,
+    run_create_table_in, run_create_table_on, run_drop_index_in, run_drop_placement_policy,
+    run_drop_table_in, run_drop_table_stmt_in, run_rename_table_in, run_truncate_table_in,
     run_truncate_table_in_with_foreign_key_checks, split_drop_table_targets, CreateTableSettings,
 };
 pub use ddl_sequence::{

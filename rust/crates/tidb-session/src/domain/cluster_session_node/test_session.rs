@@ -66,6 +66,19 @@ impl ClusterSessionFactory {
     }
 }
 
+impl ClusterSessionFactory {
+    /// This node's DDL notifier, owning: what Go's
+    /// `statstestutil.HandleNextDDLEventWithTxn` runs until the statistics
+    /// subscriber has handled every pending event. The caller stops it.
+    pub(crate) fn owned_ddl_notifier_for_test(
+        self: &Arc<Self>,
+    ) -> Arc<tidb_ddl_notifier::DdlNotifier> {
+        let notifier = super::ddl_notifier::build_notifier(self, std::time::Duration::ZERO);
+        tidb_owner::Listener::on_become_owner(notifier.as_ref());
+        notifier
+    }
+}
+
 impl ClusterServerSession {
     /// The SQL session this connection drives.
     pub(crate) fn driver_session_mut(&mut self) -> &mut Session {
@@ -198,6 +211,24 @@ impl ClusterServerSession {
         self.analyze
             .update_stats_cache(Vec::new())
             .map_err(driver_error)
+    }
+
+    /// Go testkit's `dom.StatsHandle().UpdateStatsCache(statstypes.CacheUpdate{
+    /// Updated: tables})`: the node's statistics cache takes `tables` as
+    /// they are, as Go's mock-statistics tests install theirs.
+    pub(crate) fn update_stats_cache_with(&self, tables: Vec<Arc<tidb_stats::Table>>) {
+        for table in tables {
+            self.stats
+                .publish_analyzed_table(table.hist_coll.physical_id, table);
+        }
+    }
+
+    /// Go testkit's `dom.StatsHandle().GetPhysicalTableStats(id, tblInfo)`
+    /// without the cache-miss `PseudoTable`: the node's statistics object for
+    /// `physical_id`, which a test copies and changes before publishing it
+    /// back through [`Self::update_stats_cache_with`].
+    pub(crate) fn stats_table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
+        self.stats.get(physical_id)
     }
 
     /// A fresh timestamp from the store's oracle, for a test transaction

@@ -13,9 +13,9 @@
 // limitations under the License.
 
 //! End-to-end over TCP: a raw MySQL-protocol client runs CREATE TABLE,
-//! INSERT, and SELECT against the NEW pipeline session
-//! (`PipelineSessionFactory` -> `tidb_session::Session` -> real TiKV-format
-//! bytes) through the real handshake/auth/COM_QUERY wire path.
+//! INSERT, and SELECT against a node over an embedded store (its session
+//! factory -> `tidb_session::Session` -> the store) through the real
+//! handshake/auth/COM_QUERY wire path.
 //!
 //! Writes and DDL answer with a real MySQL OK packet carrying `affected_rows`
 //! (through the `QuerySession::execute_write` hook), exactly as a stock client
@@ -30,9 +30,17 @@ use tidb_protocol::{
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
-    ConnectionTracker, PipelineSessionFactory,
+    ConnectionTracker,
 };
+use tidb_session::domain::mock_store::MockStoreDomain;
 use tidb_util::globalconn::parse_conn_id;
+
+/// Go's server over a mock store whose node authenticates against, and keeps
+/// its accounts in, `store`: connections are served from its session factory.
+fn node_over(store: &ConfiguredUserStore) -> std::sync::Arc<MockStoreDomain> {
+    MockStoreDomain::create_with_users(std::sync::Arc::new(store.clone()))
+        .expect("boot the server's store")
+}
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_FOUND_ROWS: u32 = 1 << 1;
@@ -755,7 +763,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1603,7 +1611,7 @@ fn client_found_rows_reports_matched_updates_over_the_mysql_wire() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1675,7 +1683,7 @@ fn system_variable_scope_errors_reach_text_and_prepare_wire() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1751,7 +1759,8 @@ fn the_handshake_collation_seeds_the_charset_variables_as_go_set_collation() {
     let worker_tracker = Arc::clone(&tracker);
     let worker = std::thread::spawn(move || {
         let store = users();
-        let factory = PipelineSessionFactory::with_configured_store(&store);
+        let node = node_over(&store);
+        let factory = node.factory().as_ref();
         let mut reports = Vec::new();
         for _ in 0..2 {
             let (stream, peer_addr) = listener.accept().unwrap();
@@ -1760,7 +1769,7 @@ fn the_handshake_collation_seeds_the_charset_variables_as_go_set_collation() {
                     stream,
                     peer_addr,
                     ConnectionCancellation::default(),
-                    &factory,
+                    factory,
                     &store,
                     &worker_tracker,
                     DEFAULT_MAX_ALLOWED_PACKET,
@@ -1828,7 +1837,7 @@ fn cursor_materialization_without_tmp_storage_is_8175_and_never_opens_cursor() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1973,7 +1982,7 @@ fn mysql_client_reads_the_process_list_and_kills_by_id() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -2067,7 +2076,7 @@ fn prepared_handle_range_frames_its_binary_result_set() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -2196,7 +2205,8 @@ fn kill_connection_ends_the_targeted_peer() {
     // Both connections are served by ONE factory: that is what gives them one
     // process list, as one TiDB instance has one session manager.
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let node = node_over(&store);
+    let factory = Arc::clone(node.factory());
     let acceptor = std::thread::spawn(move || {
         let mut workers = Vec::new();
         for _ in 0..2 {
@@ -2312,7 +2322,7 @@ fn prepared_transaction_control_answers_like_the_text_protocol() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -2454,7 +2464,7 @@ fn the_ok_packet_reports_the_statements_warning_count() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -2538,7 +2548,7 @@ fn session_plan_cache_binary_close_uses_session_retention_policy() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &Arc::new(ConnectionTracker::default()),
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -2611,14 +2621,15 @@ fn session_migration_moves_text_and_binary_prepared_handles_over_mysql() {
     let address = listener.local_addr().unwrap();
     let worker = std::thread::spawn(move || {
         let store = users();
-        let factory = PipelineSessionFactory::with_configured_store(&store);
+        let node = node_over(&store);
+        let factory = node.factory().as_ref();
         for _ in 0..2 {
             let (stream, peer) = listener.accept().unwrap();
             serve_mysql_connection(
                 stream,
                 peer,
                 ConnectionCancellation::default(),
-                &factory,
+                factory,
                 &store,
                 &Arc::new(ConnectionTracker::default()),
                 DEFAULT_MAX_ALLOWED_PACKET,
@@ -2744,7 +2755,7 @@ fn query_column_definitions_carry_result_field_names() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_configured_store(&store),
+            node_over(&store).factory().as_ref(),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -2869,7 +2880,8 @@ fn client_charset_bytes_reach_storage_and_results_like_go() {
     let worker_tracker = Arc::clone(&tracker);
     let worker = std::thread::spawn(move || {
         let store = users();
-        let factory = PipelineSessionFactory::with_configured_store(&store);
+        let node = node_over(&store);
+        let factory = node.factory().as_ref();
         let mut reports = Vec::new();
         for _ in 0..3 {
             let (stream, peer_addr) = listener.accept().unwrap();
@@ -2878,7 +2890,7 @@ fn client_charset_bytes_reach_storage_and_results_like_go() {
                     stream,
                     peer_addr,
                     ConnectionCancellation::default(),
-                    &factory,
+                    factory,
                     &store,
                     &worker_tracker,
                     DEFAULT_MAX_ALLOWED_PACKET,

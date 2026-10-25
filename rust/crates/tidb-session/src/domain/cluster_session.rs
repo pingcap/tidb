@@ -93,7 +93,37 @@ pub fn cluster_session_catalog(
     stats: &StatsSnapshot,
     auto_ids: &dyn TableAutoIds,
 ) -> ClusterSessionCatalog {
-    cluster_session_catalog_with_templates(loaded, storage, Some(stats), auto_ids, storage, None)
+    cluster_session_catalog_with_templates(
+        loaded,
+        storage,
+        Some(snapshot_statistics_view(stats)),
+        auto_ids,
+        storage,
+        None,
+    )
+}
+
+/// A statistics view over one fixed snapshot, for a catalog built outside a
+/// running node (boot, tests): the planner reads it exactly as it reads the
+/// node's live statistics.
+#[must_use]
+pub fn snapshot_statistics_view(
+    stats: &StatsSnapshot,
+) -> Arc<tidb_executor::driver::StatisticsView> {
+    Arc::new(tidb_executor::driver::StatisticsView::new(Arc::new(
+        SnapshotStatisticsSource(stats.clone()),
+    )))
+}
+
+struct SnapshotStatisticsSource(StatsSnapshot);
+
+impl tidb_executor::driver::StatisticsSource for SnapshotStatisticsSource {
+    fn table(&self, physical_id: i64) -> Option<Arc<tidb_stats::Table>> {
+        self.0
+            .get(&physical_id)
+            .and_then(TableStatsState::loaded)
+            .cloned()
+    }
 }
 
 /// One schema version's worth of fully built [`KvTable`]s, reused by every
@@ -155,7 +185,10 @@ impl KvTableTemplates {
 pub fn cluster_session_catalog_with_templates(
     loaded: &ClusterCatalog,
     storage: &ClusterTableStorage,
-    stats: Option<&StatsSnapshot>,
+    // Go's planner reads the domain's statistics handle
+    // (`GetPhysicalTableStats`), never a copy in the schema: the catalog plans
+    // through this view of it.
+    statistics: Option<Arc<tidb_executor::driver::StatisticsView>>,
     auto_ids: &dyn TableAutoIds,
     // Neutral storage over which CACHED-MISS tables are built for the
     // template set; sessions rebind their own seam afterwards either way.
@@ -163,6 +196,9 @@ pub fn cluster_session_catalog_with_templates(
     mut kv_templates: Option<&mut KvTableTemplates>,
 ) -> ClusterSessionCatalog {
     let mut catalog = Catalog::default();
+    if let Some(view) = statistics {
+        catalog.set_statistics_view(view);
+    }
     // Go's label rules live in the node's `InfoSyncer`, not in the schema:
     // `information_schema.attributes` reads the node's manager.
     catalog.set_label_rule_manager(tidb_executor::label_manager::label_rule_manager());
@@ -254,29 +290,6 @@ pub fn cluster_session_catalog_with_templates(
             match built {
                 Ok(mut kv_table) => {
                     kv_table.replace_storage(storage.clone_box());
-                    // A table the cluster reports as never analyzed
-                    // (`TableStatsState::Pseudo`) or one this node has not
-                    // loaded yet is left OUT of the map, which is exactly what
-                    // makes the planner treat it as `statistics.PseudoTable`.
-                    if let Some(loaded_stats) = stats
-                        .and_then(|stats| stats.get(&table.id))
-                        .and_then(TableStatsState::loaded)
-                    {
-                        let statistics = Arc::new(planner_statistics(loaded_stats, table));
-                        catalog.set_table_statistics(table.id, statistics);
-                    }
-                    if let Some(partition) = &table.partition {
-                        for definition in partition.read().definitions.snapshot() {
-                            let physical_id = definition.id;
-                            if let Some(loaded_stats) = stats
-                                .and_then(|stats| stats.get(&physical_id))
-                                .and_then(TableStatsState::loaded)
-                            {
-                                let statistics = Arc::new(planner_statistics(loaded_stats, table));
-                                catalog.set_table_statistics(physical_id, statistics);
-                            }
-                        }
-                    }
                     catalog
                         .register_kv_in(&schema, table.name.original(), kv_table)
                         .expect("the schema was created just above this loop");
@@ -388,7 +401,7 @@ pub fn session_with_cluster_storage(
     let ClusterSessionCatalog { catalog, skipped } =
         cluster_session_catalog(loaded, storage, stats, auto_ids);
     let shared: SharedCatalog = Arc::new(Mutex::new(catalog));
-    (Session::with_catalog(shared), skipped)
+    (Session::over_catalog(shared), skipped)
 }
 
 /// Go `mysql.MaxUnsignedFlag` (`UnsignedFlag`), which the out-of-range
