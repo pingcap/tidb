@@ -66,8 +66,8 @@ impl ClusterNotifierSession {
     fn write(&self, sql: &str) -> Result<u64, NotifierError> {
         self.with_server(|session| {
             session
-                .execute_write(sql)
-                .map(|outcome| outcome.map_or(0, |outcome| outcome.affected_rows))
+                .execute_internal(sql)
+                .map(|_| QuerySession::affected_rows(session))
                 .map_err(|error| NotifierError::Message(error.message))
         })
     }
@@ -87,7 +87,7 @@ impl ClusterNotifierSession {
     fn control_transaction(&self, sql: &str) -> Result<(), NotifierError> {
         self.with_server(|session| {
             session
-                .control_transaction(sql)
+                .execute_internal(sql)
                 .map(|_| ())
                 .map_err(|error| NotifierError::Message(error.message))
         })

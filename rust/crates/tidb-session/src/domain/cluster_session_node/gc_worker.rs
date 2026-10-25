@@ -34,8 +34,7 @@ use tidb_util::sqlescape::{escape_sql, SqlArg};
 
 use super::{ClusterServerSession, ClusterSessionFactory};
 use crate::domain::session_api::SessionContext;
-use crate::domain::resultset_source::ResultSetSource;
-use crate::domain::session_api::{QuerySession, QuerySessionFactory, SqlQueryError};
+use crate::domain::session_api::{QuerySessionFactory, SqlQueryError};
 
 /// How long one internal request to PD or TiKV may take before the worker
 /// gives up on it.
@@ -178,31 +177,18 @@ impl NodeGcSession<'_> {
 
     /// Go `ExecuteInternal` of a read: every row.
     fn query(&mut self, sql: &str) -> GcResult<Vec<Vec<tidb_datatype::Datum>>> {
-        let session = self.session()?;
-        let mut result = session.execute(sql).map_err(sql_error)?;
-        let source = result.source();
-        let mut rows = Vec::new();
-        loop {
-            let batch = source.next_batch(256).map_err(gc_error)?;
-            if batch.is_empty() {
-                break;
-            }
-            rows.extend(batch);
-        }
-        source.finish().map_err(gc_error)?;
-        source.close().map_err(gc_error)?;
-        Ok(rows)
+        self.session()?.execute_internal(sql).map_err(sql_error)
     }
 
     /// Go `ExecuteInternal` of a write.
     fn write(&mut self, sql: &str) -> GcResult<()> {
-        self.session()?.execute_write(sql).map_err(sql_error)?;
+        self.session()?.execute_internal(sql).map_err(sql_error)?;
         Ok(())
     }
 
     fn control(&mut self, statement: &str) -> GcResult<()> {
         self.session()?
-            .control_transaction(statement)
+            .execute_internal(statement)
             .map_err(sql_error)?;
         Ok(())
     }

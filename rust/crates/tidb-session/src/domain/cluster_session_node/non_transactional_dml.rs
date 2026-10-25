@@ -20,8 +20,7 @@
 //! job discarded every job's writes.
 
 use super::{map_error, ClusterServerSession, MaterializedResultSetSource, QueryResult};
-use crate::domain::resultset_source::ResultSetSource;
-use crate::domain::session_api::{QuerySession, SqlQueryError};
+use crate::domain::session_api::SqlQueryError;
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 use crate::{NonTransactionalInput, NonTransactionalStep, StmtOutput};
@@ -74,33 +73,12 @@ impl ClusterServerSession {
 
     /// The shard SELECT's rows, read through the node's own statement path.
     fn non_transactional_rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let mut result = self.execute(sql).map_err(driver_error)?;
-        let source = result.source();
-        let mut rows = Vec::new();
-        loop {
-            let batch = source
-                .next_batch(256)
-                .map_err(|error| DriverError::unsupported(error.to_string()))?;
-            if batch.is_empty() {
-                break;
-            }
-            rows.extend(batch);
-        }
-        source
-            .finish()
-            .map_err(|error| DriverError::unsupported(error.to_string()))?;
-        source
-            .close()
-            .map_err(|error| DriverError::unsupported(error.to_string()))?;
-        Ok(rows)
+        self.execute_internal(sql).map_err(driver_error)
     }
 
     /// One job's DML as a statement of its own, published on success when
     /// the session is auto-committing.
     fn non_transactional_job(&mut self, sql: &str) -> Result<(), DriverError> {
-        if self.execute_write(sql).map_err(driver_error)?.is_some() {
-            return Ok(());
-        }
-        self.non_transactional_rows(sql).map(|_| ())
+        self.execute_internal(sql).map(|_| ()).map_err(driver_error)
     }
 }

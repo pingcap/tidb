@@ -41,27 +41,15 @@ impl ClusterSessionFactory {
         connection_id: u64,
     ) -> Result<ClusterServerSession, SqlQueryError> {
         let mut opened = self.open_storage_session(connection_id)?;
-        let session = &mut opened.store.session;
-        session.set_restricted_sql(false);
-        session.set_connection_id(connection_id);
+        opened.store.session.set_restricted_sql(false);
         let guard = self.processes.register(
             connection_id,
             String::new(),
             String::new(),
-            session.current_database().to_owned(),
+            opened.store.session.current_database().to_owned(),
             None,
         );
-        guard.transaction_observer().use_external_owner();
-        session.attach_process(connection_id, guard);
-        session.attach_privileges(self.privileges.clone());
-        if let Some(bindings) = &self.bindings {
-            session.set_global_binding_cache(bindings.cache());
-            session.set_global_binding_writer(Arc::new(InternalBindingWriter {
-                factory: self.binding_session_factory.clone(),
-                bindings: Arc::clone(bindings),
-                connection_id,
-            }));
-        }
+        self.attach_connection(&mut opened.store.session, connection_id, guard);
         Ok(opened)
     }
 }

@@ -1200,6 +1200,29 @@ impl ClusterSessionFactory {
         }))
     }
 
+    /// What every connection's session gets once it is opened, whoever opens
+    /// it (Go `createSessionWithOpt`): its connection id, its process-list
+    /// entry, the privilege cache and the global-binding writer.
+    fn attach_connection(
+        &self,
+        session: &mut Session,
+        connection_id: u64,
+        process: crate::process::ProcessGuard,
+    ) {
+        session.set_connection_id(connection_id);
+        process.transaction_observer().use_external_owner();
+        session.attach_process(connection_id, process);
+        session.attach_privileges(self.privileges.clone());
+        if let Some(bindings) = &self.bindings {
+            session.set_global_binding_cache(bindings.cache());
+            session.set_global_binding_writer(Arc::new(InternalBindingWriter {
+                factory: self.binding_session_factory.clone(),
+                bindings: Arc::clone(bindings),
+                connection_id,
+            }));
+        }
+    }
+
     /// Go `Domain.SysSessionPool().Get()` for one internal statement: a
     /// session over this node with the internal identity, whose SQL an
     /// account executor runs in its own transaction.
@@ -3360,7 +3383,6 @@ impl QuerySessionFactory for ClusterSessionFactory {
             format!("{}@{}", identity.username(), identity.host()),
             format!("{}@{}", identity.username(), context.peer_addr.ip()),
         );
-        session.set_connection_id(context.connection_id);
         session.set_client_found_rows(context.client_found_rows);
         session.set_secure_transport(context.secure_transport);
         session.set_tls_status(context.tls_status.clone());
@@ -3375,8 +3397,11 @@ impl QuerySessionFactory for ClusterSessionFactory {
         // separate), so they never appear in SHOW PROCESSLIST. Registering
         // them here leaked every pooled internal session as a permanent
         // `Sleep` row.
-        if !identity.is_internal() {
-            let guard = self.processes.register(
+        let guard = if identity.is_internal() {
+            self.processes
+                .register_internal(context.connection_id, session.current_database().to_owned())
+        } else {
+            self.processes.register(
                 context.connection_id,
                 identity.username().to_owned(),
                 context.peer_addr.to_string(),
@@ -3385,25 +3410,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
                     context.cancellation.clone(),
                     context.close.clone(),
                 ))),
-            );
-            guard.transaction_observer().use_external_owner();
-            session.attach_process(context.connection_id, guard);
-        } else {
-            let guard = self
-                .processes
-                .register_internal(context.connection_id, session.current_database().to_owned());
-            guard.transaction_observer().use_external_owner();
-            session.attach_process(context.connection_id, guard);
-        }
-        session.attach_privileges(self.privileges.clone());
-        if let Some(bindings) = &self.bindings {
-            session.set_global_binding_cache(bindings.cache());
-            session.set_global_binding_writer(Arc::new(InternalBindingWriter {
-                factory: self.binding_session_factory.clone(),
-                bindings: Arc::clone(bindings),
-                connection_id: context.connection_id,
-            }));
-        }
+            )
+        };
+        self.attach_connection(session, context.connection_id, guard);
         Ok(opened)
     }
 
@@ -4174,7 +4183,7 @@ impl tidb_syssession::SessionContext for ClusterStatsSessionContext {
     fn rollback_txn(&self, _context: &dyn tidb_sqlexec::ExecutionContext) {
         let _ = self.with_session(|session| {
             session
-                .execute_write("ROLLBACK")
+                .execute_internal("ROLLBACK")
                 .map_err(|error| stats_session_error(error.message))?;
             Ok(())
         });
@@ -4729,33 +4738,16 @@ impl tidb_workloadrepo::RepositorySession for WorkloadRepositorySession {
         args: &[tidb_workloadrepo::SqlArg],
     ) -> Result<Vec<Vec<tidb_workloadrepo::SqlArg>>, String> {
         let sql = bind_workload_sql(sql, args)?;
-        if self
-            .session
-            .execute_write(&sql)
+        self.session
+            .execute_internal(&sql)
             .map_err(|error| error.message)?
-            .is_some()
-        {
-            return Ok(Vec::new());
-        }
-        let mut result = self.session.execute(&sql).map_err(|error| error.message)?;
-        let source = result.source();
-        let mut rows = Vec::new();
-        loop {
-            let batch = source.next_batch(256).map_err(|error| error.to_string())?;
-            if batch.is_empty() {
-                break;
-            }
-            for row in batch {
-                rows.push(
-                    row.into_iter()
-                        .map(workload_arg_from_datum)
-                        .collect::<Result<Vec<_>, _>>()?,
-                );
-            }
-        }
-        source.finish().map_err(|error| error.to_string())?;
-        source.close().map_err(|error| error.to_string())?;
-        Ok(rows)
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(workload_arg_from_datum)
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect()
     }
 
     fn schema_exists(&self, schema: &str) -> bool {
@@ -4847,12 +4839,12 @@ impl crate::binding::GlobalBindingWriter for InternalBindingWriter {
             .set_global_binding_cache(self.bindings.cache());
         internal.store.session.enable_privilege_bypass();
         internal
-            .control_transaction("BEGIN PESSIMISTIC")
+            .execute_internal("BEGIN PESSIMISTIC")
             .map_err(to_driver)?;
         let result = (|| {
             // Use Go's shared record-lock statement so binding writers on
             // different nodes serialize through the same storage transaction.
-            internal.execute_write(crate::binding_utils::LOCK_BIND_INFO_SQL)?;
+            internal.execute_internal(crate::binding_utils::LOCK_BIND_INFO_SQL)?;
             let resource_group = internal.store.session.current_resource_group().to_owned();
             let changed = internal.with_prelocked_statement(
                 StatementReadShape::LockingRead,
@@ -4860,7 +4852,7 @@ impl crate::binding::GlobalBindingWriter for InternalBindingWriter {
                 true,
                 |session| operation(session).map_err(map_error),
             )?;
-            internal.control_transaction("COMMIT")?;
+            internal.execute_internal("COMMIT")?;
             Ok(changed)
         })();
         match result {
@@ -4872,7 +4864,7 @@ impl crate::binding::GlobalBindingWriter for InternalBindingWriter {
                 Ok(changed)
             }
             Err(error) => {
-                let _ = internal.control_transaction("ROLLBACK");
+                let _ = internal.execute_internal("ROLLBACK");
                 Err(to_driver(error))
             }
         }
@@ -6794,10 +6786,16 @@ impl QuerySession for ClusterServerSession {
             });
             return Ok(None);
         }
+        // A text `EXECUTE` of a prepared DDL runs that DDL (Go `ExecuteExec`
+        // builds the prepared plan as its body).
+        if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
+            return self.execute_stmt(&body_sql, &body);
+        }
         if self.control_transaction_parsed(sql, stmt)?.is_some() {
             return Ok(None);
         }
-        match self.execute_write_parsed(sql, stmt) {
+        self.begin_statement();
+        match self.run_without_result(sql, stmt) {
             Ok(Some(outcome)) => {
                 self.ok_packet = outcome;
                 return Ok(None);
@@ -6817,7 +6815,14 @@ impl QuerySession for ClusterServerSession {
                 return Err(error);
             }
         }
-        self.execute_parsed(sql, stmt).map(Some)
+        // Go `TraceExec` runs the statement it wraps and reports its spans.
+        if let Stmt::Admin(admin) = stmt {
+            if let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() {
+                return self.execute_trace(trace).map(Some);
+            }
+        }
+        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+        self.open_query(sql, stmt).map(Some)
     }
 
     fn affected_rows(&self) -> u64 {
@@ -7484,6 +7489,34 @@ impl ClusterServerSession {
     /// through [`QuerySession::parse_statement`]); routing, the SET door, the
     /// kind, the resource group, the prelock keys and the run all read that
     /// node.
+    /// Go `ExecuteInternal`: one statement of internal SQL through
+    /// [`QuerySession::execute_stmt`]. Answers the rows of a result set, none
+    /// otherwise; [`QuerySession::affected_rows`] then holds the count.
+    pub(crate) fn execute_internal(
+        &mut self,
+        sql: &str,
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, SqlQueryError> {
+        let stmt = QuerySession::parse_statement(self, sql)?;
+        let Some(mut result) = self.execute_stmt(sql, &stmt)? else {
+            return Ok(Vec::new());
+        };
+        let to_sql_error = |error: tidb_executor::MysqlError| {
+            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
+        };
+        let source = result.source();
+        let mut rows = Vec::new();
+        loop {
+            let batch = source.next_batch(1024).map_err(to_sql_error)?;
+            if batch.is_empty() {
+                break;
+            }
+            rows.extend(batch);
+        }
+        source.finish().map_err(to_sql_error)?;
+        source.close().map_err(to_sql_error)?;
+        Ok(rows)
+    }
+
     pub(crate) fn execute_write_parsed(
         &mut self,
         sql: &str,
@@ -7505,6 +7538,13 @@ impl ClusterServerSession {
                 last_insert_id: 0,
             }));
         }
+        self.begin_statement();
+        self.run_without_result(sql, stmt)
+    }
+
+    /// Go `PrepareTxnCtx` and `ResetContextOfStmt`: once per statement,
+    /// before it is compiled.
+    fn begin_statement(&mut self) {
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
         if let Some(transaction) = self.store.txn.explicit.as_ref() {
@@ -7523,6 +7563,15 @@ impl ClusterServerSession {
         // chooses a statement snapshot. Keep schema refresh ahead of routing,
         // access-shape classification, and the statement lifecycle.
         self.rebuild_catalog_if_stale();
+    }
+
+    /// Go's `runStmt` for the statements that answer no result set: routed
+    /// stored-state changes, SET, and writes. `None` for a query.
+    fn run_without_result(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
         // Go `PlanBuilder.Build` starts with `checkSEMStmt` for every
         // statement, so a routed one is refused before its own privileges.
         self.store
@@ -7622,6 +7671,15 @@ impl ClusterServerSession {
                 crate::domain::pipeline_session::affected_rows_source(0),
             )));
         }
+        self.open_query(sql, stmt)
+    }
+
+    /// Go's `runStmt` for a statement that answers a result set.
+    fn open_query<'a>(
+        &'a mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<QueryResult<'a>, SqlQueryError> {
         if let Stmt::Dml(dml) = stmt {
             if let tidb_ast::DmlStmt::Batch(batch) = dml.as_ref() {
                 return self.run_non_transactional_dml(batch);
@@ -7731,40 +7789,7 @@ impl crate::user_table::AccountSqlSession for AccountSystemSession {
         &mut self,
         sql: &str,
     ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_executor::DriverError> {
-        // The connection's own entry points: transaction control, then a
-        // write, then a query, as the server's dispatch tries them.
-        if self
-            .0
-            .control_transaction(sql)
-            .map_err(sql_query_error_to_driver)?
-            .is_some()
-        {
-            return Ok(Vec::new());
-        }
-        if self
-            .0
-            .execute_write(sql)
-            .map_err(sql_query_error_to_driver)?
-            .is_some()
-        {
-            return Ok(Vec::new());
-        }
-        let mut result = self.0.execute(sql).map_err(sql_query_error_to_driver)?;
-        let source = result.source();
-        let drained = (|| {
-            let mut rows = Vec::new();
-            loop {
-                let batch = source.next_batch(1024)?;
-                if batch.is_empty() {
-                    break;
-                }
-                rows.extend(batch);
-            }
-            source.finish()?;
-            source.close()?;
-            Ok(rows)
-        })();
-        drained.map_err(tidb_executor::DriverError::Mysql)
+        self.0.execute_internal(sql).map_err(sql_query_error_to_driver)
     }
 }
 

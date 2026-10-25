@@ -15,7 +15,6 @@
 //! Binding cache refresh and maintenance use the existing internal-session
 //! authority, including its transaction, record locks and SQL executor.
 use super::{ClusterServerSession, ClusterSessionFactory, InternalBindingWriter, QuerySession};
-use crate::domain::resultset_source::ResultSetSource;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Weak,
@@ -117,42 +116,14 @@ impl BindingRunner {
         )
     }
     fn rows(&mut self, sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let mut result = self.session.execute(sql).map_err(driver_error)?;
-        let source = result.source();
-        let mut rows = Vec::new();
-        loop {
-            let batch = source
-                .next_batch(256)
-                .map_err(|e| DriverError::unsupported(e.to_string()))?;
-            if batch.is_empty() {
-                break;
-            }
-            rows.extend(batch);
-        }
-        source
-            .finish()
-            .map_err(|e| DriverError::unsupported(e.to_string()))?;
-        source
-            .close()
-            .map_err(|e| DriverError::unsupported(e.to_string()))?;
-        Ok(rows)
+        self.session.execute_internal(sql).map_err(driver_error)
     }
 }
 impl InternalSqlRunner for BindingRunner {
     fn exec(&mut self, sql: &str, args: &[Datum]) -> Result<u64, DriverError> {
         let sql = self.render(sql, args)?;
-        if self
-            .session
-            .control_transaction(&sql)
-            .map_err(driver_error)?
-            .is_some()
-        {
-            return Ok(0);
-        }
-        if let Some(result) = self.session.execute_write(&sql).map_err(driver_error)? {
-            return Ok(result.affected_rows);
-        }
-        self.rows(&sql).map(|_| 0)
+        self.session.execute_internal(&sql).map_err(driver_error)?;
+        Ok(QuerySession::affected_rows(&self.session))
     }
     fn exec_rows(&mut self, sql: &str, args: &[Datum]) -> Result<Vec<Vec<Datum>>, DriverError> {
         let sql = self.render(sql, args)?;

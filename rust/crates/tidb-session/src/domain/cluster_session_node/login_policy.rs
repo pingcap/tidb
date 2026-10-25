@@ -81,7 +81,7 @@ impl ClusterSessionFactory {
     ) -> Result<(), AuthenticationFailure> {
         let storage_error = AuthenticationFailure::Storage;
         session
-            .control_transaction("BEGIN PESSIMISTIC")
+            .execute_internal("BEGIN PESSIMISTIC")
             .map_err(storage_error)?;
         let result = (|| -> Result<_, SqlQueryError> {
             let select = escaped(
@@ -89,17 +89,7 @@ impl ClusterSessionFactory {
                 &[user.into(), host.into()],
             )?;
             let attributes = {
-                let mut result = session.execute(&select)?;
-                let source = result.source();
-                let rows = source
-                    .next_batch(2)
-                    .map_err(|e| SqlQueryError::unknown(e.to_string()))?;
-                source
-                    .finish()
-                    .map_err(|e| SqlQueryError::unknown(e.to_string()))?;
-                source
-                    .close()
-                    .map_err(|e| SqlQueryError::unknown(e.to_string()))?;
+                let rows = session.execute_internal(&select)?;
                 match rows.as_slice() {
                     [row] => match row.first() {
                         Some(tidb_datatype::Datum::Json(json)) => json.to_string(),
@@ -125,16 +115,16 @@ impl ClusterSessionFactory {
             if after != before {
                 let patch = action.patch(&before, &after).to_string();
                 let update = escaped("UPDATE mysql.user SET user_attributes=JSON_MERGE_PATCH(COALESCE(user_attributes, '{}'), %?) WHERE User=%? AND Host=%?", &[patch.as_str().into(), user.into(), host.into()])?;
-                session.execute_write(&update)?;
+                session.execute_internal(&update)?;
             }
-            session.control_transaction("COMMIT")?;
+            session.execute_internal("COMMIT")?;
             Ok((before, after, admission))
         })();
         let (before, after, admission) = match result {
             Ok(result) => result,
             Err(error) => {
                 // An uncertain commit retains its fatal identity even if cleanup fails.
-                let rollback = session.control_transaction("ROLLBACK");
+                let rollback = session.execute_internal("ROLLBACK");
                 if !error.is_result_undetermined() {
                     rollback.map_err(storage_error)?;
                 }
