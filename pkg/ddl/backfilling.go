@@ -1169,6 +1169,7 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 
 	it, err := snap.Iter(firstKey, upperBound)
+	failpoint.InjectCall("mockSnapshotIterError", &err)
 	if err != nil {
 		return errors.Trace(err)
 	}
