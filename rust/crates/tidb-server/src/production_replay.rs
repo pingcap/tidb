@@ -559,11 +559,10 @@ fn replay_corpus_topics_on_unistore() {
 #[test]
 #[ignore = "about seven minutes; the gate script runs it"]
 fn production_replay_stays_within_budget() {
-    // Measured 2026-10-18 after the worker-stack and LOAD STATS fixes: the
-    // nine plan texts the in-process replay also budgets, plus its three
-    // known stale recordings (`session/nontransactional`'s USE_INDEX spacing).
+    // Measured 2026-10-25: only the in-process replay's three known stale
+    // recordings (`session/nontransactional`'s USE_INDEX spacing) remain.
     // Lower these when a divergence is fixed; never raise them.
-    const DIVERGENCE_BUDGET: usize = 8;
+    const DIVERGENCE_BUDGET: usize = 3;
     const OUT_OF_DOMAIN_BUDGET: usize = 0;
     const SHARDS: usize = 8;
 

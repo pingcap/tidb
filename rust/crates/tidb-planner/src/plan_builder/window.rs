@@ -1332,8 +1332,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             Some(unit) => vec![
                 Expression::Column(col.clone()),
                 constant,
+                // Go: `types.NewStringDatum(unit)` typed `TypeVarchar`.
                 Expression::Constant(tidb_expr::constant::Constant::new(
-                    tidb_datatype::Datum::Bytes(unit.clone().into_bytes()),
+                    tidb_datatype::Datum::new_string(unit.clone()),
                     FieldType::new(FieldTypeCode::Varchar),
                 )),
             ],

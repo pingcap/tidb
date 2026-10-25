@@ -2583,17 +2583,18 @@ impl ScalarFunction {
                 );
             }
         }
-        // The `DATE_ADD`/`DATE_SUB` family: the rewriter recorded the INTERVAL
-        // unit in the name (it is a build-time keyword, not a value), so the
-        // two remaining children are ordinary expressions and the shared
-        // `time_fn::calendar::date_add` — the very implementation the AST
-        // evaluator uses — runs them. `ADDDATE`/`SUBDATE` were normalized onto
-        // these same names by the rewriter.
-        if self.args.len() == 2 {
-            let subtract = name.starts_with("date_sub_");
-            if subtract || name.starts_with("date_add_") {
-                return self.eval_date_arithmetic(&name["date_add_".len()..], subtract, ctx, row);
-            }
+        // The `DATE_ADD`/`DATE_SUB` family (`builtinAddSubDate*Sig`): Go
+        // evaluates the unit, the third argument, first, then the date and
+        // interval through the shared `time_fn::calendar::date_add`.
+        if self.args.len() == 3 && matches!(name, "date_add" | "date_sub" | "adddate" | "subdate") {
+            let unit = self.args[2].eval(ctx, row)?;
+            let Some(unit) = crate::arg_eval_type::eval_string(&unit)? else {
+                return Ok(Datum::Null);
+            };
+            let unit = std::str::from_utf8(&unit)
+                .map_err(|_| EvalError::Unsupported("invalid date interval unit"))?;
+            let subtract = matches!(name, "date_sub" | "subdate");
+            return self.eval_date_arithmetic(unit, subtract, ctx, row);
         }
         // Go `builtinDatabaseSig`/`builtinVersionSig` read session state
         // rather than arguments: the current database (NULL when none is

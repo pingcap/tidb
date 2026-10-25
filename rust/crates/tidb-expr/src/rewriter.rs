@@ -3324,21 +3324,18 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 }
             }
             // The `DATE_ADD` family's second argument is an `Expr::Interval`
-            // — a value AND a unit keyword — not an expression the generic
-            // argument loop below can rewrite. The unit is a build-time
-            // choice exactly like a cast's target type, so it travels in the
-            // FUNCTION NAME (`date_add_month`) and the node keeps two
-            // ordinary child expressions; `ScalarFunction::eval` then calls
-            // the same `time_fn::calendar::date_add` the row path uses.
-            // `ADDDATE`/`SUBDATE` are the same shape and the same evaluation
-            // (the parser already normalized their bare-number form to an
-            // `INTERVAL n DAY`), so they map onto the same two names.
+            // -- a value AND a unit keyword. Go's parser hands the function
+            // class three arguments, the unit as an `ast.TimeUnitExpr`, and
+            // the rewriter turns that into a VARCHAR string constant
+            // (`expression_rewriter.go`, `case *ast.TimeUnitExpr`):
+            // `date_add(d, n, "MONTH")`. `ADDDATE`/`SUBDATE` keep their own
+            // names (the parser already normalized their bare-number form to
+            // an `INTERVAL n DAY`).
             if matches!(
                 lowered.as_str(),
                 "date_add" | "date_sub" | "adddate" | "subdate"
             ) {
                 if let [date, Expr::Interval { value, unit }] = args.as_slice() {
-                    let subtract = lowered == "date_sub" || lowered == "subdate";
                     let unit = unit.to_ascii_uppercase();
                     // Only the units `date_add` itself implements are built.
                     // The composite units
@@ -3372,21 +3369,17 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                             "this INTERVAL unit is not yet built for chunk evaluation",
                         ));
                     }
-                    let name = format!(
-                        "{}_{}",
-                        if subtract { "date_sub" } else { "date_add" },
-                        unit.to_ascii_lowercase()
-                    );
                     let args = vec![
                         rewrite_expr_resolved(date, &child_resolver)?,
                         rewrite_expr_resolved(value, &child_resolver)?,
+                        constant(Datum::new_string(unit), FieldTypeCode::Varchar),
                     ];
                     let ret_type =
-                        builtin_return_type(&name, &args).ok_or(EvalError::Unsupported(
+                        builtin_return_type(&lowered, &args).ok_or(EvalError::Unsupported(
                             "this builtin is not yet built for chunk evaluation",
                         ))?;
                     return Ok(Expression::ScalarFunction(ScalarFunction::new(
-                        CiString::new(&name),
+                        CiString::new(&lowered),
                         ret_type,
                         args,
                     )));

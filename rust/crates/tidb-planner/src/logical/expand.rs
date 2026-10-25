@@ -452,10 +452,12 @@ impl LogicalExpand {
 
     /// The `DistinctGbyExprs` lookup both substitution bodies share.
     fn find_distinct_gby_expr(&self, expr: &Expression) -> Option<usize> {
+        // Go compares `CanonicalHashCode`s.
+        let hash = expr.canonical_hash_code();
         self.distinct_gby_exprs
             .iter()
             .take(self.distinct_group_by_col.len())
-            .position(|one| schema_producer::expressions_equal(expr, one))
+            .position(|one| one.canonical_hash_code() == hash)
     }
 
     /// Go `LogicalExpand.Hash64(h)`

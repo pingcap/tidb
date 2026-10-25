@@ -1627,13 +1627,20 @@ impl OwnedRewrite for PushDownTopN<'_> {
             }
             // Go `LogicalUnionAll.PushDownTopN` (`logical_union_all.go:159`): a
             // COPY that keeps `count + offset` rows enters each branch, and the
-            // original stays above.
+            // original stays above. Go builds each branch's copy with its own
+            // `LogicalTopN{...}.Init`, so every copy draws a plan id.
             LogicalPlan::UnionAll(_) | LogicalPlan::PartitionUnionAll(_) => match topn {
                 Some(topn) => {
-                    let per_child =
-                        LogicalUnionAll::push_down_topn_for_child(&topn, self.allocator);
+                    let per_child = (0..child_count)
+                        .map(|_| {
+                            Some(Box::new(LogicalUnionAll::push_down_topn_for_child(
+                                &topn,
+                                self.allocator,
+                            )))
+                        })
+                        .collect();
                     self.stash.push(PendingTopN::Reattach(topn));
-                    Descend::Children(vec![Some(Box::new(per_child)); child_count])
+                    Descend::Children(per_child)
                 }
                 None => {
                     self.stash.push(PendingTopN::Nothing);

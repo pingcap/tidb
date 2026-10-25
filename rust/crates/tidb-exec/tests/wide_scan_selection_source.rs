@@ -225,7 +225,11 @@ fn temporal_and_json_builtins_lower_through_wide_selection() {
             .with_flen(26)
             .with_decimal(6),
     };
-    let date_add = build_call("date_add_year", vec![datetime, PbScalar::IntLiteral(1)])
+    let unit = PbScalar::StringLiteral {
+        value: b"YEAR".to_vec(),
+        field_type: FieldType::new(FieldTypeCode::Varchar),
+    };
+    let date_add = build_call("date_add", vec![datetime, PbScalar::IntLiteral(1), unit])
         .expect("Go's DATE_ADD overload resolves");
     let json = PbScalar::Column {
         offset: 1,

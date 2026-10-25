@@ -4708,7 +4708,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // AllocPlanColumnID() }". The trimmed output columns are FRESH plan
         // columns carrying the kept names, which is what makes EXPLAIN print
         // `Column#14->Column#27` for an aggregate output that this projection
-        // re-exports.
+        // re-exports. Like Go's `Schema.Clone`, the column keeps a populated
+        // `hashcode` cache under its new id, which the projection eliminator
+        // later resolves through (see `replace_grouping_expr`).
         let mut kept_columns: Vec<Column> = schema.columns.into_iter().take(old_len).collect();
         for column in &mut kept_columns {
             column.unique_id = self.column_ids.alloc();

@@ -290,22 +290,6 @@ pub fn new_function_impl(
 
     verify_args_by_count(func_name, func_args.len())?;
 
-    // Go's date-add function class consumes a constant unit argument. Use
-    // the same compiled form as the AST rewriter before deriving its type.
-    let normalized_name;
-    let func_name = if matches!(func_name, "date_add" | "date_sub") && func_args.len() == 3 {
-        let unit = crate::eval_expression_once(&func_args[2], ctx)?
-            .sql_bytes()
-            .map_err(|_| EvalError::Unsupported("invalid date arithmetic unit"))?;
-        let unit = std::str::from_utf8(&unit)
-            .map_err(|_| EvalError::Unsupported("invalid date arithmetic unit"))?;
-        normalized_name = format!("{func_name}_{}", unit.to_ascii_lowercase());
-        func_args.pop();
-        normalized_name.as_str()
-    } else {
-        func_name
-    };
-
     // Go: `if builtinRetTp.GetType() != TypeUnspecified || retType.GetType()
     // == TypeUnspecified { retType = builtinRetTp }`. See the module header's
     // `getFunction` narrowing for why the inference table stands in for
@@ -337,15 +321,7 @@ pub fn new_function_impl(
     let mut ret_type = ret_type;
     crate::rewriter::result_type::stamp_builtin_return_flags(func_name, &func_args, &mut ret_type);
 
-    let function = ScalarFunction::new(
-        CiString::new(if matches!(registered_name, "date_add" | "date_sub") {
-            func_name
-        } else {
-            registered_name
-        }),
-        ret_type,
-        func_args,
-    );
+    let function = ScalarFunction::new(CiString::new(registered_name), ret_type, func_args);
     // Go getFunction refines comparison arguments before collation, the
     // construction callback and the selected constant-folding mode.
     let mut expression = Expression::ScalarFunction(function);

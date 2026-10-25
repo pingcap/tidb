@@ -696,35 +696,18 @@ fn frame_bound_text(
         match calc {
             Expression::ScalarFunction(function) => {
                 let args = function.get_args();
-                // This port names the date arithmetic after its unit
-                // (`date_add_minute_second`); Go's name is `date_add`.
-                let name = function.func_name.lowercase();
-                let name = if name.starts_with("date_add") {
-                    "date_add"
-                } else if name.starts_with("date_sub") {
-                    "date_sub"
-                } else {
-                    &*name
-                };
-                match name {
-                    "date_add" | "date_sub" => {
-                        let lowered = function.func_name.lowercase();
-                        // The unit is the third argument in Go; this port
-                        // folds it into the function name.
-                        let unit = args.get(2).map_or_else(
-                            || {
-                                let suffix = lowered.get(9..).unwrap_or_default();
-                                format!("\"{}\"", suffix.to_ascii_uppercase())
-                            },
-                            |arg| expression_text(eval_ctx, arg),
-                        );
-                        format!(
-                            "interval {} {unit}",
-                            args.get(1)
-                                .map(|arg| expression_text(eval_ctx, arg))
-                                .unwrap_or_default(),
-                        )
-                    }
+                match function.func_name.lowercase() {
+                    // Go `FrameBound.String`: `interval <value> <unit>`, the
+                    // unit being the function's third argument.
+                    "date_add" | "date_sub" => format!(
+                        "interval {} {}",
+                        args.get(1)
+                            .map(|arg| expression_text(eval_ctx, arg))
+                            .unwrap_or_default(),
+                        args.get(2)
+                            .map(|arg| expression_text(eval_ctx, arg))
+                            .unwrap_or_default(),
+                    ),
                     "plus" | "minus" => args
                         .get(1)
                         .map(|arg| expression_text(eval_ctx, arg))

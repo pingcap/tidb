@@ -997,11 +997,15 @@ fn tidb_parse_tso_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(result)
 }
 
-fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
-    let unit = name
-        .strip_prefix("date_add_")
-        .or_else(|| name.strip_prefix("date_sub_"))?;
-    date_arithmetic_return_type(unit, args)
+/// Go `addSubDateFunctionClass.getFunction`: the result type is chosen from
+/// the date and interval arguments and the constant unit, the third argument.
+fn date_add_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [_, _, Expression::Constant(unit)] = args else {
+        return None;
+    };
+    let unit = unit.literal_value()?.sql_bytes().ok()?;
+    let unit = std::str::from_utf8(&unit).ok()?;
+    date_arithmetic_return_type(unit, &args[..2])
 }
 
 pub(crate) fn date_arithmetic_return_type(unit: &str, args: &[Expression]) -> Option<FieldType> {
@@ -1278,8 +1282,8 @@ fn arithmetic_signature_guarded(name: &str, args: &[Expression]) -> Option<Field
     let int = || FieldType::new(FieldTypeCode::LongLong);
     let real = || FieldType::new(FieldTypeCode::Double);
     let vector = || FieldType::new(FieldTypeCode::VectorFloat32);
-    if name.starts_with("date_add_") || name.starts_with("date_sub_") {
-        return date_add_return_type(name, args);
+    if matches!(name, "date_add" | "date_sub" | "adddate" | "subdate") {
+        return date_add_return_type(args);
     }
     Some(match name {
         // ---------------------------------------------------------------

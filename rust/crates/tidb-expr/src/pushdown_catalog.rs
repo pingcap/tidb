@@ -420,34 +420,35 @@ fn temporal_field_type(code: FieldTypeCode, flags: u32) -> tidb_proto::tipb::Fie
     field_type_to_pb(&field_type).expect("supported temporal/json result type")
 }
 
-// DATE_ADD/SUB are named `date_add_<unit>`/`date_sub_<unit>` by the rewriter.
-// Their unit changes the runtime operation and result metadata, but not the
+// DATE_ADD/SUB take Go's three arguments: the date, the interval and the
+// constant unit (`addSubDateFunctionClass` declares the unit `ETString`).
+// The unit changes the runtime operation and result metadata, but not the
 // TiPB signature family.  Keep every Go overload here so an unsupported row
-// cannot accidentally resolve merely because it shares a function prefix.
-const DATE_ARGS_SS: &[EvalType] = &[EvalType::String, EvalType::String];
-const DATE_ARGS_SI: &[EvalType] = &[EvalType::String, EvalType::Int];
-const DATE_ARGS_SR: &[EvalType] = &[EvalType::String, EvalType::Real];
-const DATE_ARGS_SD: &[EvalType] = &[EvalType::String, EvalType::Decimal];
-const DATE_ARGS_IS: &[EvalType] = &[EvalType::Int, EvalType::String];
-const DATE_ARGS_II: &[EvalType] = &[EvalType::Int, EvalType::Int];
-const DATE_ARGS_IR: &[EvalType] = &[EvalType::Int, EvalType::Real];
-const DATE_ARGS_ID: &[EvalType] = &[EvalType::Int, EvalType::Decimal];
-const DATE_ARGS_RS: &[EvalType] = &[EvalType::Real, EvalType::String];
-const DATE_ARGS_RI: &[EvalType] = &[EvalType::Real, EvalType::Int];
-const DATE_ARGS_RR: &[EvalType] = &[EvalType::Real, EvalType::Real];
-const DATE_ARGS_RD: &[EvalType] = &[EvalType::Real, EvalType::Decimal];
-const DATE_ARGS_DS: &[EvalType] = &[EvalType::Decimal, EvalType::String];
-const DATE_ARGS_DI: &[EvalType] = &[EvalType::Decimal, EvalType::Int];
-const DATE_ARGS_DR: &[EvalType] = &[EvalType::Decimal, EvalType::Real];
-const DATE_ARGS_DD: &[EvalType] = &[EvalType::Decimal, EvalType::Decimal];
-const DATE_ARGS_TS: &[EvalType] = &[EvalType::Datetime, EvalType::String];
-const DATE_ARGS_TI: &[EvalType] = &[EvalType::Datetime, EvalType::Int];
-const DATE_ARGS_TR: &[EvalType] = &[EvalType::Datetime, EvalType::Real];
-const DATE_ARGS_TD: &[EvalType] = &[EvalType::Datetime, EvalType::Decimal];
-const DATE_ARGS_HS: &[EvalType] = &[EvalType::Duration, EvalType::String];
-const DATE_ARGS_HI: &[EvalType] = &[EvalType::Duration, EvalType::Int];
-const DATE_ARGS_HR: &[EvalType] = &[EvalType::Duration, EvalType::Real];
-const DATE_ARGS_HD: &[EvalType] = &[EvalType::Duration, EvalType::Decimal];
+// cannot accidentally resolve merely because it shares a function name.
+const DATE_ARGS_SS: &[EvalType] = &[EvalType::String, EvalType::String, EvalType::String];
+const DATE_ARGS_SI: &[EvalType] = &[EvalType::String, EvalType::Int, EvalType::String];
+const DATE_ARGS_SR: &[EvalType] = &[EvalType::String, EvalType::Real, EvalType::String];
+const DATE_ARGS_SD: &[EvalType] = &[EvalType::String, EvalType::Decimal, EvalType::String];
+const DATE_ARGS_IS: &[EvalType] = &[EvalType::Int, EvalType::String, EvalType::String];
+const DATE_ARGS_II: &[EvalType] = &[EvalType::Int, EvalType::Int, EvalType::String];
+const DATE_ARGS_IR: &[EvalType] = &[EvalType::Int, EvalType::Real, EvalType::String];
+const DATE_ARGS_ID: &[EvalType] = &[EvalType::Int, EvalType::Decimal, EvalType::String];
+const DATE_ARGS_RS: &[EvalType] = &[EvalType::Real, EvalType::String, EvalType::String];
+const DATE_ARGS_RI: &[EvalType] = &[EvalType::Real, EvalType::Int, EvalType::String];
+const DATE_ARGS_RR: &[EvalType] = &[EvalType::Real, EvalType::Real, EvalType::String];
+const DATE_ARGS_RD: &[EvalType] = &[EvalType::Real, EvalType::Decimal, EvalType::String];
+const DATE_ARGS_DS: &[EvalType] = &[EvalType::Decimal, EvalType::String, EvalType::String];
+const DATE_ARGS_DI: &[EvalType] = &[EvalType::Decimal, EvalType::Int, EvalType::String];
+const DATE_ARGS_DR: &[EvalType] = &[EvalType::Decimal, EvalType::Real, EvalType::String];
+const DATE_ARGS_DD: &[EvalType] = &[EvalType::Decimal, EvalType::Decimal, EvalType::String];
+const DATE_ARGS_TS: &[EvalType] = &[EvalType::Datetime, EvalType::String, EvalType::String];
+const DATE_ARGS_TI: &[EvalType] = &[EvalType::Datetime, EvalType::Int, EvalType::String];
+const DATE_ARGS_TR: &[EvalType] = &[EvalType::Datetime, EvalType::Real, EvalType::String];
+const DATE_ARGS_TD: &[EvalType] = &[EvalType::Datetime, EvalType::Decimal, EvalType::String];
+const DATE_ARGS_HS: &[EvalType] = &[EvalType::Duration, EvalType::String, EvalType::String];
+const DATE_ARGS_HI: &[EvalType] = &[EvalType::Duration, EvalType::Int, EvalType::String];
+const DATE_ARGS_HR: &[EvalType] = &[EvalType::Duration, EvalType::Real, EvalType::String];
+const DATE_ARGS_HD: &[EvalType] = &[EvalType::Duration, EvalType::Decimal, EvalType::String];
 
 const fn date_arg_types(from: EvalType, to: EvalType) -> &'static [EvalType] {
     match (from, to) {
@@ -847,13 +848,15 @@ const DATE_SUB_SIGNATURES: &[BuiltinSignature] = &[
 /// that overload choice here is important because the protobuf signature also
 /// determines the implicit argument casts and result field type.
 fn resolve_date_arithmetic(name: &str, args: &[PbScalar]) -> Option<&'static BuiltinSignature> {
-    let subtract = name.starts_with("date_sub_");
-    if !subtract && !name.starts_with("date_add_") {
-        return None;
-    }
-    let [first, second] = args else {
+    let subtract = match name {
+        "date_add" | "adddate" => false,
+        "date_sub" | "subdate" => true,
+        _ => return None,
+    };
+    let [first, second, PbScalar::StringLiteral { value: unit, .. }] = args else {
         return None;
     };
+    let unit = std::str::from_utf8(unit).ok()?.to_ascii_uppercase();
     // Go normalizes TIMESTAMP and JSON date operands before selecting its
     // overload (`timestamp` behaves as `datetime`, JSON as `string`).
     let first_type = match first.eval_type() {
@@ -870,20 +873,19 @@ fn resolve_date_arithmetic(name: &str, args: &[PbScalar]) -> Option<&'static Bui
     } else {
         DATE_ADD_SIGNATURES
     };
+    let arg_types = [first_type, second_type, EvalType::String];
     let mut matches = candidates
         .iter()
-        .filter(|candidate| candidate.arg_types == [first_type, second_type]);
+        .filter(|candidate| candidate.arg_types == arg_types);
     let first_match = matches.next()?;
     if first_match.ret == EvalType::Duration {
-        let unit = name.rsplit('_').next()?.to_ascii_uppercase();
         let date_unit = matches!(
             unit.as_str(),
             "DAY" | "WEEK" | "MONTH" | "QUARTER" | "YEAR" | "YEAR_MONTH"
         );
-        if date_unit && unit != "DAY_MICROSECOND" {
+        if date_unit {
             return candidates.iter().find(|candidate| {
-                candidate.arg_types == [first_type, second_type]
-                    && candidate.ret == EvalType::Datetime
+                candidate.arg_types == arg_types && candidate.ret == EvalType::Datetime
             });
         }
     }
@@ -4949,32 +4951,46 @@ mod tests {
     /// calls must select their exact upstream signature numbers.
     #[test]
     fn temporal_and_json_families_lower_with_go_signatures_and_casts() {
+        // Go's `ast.TimeUnitExpr` constant: DATE_ADD/SUB's third argument.
+        let unit = |name: &str| PbScalar::StringLiteral {
+            value: name.as_bytes().to_vec(),
+            field_type: FieldType::new(FieldTypeCode::Varchar),
+        };
         let cases = [
             (
                 build_call(
-                    "date_add_year",
-                    vec![column(FieldTypeCode::Datetime), PbScalar::IntLiteral(1)],
+                    "date_add",
+                    vec![
+                        column(FieldTypeCode::Datetime),
+                        PbScalar::IntLiteral(1),
+                        unit("YEAR"),
+                    ],
                 )
                 .unwrap(),
                 ScalarFuncSig::AddDateDatetimeInt,
             ),
             (
                 build_call(
-                    "date_add_second",
-                    vec![column(FieldTypeCode::VarString), PbScalar::IntLiteral(1)],
+                    "date_add",
+                    vec![
+                        column(FieldTypeCode::VarString),
+                        PbScalar::IntLiteral(1),
+                        unit("SECOND"),
+                    ],
                 )
                 .unwrap(),
                 ScalarFuncSig::AddDateStringInt,
             ),
             (
                 build_call(
-                    "date_sub_hour",
+                    "date_sub",
                     vec![
                         column(FieldTypeCode::Duration),
                         PbScalar::Column {
                             offset: 1,
                             field_type: FieldType::new(FieldTypeCode::VarString),
                         },
+                        unit("HOUR"),
                     ],
                 )
                 .unwrap(),

@@ -247,10 +247,10 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // EXPLAIN text is compared whole, and some plans still differ from Go's in
     // id allocation, estimates or operator choice (measured 2026-10-17: 37; 82 after
     // the JSON argument casts, the RANGE pruner, the handle ordering and derived TopN, mostly
-    // index-merge paths and grouped-range ordered scans). They are
-    // budgeted apart: the number may only go down, and lowering the constant
-    // records a fixed plan.
-    const PLAN_TEXT_BUDGET: usize = 5;
+    // index-merge paths and grouped-range ordered scans; 0 on 2026-10-25). They
+    // are budgeted apart: the number may only go down, and lowering the
+    // constant records a fixed plan.
+    const PLAN_TEXT_BUDGET: usize = 0;
     let (plan_text, other): (Vec<&String>, Vec<&String>) = total
         .divergences
         .iter()

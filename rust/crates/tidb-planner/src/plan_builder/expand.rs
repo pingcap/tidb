@@ -419,7 +419,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let Some(block) = &self.current_block_expand else {
             return expr;
         };
-        replace_grouping_expr(&expr, block)
+        replace_grouping_expr(expr, block)
     }
 
     /// [`Self::replace_grouping_func`] over every `ByItems` of an already-built
@@ -479,35 +479,52 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 }
 
-/// The recursive half of `resolveGroupingTraverseAction.Transform` (`:1700`).
-fn replace_grouping_expr(expr: &Expression, block: &BlockExpand) -> Expression {
+/// Go `resolveGroupingTraverseAction.Transform` (`logical_plan_builder.go:1692`).
+///
+/// Go matches by `CanonicalHashCode`, which for a column fills its lazy
+/// `hashcode` cache. The column keeps that cache when the projection reuses
+/// it as its output column, and `buildSelect`'s trailing projection clones it
+/// before reallocating the `UniqueID`. The projection eliminator then resolves
+/// the clone through the stale cache back to the original column. So the
+/// column returned here keeps its populated cache, as Go's does.
+fn replace_grouping_expr(expr: Expression, block: &BlockExpand) -> Expression {
     match expr {
-        // "column: resolve it to the grouping set col if any."
-        Expression::Column(_) => {
-            substitute_grouping_col(expr, block).unwrap_or_else(|| expr.clone())
+        Expression::Column(mut column) => {
+            let hash = column.hash_code().to_vec();
+            substitute_grouping_col(&hash, block).unwrap_or(Expression::Column(column))
+        }
+        // "select 1 in (select t2.a from t group by t2.a, b with rollup) from
+        // t2": a correlated group-by item resolves the same way.
+        Expression::CorrelatedColumn(mut column) => {
+            let hash = column.hash_code().to_vec();
+            substitute_grouping_col(&hash, block).unwrap_or(Expression::CorrelatedColumn(column))
         }
         // "constant just keep it real: select 1 from t group by a, b with rollup."
-        Expression::Constant(_) => expr.clone(),
-        Expression::ScalarFunction(function) => {
-            if let Some(substituted) = substitute_grouping_col(expr, block) {
+        Expression::Constant(_) => expr,
+        // "scalar function just try to resolve itself first, then if not
+        // changed, trying resolve its children."
+        Expression::ScalarFunction(mut function) => {
+            let hash = function.canonical_hash_code();
+            if let Some(substituted) = substitute_grouping_col(&hash, block) {
                 return substituted;
             }
-            let mut function = function.clone();
-            for arg in &mut function.args {
-                *arg = replace_grouping_expr(arg, block);
-            }
+            function.args = std::mem::take(&mut function.args)
+                .into_iter()
+                .map(|arg| replace_grouping_expr(arg, block))
+                .collect();
             Expression::ScalarFunction(function)
         }
-        other => other.clone(),
     }
 }
 
-/// [`LogicalExpand::try_substitute_expr_with_grouping_set_col`] against the
-/// block record, which is what the builder holds rather than the operator.
-fn substitute_grouping_col(expr: &Expression, block: &BlockExpand) -> Option<Expression> {
-    let position = block.distinct_group_by_exprs.iter().position(|candidate| {
-        crate::logical::schema_producer::expressions_equal(expr, candidate)
-    })?;
+/// Go `LogicalExpand.TrySubstituteExprWithGroupingSetCol`
+/// (`logical_expand.go:290`) against the block record, which is what the
+/// builder holds rather than the operator.
+fn substitute_grouping_col(hash: &[u8], block: &BlockExpand) -> Option<Expression> {
+    let position = block
+        .distinct_group_by_exprs
+        .iter()
+        .position(|candidate| candidate.canonical_hash_code() == hash)?;
     block
         .distinct_group_by_cols
         .get(position)
@@ -537,7 +554,7 @@ impl BlockExpand {
         }
         let mut marks = Vec::with_capacity(args.len());
         for (index, arg) in args.iter().enumerate() {
-            let substituted = substitute_grouping_col(arg, self);
+            let substituted = substitute_grouping_col(&arg.canonical_hash_code(), self);
             let col = match substituted.as_ref().unwrap_or(arg) {
                 Expression::Column(col) => Some(col),
                 _ => None,
