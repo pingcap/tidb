@@ -1446,6 +1446,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 					UniqueID: planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID(),
 					RetType:  key.GetType(er.sctx.GetEvalCtx()).Clone(),
 				}
+				projCol.SetCoercibility(key.Coercibility())
+				projCol.SetRepertoire(key.Repertoire())
 				projCols = append(projCols, projCol)
 				if src, ok := logicalop.ExtractCastSourceColumn(key); ok {
 					if projectedCastSources == nil {
