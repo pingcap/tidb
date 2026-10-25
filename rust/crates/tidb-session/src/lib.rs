@@ -1340,7 +1340,7 @@ pub use tidb_executor::TxnErrorKind;
 
 mod account;
 pub mod slow_log;
-pub mod slow_log_rules;
+pub use tidb_variable::slow_log_rules;
 pub mod trace;
 mod show_placement;
 mod index_advisor;
@@ -1388,7 +1388,7 @@ mod session_plan_cache;
 use record_set::StatementCompletion;
 pub use record_set::{OpenedStatement, SessionRecordSet, StatementExecution, StatementRecordSet};
 mod resource_group;
-pub mod session_vars;
+pub use tidb_variable::session_vars;
 mod store_helper;
 mod stmt_ctx;
 mod table_lock;
@@ -1410,7 +1410,7 @@ pub use txn::{
 mod user_table;
 pub mod util_config;
 mod variables;
-pub mod varsutil;
+pub use tidb_variable::varsutil;
 mod warnings;
 pub(crate) use classify::{
     statement_kind_of, statement_not_fill_cache, statement_priority_of, StatementKind,
@@ -1431,8 +1431,10 @@ mod show_create_placement_policy;
 mod show_index;
 mod stats_lock_arm;
 pub use tidb_vardef::statusvar;
-pub mod sysvar;
+pub use tidb_variable::sysvar;
 pub mod vars;
+#[cfg(test)]
+mod tests_variable_session;
 pub use vars::{GlobalSysvars, SessionVars, VarError};
 
 impl Session {

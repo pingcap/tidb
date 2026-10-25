@@ -230,34 +230,7 @@ pub struct JsonSqlWarnForSlowLog {
 /// Go `RewritePhaseInfo` and `DurationOptimizer`, which the planner sets.
 pub use tidb_executor::phase_durations::{DurationOptimizer, RewritePhaseInfo};
 
-/// Go `execdetails.LoadTiKVExecDetails(util.ExecDetails)`'s snapshot: the
-/// statement's client-go waits and traffic the `KV_total` .. `Unpacked_*`
-/// lines print.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct KvExecDetails {
-    /// Go `WaitKVRespDuration`.
-    pub wait_kv_resp_duration: Duration,
-    /// Go `WaitPDRespDuration`.
-    pub wait_pd_resp_duration: Duration,
-    /// Go `BackoffDuration`.
-    pub backoff_duration: Duration,
-    /// Go `UnpackedBytesSentKVTotal`.
-    pub unpacked_bytes_sent_kv_total: i64,
-    /// Go `UnpackedBytesReceivedKVTotal`.
-    pub unpacked_bytes_received_kv_total: i64,
-    /// Go `UnpackedBytesSentKVCrossZone`.
-    pub unpacked_bytes_sent_kv_cross_zone: i64,
-    /// Go `UnpackedBytesReceivedKVCrossZone`.
-    pub unpacked_bytes_received_kv_cross_zone: i64,
-    /// Go `UnpackedBytesSentMPPTotal`.
-    pub unpacked_bytes_sent_mpp_total: i64,
-    /// Go `UnpackedBytesReceivedMPPTotal`.
-    pub unpacked_bytes_received_mpp_total: i64,
-    /// Go `UnpackedBytesSentMPPCrossZone`.
-    pub unpacked_bytes_sent_mpp_cross_zone: i64,
-    /// Go `UnpackedBytesReceivedMPPCrossZone`.
-    pub unpacked_bytes_received_mpp_cross_zone: i64,
-}
+pub use tidb_util::execdetails::exec_details::KvExecDetails;
 
 /// Go `execdetails.LoadTiKVExecDetails(ctx.Value(util.ExecDetailsKey))`:
 /// client-rust charges the statement's `ExecDetails` itself, traffic
@@ -269,23 +242,24 @@ pub fn load_tikv_exec_details(
     exec_details.snapshot()
 }
 
-impl From<&tikv_client::util::ExecDetailsSnapshot> for KvExecDetails {
-    fn from(snapshot: &tikv_client::util::ExecDetailsSnapshot) -> Self {
-        let nanos = |value: i64| Duration::from_nanos(u64::try_from(value).unwrap_or(0));
-        let traffic = &snapshot.traffic;
-        Self {
-            wait_kv_resp_duration: nanos(snapshot.wait_kv_response_duration_ns),
-            wait_pd_resp_duration: nanos(snapshot.wait_pd_response_duration_ns),
-            backoff_duration: nanos(snapshot.backoff_duration_ns),
-            unpacked_bytes_sent_kv_total: traffic.sent_kv_total,
-            unpacked_bytes_received_kv_total: traffic.received_kv_total,
-            unpacked_bytes_sent_kv_cross_zone: traffic.sent_kv_cross_zone,
-            unpacked_bytes_received_kv_cross_zone: traffic.received_kv_cross_zone,
-            unpacked_bytes_sent_mpp_total: traffic.sent_mpp_total,
-            unpacked_bytes_received_mpp_total: traffic.received_mpp_total,
-            unpacked_bytes_sent_mpp_cross_zone: traffic.sent_mpp_cross_zone,
-            unpacked_bytes_received_mpp_cross_zone: traffic.received_mpp_cross_zone,
-        }
+/// [`KvExecDetails`] from client-rust's snapshot (Go's `LoadTiKVExecDetails`
+/// reads client-go's `util.ExecDetails` the same way).
+#[must_use]
+pub fn kv_exec_details(snapshot: &tikv_client::util::ExecDetailsSnapshot) -> KvExecDetails {
+    let nanos = |value: i64| Duration::from_nanos(u64::try_from(value).unwrap_or(0));
+    let traffic = &snapshot.traffic;
+    KvExecDetails {
+        wait_kv_resp_duration: nanos(snapshot.wait_kv_response_duration_ns),
+        wait_pd_resp_duration: nanos(snapshot.wait_pd_response_duration_ns),
+        backoff_duration: nanos(snapshot.backoff_duration_ns),
+        unpacked_bytes_sent_kv_total: traffic.sent_kv_total,
+        unpacked_bytes_received_kv_total: traffic.received_kv_total,
+        unpacked_bytes_sent_kv_cross_zone: traffic.sent_kv_cross_zone,
+        unpacked_bytes_received_kv_cross_zone: traffic.received_kv_cross_zone,
+        unpacked_bytes_sent_mpp_total: traffic.sent_mpp_total,
+        unpacked_bytes_received_mpp_total: traffic.received_mpp_total,
+        unpacked_bytes_sent_mpp_cross_zone: traffic.sent_mpp_cross_zone,
+        unpacked_bytes_received_mpp_cross_zone: traffic.received_mpp_cross_zone,
     }
 }
 
@@ -1440,7 +1414,7 @@ mod tests {
         exec_details.traffic.add_request(100, true, false);
         exec_details.traffic.add_response(40, true, true);
         let snapshot = load_tikv_exec_details(&exec_details);
-        let detail = KvExecDetails::from(&snapshot);
+        let detail = kv_exec_details(&snapshot);
         let mut buf = String::new();
         kv_exec_detail_format(&mut buf, Some(&detail));
         assert_eq!(

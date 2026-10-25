@@ -395,14 +395,7 @@ where
 
 /// Go `validateDest`.
 pub fn validate_dest(value: &str) -> Result<String, String> {
-    let value = value.to_ascii_lowercase();
-    if value.is_empty() || value == "table" {
-        Ok(value)
-    } else {
-        Err(format!(
-            "Variable '{REPOSITORY_DEST}' can't be set to the value of '{value}': valid values are '' and 'table'"
-        ))
-    }
+    tidb_variable::sysvar::validate_workload_repository_dest(value)
 }
 
 /// Domain's owner-manager constructor.

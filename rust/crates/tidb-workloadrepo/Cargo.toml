@@ -11,6 +11,7 @@ description = "TiDB workload repository worker"
 workspace = true
 
 [dependencies]
+tidb-variable = { path = "../tidb-variable" }
 chrono.workspace = true
 tidb-owner = { path = "../tidb-owner" }
 tidb-pd-client = { path = "../tidb-pd-client" }

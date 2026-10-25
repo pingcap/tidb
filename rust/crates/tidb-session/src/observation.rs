@@ -1285,7 +1285,7 @@ impl Session {
         let mem_max = self.session_memory.session_tracker().max_consumed();
         let disk_max = self.session_memory.session_disk_tracker().max_consumed();
         let durations = self.phase_durations.snapshot();
-        let kv_exec_detail = crate::slow_log::KvExecDetails::from(
+        let kv_exec_detail = crate::slow_log::kv_exec_details(
             &crate::slow_log::load_tikv_exec_details(&observation.exec_details),
         );
         if let Some(rules) = rules {

@@ -26,6 +26,35 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::sync::Mutex;
+/// Go `execdetails.LoadTiKVExecDetails(util.ExecDetails)`'s snapshot: the
+/// statement's client-go waits and traffic the `KV_total` .. `Unpacked_*`
+/// lines print.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KvExecDetails {
+    /// Go `WaitKVRespDuration`.
+    pub wait_kv_resp_duration: std::time::Duration,
+    /// Go `WaitPDRespDuration`.
+    pub wait_pd_resp_duration: std::time::Duration,
+    /// Go `BackoffDuration`.
+    pub backoff_duration: std::time::Duration,
+    /// Go `UnpackedBytesSentKVTotal`.
+    pub unpacked_bytes_sent_kv_total: i64,
+    /// Go `UnpackedBytesReceivedKVTotal`.
+    pub unpacked_bytes_received_kv_total: i64,
+    /// Go `UnpackedBytesSentKVCrossZone`.
+    pub unpacked_bytes_sent_kv_cross_zone: i64,
+    /// Go `UnpackedBytesReceivedKVCrossZone`.
+    pub unpacked_bytes_received_kv_cross_zone: i64,
+    /// Go `UnpackedBytesSentMPPTotal`.
+    pub unpacked_bytes_sent_mpp_total: i64,
+    /// Go `UnpackedBytesReceivedMPPTotal`.
+    pub unpacked_bytes_received_mpp_total: i64,
+    /// Go `UnpackedBytesSentMPPCrossZone`.
+    pub unpacked_bytes_sent_mpp_cross_zone: i64,
+    /// Go `UnpackedBytesReceivedMPPCrossZone`.
+    pub unpacked_bytes_received_mpp_cross_zone: i64,
+}
+
 #[cfg(test)]
 use std::sync::Arc;
 use std::time::Duration;

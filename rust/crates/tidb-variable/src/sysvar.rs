@@ -596,7 +596,7 @@ pub struct SysVarDef {
 impl SysVarDef {
     /// A fill value for the catalog merge's output array before every slot is
     /// written. It is never observed: the merge writes exactly `TOTAL` slots.
-    pub(crate) const PLACEHOLDER: Self = Self {
+    pub const PLACEHOLDER: Self = Self {
         name: "",
         global_config_name: "",
         scope: 0,
@@ -689,7 +689,7 @@ pub use catalog::SYS_VARS;
 /// that arrives is already lowercase -- parser output and internal callers
 /// both speak in the registry's own casing. `to_ascii_lowercase()` allocates
 /// for every one of them; the scan proves most calls need no copy at all.
-pub(crate) fn lowered_if_needed(name: &str) -> std::borrow::Cow<'_, str> {
+pub fn lowered_if_needed(name: &str) -> std::borrow::Cow<'_, str> {
     if name.bytes().any(|byte| byte.is_ascii_uppercase()) {
         std::borrow::Cow::Owned(name.to_ascii_lowercase())
     } else {
@@ -753,7 +753,7 @@ pub fn install_sem_v2_sysvar_registry() {
 /// for callers that want the slot itself -- the global-variable snapshot is
 /// indexed by registry position so a read needs no second string probe.
 #[must_use]
-pub(crate) fn sys_var_index_lookup(name: &str) -> Option<usize> {
+pub fn sys_var_index_lookup(name: &str) -> Option<usize> {
     let lowered = lowered_if_needed(name);
     sys_var_index().get(lowered.as_ref()).copied()
 }
@@ -767,13 +767,13 @@ pub(crate) fn sys_var_index_lookup(name: &str) -> Option<usize> {
 /// read. The index never changes for a given name, so a call site with a
 /// literal name resolves it once and pays only the slot read afterwards;
 /// the value and every scope rule are exactly what the by-name read gives.
-pub(crate) struct StaticSysVarIndex {
+pub struct StaticSysVarIndex {
     name: &'static str,
     index: std::sync::OnceLock<usize>,
 }
 
 impl StaticSysVarIndex {
-    pub(crate) const fn new(name: &'static str) -> Self {
+    pub const fn new(name: &'static str) -> Self {
         Self {
             name,
             index: std::sync::OnceLock::new(),
@@ -783,7 +783,7 @@ impl StaticSysVarIndex {
     /// The registry index of this variable. Panics only for a name that is
     /// not a registered system variable, which is a programming error in the
     /// call site's literal.
-    pub(crate) fn get(&self) -> usize {
+    pub fn get(&self) -> usize {
         *self.index.get_or_init(|| {
             sys_var_index_lookup(self.name).expect("a registered system variable name")
         })
@@ -1006,9 +1006,9 @@ pub struct Validated {
 /// `HH:MM` value and preserving an explicitly supplied numeric offset. The
 /// registry-level validator uses UTC; GLOBAL SQL writes call this helper again
 /// with the issuing session's location before the value reaches the hook.
-pub(crate) fn normalize_time_value(
+pub fn normalize_time_value(
     value: &str,
-    zone: &tidb_executor::SessionTimeZone,
+    zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<String, ValidationError> {
     // `vardef.LocalDayTimeFormat` / `vardef.FullDayTimeFormat`, chosen by
     // length as Go does; the parse error IS the SET error (1105).
@@ -1044,7 +1044,7 @@ pub(crate) fn normalize_time_value(
 /// comma-split engines trim,
 /// canonicalize case-insensitively to tikv/tiflash/tidb, and an empty or
 /// unknown engine refuses the SET with `ErrWrongValueForVar`.
-pub(crate) fn normalize_isolation_read_engines_value(normalized: &str) -> Result<String, ()> {
+pub fn normalize_isolation_read_engines_value(normalized: &str) -> Result<String, ()> {
     let engines = normalized.split(',');
     let mut formatted = String::new();
     for (index, engine) in engines.enumerate() {
@@ -1172,7 +1172,7 @@ impl SysVarDef {
             VarType::Float => self.check_float(value),
             VarType::Enum => self.check_enum(value),
             VarType::Time => Ok(Validated {
-                value: normalize_time_value(value, &tidb_executor::SessionTimeZone::utc())?,
+                value: normalize_time_value(value, &tidb_datatype::SessionTimeZone::utc())?,
                 truncated: false,
             }),
             VarType::Duration => self.check_duration(value),
@@ -1203,7 +1203,7 @@ impl SysVarDef {
         lookup: Option<&dyn Fn(&str) -> Option<String>>,
     ) -> Result<Validated, ValidationError> {
         if self.name == "tiflash_compute_dispatch_policy" {
-            tidb_exec::tiflash_compute::DispatchPolicy::parse(&validated.value)
+            tidb_util::tiflashcompute::DispatchPolicy::parse(&validated.value)
                 .map_err(ValidationError::Refused)?;
         }
         if let Some(lookup) = lookup {
@@ -1623,7 +1623,7 @@ impl SysVarDef {
             ));
         }
         if self.name == "tidb_workload_repository_dest" {
-            return tidb_workloadrepo::validate_dest(&validated.value)
+            return validate_workload_repository_dest(&validated.value)
                 .map(|value| Validated {
                     value,
                     truncated: validated.truncated,
@@ -2527,7 +2527,7 @@ pub fn order_by_dependency<S: AsRef<str>>(names: &[S]) -> Vec<String> {
 /// resolve through: a name outside the parser registry is
 /// `ErrUnknownCollation`, and a registered collation the new collation
 /// framework does not implement is `ErrUnsupportedCollation`. Both are 1273.
-pub(crate) fn supported_collation(
+pub fn supported_collation(
     value: &str,
     original: &str,
 ) -> Result<tidb_datatype::CollationInfo, SqlError> {
@@ -2587,6 +2587,19 @@ fn pipelined_dml_resource_policy_is_valid(value: &str) -> bool {
             _ => false,
         }
     })
+}
+
+/// Go workloadrepo's `tidb_workload_repository_dest` validation, which Go's
+/// workload repository registers with this package: `''` or `table`.
+pub fn validate_workload_repository_dest(value: &str) -> Result<String, String> {
+    let value = value.to_ascii_lowercase();
+    if value.is_empty() || value == "table" {
+        Ok(value)
+    } else {
+        Err(format!(
+            "Variable 'tidb_workload_repository_dest' can't be set to the value of '{value}': valid values are '' and 'table'"
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -2758,44 +2771,6 @@ mod tests {
 
     /// Go `TestSettersandGetters`: scope metadata must agree with the live
     /// session/global setter routes, including read-only and internal names.
-    #[test]
-    fn setter_scope_contract_matches_go() {
-        let mut vars = crate::vars::SessionVars::new();
-        for definition in SYS_VARS {
-            if !definition.has_session_scope() {
-                let error = vars
-                    .set_system(definition.name, definition.value.to_owned())
-                    .expect_err("SESSION must reject a non-session variable");
-                assert!(
-                    matches!(
-                        error,
-                        crate::vars::VarError::ReadOnlyVariable(_)
-                            | crate::vars::VarError::GlobalOnlyVariable(_)
-                            | crate::vars::VarError::UnknownSystemVariable(_)
-                    ),
-                    "unexpected SESSION error for {}: {error:?}",
-                    definition.name
-                );
-            }
-            if !definition.has_global_scope() && !definition.has_instance_scope() {
-                let error = vars
-                    .set_global(definition.name, definition.value.to_owned())
-                    .expect_err("GLOBAL must reject a non-global/non-instance variable");
-                assert!(
-                    matches!(
-                        error,
-                        crate::vars::VarError::ReadOnlyVariable(_)
-                            | crate::vars::VarError::SessionOnlyVariable(_)
-                    ),
-                    "unexpected GLOBAL error for {}: {error:?}",
-                    definition.name
-                );
-            }
-        }
-    }
-
-    /// Go `TestInstanceConfigHasMatchingSysvar`: every serialized `[instance]`
-    /// option must have a same-named system variable for unified routing.
     #[test]
     fn instance_config_keys_have_matching_sysvars() {
         let json = tidb_config::config_tree::new_config()

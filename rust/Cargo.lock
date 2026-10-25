@@ -4335,6 +4335,7 @@ dependencies = [
  "tidb-unistore",
  "tidb-util",
  "tidb-vardef",
+ "tidb-variable",
  "tidb-workloadrepo",
  "tikv-client",
  "tokio",
@@ -4801,6 +4802,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-variable"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde_json",
+ "tidb-config",
+ "tidb-datatype",
+ "tidb-error",
+ "tidb-hack",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-naming",
+ "tidb-parser",
+ "tidb-util",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-workloadrepo"
 version = "0.0.0"
 dependencies = [
@@ -4809,6 +4828,7 @@ dependencies = [
  "tidb-owner",
  "tidb-pd-client",
  "tidb-stmtsummary",
+ "tidb-variable",
 ]
 
 [[package]]

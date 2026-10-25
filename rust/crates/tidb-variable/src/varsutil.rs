@@ -35,7 +35,7 @@ use tidb_vardef::tidb_vars::{
     ASSERTION_FAST_STR, ASSERTION_STRICT_STR, ON, TIDB_ANALYZE_SKIP_COLUMN_TYPES, WARN,
 };
 
-use crate::vars::VarError;
+use crate::VarError;
 use tidb_util::stringutil::go_to_lower;
 
 /// Go `OffInt`.

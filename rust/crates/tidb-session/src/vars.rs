@@ -1761,39 +1761,12 @@ impl tidb_domain::sysvar_cache::SysVarCacheDeps for SysVarCacheRebuild<'_> {
     fn resize_info_cache(&self) {}
 }
 
-/// Why a variable statement failed.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum VarError {
-    /// Go `ErrUnknownSystemVar` (1193).
-    UnknownSystemVariable(String),
-    /// Go `ErrVariableNoLongerSupported` (8136), used by the expression
-    /// read path for a removed system variable.
-    RemovedSystemVariable { name: String, reason: String },
-    /// Go `ErrIncorrectGlobalLocalVar` (1238): the variable is read-only.
-    ReadOnlyVariable(String),
-    /// Go `ErrWrongTypeForVar` (1232).
-    WrongTypeForVar(String),
-    /// Go `ErrWrongValueForVar` (1231).
-    WrongValueForVar(String, String),
-    /// A catalogued MySQL error returned unchanged by validation.
-    SqlError(tidb_error::mysql::SqlError),
-    /// Go `ErrLocalVariable` (1228): `SET GLOBAL` named a SESSION-only
-    /// variable.
-    SessionOnlyVariable(String),
-    /// Go `ErrGlobalVariable` (1229): `SET SESSION` named a GLOBAL-only
-    /// variable.
-    GlobalOnlyVariable(String),
-    /// Go `ErrIncorrectGlobalLocalVar` (1238), the read-side form: `SELECT
-    /// @@global.x` named a SESSION-only variable (there is no GLOBAL copy to
-    /// read).
-    NoGlobalCopy(String),
-    /// Go `ErrIncorrectScope` (1238), the expression rewriter's explicit read
-    /// scope validation. The second field is Go's allowed-scope text, such as
-    /// `GLOBAL` or `SESSION or GLOBAL`.
-    IncorrectScope(String, &'static str),
-    /// A `SysVar.Validation` closure's own `errors.Errorf`, whose wording is
-    /// the whole error (Go gives it no code, so it reports as 1105).
-    ValidationRefused(String),
+pub use tidb_variable::VarError;
+
+impl tidb_variable::session_vars::SystemVars for SessionVars {
+    fn get_system(&self, name: &str) -> Option<String> {
+        SessionVars::get_system(self, name).ok()
+    }
 }
 
 /// A session's system-variable state: the variables it has overridden (Go's

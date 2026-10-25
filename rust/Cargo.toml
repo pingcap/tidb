@@ -83,6 +83,7 @@ members = [
     "crates/tidb-stmtsummary",
     "crates/tidb-server",
     "crates/tidb-session",
+    "crates/tidb-variable",
     "crates/tidb-domain",
     "crates/tidb-ddl-copr",
     "crates/tidb-ddl-mock",
