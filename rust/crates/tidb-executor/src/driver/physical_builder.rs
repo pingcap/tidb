@@ -2566,6 +2566,12 @@ fn build_index_reader(
 ) -> Result<Box<dyn Executor>, DriverError> {
     let scan = embedded_index_scan(index_plan)
         .ok_or_else(|| DriverError::unsupported("a physical index reader has no index scan"))?;
+    // Go's mem readers answer in index order whatever the reader's
+    // `keepOrder` (`memIndexLookUpReader.getMemRowsIter` turns the buffered
+    // index entries' handles into table ranges in that order), and
+    // `UnionScanExec.getOneRow` merges them with the snapshot stream by
+    // `usedIndex`; handle order would append the staged rows instead.
+    let keep_order = keep_order || storage.is_mem_buffer();
     let (mut table, separated) = storage.table(
         catalog
             .physical_kv_table_by_id(scan.table_id)

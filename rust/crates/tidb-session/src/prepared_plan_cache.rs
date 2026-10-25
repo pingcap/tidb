@@ -393,7 +393,10 @@ impl Visitor for CacheableChecker<'_> {
 mod tests {
     use crate::Session;
 
-    fn verdict(session: &Session, sql: &str) -> Result<(), String> {
+    fn verdict(session: &mut Session, sql: &str) -> Result<(), String> {
+        // A node session's catalog catches up with its node first, as
+        // every statement and PREPARE through the node does.
+        session.refresh_node_catalog().expect("refresh catalog");
         let mut statement = session.parse_statement(sql).expect("parse");
         let catalog = session.lock_catalog().expect("catalog");
         session.prepared_statement_cacheable(&mut statement, &catalog)
@@ -401,10 +404,10 @@ mod tests {
 
     #[test]
     fn parameterized_window_frames_are_never_cacheable() {
-        let session = Session::new();
+        let mut session = Session::new();
         assert_eq!(
             verdict(
-                &session,
+                &mut session,
                 "SELECT SUM(a) OVER (ORDER BY a ROWS BETWEEN ? PRECEDING AND CURRENT ROW) FROM t"
             ),
             Err("query has ? in window function frames is un-cacheable".to_owned())
@@ -420,7 +423,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             verdict(
-                &session,
+                &mut session,
                 "SELECT * FROM t WHERE a IN (SELECT a FROM t WHERE a > ?)"
             ),
             Err("query has sub-queries is un-cacheable".to_owned())
@@ -429,7 +432,7 @@ mod tests {
             .run("SET tidb_enable_plan_cache_for_subquery = ON")
             .unwrap();
         assert!(verdict(
-            &session,
+            &mut session,
             "SELECT * FROM t WHERE a IN (SELECT a FROM t WHERE a > ?)"
         )
         .is_ok());
@@ -440,7 +443,7 @@ mod tests {
         let mut session = Session::new();
         session.run("CREATE TABLE t (a int)").unwrap();
         assert!(verdict(
-            &session,
+            &mut session,
             "WITH c AS (SELECT a FROM t) SELECT * FROM c WHERE a > ?"
         )
         .is_ok());
@@ -453,7 +456,7 @@ mod tests {
             .run("CREATE GLOBAL TEMPORARY TABLE tmp (a int) ON COMMIT DELETE ROWS")
             .unwrap();
         assert_eq!(
-            verdict(&session, "SELECT * FROM tmp WHERE a > ?"),
+            verdict(&mut session, "SELECT * FROM tmp WHERE a > ?"),
             Err("query accesses temporary tables is un-cacheable".to_owned())
         );
     }
@@ -464,24 +467,24 @@ mod tests {
         session.run("CREATE TABLE t (a int)").unwrap();
         session.run("SET tidb_opt_fix_control = '44823:2'").unwrap();
         assert_eq!(
-            verdict(&session, "SELECT * FROM t WHERE a IN (?, ?, ?)"),
+            verdict(&mut session, "SELECT * FROM t WHERE a IN (?, ?, ?)"),
             Err("too many values in in-list".to_owned())
         );
         session.run("SET tidb_opt_fix_control = '44823:0'").unwrap();
-        assert!(verdict(&session, "SELECT * FROM t WHERE a IN (?, ?, ?)").is_ok());
+        assert!(verdict(&mut session, "SELECT * FROM t WHERE a IN (?, ?, ?)").is_ok());
     }
 
     #[test]
     fn fix_49736_forces_ast_cacheability() {
         let mut session = Session::new();
         assert_eq!(
-            verdict(&session, "SELECT @v + ?"),
+            verdict(&mut session, "SELECT @v + ?"),
             Err("query has user-defined variables is un-cacheable".to_owned())
         );
         session
             .run("SET tidb_opt_fix_control = '49736:ON'")
             .unwrap();
-        assert!(verdict(&session, "SELECT @v + ?").is_ok());
+        assert!(verdict(&mut session, "SELECT @v + ?").is_ok());
     }
 
     #[test]
@@ -490,7 +493,7 @@ mod tests {
         session.run("CREATE TABLE t (a varchar(20))").unwrap();
         assert_eq!(
             verdict(
-                &session,
+                &mut session,
                 "SELECT * FROM t WHERE CONVERT(a USING utf8mb4) = ?"
             ),
             Err("query has 'convert' is un-cacheable".to_owned())
