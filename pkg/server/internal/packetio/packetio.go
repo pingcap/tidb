@@ -471,7 +471,7 @@ func (cw *compressedWriter) Flush() error {
 }
 
 // Packets up to this size are sent uncompressed; MySQL itself uses 50 bytes.
-const minCompressLength = 1024
+const minCompressLength = 512
 
 // Shared by all connections: each writer holds a few hundred KiB of encoder state.
 var zlibWriterPool = sync.Pool{

@@ -486,7 +486,9 @@ func TestCompressedWriterThreshold(t *testing.T) {
 		cw = newCompressedWriter(&aboveLimit, algorithm, &seq)
 		cw.Write(bytes.Repeat([]byte{'a'}, minCompressLength+1))
 		require.NoError(t, cw.Flush())
-		require.Equal(t, []byte{0x01, 0x04, 0x0}, aboveLimit.Bytes()[4:7])
+		uncompressedLength := minCompressLength + 1
+		require.Equal(t, []byte{byte(uncompressedLength), byte(uncompressedLength >> 8), byte(uncompressedLength >> 16)},
+			aboveLimit.Bytes()[4:7])
 		require.Less(t, aboveLimit.Len(), minCompressLength)
 	}
 }
