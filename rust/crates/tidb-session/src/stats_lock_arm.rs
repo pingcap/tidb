@@ -17,7 +17,7 @@
 //! Go deliberately executes the statistics-handle mutation in a borrowed
 //! system session and commits that internal transaction independently of the
 //! user's transaction. This module therefore stages the shared catalog
-//! directly rather than the user's optional transaction working copy.
+//! directly, outside the user's transaction.
 
 use crate::{Session, StmtOutput, WarningLevel};
 use tidb_executor::{Catalog, DriverError};

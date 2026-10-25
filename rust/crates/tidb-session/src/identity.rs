@@ -543,8 +543,8 @@ impl Session {
         Ok(())
     }
 
-    /// Runs `plan` against the catalog image the executor will use: the open
-    /// transaction's working copy, else the shared catalog, with the session's
+    /// Runs `plan` against the catalog the executor will use: a stale
+    /// transaction's historical schema, else the session's catalog, with the session's
     /// local temporary tables overlaid (a temporary table shadows a base table
     /// of the same name for name resolution too).
     pub(crate) fn with_planning_catalog<T>(
@@ -559,13 +559,7 @@ impl Session {
             catalog.attach_local_temporary_tables(self.local_temporary_tables.clone());
             plan(&catalog)
         };
-        match &self.txn {
-            Some(txn) => overlay(&txn.working),
-            None => {
-                let catalog = self.lock_catalog()?;
-                overlay(&catalog)
-            }
-        }
+        self.with_txn_catalog(overlay)?
     }
 
     /// Go `privilege.Manager.RequestVerificationWithUser` for the planner's
@@ -642,8 +636,8 @@ impl Session {
         if let tidb_ast::Stmt::Ddl(ddl) = stmt {
             if let tidb_ast::DdlStmt::DropTable(drop) = ddl.as_ref() {
                 if drop.temporary == tidb_ast::DropTemporary::Global {
-                    let catalog = self.lock_catalog()?;
-                    let catalog = self.txn.as_ref().map_or(&*catalog, |txn| &txn.working);
+                    let shared = self.lock_catalog()?;
+                    let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
                     for path in &drop.names {
                         let (db, name) = match path.as_slice() {
                             [name] => (self.current_db.as_str(), name.as_str()),

@@ -146,4 +146,8 @@ impl crate::statement_lifecycle::CatalogFollowing for CatalogFollower {
     fn rebuild_if_stale(&mut self, session: &mut Session, txn: &TxnManager) {
         Self::rebuild_if_stale(self, session, txn);
     }
+
+    fn rebuild(&mut self, session: &mut Session) {
+        Self::rebuild(self, session);
+    }
 }

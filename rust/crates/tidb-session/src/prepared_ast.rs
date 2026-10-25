@@ -132,7 +132,7 @@ impl Session {
     pub(crate) fn plan_cache_dirty_tables(&self) -> Vec<i64> {
         // Nothing is dirty outside a transaction: the tracker keeps what the
         // last autocommit statement staged until the next one opens.
-        if self.statement_snapshot.is_some() || self.txn.is_none() {
+        if self.statement_snapshot.is_some() || !self.in_transaction() {
             Vec::new()
         } else {
             self.staged_writes.dirty_table_ids()

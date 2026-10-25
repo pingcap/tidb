@@ -12,24 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transaction control: the staged-catalog transaction a `BEGIN` opens, the
-//! savepoint stack inside it, and the two doors every statement reaches the
-//! catalog through.
+//! Transaction control on the session side: Go's `SessionVars.TxnCtx` (with
+//! `InTxn`), the `SimpleExec` transaction statements (`executeBegin`,
+//! `executeCommit`, `executeRollback`, `executeSavepoint`,
+//! `executeReleaseSavepoint`, `pkg/executor/simple.go`) and the doors every
+//! statement reaches the catalog through.
 //!
-//! This is the seam of Go's `sessiontxn` provider plus the `kv.MemBuffer`
-//! staging underneath it: [`Session::with_catalog_mut`] is the read-your-own-
-//! writes door and [`Session::with_staged_catalog`] the statement-level
-//! rollback one.
+//! The session owns no transaction. The store transaction is the store
+//! session's ([`crate::txn_manager::TxnManager`], Go `LazyTxn` behind
+//! `sessiontxn.TxnManager`), which the transaction statements reach through
+//! [`TxnManagerOps`] as Go's executors reach `sessiontxn.GetTxnManager(sctx)`.
 
 use std::sync::MutexGuard;
 
 use tidb_ast::{SessionStmt, Stmt};
 use tidb_datatype::Datum;
+use tidb_exec::sql_query_error::SqlQueryError;
+use tidb_executor::cluster_storage::BufferCheckpoint;
 use tidb_executor::{Catalog, DriverError};
 
-use crate::{statement_kind_of, Session, SessionTxnMode, TxnErrorKind};
 use crate::{txn_mode_for_begin, PESSIMISTIC_TXN_MODE};
-use tidb_util::stringutil::go_to_lower;
+use crate::{Session, SessionTxnMode, TxnErrorKind};
 
 /// A persisted schema image and the storage authority's retained timestamp guard.
 pub struct HistoricalRead {
@@ -50,62 +53,23 @@ pub type StatementTxnActivator = dyn Fn() + Send + Sync;
 pub type SnapshotSchemaProvider =
     dyn Fn(u64, &str, bool) -> Result<Catalog, DriverError> + Send + Sync;
 
-/// An open transaction's state.
+/// Go `SessionVars.TxnCtx` of the open transaction; `Some` is Go's `InTxn`.
 ///
-/// Go stages a transaction's writes in a `kv.MemBuffer` over a read snapshot
-/// and flushes them at commit; this stages them in a private copy of the
-/// catalog taken at `BEGIN`, so the session reads its own writes while its
-/// peers see nothing until commit.
-///
-/// `base_version` is the shared catalog's mutation counter at `BEGIN`. If it
-/// moved by commit time, someone else wrote, and the commit replays this
-/// transaction onto their work ([`Catalog::rebase_transaction`]), refusing it
-/// only where Go's TiKV conflict check or schema validator would.
-pub(crate) struct Transaction {
-    pub(crate) working: Catalog,
-    /// The catalog as `BEGIN` found it: Go's `GetSnapshot(TxnCtx.StartTS)`,
-    /// the committed state the transaction reads beneath its own writes.
-    /// The in-process store writes through into `working`, so a reader that
-    /// must skip the membuffer (`TABLESAMPLE`) reads this image instead.
-    pub(crate) read_snapshot: std::sync::Arc<Catalog>,
-    /// Whether a locking read (`SELECT ... FOR UPDATE/SHARE`) ran in a
-    /// transaction whose rows live outside its image (a cluster session's,
-    /// whose owner takes the real locks): COMMIT keeps the whole-catalog
-    /// check for it.
-    pub(crate) locking_read: bool,
-    /// Whether this transaction's rows live in its catalog image -- the
-    /// in-process store -- so its statements read, lock and stage them here
-    /// rather than through an outer owner's buffer and TiKV.
-    writes_in_image: bool,
-    /// Go's `Op_Lock` mutations of an optimistic transaction: the keys its
-    /// locking reads selected. COMMIT prewrites them even when nothing else
-    /// was written, and conflicts on one a peer committed after `BEGIN`.
-    lock_keys: Vec<Vec<u8>>,
-    /// This transaction's claim on the store's pessimistic locks -- a
-    /// pessimistic transaction's `Op_Lock` mutations; dropping the
-    /// transaction releases them. A stale read takes none.
-    lock_guard: Option<tidb_executor::PessimisticLockGuard>,
-    base_version: u64,
-    /// The transaction's start timestamp -- Go `TxnCtx.StartTS`, which
-    /// `@@tidb_current_ts` reports. For a stale transaction it IS the as-of
-    /// timestamp, which is the corpus's own assertion.
-    start_ts: u64,
-    /// `Some(ts)` for `START TRANSACTION READ ONLY AS OF TIMESTAMP`: the
-    /// working copy is a historical snapshot and COMMIT publishes nothing.
-    stale_read_ts: Option<u64>,
-    _historical_hold: Option<std::sync::Arc<dyn Send + Sync>>,
-    /// The mode this transaction opened in, resolved from the `BEGIN` keyword
-    /// and `@@tidb_txn_mode` exactly as Go resolves it.
-    ///
-    /// This tier's store is a catalog behind a mutex, not TiKV, so there is no
-    /// lock to take and the mode changes nothing about how a statement runs
-    /// here. It is still resolved and kept, because it is what the client
-    /// asked for and what the real-TiKV tier consumes.
+/// It holds the transaction's context and none of its data: the rows a
+/// transaction writes are staged in the store session's `MutationBuffer`, and
+/// its reads go through the statement's snapshot.
+pub(crate) struct TxnCtx {
+    /// The mode the transaction opened in, resolved from the `BEGIN` keyword
+    /// and `@@tidb_txn_mode` exactly as Go resolves it (`TxnCtx.IsPessimistic`).
     mode: SessionTxnMode,
-    /// Go's TxnCtx isolation: a later SET SESSION affects the next
-    /// transaction, not the missing-key lock policy of this transaction.
+    /// Go `TxnCtx.Isolation == ReadCommitted`: a later `SET SESSION` affects
+    /// the next transaction, not the missing-key lock policy of this one.
     read_committed: bool,
-    /// The transaction's savepoint stack, oldest first -- Go's
+    /// Go `StalenessTxnContextProvider`: the as-of timestamp, which is also
+    /// the transaction's `StartTS`, and the historical schema and timestamp
+    /// hold every statement of the transaction reads (`TxnCtx.InfoSchema`).
+    stale: Option<(u64, HistoricalRead)>,
+    /// The transaction's savepoint stack, oldest first -- Go
     /// `TxnCtx.Savepoints` (`pkg/sessionctx/variable/session.go`).
     savepoints: crate::SavepointStack<Savepoint>,
     /// The session's LOCAL temporary tables as they stood at `BEGIN`.
@@ -124,103 +88,62 @@ pub(crate) struct Transaction {
     local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
 }
 
-impl Transaction {
+impl TxnCtx {
     pub(crate) const fn is_stale_read(&self) -> bool {
-        self.stale_read_ts.is_some()
-    }
-
-    /// Opens a transaction over `catalog`: the ONE place a [`Transaction`] is
-    /// built.
-    ///
-    /// Both openings -- the explicit `BEGIN` and the lazy one `autocommit = 0`
-    /// performs for the first statement that touches data -- come through here,
-    /// so a field added to the struct has exactly one place it can be forgotten
-    /// and that place will not compile without it.
-    ///
-    /// A transaction opened lazily therefore carries the same empty savepoint
-    /// stack an explicit BEGIN does, which is what Go does: it makes no
-    /// distinction between the two once `InTxn()` holds, so SAVEPOINT works in
-    /// either.
-    fn open(
-        catalog: &Catalog,
-        mode: SessionTxnMode,
-        read_committed: bool,
-        local_temporary_at_open: Vec<(String, String, tidb_executor::KvTable)>,
-    ) -> Self {
-        let start_ts = catalog.allocate_tso();
-        let working = catalog.clone();
-        Transaction {
-            working,
-            read_snapshot: std::sync::Arc::new(catalog.clone()),
-            locking_read: false,
-            writes_in_image: !catalog.any_table_has_external_statement_rollback(),
-            lock_keys: Vec::new(),
-            lock_guard: Some(tidb_executor::PessimisticLockGuard::new(
-                catalog.pessimistic_locks(),
-                start_ts,
-            )),
-            base_version: catalog.version(),
-            start_ts,
-            stale_read_ts: None,
-            _historical_hold: None,
-            mode,
-            read_committed,
-            savepoints: crate::SavepointStack::default(),
-            local_temporary_at_open,
-        }
+        self.stale.is_some()
     }
 }
 
-/// One statement's transactional read and lock step inside an in-process
-/// transaction -- Go `ExecStmt`'s pessimistic statement around its executor
-/// (`handlePessimisticDML`, `runPessimisticSelectForUpdate`).
-pub(crate) struct TransactionStatement {
-    /// The committed image the statement read at its `for_update_ts`, for a
-    /// statement that reads the latest committed rows; `None` for one that
-    /// reads the transaction's snapshot.
-    view_base: Option<Catalog>,
-    /// The transaction's image before the statement, set aside while the
-    /// statement runs over its view.
-    saved: Option<Catalog>,
-    /// Whether the view IS the transaction's image -- nothing committed since
-    /// `BEGIN` -- so the statement's writes need no folding back.
-    view_is_image: bool,
-    /// Whether the transaction is pessimistic, so the statement locks what
-    /// it read for writing.
-    pessimistic: bool,
-    /// Whether the statement is a locking read, whose rows are held back
-    /// until their keys are locked.
-    locking_read: bool,
+/// The store half of the transaction statements: Go
+/// `sessiontxn.GetTxnManager(sctx)` as the `SimpleExec` arms reach it. The
+/// store session implements it over its `TxnManager`.
+pub trait TxnManagerOps {
+    /// Go `CommitTxn` of the store transaction (`session.go:982`), under its
+    /// `session.CommitTxn` / `doCommitWithRetry` regions.
+    fn commit_txn(&mut self, session: &mut Session) -> Result<(), DriverError>;
+    /// Go `RollbackTxn` (`session.go:1022`): the store transaction, entered
+    /// or pending, and every write it staged are dropped.
+    fn rollback_txn(&mut self, session: &mut Session) -> Result<(), DriverError>;
+    /// Go `EnterNewTxn(EnterNewTxnWithBeginStmt)`: the transaction activates
+    /// at once (`OnInitialize`'s `activeNow`, `isolation/base.go:88`), with
+    /// the latest schema (`GetSnapshotInfoSchema(startTS)`).
+    fn enter_new_txn_with_begin(&mut self, session: &mut Session) -> Result<(), DriverError>;
+    /// Go `executeSavepoint`'s `Txn(true)` and `GetMemBuffer().Checkpoint()`:
+    /// activates a pending `autocommit = 0` transaction and marks its
+    /// membuffer. `None` when no transaction is open (autocommit).
+    fn savepoint_checkpoint(
+        &mut self,
+        session: &mut Session,
+    ) -> Result<Option<BufferCheckpoint>, DriverError>;
+    /// Go `RollbackMemDBToCheckpoint`.
+    fn rollback_to_checkpoint(&mut self, checkpoint: &BufferCheckpoint);
 }
 
-/// How a statement's lock step ended.
-pub(crate) enum StatementFinish {
-    /// The statement's outcome, locks taken.
-    Done(Result<crate::record_set::PendingExecution, DriverError>),
-    /// A key the statement read was committed by another transaction before
-    /// the lock could be taken: Go's pessimistic write conflict, which reruns
-    /// the statement at a newer `for_update_ts`.
-    Retry,
+/// A store-session error as a driver error, its typed cause (Go
+/// `errors.Cause`) kept when it has one.
+pub(crate) fn driver_error_of(error: SqlQueryError) -> DriverError {
+    if let Some(cause) = error.driver_cause() {
+        return cause.clone();
+    }
+    let mut mapped = tidb_executor::MysqlError::from_parts(error.code, error.state, error.message);
+    if let Some(identity) = error.identity {
+        mapped = mapped.with_identity(identity);
+    }
+    DriverError::Mysql(mapped)
 }
 
-/// One entry of a transaction's savepoint stack.
+/// One entry of a transaction's savepoint stack: Go `SavepointRecord`.
 ///
-/// Go records a `tikv.MemDBCheckpoint` -- a position in the transaction's
-/// membuffer that `RollbackMemDBToCheckpoint` truncates back to. This tier's
-/// transaction stages its writes in a private catalog copy rather than a
-/// membuffer, so the mark is an IMAGE of that copy, restored by assignment.
-/// It is the same primitive [`Session::with_staged_catalog`] already uses for
-/// statement-level rollback, just held under a name for longer than one
-/// statement.
+/// Kept even after a `ROLLBACK TO` restores from it, because Go's
+/// `RollbackToSavepoint` truncates the stack to `[:idx+1]` -- the named
+/// savepoint SURVIVES its own rollback and can be rolled back to again.
 pub(crate) struct Savepoint {
-    /// The transaction's working catalog as of this savepoint.
-    ///
-    /// Kept even after a `ROLLBACK TO` restores from it, because Go's
-    /// `RollbackToSavepoint` truncates the stack to `[:idx+1]` -- the named
-    /// savepoint SURVIVES its own rollback and can be rolled back to again.
-    image: Catalog,
+    /// Go `MemDBCheckpoint`: the store transaction's membuffer position, which
+    /// `RollbackMemDBToCheckpoint` truncates back to. `None` for a transaction
+    /// no store transaction backs (a stale read).
+    buffer: Option<BufferCheckpoint>,
     /// The session's LOCAL temporary tables at the savepoint, for the same
-    /// reason [`Transaction::local_temporary_at_open`] exists: their rows are
+    /// reason [`TxnCtx::local_temporary_at_open`] exists: their rows are
     /// in the transaction membuffer Go truncates back to the checkpoint, so
     /// they roll back with everything else, while the table map does not.
     local_temporary: Vec<(String, String, tidb_executor::KvTable)>,
@@ -385,22 +308,26 @@ impl Session {
         self.vars.is_autocommit()
     }
 
-    /// Go's lazy transaction start: with autocommit OFF, a statement that
-    /// touches data runs INSIDE a transaction the session opens for it, so a
-    /// later `ROLLBACK` can discard it. `BEGIN` still opens one explicitly;
-    /// this only covers the statements that would otherwise have none.
+    /// The session half of Go's lazy `autocommit = 0` transaction: a
+    /// statement that reads or writes data activates the pending transaction
+    /// the store session entered for it (`PrepareTxnCtx`), and Go's
+    /// `ActivateTxn` then sets `InTxn` (`isolation/base.go:322`), so a later
+    /// `ROLLBACK` can discard it. `BEGIN` opens one explicitly; this only
+    /// covers the statements that would otherwise have none.
     pub(crate) fn begin_implicit_transaction(&mut self) -> Result<(), DriverError> {
-        if self.txn.is_some() || self.is_autocommit() {
+        if self.txn_ctx.is_some() || self.is_autocommit() {
             return Ok(());
         }
         let mode = self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default);
-        self.open_transaction(mode)
+        self.open_txn_ctx(mode);
+        Ok(())
     }
 
-    /// Whether a transaction is open (the wire's `SERVER_STATUS_IN_TRANS`).
+    /// Whether a transaction is open (Go `SessionVars.InTxn`, the wire's
+    /// `SERVER_STATUS_IN_TRANS`).
     #[must_use]
     pub fn in_transaction(&self) -> bool {
-        self.txn.is_some()
+        self.txn_ctx.is_some()
     }
 
     /// Go `doCommitWithRetry`'s deferred
@@ -431,18 +358,11 @@ impl Session {
             .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1")
     }
 
-    /// The mode the open transaction runs in, if one is open.
-    ///
-    /// `BEGIN PESSIMISTIC` and `BEGIN OPTIMISTIC` are accepted here and their
-    /// mode is reported faithfully, but this tier takes no row locks in either
-    /// mode: its store is one shared catalog behind a mutex, so concurrent
-    /// sessions already serialize and a committing session that lost the race
-    /// is refused with a write conflict. `SELECT ... FOR UPDATE` returns the
-    /// same rows it would under a real pessimistic lock; what is missing is
-    /// the lock, not the result (see [`Self::check_query_clauses`]).
+    /// The mode the open transaction runs in, if one is open (Go
+    /// `TxnCtx.IsPessimistic`).
     #[must_use]
     pub fn txn_mode(&self) -> Option<SessionTxnMode> {
-        self.txn.as_ref().map(|txn| txn.mode)
+        self.txn_ctx.as_ref().map(|txn| txn.mode)
     }
 
     /// Whether locking reads must acquire only existing keys after reading.
@@ -456,7 +376,7 @@ impl Session {
     }
 
     pub(crate) fn read_committed_locking(&self) -> bool {
-        self.txn.as_ref().map_or_else(
+        self.txn_ctx.as_ref().map_or_else(
             || match self.vars.txn_isolation_level_one_shot_in_use() {
                 // Go `IsIsolation` adopts a waiting `SET TRANSACTION` level.
                 Some(level) => level.eq_ignore_ascii_case("READ-COMMITTED"),
@@ -498,46 +418,26 @@ impl Session {
             .unwrap_or_else(|| self.resolve_begin_txn_mode(tidb_ast::TransactionMode::Default))
     }
 
-    /// Installs a transaction over the shared catalog as it stands now.
-    ///
-    /// The lock is taken and released here rather than held across the
-    /// installation, because [`Transaction::open`] copies the catalog it is
-    /// given and needs nothing from it afterwards.
-    fn open_transaction(&mut self, mode: SessionTxnMode) -> Result<(), DriverError> {
-        let local_temporary_at_open = self.local_temporary_tables.clone();
+    /// Go `NewTxn`'s fresh `TxnCtx`: the context of a transaction the store
+    /// session opens alongside it. The store transaction publishes its own
+    /// `StartTS` (`@@tidb_current_ts`) and `TIDB_TRX` row when it activates.
+    fn open_txn_ctx(&mut self, mode: SessionTxnMode) {
         // Go `txnManager.newProviderWithRequest` picks the provider from
         // `IsolationLevelForNewTxn`, which honors `SET TRANSACTION`.
         let read_committed = self
             .vars
             .isolation_level_for_new_txn(self.in_transaction())
             .eq_ignore_ascii_case("READ-COMMITTED");
-        let txn = Transaction::open(
-            &*self.lock_catalog()?,
-            mode,
-            read_committed,
-            local_temporary_at_open,
-        );
         // A fresh transaction gets a fresh, empty staged-write tracker --
         // Go's own membuffer is empty the moment a transaction activates.
-        // Direct protocol BEGIN and implicit activation both reach this
-        // constructor without necessarily running SQL dispatch, so this is
-        // the one door that must reset it, matching `Transaction::open`.
         self.staged_writes = std::sync::Arc::default();
-        // Go publishes `TxnCtx.StartTS` the moment the transaction
-        // activates; `@@tidb_current_ts` reads exactly that. A server that
-        // owns the statement transactions publishes its store transaction's
-        // timestamp at ITS activation, which for an `autocommit = 0`
-        // transaction is a later statement than this one.
-        if !self.statement_txns_are_external() {
-            self.current_tso().publish(txn.start_ts);
-            if let Some(process) = &self.process {
-                process
-                    .registry()
-                    .transaction_started(process.id(), txn.start_ts);
-            }
-        }
-        self.txn = Some(txn);
-        Ok(())
+        self.txn_ctx = Some(TxnCtx {
+            mode,
+            read_committed,
+            stale: None,
+            savepoints: crate::SavepointStack::default(),
+            local_temporary_at_open: self.local_temporary_tables.clone(),
+        });
     }
 
     /// Go `CalculateAsOfTsExpr` (`pkg/sessiontxn/staleread/util.go:41-86`),
@@ -643,59 +543,40 @@ impl Session {
         self.statement_snapshot
             .as_ref()
             .map(|(ts, _)| *ts)
-            .or_else(|| self.txn.as_ref().and_then(|txn| txn.stale_read_ts))
+            .or_else(|| {
+                self.txn_ctx
+                    .as_ref()
+                    .and_then(|txn| txn.stale.as_ref().map(|(ts, _)| *ts))
+            })
     }
 
     /// `START TRANSACTION READ ONLY AS OF TIMESTAMP <resolved ts>`: the Go
     /// stale transaction (`StalenessTxnContextProvider`), whose `StartTS` IS
     /// the as-of timestamp and whose reads all see the store as of it.
     pub(crate) fn open_stale_transaction(&mut self, ts: u64) -> Result<(), DriverError> {
-        let mut historical_hold = None;
-        let snapshot = if let Some(provider) = &self.historical_read_provider {
-            let schema = self
-                .snapshot_schema
-                .as_ref()
-                .filter(|(selected, _)| *selected == ts)
-                .map(|(_, catalog)| catalog);
-            let read = provider(ts, self.current_resource_group(), schema)?;
-            historical_hold = Some(read.timestamp_hold);
-            read.catalog
-        } else {
-            let shared = self.lock_catalog()?;
-            shared.state_as_of(ts).ok_or_else(|| {
-                // No retained commit is that old. Go's analogue is the GC
-                // barrier; this tier's ring is its retention, and answering
-                // from the PRESENT under a historical name would be the one
-                // undetectable wrong answer.
-                DriverError::Txn(TxnErrorKind::AsOf(
-                    "the requested timestamp precedes this store's retained history".to_owned(),
-                ))
-            })?
-        };
+        let provider = self.historical_read_provider.as_ref().ok_or_else(|| {
+            DriverError::unsupported(
+                "historical reads require the store's historical read provider",
+            )
+        })?;
+        let schema = self
+            .snapshot_schema
+            .as_ref()
+            .filter(|(selected, _)| *selected == ts)
+            .map(|(_, catalog)| catalog);
+        let read = provider(ts, self.current_resource_group(), schema)?;
         // A historical read also has an empty transaction membuffer.
         self.staged_writes = std::sync::Arc::default();
-        let local_temporary_at_open = self.local_temporary_tables.clone();
-        self.txn = Some(Transaction {
-            base_version: snapshot.version(),
-            read_snapshot: std::sync::Arc::new(snapshot.clone()),
-            locking_read: false,
-            writes_in_image: false,
-            lock_keys: Vec::new(),
-            lock_guard: None,
-            working: snapshot,
-            start_ts: ts,
-            stale_read_ts: Some(ts),
-            _historical_hold: historical_hold,
+        self.txn_ctx = Some(TxnCtx {
             mode: SessionTxnMode::Optimistic,
             read_committed: false,
+            stale: Some((ts, read)),
             savepoints: crate::SavepointStack::default(),
-            local_temporary_at_open,
+            local_temporary_at_open: self.local_temporary_tables.clone(),
         });
         self.current_tso().publish(ts);
-        if self.historical_read_provider.is_some() {
-            if let Some(observer) = self.transaction_observer() {
-                observer.activated(ts);
-            }
+        if let Some(observer) = self.transaction_observer() {
+            observer.activated(ts);
         }
         if let Some(process) = &self.process {
             process.registry().transaction_started(process.id(), ts);
@@ -715,8 +596,8 @@ impl Session {
     /// published timestamp goes with it.
     pub(crate) fn discard_stale_statement_transaction(&mut self) {
         self.cleanup_txn_read_ts();
-        if let Some(txn) = self.txn.take() {
-            self.set_last_txn_info_started(txn.start_ts);
+        if let Some((ts, _)) = self.txn_ctx.take().and_then(|txn| txn.stale) {
+            self.set_last_txn_info_started(ts);
         }
         if let Some(process) = &self.process {
             process.registry().transaction_finished(process.id());
@@ -732,7 +613,7 @@ impl Session {
     /// that was truncated and rebuilt under a new id is left alone for the
     /// same reason -- which is Go's split between the transactional row data
     /// and the non-transactional session table map. See
-    /// [`Transaction::local_temporary_at_open`].
+    /// [`TxnCtx::local_temporary_at_open`].
     fn restore_local_temporary_rows(
         &mut self,
         snapshot: Vec<(String, String, tidb_executor::KvTable)>,
@@ -759,154 +640,212 @@ impl Session {
         txn_mode_for_begin(mode, &variable)
     }
 
-    /// Applies `BEGIN`/`START TRANSACTION`, `COMMIT`, or `ROLLBACK`.
+    /// Applies `BEGIN`/`START TRANSACTION`, `COMMIT`, `ROLLBACK` or a
+    /// savepoint statement on a node-backed session, through its connection
+    /// (a Go `testkit` session's transaction is its store transaction).
     ///
     /// Returns `Some(in_transaction)` for those statements and `None` for
     /// anything else, so a caller can answer with an OK packet carrying the
     /// right status flag without re-parsing.
-    ///
-    /// Go's `BEGIN` inside an open transaction implicitly commits the current
-    /// one before starting the new one, which this reproduces. `COMMIT` and
-    /// `ROLLBACK` with no open transaction are no-ops, as in MySQL.
     pub fn control_transaction(&mut self, sql: &str) -> Result<Option<bool>, DriverError> {
-        // A node-backed session's transaction is the connection's buffer, as
-        // a Go `testkit` session's is its store transaction.
-        if let Some(mut node) = self.node.take() {
-            let result = node.control_transaction(self, sql);
-            self.node = Some(node);
-            return result;
-        }
-        let stmt = self.parse(sql)?;
-        self.control_transaction_stmt(&stmt)
+        let Some(mut node) = self.node.take() else {
+            return Err(DriverError::unsupported(
+                "transaction statements run on the store session",
+            ));
+        };
+        let result = node.control_transaction(self, sql);
+        self.node = Some(node);
+        result
     }
 
-    /// Go `SimpleExec.executeBegin`'s first check, for a caller that runs
-    /// the implicit commit itself: a `READ ONLY` clause under
-    /// `tidb_enable_noop_functions = OFF` is refused BEFORE `NewTxn` commits
-    /// the open transaction. The WARN mode's warning is left to
-    /// [`Self::control_transaction_stmt`], so it is appended once.
-    pub fn refuse_begin_noop_clause(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
-        let Stmt::Session(session_stmt) = stmt else {
-            return Ok(());
-        };
-        let SessionStmt::Begin(begin) = &**session_stmt else {
-            return Ok(());
-        };
-        if begin.read_only
-            && begin.as_of.is_none()
-            && self.noop_funcs_mode(false) == crate::noop::NoopFuncsMode::Off
-        {
-            return self.gate_noop_clause("READ ONLY", false);
-        }
-        Ok(())
-    }
-
-    /// [`Self::control_transaction`] over a statement this session already
-    /// parsed. The text form parses and delegates here, so both callers ask
-    /// the same question of the same code.
-    pub fn control_transaction_stmt(&mut self, stmt: &Stmt) -> Result<Option<bool>, DriverError> {
+    /// The `SimpleExec` transaction statements (`pkg/executor/simple.go`):
+    /// `executeBegin`, `executeCommit`, `executeRollback`, `executeSavepoint`
+    /// and `executeReleaseSavepoint`, with the store half through `txn`.
+    ///
+    /// Returns `Some(in_transaction)` for those statements and `None` for
+    /// anything else.
+    ///
+    /// `COMMIT` only leaves the transaction here, as Go's `executeCommit`
+    /// only clears `InTxn`; the store session commits it when the statement
+    /// finishes (Go `finishStmt` -> `CommitTxn`).
+    pub fn control_transaction_stmt(
+        &mut self,
+        stmt: &Stmt,
+        txn: &mut dyn TxnManagerOps,
+    ) -> Result<Option<bool>, DriverError> {
         let Stmt::Session(session_stmt) = stmt else {
             return Ok(None);
         };
         match &**session_stmt {
             SessionStmt::Begin(begin) => {
-                // Go `SimpleExec.executeBegin`: `START TRANSACTION READ ONLY`
-                // is a no-op clause -- TiDB does not actually stop writes --
-                // so it goes through `tidb_enable_noop_functions`, refusing
-                // with 1235 at the OFF default. `AS OF TIMESTAMP` exempts it,
-                // because that spelling names a real historical read rather
-                // than the bare read-only claim.
-                if begin.read_only && begin.as_of.is_none() {
-                    self.gate_noop_clause("READ ONLY", false)?;
-                }
-                // `START TRANSACTION READ ONLY AS OF TIMESTAMP <expr>` opens
-                // the transaction AT that timestamp, so every statement in it
-                // reads history through the installed store/schema owner.
-                if let Some(expr) = &begin.as_of {
-                    // Go `StalenessTxnContextProvider`: the expression
-                    // resolves through `CalculateAsOfTsExpr`'s rules and the
-                    // transaction opens AT that timestamp -- its `StartTS`,
-                    // which `@@tidb_current_ts` reports.
-                    let ts = self.resolve_as_of_ts(&expr.clone())?;
-                    if self.vars.txn_read_ts() != 0 {
-                        if let Some(provider) = &self.snapshot_schema_provider {
-                            provider(ts, self.current_resource_group(), false)?;
-                        }
-                        return Err(DriverError::unsupported("start transaction read only as of is forbidden after set transaction read only as of"));
-                    }
-                    self.statement_began_txn = true;
-                    if self.txn.is_some() {
-                        self.commit()?;
-                    }
-                    self.open_stale_transaction(ts)?;
-                    return Ok(Some(true));
-                }
-                // Go's `NewTxn` gives the transaction a fresh `TxnCtx`, so the
-                // statement's own (`origTxnCtx`) is not the one it opens.
-                self.statement_began_txn = true;
-                // An open transaction is committed first (Go's implicit commit).
-                if self.txn.is_some() {
-                    self.commit()?;
-                }
-                let read_ts = self.vars.use_txn_read_ts();
-                if read_ts != 0 {
-                    self.open_stale_transaction(read_ts)?;
-                    return Ok(Some(true));
-                }
-                if let Some(ts) = self.external_read_ts()? {
-                    self.open_stale_transaction(ts)?;
-                    return Ok(Some(true));
-                }
-                let mode = self.resolve_begin_txn_mode(begin.mode);
-                self.open_transaction(mode)?;
+                self.execute_begin(begin, txn)?;
                 Ok(Some(true))
             }
             SessionStmt::Commit(_) => {
-                self.commit()?;
+                self.leave_txn_ctx_for_commit();
                 Ok(Some(false))
             }
             SessionStmt::Rollback { savepoint, .. } => {
                 if let Some(name) = savepoint {
                     // ROLLBACK TO does NOT end the transaction: it restores
                     // the data and leaves everything else running.
-                    self.rollback_to_savepoint(name)?;
+                    self.rollback_to_savepoint(name, txn)?;
                     return Ok(Some(true));
                 }
-                self.cleanup_txn_read_ts();
-                if self.txn.is_some() {
-                    self.record_statement_ended_txn();
-                }
-                // Dropping the staged copy discards every staged write.
-                // A local temporary table's rows are not in that copy -- they
-                // are in the session -- so they are put back by hand.
-                if let Some(txn) = self.txn.take() {
-                    self.clear_table_delta();
-                    if let Some(process) = &self.process {
-                        process
-                            .registry()
-                            .transaction_state(process.id(), "RollingBack");
-                    }
-                    // Go `setLastTxnInfoBeforeTxnEnd`: an activated
-                    // transaction that ends without a commit leaves the
-                    // start-only record.
-                    self.set_last_txn_info_started(txn.start_ts);
-                    self.current_tso().clear();
-                    self.restore_local_temporary_rows(txn.local_temporary_at_open);
-                    if let Some(process) = &self.process {
-                        process.registry().transaction_finished(process.id());
-                    }
-                }
+                self.execute_rollback(txn)?;
                 Ok(Some(false))
             }
             SessionStmt::Savepoint(name) => {
-                self.set_savepoint(name)?;
-                Ok(Some(self.txn.is_some()))
+                self.set_savepoint(name, txn)?;
+                Ok(Some(self.txn_ctx.is_some()))
             }
             SessionStmt::ReleaseSavepoint(name) => {
                 self.release_savepoint(name)?;
                 Ok(Some(true))
             }
             _ => Ok(None),
+        }
+    }
+
+    /// Go `SimpleExec.executeBegin` -> `EnterNewTxn(EnterNewTxnWithBeginStmt)`.
+    fn execute_begin(
+        &mut self,
+        begin: &tidb_ast::BeginStmt,
+        txn: &mut dyn TxnManagerOps,
+    ) -> Result<(), DriverError> {
+        // `START TRANSACTION READ ONLY` is a no-op clause -- TiDB does not
+        // actually stop writes -- so it goes through
+        // `tidb_enable_noop_functions`, refusing with 1235 at the OFF
+        // default, BEFORE `NewTxn` commits the open transaction. `AS OF
+        // TIMESTAMP` exempts it, because that spelling names a real
+        // historical read rather than the bare read-only claim.
+        if begin.read_only && begin.as_of.is_none() {
+            self.gate_noop_clause("READ ONLY", false)?;
+        }
+        // `START TRANSACTION READ ONLY AS OF TIMESTAMP <expr>` opens the
+        // transaction AT that timestamp (Go `StalenessTxnContextProvider`):
+        // the expression resolves through `CalculateAsOfTsExpr`'s rules when
+        // the statement is built, before any commit, and the transaction's
+        // `StartTS` -- which `@@tidb_current_ts` reports -- is that timestamp.
+        let as_of = match &begin.as_of {
+            Some(expr) => {
+                let ts = self.resolve_as_of_ts(&expr.clone())?;
+                if self.vars.txn_read_ts() != 0 {
+                    if let Some(provider) = &self.snapshot_schema_provider {
+                        provider(ts, self.current_resource_group(), false)?;
+                    }
+                    return Err(DriverError::unsupported("start transaction read only as of is forbidden after set transaction read only as of"));
+                }
+                Some(ts)
+            }
+            None => None,
+        };
+        // Go's `NewTxn` gives the transaction a fresh `TxnCtx`, so the
+        // statement's own (`origTxnCtx`) is not the one it opens.
+        self.statement_began_txn = true;
+        self.commit_before_enter_new_txn(txn)?;
+        let stale_ts = match as_of {
+            Some(ts) => Some(ts),
+            None => match self.vars.use_txn_read_ts() {
+                0 => self.external_read_ts()?,
+                read_ts => Some(read_ts),
+            },
+        };
+        match stale_ts {
+            Some(ts) => self.open_stale_transaction(ts)?,
+            None => {
+                let mode = self.resolve_begin_txn_mode(begin.mode);
+                self.open_txn_ctx(mode);
+            }
+        }
+        txn.enter_new_txn_with_begin(self)
+    }
+
+    /// Go `sessiontxn.CommitBeforeEnterNewTxn`: an open transaction is
+    /// committed before a new one is entered; a pending one no statement
+    /// activated, or writes a finished autocommit statement left behind, are
+    /// dropped, not committed (`txn.Valid()` is false for them).
+    fn commit_before_enter_new_txn(
+        &mut self,
+        txn: &mut dyn TxnManagerOps,
+    ) -> Result<(), DriverError> {
+        if self.in_transaction() {
+            self.leave_txn_ctx_for_commit();
+            if let Err(error) = txn.commit_txn(self) {
+                // A commit that fails has ended the transaction (Go rolls it
+                // back); its staged writes go with it.
+                let _ = txn.rollback_txn(self);
+                return Err(error);
+            }
+        }
+        txn.rollback_txn(self)
+    }
+
+    /// The session half of Go `CommitTxn`: `doCommitWithRetry`'s deferred
+    /// one-shot isolation step and the slow log's ended transaction, then the
+    /// context goes. Go `executeCommit` is only this (`SetInTxn(false)`); the
+    /// store commit follows when the statement finishes.
+    pub(crate) fn leave_txn_ctx_for_commit(&mut self) {
+        self.set_txn_isolation_level_one_shot_state_for_next_txn();
+        if self.txn_ctx.is_some() {
+            self.record_statement_ended_txn();
+        }
+        self.cleanup_txn_read_ts();
+        let Some(txn) = self.txn_ctx.take() else {
+            return;
+        };
+        if let Some(process) = &self.process {
+            process
+                .registry()
+                .transaction_state(process.id(), "Committing");
+        }
+        if let Some((ts, _)) = txn.stale {
+            // Go's stale transaction is read-only by construction; its
+            // COMMIT publishes nothing, and `setLastTxnInfoBeforeTxnEnd`
+            // leaves the start-only record (`pkg/session/session.go:1056`).
+            self.set_last_txn_info_started(ts);
+            self.current_tso().clear();
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
+        }
+    }
+
+    /// Go `SimpleExec.executeRollback` without a savepoint: `RollbackTxn`.
+    fn execute_rollback(&mut self, txn: &mut dyn TxnManagerOps) -> Result<(), DriverError> {
+        self.leave_txn_ctx_for_rollback();
+        txn.rollback_txn(self)
+    }
+
+    /// The session half of Go `RollbackTxn`: the context goes, and the rows
+    /// of the local temporary tables go back to the transaction's start. The
+    /// caller rolls the store transaction back.
+    pub(crate) fn leave_txn_ctx_for_rollback(&mut self) {
+        self.cleanup_txn_read_ts();
+        if self.txn_ctx.is_some() {
+            self.record_statement_ended_txn();
+        }
+        if let Some(ctx) = self.txn_ctx.take() {
+            self.clear_table_delta();
+            if let Some(process) = &self.process {
+                process
+                    .registry()
+                    .transaction_state(process.id(), "RollingBack");
+            }
+            // Go `setLastTxnInfoBeforeTxnEnd`: an activated transaction that
+            // ends without a commit leaves the start-only record. The store
+            // transaction records its own; a stale one is recorded here.
+            if let Some((ts, _)) = &ctx.stale {
+                self.set_last_txn_info_started(*ts);
+            }
+            self.current_tso().clear();
+            // The staged writes go with the store transaction. A local
+            // temporary table's rows are not in it -- they are in the
+            // session -- so they are put back by hand.
+            self.restore_local_temporary_rows(ctx.local_temporary_at_open);
+            if let Some(process) = &self.process {
+                process.registry().transaction_finished(process.id());
+            }
         }
     }
 
@@ -925,7 +864,11 @@ impl Session {
     /// moves the name to the END of the stack, so savepoints that were taken
     /// after the original are no longer "after" it, and a later `ROLLBACK TO`
     /// the redefined name no longer drops them.
-    fn set_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
+    fn set_savepoint(
+        &mut self,
+        name: &str,
+        txn: &mut dyn TxnManagerOps,
+    ) -> Result<(), DriverError> {
         // Go's `Txn(true)`: with autocommit OFF this is the statement that
         // opens the pending transaction.
         self.begin_implicit_transaction()?;
@@ -937,17 +880,17 @@ impl Session {
                 "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled",
             )));
         }
+        let buffer = txn.savepoint_checkpoint(self)?;
         let local_temporary = self.local_temporary_tables.clone();
         let global_temporary = self.global_temporary_data.clone();
         let table_delta = self.table_delta_savepoint();
-        let Some(txn) = &mut self.txn else {
+        let Some(ctx) = &mut self.txn_ctx else {
             return Ok(());
         };
-        let image = txn.working.clone();
-        txn.savepoints.add(
+        ctx.savepoints.add(
             name,
             Savepoint {
-                image,
+                buffer,
                 local_temporary,
                 global_temporary,
                 table_delta,
@@ -967,24 +910,22 @@ impl Session {
     ///
     /// With no transaction open Go's `txn.Valid()` is false and the error is
     /// the same 1305 an unknown name gets.
-    fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
-        // Go `TxnCtx.RollbackToSavepoint` is only reached with a valid
-        // transaction (`executeRollback`), so no transaction is the same 1305
-        // an unknown name gets.
-        let found = self
-            .txn
-            .as_mut()
-            .and_then(|txn| {
-                txn.savepoints.rollback_to(name).map(|savepoint| {
-                    (
-                        savepoint.image.clone(),
-                        savepoint.local_temporary.clone(),
-                        savepoint.global_temporary.clone(),
-                        savepoint.table_delta.clone(),
-                    )
-                })
-            });
-        let Some((image, local_temporary, global_temporary, table_delta)) = found else {
+    fn rollback_to_savepoint(
+        &mut self,
+        name: &str,
+        txn: &mut dyn TxnManagerOps,
+    ) -> Result<(), DriverError> {
+        let found = self.txn_ctx.as_mut().and_then(|ctx| {
+            ctx.savepoints.rollback_to(name).map(|savepoint| {
+                (
+                    savepoint.buffer.clone(),
+                    savepoint.local_temporary.clone(),
+                    savepoint.global_temporary.clone(),
+                    savepoint.table_delta.clone(),
+                )
+            })
+        });
+        let Some((buffer, local_temporary, global_temporary, table_delta)) = found else {
             // go appends the statement error into the warning buffer as well
             // (driver_tidb.go:376's error door), so SHOW WARNINGS after the
             // refused ROLLBACK TO carries the same 1305 row.
@@ -995,8 +936,8 @@ impl Session {
             );
             return Err(DriverError::SavepointNotExists(name.to_owned()));
         };
-        if let Some(txn) = self.txn.as_mut() {
-            txn.working = image;
+        if let Some(buffer) = &buffer {
+            txn.rollback_to_checkpoint(buffer);
         }
         self.restore_local_temporary_rows(local_temporary);
         self.global_temporary_data = global_temporary;
@@ -1009,9 +950,9 @@ impl Session {
     /// savepoint taken after it (`Savepoints[:i]`), touching no data.
     fn release_savepoint(&mut self, name: &str) -> Result<(), DriverError> {
         let released = self
-            .txn
+            .txn_ctx
             .as_mut()
-            .is_some_and(|txn| txn.savepoints.release(name));
+            .is_some_and(|ctx| ctx.savepoints.release(name));
         if !released {
             self.append_warning(
                 crate::WarningLevel::Error,
@@ -1023,150 +964,31 @@ impl Session {
         Ok(())
     }
 
-    /// Publishes the open transaction's staged writes, or refuses when the
-    /// shared catalog moved under it. A refused commit ends the transaction,
-    /// as an aborted Go transaction does -- the staged writes are gone either
-    /// way, so the caller must retry the statements, not just the COMMIT.
-    pub(crate) fn commit(&mut self) -> Result<(), DriverError> {
-        self.set_txn_isolation_level_one_shot_state_for_next_txn();
-        if self.txn.is_some() {
-            self.record_statement_ended_txn();
+    /// Runs `body` over the catalog the open transaction reads: a stale
+    /// transaction's historical schema (Go `TxnCtx.InfoSchema`), otherwise the
+    /// session's catalog.
+    pub(crate) fn with_txn_catalog<T>(
+        &self,
+        body: impl FnOnce(&Catalog) -> T,
+    ) -> Result<T, DriverError> {
+        if let Some((_, read)) = self.txn_ctx.as_ref().and_then(|ctx| ctx.stale.as_ref()) {
+            return Ok(body(&read.catalog));
         }
-        self.cleanup_txn_read_ts();
-        let Some(txn) = self.txn.take() else {
-            // COMMIT with no open transaction is a no-op, as in MySQL.
-            return Ok(());
-        };
-        if let Some(process) = &self.process {
-            process
-                .registry()
-                .transaction_state(process.id(), "Committing");
-        }
-        if txn.stale_read_ts.is_some() {
-            // Go's stale transaction is read-only by construction; its
-            // COMMIT publishes nothing, and `setLastTxnInfoBeforeTxnEnd`
-            // leaves the start-only record (`pkg/session/session.go:1056`).
-            self.set_last_txn_info_started(txn.start_ts);
-            self.current_tso().clear();
-            if let Some(process) = &self.process {
-                process.registry().transaction_finished(process.id());
-            }
-            return Ok(());
-        }
-        if txn.working.version() == txn.base_version
-            && txn.lock_keys.is_empty()
-            && !txn.locking_read
-            && !txn
-                .lock_guard
-                .as_ref()
-                .is_some_and(|guard| guard.locks().holds_any(guard.owner()))
-        {
-            // client-go `KVTxn.Commit` returns before prewrite when the
-            // membuffer holds no mutation (`committer.mutations.Len() == 0`),
-            // so a transaction that wrote nothing commits whatever its peers
-            // committed meanwhile, and `LastTxnInfo` keeps the start-only
-            // record `setLastTxnInfoBeforeTxnEnd` wrote. A working copy whose
-            // mutation counter never moved is that empty membuffer.
-            self.set_last_txn_info_started(txn.start_ts);
-            self.current_tso().clear();
-            if let Some(process) = &self.process {
-                process.registry().transaction_finished(process.id());
-            }
-            return Ok(());
-        }
-        let mut shared = match self.lock_catalog() {
-            Ok(shared) => shared,
-            Err(error) => {
-                self.clear_table_delta();
-                if let Some(process) = &self.process {
-                    process.registry().transaction_finished(process.id());
-                }
-                return Err(error);
-            }
-        };
-        // Go's prewrite rejects an `Op_Insert` mutation whose key the
-        // committed rows hold: a key an INSERT presumed absent (an optimistic
-        // transaction under `tidb_constraint_check_in_place = OFF`) reports
-        // its duplicate here, at COMMIT, and the transaction is gone. A key
-        // whose working bytes equal the committed ones was rolled back with
-        // its statement.
-        for presumed in self.staged_writes.take_presumed() {
-            let Some(committed) = shared.stored_raw_value(presumed.table_id, &presumed.key) else {
-                continue;
-            };
-            if txn.working.stored_raw_value(presumed.table_id, &presumed.key) == Some(committed) {
-                continue;
-            }
-            drop(shared);
-            self.clear_table_delta();
-            if let Some(process) = &self.process {
-                process.registry().transaction_finished(process.id());
-            }
-            return Err(DriverError::DuplicateEntry {
-                value: presumed.value,
-                key: presumed.index,
-            });
-        }
-        let moved = shared.version() != txn.base_version;
-        let rebased = if moved
-            && !txn.mode.is_pessimistic()
-            && !shared.raw_values_match(&txn.read_snapshot, &txn.lock_keys)
-        {
-            // Go prewrites an optimistic transaction's `Op_Lock` keys like
-            // its writes: one a peer committed after `BEGIN` is a conflict.
-            Err(tidb_executor::RebaseRefusal::WriteConflict)
-        } else if !moved {
-            *shared = txn.working;
-            Ok(())
-        } else if txn.locking_read {
-            // A locking read whose keys an outer owner holds needs the
-            // unmoved image.
-            Err(tidb_executor::RebaseRefusal::NotRebasable)
-        } else {
-            // Go's commit fails only on a key another transaction committed
-            // meanwhile, or on a touched table whose definition changed; a
-            // commit to an unrelated table is no conflict, and a key this
-            // transaction's pessimistic lock covers was read after any
-            // commit that preceded the lock.
-            let held = |key: &[u8]| {
-                txn.lock_guard
-                    .as_ref()
-                    .is_some_and(|guard| guard.locks().holds(guard.owner(), key))
-            };
-            shared.rebase_transaction(&txn.read_snapshot, &txn.working, &self.staged_writes, &held)
-        };
-        if let Err(refusal) = rebased {
-            drop(shared);
-            self.clear_table_delta();
-            if let Some(process) = &self.process {
-                process.registry().transaction_finished(process.id());
-            }
-            return Err(match refusal {
-                tidb_executor::RebaseRefusal::SchemaChanged => {
-                    let error = tidb_domain::schema_checker::SchemaCheckError::InfoSchemaChanged;
-                    DriverError::DdlCoded {
-                        proto: error.proto(),
-                        message: error.message(),
-                    }
-                }
-                _ => DriverError::Txn(TxnErrorKind::WriteConflict),
-            });
-        }
-        // The commit is durable in this store the moment the shared catalog
-        // holds it; the history snapshot and Go's `LastTxnInfo` record
-        // both.
-        let commit_ts = shared.allocate_tso();
-        shared.record_commit(commit_ts);
-        drop(shared);
-        if self.stats_collector.is_none() {
-            self.publish_table_delta();
-        }
-        self.set_last_txn_info_committed(txn.start_ts, commit_ts);
-        self.current_tso().clear();
-        if let Some(process) = &self.process {
-            process.registry().transaction_finished(process.id());
-        }
-        Ok(())
+        let catalog = self.lock_catalog()?;
+        Ok(body(&catalog))
+    }
+
+    /// A stale transaction's historical catalog (Go `TxnCtx.InfoSchema`).
+    pub(crate) fn txn_ctx_stale_catalog(&self) -> Option<&Catalog> {
+        self.txn_ctx
+            .as_ref()
+            .and_then(|ctx| ctx.stale.as_ref())
+            .map(|(_, read)| &read.catalog)
+    }
+
+    /// Whether the open transaction is a stale read (Go `TxnCtx.IsStaleness`).
+    pub(crate) fn txn_is_stale_read(&self) -> bool {
+        self.txn_ctx.as_ref().is_some_and(TxnCtx::is_stale_read)
     }
 
     /// Borrows the shared catalog for one statement. The lock is held for the
@@ -1178,9 +1000,10 @@ impl Session {
             .map_err(|_| DriverError::CatalogPoisoned)
     }
 
-    /// Runs `body` over the catalog this statement sees: the transaction's
-    /// staged copy when one is open (so it reads its own writes), otherwise
-    /// the shared catalog directly (autocommit).
+    /// Runs `body` over the catalog this statement sees: the statement's
+    /// snapshot catalog when one is bound, a stale transaction's historical
+    /// catalog, otherwise the session's catalog. A transaction's own writes
+    /// are read through the store session's buffer under its tables.
     pub(crate) fn with_catalog_mut<T>(
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
@@ -1228,17 +1051,15 @@ impl Session {
         {
             let (value, discovered) = if let Some((_, read)) = &mut self.statement_snapshot {
                 run_discovering_temporary_overlay(&mut read.catalog, body)
+            } else if let Some((_, read)) = self.txn_ctx.as_mut().and_then(|ctx| ctx.stale.as_mut())
+            {
+                run_discovering_temporary_overlay(&mut read.catalog, body)
             } else {
-                match &mut self.txn {
-                    Some(txn) => run_discovering_temporary_overlay(&mut txn.working, body),
-                    None => {
-                        let mut catalog = self
-                            .catalog
-                            .lock()
-                            .map_err(|_| DriverError::CatalogPoisoned)?;
-                        run_discovering_temporary_overlay(&mut catalog, body)
-                    }
-                }
+                let mut catalog = self
+                    .catalog
+                    .lock()
+                    .map_err(|_| DriverError::CatalogPoisoned)?;
+                run_discovering_temporary_overlay(&mut catalog, body)
             };
             if let Some(discovered) = discovered {
                 if include_local {
@@ -1268,17 +1089,14 @@ impl Session {
         };
         let value = if let Some((_, read)) = &mut self.statement_snapshot {
             overlay.run(&mut read.catalog, body)
+        } else if let Some((_, read)) = self.txn_ctx.as_mut().and_then(|ctx| ctx.stale.as_mut()) {
+            overlay.run(&mut read.catalog, body)
         } else {
-            match &mut self.txn {
-                Some(txn) => overlay.run(&mut txn.working, body),
-                None => {
-                    let mut catalog = self
-                        .catalog
-                        .lock()
-                        .map_err(|_| DriverError::CatalogPoisoned)?;
-                    overlay.run(&mut catalog, body)
-                }
-            }
+            let mut catalog = self
+                .catalog
+                .lock()
+                .map_err(|_| DriverError::CatalogPoisoned)?;
+            overlay.run(&mut catalog, body)
         };
         if include_local {
             self.local_temporary_tables = std::mem::take(&mut overlay.local);
@@ -1386,23 +1204,19 @@ impl Session {
     ///
     /// The guard rather than an error arm is what makes a PANIC take the same
     /// path as an `Err`. An `inspect_err` restore is skipped entirely when
-    /// `body` unwinds, and inside `BEGIN` the catalog being mutated is the
-    /// transaction's own working copy, held behind no lock -- so a caught
-    /// panic would leave a HALF-APPLIED statement for `COMMIT` to publish.
+    /// `body` unwinds, so a caught panic would leave a HALF-APPLIED statement
+    /// in the in-process rows.
     pub(crate) fn with_staged_catalog<T>(
         &mut self,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        // Cluster sessions keep statement writes in the outer
-        // `MutationBuffer`/`BufferCheckpoint` owned by `ClusterServerSession`.
-        // Their catalog contains only KV-backed tables, so taking a deep image
-        // here duplicates schema maps on every prepared DML without adding a
-        // rollback capability.  The in-process backend still has to retain
-        // the image (and an internal Session transaction must always retain
-        // it), hence the deliberately narrow fast path.
-        let cluster_catalog = self.txn.is_none();
+        // Store sessions keep statement writes in the store session's
+        // `MutationBuffer`/`BufferCheckpoint`. Their catalog contains only
+        // KV-backed tables, so taking a deep image here duplicates schema
+        // maps on every prepared DML without adding a rollback capability.
+        // In-process rows (temporary tables) still need the image.
         self.with_catalog_mut(|catalog| {
-            if cluster_catalog && catalog.all_tables_have_external_statement_rollback() {
+            if catalog.all_tables_have_external_statement_rollback() {
                 return body(catalog);
             }
             let mut guard = CatalogStage {
@@ -1428,11 +1242,8 @@ impl Session {
         table_name: &str,
         body: impl FnOnce(&mut Catalog) -> Result<T, DriverError>,
     ) -> Result<T, DriverError> {
-        let cluster_catalog = self.txn.is_none();
         self.with_catalog_mut(|catalog| {
-            let has_external_rollback =
-                catalog.table_has_external_statement_rollback(database, table_name);
-            if cluster_catalog && has_external_rollback {
+            if catalog.table_has_external_statement_rollback(database, table_name) {
                 return body(catalog);
             }
             let mut guard = CatalogStage {
@@ -1467,225 +1278,6 @@ impl Session {
         }
     }
 
-    /// Opens the running statement's transactional read and lock step, Go's
-    /// `OnStmtStart` for an in-process transaction.
-    ///
-    /// Go reads an INSERT, UPDATE, DELETE or locking SELECT of a pessimistic
-    /// transaction at its `for_update_ts` (`executorBuilder.getSnapshotTS`),
-    /// the latest committed rows beneath the transaction's own writes, and
-    /// every statement of a READ-COMMITTED one at a fresh timestamp; any
-    /// other statement reads the transaction's snapshot. Such a statement
-    /// runs over a view of the shared catalog with the transaction's writes
-    /// laid over it, and its lock operators record the keys to lock. A
-    /// session whose transaction an outer owner drives (a cluster node, which
-    /// installs its own key collector) is left to that owner.
-    pub(crate) fn begin_transaction_statement(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
-        let locking_read = matches!(stmt, Stmt::Query(_)) && crate::dispatch::query_has_lock(stmt);
-        let Some(txn) = self.txn.as_mut() else {
-            return Ok(());
-        };
-        if txn.is_stale_read()
-            || self.statement_snapshot.is_some()
-            || self.selected_lock_keys.is_some()
-        {
-            return Ok(());
-        }
-        if !txn.writes_in_image {
-            txn.locking_read |= locking_read;
-            return Ok(());
-        }
-        let pessimistic = txn.mode.is_pessimistic();
-        let for_update_read = pessimistic
-            && (locking_read
-                || txn.read_committed
-                || self.statement_kind == crate::StatementKind::Dml);
-        if !for_update_read && !locking_read {
-            return Ok(());
-        }
-        let mut statement = TransactionStatement {
-            view_base: None,
-            saved: None,
-            view_is_image: true,
-            pessimistic,
-            locking_read,
-        };
-        if for_update_read {
-            self.staged_writes.begin_statement_log();
-            let view_base = self.lock_catalog()?.clone();
-            let Some(txn) = self.txn.as_mut() else {
-                return Ok(());
-            };
-            statement.view_is_image = view_base.version() == txn.base_version;
-            let view = if statement.view_is_image {
-                txn.working.clone()
-            } else {
-                view_base.clone().with_transaction_writes(
-                    &txn.read_snapshot,
-                    &txn.working,
-                    &self.staged_writes,
-                )
-            };
-            statement.saved = Some(std::mem::replace(&mut txn.working, view));
-            statement.view_base = Some(view_base);
-        }
-        self.selected_lock_keys = Some(
-            tidb_executor::select_lock::SelectedLockKeys::new(
-                tidb_txnkv::transaction::LockWaitTime::Timeout(self.lock_wait_timeout()),
-                self.vars().shared_lock_promotion_enabled(),
-            )
-            .with_read_committed(self.read_committed_locking())
-            .with_lock_state_observer(self.transaction_lock_state_observer()),
-        );
-        self.transaction_statement = Some(statement);
-        Ok(())
-    }
-
-    /// Whether a statement that fails its lock step may be run again: one
-    /// that [`Self::begin_transaction_statement`] reads at `for_update_ts`.
-    pub(crate) fn transaction_statement_may_retry(&self, stmt: &Stmt) -> bool {
-        self.txn.as_ref().is_some_and(|txn| {
-            txn.writes_in_image
-                && !txn.is_stale_read()
-                && txn.mode.is_pessimistic()
-                && (statement_kind_of(stmt) == crate::StatementKind::Dml
-                    || (matches!(stmt, Stmt::Query(_)) && crate::dispatch::query_has_lock(stmt)))
-        })
-    }
-
-    /// Ends the running statement's lock step: Go `handlePessimisticDML`
-    /// and `SelectLockExec`'s `doLockKeys`.
-    ///
-    /// A locking read's rows are drained first, so its lock operator has
-    /// published every key before any row reaches the client. A pessimistic
-    /// statement then locks those keys and every key it wrote; on success its
-    /// writes join the transaction's image, and on any failure the statement
-    /// leaves the image as it found it -- Go's statement rollback, the
-    /// transaction going on. An optimistic transaction only records a locking
-    /// read's keys for COMMIT to check.
-    pub(crate) fn finish_transaction_statement(
-        &mut self,
-        execution: Result<crate::record_set::PendingExecution, DriverError>,
-    ) -> StatementFinish {
-        let Some(statement) = self.transaction_statement.take() else {
-            return StatementFinish::Done(execution);
-        };
-        let collector = self.selected_lock_keys.take();
-        let mut execution = match execution {
-            Ok(execution) => execution,
-            Err(error) => {
-                self.restore_statement_image(statement);
-                return StatementFinish::Done(Err(error));
-            }
-        };
-        if statement.locking_read
-            && matches!(execution, crate::record_set::PendingExecution::Query(_))
-        {
-            match execution.collect(self) {
-                Ok(output) => execution = crate::record_set::PendingExecution::Complete(output),
-                Err(error) => {
-                    self.restore_statement_image(statement);
-                    return StatementFinish::Done(Err(error));
-                }
-            }
-        }
-        let written = self.staged_writes.statement_log_keys();
-        let mut requests = collector
-            .map(|collector| collector.take_requests())
-            .unwrap_or_default();
-        if !statement.pessimistic {
-            self.staged_writes.end_statement_log(true);
-            if let Some(txn) = self.txn.as_mut() {
-                txn.lock_keys
-                    .extend(requests.into_iter().flat_map(|(_, keys)| keys));
-            }
-            return StatementFinish::Done(Ok(execution));
-        }
-        if !written.is_empty() {
-            requests.push((
-                tidb_txnkv::transaction::LockWaitTime::Timeout(self.lock_wait_timeout()),
-                written.clone(),
-            ));
-        }
-        for (wait, keys) in requests {
-            if let Err(finish) = self.acquire_pessimistic_locks(&statement, wait, &keys) {
-                self.restore_statement_image(statement);
-                return finish;
-            }
-        }
-        self.staged_writes.end_statement_log(true);
-        if let (Some(saved), Some(txn)) = (statement.saved, self.txn.as_mut()) {
-            if !statement.view_is_image {
-                let view = std::mem::replace(&mut txn.working, saved);
-                txn.working.absorb_writes(&view, &written);
-            }
-        }
-        StatementFinish::Done(Ok(execution))
-    }
-
-    /// Takes `keys` for this transaction, Go `KVTxn.LockKeys` with the
-    /// statement's wait policy.
-    ///
-    /// The committed rows are checked and the lock taken under the catalog
-    /// lock, so no commit lands between them: a key committed since the
-    /// statement read it asks for the statement to be rerun at a newer
-    /// `for_update_ts`. A key another live transaction holds fails a NOWAIT
-    /// request with 3572 and otherwise waits, with the catalog released, for
-    /// that transaction to end, failing with 1205 when the wait runs out.
-    fn acquire_pessimistic_locks(
-        &self,
-        statement: &TransactionStatement,
-        wait: tidb_txnkv::transaction::LockWaitTime,
-        keys: &[Vec<u8>],
-    ) -> Result<(), StatementFinish> {
-        use tidb_txnkv::transaction::LockWaitTime;
-        let Some(guard) = self.txn.as_ref().and_then(|txn| txn.lock_guard.as_ref()) else {
-            return Ok(());
-        };
-        let deadline = match wait {
-            LockWaitTime::Timeout(timeout) => Some(std::time::Instant::now() + timeout),
-            LockWaitTime::NoWait | LockWaitTime::AlwaysWait => None,
-        };
-        loop {
-            let shared = self
-                .lock_catalog()
-                .map_err(|error| StatementFinish::Done(Err(error)))?;
-            if let Some(base) = &statement.view_base {
-                if shared.version() != base.version() && !shared.raw_values_match(base, keys) {
-                    return Err(StatementFinish::Retry);
-                }
-            }
-            let outcome = guard.locks().try_acquire(guard.owner(), keys);
-            drop(shared);
-            let tidb_executor::LockAcquire::Blocked { holder } = outcome else {
-                return Ok(());
-            };
-            let error = match wait {
-                LockWaitTime::NoWait => (
-                    &*tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET,
-                    tidb_error::tidb::errname::ErrLockAcquireFailAndNoWaitSet.raw,
-                ),
-                _ if guard.locks().wait_released(holder, deadline) => continue,
-                _ => (
-                    &*tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT,
-                    tidb_error::tidb::errname::ErrLockWaitTimeout.raw,
-                ),
-            };
-            return Err(StatementFinish::Done(Err(DriverError::Mysql(
-                tidb_executor::MysqlError::terror(error.0, error.1),
-            ))));
-        }
-    }
-
-    /// Puts back the transaction's image a statement ran beside, and takes
-    /// the keys only the failed statement wrote back out of the
-    /// transaction's record of its writes.
-    fn restore_statement_image(&mut self, statement: TransactionStatement) {
-        self.staged_writes.end_statement_log(false);
-        if let (Some(saved), Some(txn)) = (statement.saved, self.txn.as_mut()) {
-            txn.working = saved;
-        }
-    }
-
     /// Go `serverStatus2Str` over this session's status bits: the `State`
     /// column of `SHOW PROCESSLIST`.
     ///
@@ -1693,7 +1285,7 @@ impl Session {
     /// bits this tier owns, in the same order as Go's `ascServerStatus`.
     #[must_use]
     pub fn status_text(&self) -> String {
-        match (self.txn.is_some(), self.is_autocommit()) {
+        match (self.txn_ctx.is_some(), self.is_autocommit()) {
             (true, true) => "in transaction; autocommit".to_owned(),
             (true, false) => "in transaction".to_owned(),
             (false, true) => "autocommit".to_owned(),

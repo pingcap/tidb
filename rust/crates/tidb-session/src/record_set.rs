@@ -63,22 +63,13 @@ impl PendingExecution {
 pub(crate) enum QueryTransactionEnd {
     #[default]
     None,
-    AutocommitRead,
     StaleRead,
     SnapshotRead,
 }
 
 impl QueryTransactionEnd {
-    fn finish(self, session: &mut Session, succeeded: bool) -> Result<(), DriverError> {
+    fn finish(self, session: &mut Session) -> Result<(), DriverError> {
         match self {
-            Self::AutocommitRead
-                if succeeded
-                    && !session.in_transaction()
-                    && !session.statement_txns_are_external() =>
-            {
-                let start_ts = session.lock_catalog()?.allocate_tso();
-                session.set_last_txn_info_started(start_ts);
-            }
             // A one-statement stale transaction must end even after Next/Close fails.
             Self::StaleRead => session.discard_stale_statement_transaction(),
             Self::SnapshotRead => session.statement_snapshot = None,
@@ -116,7 +107,7 @@ impl PendingQuery {
         let result = self.record_set.finish();
         self.context.drain_fold_warnings();
         session.drain_eval_warnings(&self.context);
-        let finished = std::mem::take(&mut self.transaction_end).finish(session, result.is_ok());
+        let finished = std::mem::take(&mut self.transaction_end).finish(session);
         result.and(finished)
     }
 
@@ -141,7 +132,7 @@ impl PendingQuery {
         let result = record_set.collect();
         context.drain_fold_warnings();
         session.drain_eval_warnings(&context);
-        let finished = transaction_end.finish(session, result.is_ok());
+        let finished = transaction_end.finish(session);
         let (columns, rows) = result?;
         finished?;
         Ok(StmtOutput::Rows { columns, rows })

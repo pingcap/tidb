@@ -320,9 +320,8 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// The first pair in `[start, upper_bound)` of the transaction's READ
     /// SNAPSHOT, without its own staged writes -- Go
     /// `GetSnapshot(startTS).Iter`, which `TABLESAMPLE` reads instead of the
-    /// transaction. The in-process store writes through, so its callers pass
-    /// a table from the catalog image taken when the transaction opened (see
-    /// [`crate::StmtContext::txn_read_snapshot`]) and this default reads it.
+    /// transaction. The in-process store writes through and has no snapshot
+    /// apart from its rows, so this default reads them.
     fn snapshot_first(
         &mut self,
         start: &Key,
@@ -568,17 +567,6 @@ impl TableStorage for MemTableStorage {
         match self.get(key) {
             Err(StorageError::NotFound) => Ok(Vec::new()),
             other => other,
-        }
-    }
-
-    fn mark_presume_key_not_exists_with_hint(&mut self, key: &Key, value: &str, index: &str) {
-        if let Some(staging) = self.staging.as_ref().filter(|staging| staging.optimistic) {
-            staging.writes.presume(crate::kv_table::PresumedKey {
-                table_id: staging.table_id,
-                key: key.as_bytes().to_vec(),
-                value: value.to_owned(),
-                index: index.to_owned(),
-            });
         }
     }
 

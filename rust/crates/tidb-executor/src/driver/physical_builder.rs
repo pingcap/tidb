@@ -1377,15 +1377,13 @@ fn build_table_sample(
     } else {
         sample.table_sample_info.partition_ids.clone()
     };
-    // Go samples `GetSnapshot(TxnCtx.StartTS)`, so an open transaction reads
-    // the catalog image it started from rather than its own writes.
-    let snapshot = ctx.txn_read_snapshot().unwrap_or(catalog);
+    // Go samples `GetSnapshot(TxnCtx.StartTS)`, never the membuffer: the
+    // table's storage reads its snapshot (`TableStorage::snapshot_first`).
     let mut tables = physical_ids
         .iter()
         .map(|physical_id| {
-            snapshot
+            catalog
                 .physical_kv_table_by_id(*physical_id)
-                .or_else(|| catalog.physical_kv_table_by_id(*physical_id))
                 .ok_or_else(|| {
                     DriverError::unsupported("physical table-sample ID is absent from the catalog")
                 })

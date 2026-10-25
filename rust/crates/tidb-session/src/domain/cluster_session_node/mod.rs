@@ -70,13 +70,13 @@
 //! * A prepared one. It used to be run as an ordinary statement instead; it is
 //!   now classified at PREPARE and routed to the same place, so which protocol
 //!   carried it does not enter into any of this.
-//! * `SET autocommit = 0`, which carries no keyword at all -- see
-//!   [`ClusterServerSession::begin_if_autocommit_off`] for why the variable
-//!   itself is the routing question, and
-//!   [`ClusterServerSession::commit_if_session_left_transaction`] for the
+//! * `SET autocommit = 0`, which carries no keyword at all: the store
+//!   session's `prepare_statement_context` enters the pending transaction for
+//!   the statement about to run (Go `PrepareTxnCtx`), and
+//!   [`ClusterServerSession::commit_if_session_left_transaction`] is the
 //!   statement that ends the transaction from the inside.
 //! * `SAVEPOINT`, which under `autocommit = 0` is Go's `Txn(true)` and so is
-//!   itself a transaction opening ([`ClusterServerSession::apply_savepoint`]).
+//!   itself a transaction opening (`TxnManager::savepoint_checkpoint`).
 //!
 //! None of them tracks transaction state here. Each asks the driver session,
 //! which owns the rules; a second copy that could drift is the bug all four
@@ -332,7 +332,7 @@ use tidb_exec::cluster_table_storage::LockKeysOutcome;
 use crate::StmtResult;
 #[cfg(test)]
 const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
-use crate::txn_manager::{CommitHooks, TxnManager};
+use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
 mod non_transactional_dml;
 mod record_set;
 mod ru_stats_writer;
@@ -5011,27 +5011,6 @@ impl SimpleExecRegions {
     }
 }
 
-/// Go `session.CommitTxn` and, over a valid transaction, the
-/// `session.doCommitWithRetry` it calls; the commit runs under both until
-/// the value drops.
-struct CommitTxnRegions {
-    // Dropped in declaration order: the inner region ends first.
-    _do_commit: Option<tidb_util::tracing::ThreadRegion>,
-    _commit_txn: tidb_util::tracing::ThreadRegion,
-}
-
-impl CommitTxnRegions {
-    fn begin(valid: bool) -> Self {
-        let commit_txn = tidb_util::tracing::start_thread_region_ex("session.CommitTxn");
-        let do_commit =
-            valid.then(|| tidb_util::tracing::start_thread_region_ex("session.doCommitWithRetry"));
-        Self {
-            _do_commit: do_commit,
-            _commit_txn: commit_txn,
-        }
-    }
-}
-
 /// The node's [`crate::txn_manager::SchemaPins`]: its MDL registry.
 struct NodeSchemaPins(Arc<schema_sync::SchemaPinRegistry>);
 
@@ -5242,58 +5221,20 @@ impl ClusterServerSession {
         ) {
             self.store.session.reset_transaction_scope();
         }
-        // Go's `BEGIN` inside an open transaction implicitly COMMITS it --
-        // and the commit must run BEFORE the schema refresh below, in Go's
-        // own order. The refresh replaces the session's shared catalog, and
-        // the driver session's commit checks that the catalog it opened on
-        // is the one it is committing into; refreshing first turned every
-        // implicit commit after a mid-run statistics republish into a
-        // phantom "Write conflict" at `BEGIN` (sysbench abandons a
-        // transaction on an ignorable 1213 and just issues the next BEGIN,
-        // which is exactly this shape).
-        // Go `executeBegin` refuses a `READ ONLY` clause before `NewTxn`
-        // commits the open transaction, so a refused BEGIN leaves it open.
-        if matches!(control, Some(TransactionControl::Begin { .. })) {
-            self.store.session
-                .refuse_begin_noop_clause(stmt)
-                .map_err(map_error)?;
-        }
-        if matches!(control, Some(TransactionControl::Begin { .. }))
-            && self.store.session.in_transaction()
-        {
-            // A commit that fails has ended the transaction (Go rolls it
-            // back); the staged writes must go with it rather than wait for
-            // the next statement's leftover-transaction commit to publish
-            // them.
-            // Go `executeBegin` -> `NewTxn`: `session.CommitTxn` of the open
-            // transaction, inside the `SimpleExec`.
-            let _commit_txn = CommitTxnRegions::begin(true);
-            if let Err(error) = self.store.session.control_transaction("COMMIT") {
-                self.discard_explicit()?;
-                return Err(map_error(error));
-            }
-            self.commit_explicit()?;
-        }
-        // The refresh happens BEFORE the driver session pins its own schema
-        // view for the transaction: Go activates a transaction with the
-        // LATEST schema at start (`domain.GetSnapshotInfoSchema(startTS)`),
-        // so a table committed before BEGIN is visible to every statement of
-        // the new transaction, on a connection of any age.
-        if matches!(control, Some(TransactionControl::Begin { .. })) {
-            self.rebuild_catalog_now();
-        }
-        let state = match self.store.session.control_transaction_stmt(stmt) {
+        // Go `SimpleExec.Next`: the statement itself, the store half through
+        // the session's transaction manager -- `BEGIN`'s implicit commit and
+        // activation, `ROLLBACK`'s `RollbackTxn`, the savepoints' membuffer
+        // checkpoints.
+        let state = match self.store.control_transaction_stmt(stmt) {
             Ok(state) => state,
             Err(error) => {
-                // A failed COMMIT has already ended the session's transaction
-                // (Go rolls it back and reports the error). Left open, the
-                // store transaction would be published by the next
-                // statement's `commit_if_session_left_transaction`, so a
-                // COMMIT the client saw fail would take effect after all.
+                // A failed statement that has ended the session's transaction
+                // must not leave the store transaction for the next
+                // statement's `commit_if_session_left_transaction` to publish.
                 if self.store.txn.explicit.is_some() && !self.store.session.in_transaction() {
                     self.discard_explicit()?;
                 }
-                return Err(map_error(error));
+                return Err(error);
             }
         };
         let Some(in_transaction) = state else {
@@ -5310,43 +5251,13 @@ impl ClusterServerSession {
                 self.commit_explicit()?;
             }
             Some(TransactionControl::Rollback) => {
-                // Go `executeRollback` rolls the transaction back in the
+                // Go `executeRollback` rolled the transaction back in the
                 // `SimpleExec`; `finishStmt`'s `CommitTxn` then finds no
                 // valid transaction.
-                self.discard_explicit()?;
                 drop(simple_exec.take());
                 let _commit_txn = CommitTxnRegions::begin(false);
             }
-            // A BEGIN drops the staged writes too: a leftover buffer at that
-            // point could only come from a statement outside any transaction
-            // whose autocommit already published it. Then it takes the one
-            // timestamp every statement of the new transaction reads at, and
-            // that its COMMIT will prewrite at.
-            Some(TransactionControl::Begin { .. }) => {
-                self.discard_explicit()?;
-                // NO refresh here, deliberately. The refresh for this BEGIN
-                // already ran above, BEFORE `session.control_transaction`
-                // pinned the driver transaction's `base_version` -- one
-                // refresh, then both pins, which is Go's shape (one
-                // `GetSnapshotInfoSchema(startTS)` per activation). A second
-                // rebuild HERE ran after that pin, so a reload or statistics
-                // republish landing in the microseconds between them swapped
-                // the connection's catalog under the just-opened transaction
-                // -- whose COMMIT then failed the base-version guard with a
-                // phantom 9007. Receipted live by the guard probe under rung
-                // 8: `shared_version:86, base_version:1910` -- a freshly
-                // rebuilt catalog (counter restarted) against a pin taken on
-                // the long-lived one, once per run, exactly one thread.
-                let resource_group = self.store.session.current_resource_group().to_owned();
-                self.open_explicit(&resource_group)?;
-            }
-            Some(
-                control @ (TransactionControl::Savepoint(_)
-                | TransactionControl::RollbackToSavepoint(_)
-                | TransactionControl::ReleaseSavepoint(_)),
-            ) => self.apply_savepoint(&control)?,
-            // Refused above, before the session was touched.
-            Some(TransactionControl::Unsupported(_)) | None => {}
+            _ => {}
         }
         drop(simple_exec);
         // The control path bypasses the ordinary statement pipeline's finish
@@ -5507,89 +5418,6 @@ impl ClusterServerSession {
     ) -> Result<T, SqlQueryError> {
         self.store.probe_statement(shape, resource_group, run)
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    /// Opens the transaction `autocommit = 0` implies, for the statement about
-    /// to run.
-    ///
-    /// `SET autocommit = 0` is the third door onto this connection's
-    /// transaction state, and the only one that carries no keyword: there is no
-    /// `BEGIN` for [`classify_transaction_control`] to route on, just a
-    /// variable the driver session turns OFF. So the variable IS the routing
-    /// question, and asking the session for it -- rather than tracking a copy
-    /// here -- is what keeps the two halves from disagreeing the way they did
-    /// when a prepared `BEGIN` flipped one and not the other.
-    ///
-    /// The timing is Go's, not MySQL's `START TRANSACTION`: the `SET` itself
-    /// takes no timestamp, and the transaction begins at the first statement
-    /// that reads or writes data (captured). DDL, account and `SET GLOBAL`
-    /// statements never reach here -- each commits the open transaction first,
-    /// as Go does -- so none of them opens one either.
-    fn begin_if_autocommit_off(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
-        self.store.txn.enter_if_autocommit_off(
-            &self.store.session,
-            resource_group,
-            self.store.follower.schema_version(),
-        );
-        Ok(())
-    }
-
-    /// Go `EnterNewTxnWithBeginStmt`: `BEGIN` activates the transaction at
-    /// once; see [`TxnManager::open`].
-    fn open_explicit(&mut self, resource_group: &str) -> Result<(), SqlQueryError> {
-        self.store.txn
-            .open(&self.store.session, resource_group, self.store.follower.schema_version())
-    }
-
-
-
-
-    /// What a commit reads off this node; see [`CommitHooks`].
-    fn commit_hooks(&self) -> NodeCommitHooks {
-        NodeCommitHooks {
-            bindings: self.bindings.clone(),
-            schema_validator: self.schema_validator.clone(),
-            schema_version: self.store.follower.schema_version(),
-            catalog: self.store.session.shared_catalog(),
-        }
-    }
-
-
-    /// Applies one savepoint statement to the connection's buffer, after the
-    /// driver session has accepted it: the byte half of the rule the session
-    /// just applied; see [`TxnManager::add_savepoint`].
-    fn apply_savepoint(&mut self, control: &TransactionControl) -> Result<(), SqlQueryError> {
-        match control {
-            TransactionControl::Savepoint(name) => {
-                let resource_group = self.store.session.current_resource_group().to_owned();
-                self.store.txn.add_savepoint(
-                    &self.store.session,
-                    name,
-                    &resource_group,
-                    self.store.follower.schema_version(),
-                )?;
-            }
-            TransactionControl::RollbackToSavepoint(name) => {
-                self.store.txn.rollback_to_savepoint(&self.store.session, name);
-            }
-            TransactionControl::ReleaseSavepoint(name) => self.store.txn.release_savepoint(name),
-            _ => {}
-        }
-        Ok(())
-    }
-
 
     fn rebuild_catalog_if_stale(&mut self) {
         self.store.rebuild_catalog_if_stale();
@@ -7189,6 +7017,15 @@ impl QuerySession for ClusterServerSession {
         if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
             return self.execute_write_parsed(&body_sql, &body);
         }
+        // A transaction statement an internal session runs as SQL (Go's
+        // `ExecuteInternal("BEGIN")`) takes the same door the wire's does.
+        if classify_transaction_control_stmt(stmt).is_some() {
+            self.control_transaction_parsed(sql, stmt)?;
+            return Ok(Some(WriteOutcome {
+                affected_rows: 0,
+                last_insert_id: 0,
+            }));
+        }
         // Go `TxnCtx.StatementCount`: every statement inside an explicit
         // transaction counts toward its COMMIT observation.
         if let Some(transaction) = self.store.txn.explicit.as_ref() {
@@ -7673,6 +7510,14 @@ impl QuerySession for ClusterServerSession {
         // See `execute_write_parsed`: a prepared DDL body takes the DDL route.
         if let Some((body_sql, body)) = self.store.session.prepared_ddl_body(stmt) {
             return self.execute_parsed(&body_sql, &body);
+        }
+        // A transaction statement takes the connection's transaction door,
+        // whichever entry it came through; it answers no rows.
+        if classify_transaction_control_stmt(stmt).is_some() {
+            self.control_transaction_parsed(sql, stmt)?;
+            return Ok(QueryResult::new(Box::new(
+                crate::domain::pipeline_session::affected_rows_source(0),
+            )));
         }
         // Go `session.ExecuteStmt`: it returns the opened record set, which
         // the caller drains outside it.

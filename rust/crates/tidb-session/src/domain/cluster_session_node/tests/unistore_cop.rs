@@ -19594,9 +19594,10 @@ fn analyze_runs_multi_valued_indexes_as_independent_tasks() {
 
 /// Go rolls back a transaction whose COMMIT fails: the client sees the
 /// error and nothing it staged is published, not even by the next
-/// statement (captured from Go on this branch). Two failure owners: the
-/// store's prewrite (a presumed-absent key) and the session's own commit (a
-/// locking read whose catalog moved under it).
+/// statement (captured from Go on this branch). The failure owner is the
+/// store's prewrite (a presumed-absent key); a republish of the connection's
+/// catalog while the transaction is open does not fail its commit, as Go's
+/// schema and statistics reloads do not.
 #[test]
 fn a_failed_commit_publishes_nothing_later() {
     let (stack, _users) = cop_backed_stack();
@@ -19629,15 +19630,10 @@ fn a_failed_commit_publishes_nothing_later() {
         let charset = catalog.database_charset("failed_commit").unwrap();
         assert!(catalog.set_database_charset("failed_commit", charset));
     }
-    session
-        .control_transaction("COMMIT")
-        .expect_err("the session's locking-read commit refuses a moved catalog");
-    session
-        .execute_write("INSERT INTO t VALUES (4, 40)")
-        .unwrap();
+    session.control_transaction("COMMIT").unwrap();
     assert_eq!(
         displayed(rows(&mut session, "SELECT * FROM t ORDER BY id")),
-        vec![vec!["1", "10"], vec!["2", "20"], vec!["4", "40"]]
+        vec![vec!["1", "10"], vec!["2", "20"], vec!["3", "30"]]
     );
 }
 

@@ -750,7 +750,9 @@ impl Session {
             && !was_autocommit
             && self.is_autocommit()
         {
-            self.commit()?;
+            // Go `SetInTxn(false)`; the statement's finish commits the store
+            // transaction (`autoCommitAfterStmt`).
+            self.leave_txn_ctx_for_commit();
         }
         Ok(())
     }

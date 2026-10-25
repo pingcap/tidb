@@ -519,7 +519,7 @@ impl Session {
     /// without `ERROR_FOR_DIVISION_BY_ZERO` the condition is ignored, a
     /// non-strict mode warns, and the default strict mode fails the statement.
     /// The sequences a statement of this session may read, over the catalog it
-    /// sees (the transaction's working copy inside `BEGIN`).
+    /// sees (a stale transaction's historical schema inside `BEGIN ... AS OF`).
     ///
     /// Only the NAMES are snapshotted: the allocators are `Arc` handles, so
     /// consuming a value through one moves the counter the catalog holds. That
@@ -534,14 +534,8 @@ impl Session {
                 Arc::clone(&self.sequence_last_values),
             ))
         };
-        match &self.txn {
-            Some(txn) => snapshot(&txn.working),
-            None => match self.catalog.lock() {
-                Ok(catalog) => snapshot(&catalog),
-                // The statement itself reports a poisoned catalog.
-                Err(_) => Arc::default(),
-            },
-        }
+        // The statement itself reports a poisoned catalog.
+        self.with_txn_catalog(snapshot).unwrap_or_default()
     }
 
     fn tidb_decode_key_snapshot(&self) -> Arc<tidb_executor::TidbDecodeKeySnapshot> {
@@ -1286,16 +1280,14 @@ impl Session {
         is_dml: bool,
         ignore_err: bool,
     ) -> tidb_executor::StmtContext {
-        let ctx = self
-            .session_statement_context(is_dml, ignore_err)
+        // A transaction's reads that skip its own writes (`TABLESAMPLE`, Go
+        // `GetSnapshot(TxnCtx.StartTS)`) go to the store snapshot under the
+        // session's tables (`ClusterTableStorage::snapshot_first`).
+        self.session_statement_context(is_dml, ignore_err)
             .with_hypo_state(
                 Arc::clone(&self.hypo_indexes),
                 Arc::clone(&self.hypo_tiflash_replicas),
-            );
-        match &self.txn {
-            Some(txn) => ctx.with_txn_read_snapshot(Arc::clone(&txn.read_snapshot)),
-            None => ctx,
-        }
+            )
     }
 
     fn session_statement_context(
@@ -1382,10 +1374,7 @@ impl Session {
         // Transaction state is not part of the variable-table generation
         // that keys `StatementVarSnapshot`, so read it at every statement
         // boundary like Go reads `TxnCtx.IsStaleness`.
-        index_lookup_push_down_session.staleness |= self
-            .txn
-            .as_ref()
-            .is_some_and(|transaction| transaction.is_stale_read());
+        index_lookup_push_down_session.staleness |= self.txn_is_stale_read();
         // Go attaches the domain to the session, not to selected AST kinds.
         // EXPLAIN and ordinary planning must see the same latest infoschema.
         let latest_index_schema = self.latest_index_schema_snapshot();
@@ -1406,8 +1395,7 @@ impl Session {
         // Go's stale provider selects the instance scope independently of the
         // replica preference. tidb_snapshot uses the ordinary provider even
         // though this adapter shares the historical catalog implementation.
-        let is_staleness = self.vars.snapshot_ts() == 0
-            && self.txn.as_ref().is_some_and(|txn| txn.is_stale_read());
+        let is_staleness = self.vars.snapshot_ts() == 0 && self.txn_is_stale_read();
         let read_replica_scope = if is_staleness || replica_read.is_closest_read() {
             tidb_config::config_tree::config::get_txn_scope_from_config()
         } else {
@@ -2356,26 +2344,28 @@ mod tests {
         session
             .run("INSERT INTO read_consistency VALUES (1)")
             .unwrap();
-        let ts = session.catalog.lock().unwrap().allocate_tso();
+        // A real TSO from the store: the start of an explicit transaction.
+        session.run("BEGIN").unwrap();
+        let crate::StmtResult::Rows(rows) = session.run("SELECT @@tidb_current_ts").unwrap() else {
+            panic!("expected rows");
+        };
+        session.run("COMMIT").unwrap();
+        let ts = String::from_utf8(rows[0][0].sql_bytes().unwrap()).unwrap();
         assert!(
             !session
                 .statement_context(false)
                 .snapshot_read_options(0.0)
                 .is_staleness
         );
-        session.open_stale_transaction(ts).unwrap();
+        session
+            .run(&format!("START TRANSACTION READ ONLY AS OF TIMESTAMP {ts}"))
+            .unwrap();
         let retained = session.statement_context(false);
         assert!(retained.snapshot_read_options(0.0).is_staleness);
-        session.discard_stale_statement_transaction();
-        assert!(
-            !session
-                .statement_context(false)
-                .snapshot_read_options(0.0)
-                .is_staleness
-        );
-        assert!(retained.snapshot_read_options(0.0).is_staleness);
+        // Go's stale provider routes the scope; `tidb_snapshot` reads through
+        // the same historical schema without stale routing.
+        let ts: u64 = ts.parse().unwrap();
         session.vars.restore_snapshot_ts(ts);
-        session.open_stale_transaction(ts).unwrap();
         assert!(
             !session
                 .statement_context(false)
@@ -2383,8 +2373,15 @@ mod tests {
                 .is_staleness,
             "tidb_snapshot shares the catalog adapter, not stale routing"
         );
-        session.discard_stale_statement_transaction();
         session.vars.restore_snapshot_ts(0);
+        session.run("COMMIT").unwrap();
+        assert!(
+            !session
+                .statement_context(false)
+                .snapshot_read_options(0.0)
+                .is_staleness
+        );
+        assert!(retained.snapshot_read_options(0.0).is_staleness);
     }
 
     #[test]

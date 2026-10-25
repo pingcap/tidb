@@ -1345,10 +1345,6 @@ pub struct StmtContextData {
     /// `tidb_enable_reuse_chunk`) and the planner has not cleared it
     /// (`disableReuseChunkIfNeeded`).
     chunk_alloc_valid: Arc<AtomicBool>,
-    /// The catalog image an open transaction started from: what Go's
-    /// `GetSnapshot(TxnCtx.StartTS)` reads, as opposed to the transaction's
-    /// own staged writes. `None` outside a transaction.
-    txn_read_snapshot: Option<Arc<crate::Catalog>>,
     /// The warnings TiKV reported for THIS statement's coprocessor requests.
     ///
     /// It is an `Arc` sink rather than the `Rc` buffer beside it because a
@@ -2756,7 +2752,6 @@ impl StmtContext {
             ignore_inlist_plan_digest: tidb_vardef::defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST,
             has_physical_table_reader: Arc::default(),
             chunk_alloc_valid: Arc::default(),
-            txn_read_snapshot: None,
             cop_warnings: WarningCollector::new(),
             cop_lite_worker: Arc::default(),
         }))
@@ -2902,21 +2897,6 @@ impl StmtContext {
     #[must_use]
     pub fn is_chunk_alloc_valid(&self) -> bool {
         self.chunk_alloc_valid.load(Ordering::Relaxed)
-    }
-
-    /// Declares the catalog image the open transaction started from.
-    #[must_use]
-    pub fn with_txn_read_snapshot(mut self, snapshot: Arc<crate::Catalog>) -> Self {
-        self.txn_read_snapshot = Some(snapshot);
-        self
-    }
-
-    /// The open transaction's start-time catalog image, read by
-    /// `TABLESAMPLE` (Go `tableRegionSampler` scans `GetSnapshot(startTS)`,
-    /// never the membuffer).
-    #[must_use]
-    pub fn txn_read_snapshot(&self) -> Option<&crate::Catalog> {
-        self.txn_read_snapshot.as_deref()
     }
 
     /// Records the same physical-reader fact Go records by appending to

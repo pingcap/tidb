@@ -376,12 +376,10 @@ impl Session {
             // `ALTER TABLE ... AUTO_INCREMENT` sequence leaves the in-
             // transaction row stored.
             //
-            // Doing this before the DDL runs is also what keeps the DDL off
-            // the transaction's WORKING COPY of the catalog: with no open
-            // transaction, `with_catalog_mut` reaches the shared catalog, so
-            // a TRUNCATE's counter reset lands on the table that survives
-            // rather than on a copy about to be discarded.
-            self.commit()?;
+            // The session leaves the transaction here; the store session
+            // commits it when the statement finishes
+            // (`commit_if_session_left_transaction`, Go `autoCommitAfterStmt`).
+            self.leave_txn_ctx_for_commit();
         }
         // Go `GrantExec.Next` and `RevokeExec.Next`, and `SimpleExec`'s
         // `autoNewTxn` for GRANT/REVOKE ROLE and FLUSH, commit the open
@@ -394,7 +392,7 @@ impl Session {
                 | tidb_ast::AdminStmt::RevokeRole(_)
                 | tidb_ast::AdminStmt::Flush(_)
         )) {
-            self.commit()?;
+            self.leave_txn_ctx_for_commit();
         }
         if let Some(error) = self.local_temporary_ddl_refusal(stmt) {
             return Err(error);
@@ -1041,10 +1039,7 @@ impl Session {
                 return Ok(None);
             };
             self.found_in_plan_cache = cache_hit;
-            let mut query = PendingQuery::new(record_set, stmt_ctx);
-            if !self.in_transaction() {
-                query.transaction_end = QueryTransactionEnd::AutocommitRead;
-            }
+            let query = PendingQuery::new(record_set, stmt_ctx);
             Ok(Some(PendingExecution::Query(query)))
         })();
         match result {
@@ -1202,10 +1197,7 @@ impl Session {
             false,
         );
         self.found_in_plan_cache = cache_hit;
-        let mut query = PendingQuery::new(record_set, stmt_ctx);
-        if !self.in_transaction() {
-            query.transaction_end = QueryTransactionEnd::AutocommitRead;
-        }
+        let query = PendingQuery::new(record_set, stmt_ctx);
         Ok(Some(PendingExecution::Query(query)))
     }
 
@@ -1509,37 +1501,7 @@ impl Session {
         ts: u64,
         stripped: Stmt,
     ) -> Result<PendingExecution, DriverError> {
-        let retention_unavailable = match self.open_stale_transaction(ts) {
-            Ok(()) => None,
-            Err(DriverError::Txn(crate::TxnErrorKind::AsOf(cause)))
-                if cause.contains("precedes this store's retained history") =>
-            {
-                Some(cause)
-            }
-            Err(error) => return Err(error),
-        };
-        if let Some(cause) = retention_unavailable {
-            // go resolves the named tables against the AS-OF schema before
-            // anything else. When the timestamp precedes this store's
-            // retention, that schema answers `Table ... doesn't exist` for
-            // the first named table -- nothing was retained that far back
-            // (oracle-captured: `SELECT * FROM sq1 AS OF TIMESTAMP
-            // '2020-01-01 ...'` on a table that exists in the present).
-            let mut scan = stripped.clone();
-            let scan_result = crate::binding::scan_statement_tables(&mut scan);
-            if let Some((database, table)) = scan_result.names.first() {
-                let database = if database.is_empty() {
-                    self.current_database().to_owned()
-                } else {
-                    database.clone()
-                };
-                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                    "{}.{}",
-                    database, table
-                ))));
-            }
-            return Err(DriverError::Txn(crate::TxnErrorKind::AsOf(cause)));
-        }
+        self.open_stale_transaction(ts)?;
         match self.execute_parsed_statement_inner("", stripped, None, None, None) {
             Ok(PendingExecution::Query(mut query)) => {
                 query.transaction_end = if self.is_autocommit() || self.vars.snapshot_ts() != 0 {
@@ -1798,22 +1760,6 @@ impl Session {
                 return Ok(output);
             }
         }
-        // For the autocommit `LastTxnInfo` decision below: a table-reading
-        // SELECT activates a transaction in Go (start-only record); one that
-        // reads no stored table never takes a timestamp and leaves the
-        // record alone (`setLastTxnInfoBeforeTxnEnd`'s `StartTS == 0` skip).
-        let query_reads_stored_table =
-            matches!(stmt, Stmt::Query(_)) && !self.in_transaction() && {
-                let current_db = self.current_database().to_owned();
-                match self.lock_catalog() {
-                    Ok(catalog) => scan.names.iter().any(|(db, table)| {
-                        let db = if db.is_empty() { &current_db } else { db };
-                        catalog.stored_table_id(db, table).is_some()
-                    }),
-                    Err(_) => false,
-                }
-            };
-        let was_autocommit_statement = !self.in_transaction();
         // The jobs this statement's DDL submits are finished into the DDL
         // history once it completes, as Go's job worker finishes them.
         drop(self.ddl_job_sink.take());
@@ -1825,39 +1771,12 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .explain_marker = true;
         }
-        // A statement this one runs inside its own execution belongs to the
-        // outer statement's lock step, which only the outer call finishes.
-        let nested = self.transaction_statement.is_some();
-        let retry_stmt =
-            (!nested && self.transaction_statement_may_retry(&stmt)).then(|| stmt.clone());
-        let mut execution =
+        // The pessimistic lock step and its retry are the store session's
+        // statement loop (Go `handlePessimisticDML`, `StatementLifecycle`).
+        let execution =
             self.execute_parsed_statement_inner(sql, stmt, prepared, select_plan, dml_plan);
-        let mut retries = tidb_exec::pessimistic_lock_error::PessimisticStatementRetry::default();
-        while !nested {
-            match self.finish_transaction_statement(execution) {
-                crate::txn::StatementFinish::Done(result) => {
-                    execution = result;
-                    break;
-                }
-                // Go `handlePessimisticLockError`: rerun the statement over a
-                // fresh `for_update_ts`, rebuilding its plan.
-                crate::txn::StatementFinish::Retry => {
-                    execution = match (retries.retry(), retry_stmt.clone()) {
-                        (Ok(()), Some(stmt)) => {
-                            self.record_statement_retry();
-                            self.execute_parsed_statement_inner(sql, stmt, prepared, None, None)
-                        }
-                        (Err(error), _) => Err(DriverError::Mysql(tidb_executor::MysqlError::sql_error(
-                            error.code,
-                            error.message,
-                        ))),
-                        (Ok(()), None) => Err(DriverError::Txn(crate::TxnErrorKind::WriteConflict)),
-                    };
-                }
-            }
-        }
         self.finish_submitted_ddl_jobs(sql, execution.is_ok());
-        let mut execution = execution?;
+        let execution = execution?;
         // Go runs a statement without a result set through
         // `handleNoDelayExecutor`, whose `TryNewCacheChunk` draws from the
         // session's reusable allocator and so marks `useChunkAlloc` -- the
@@ -1870,40 +1789,6 @@ impl Session {
                 .vars
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_REUSECHUNK)
                 .is_ok_and(|value| value.eq_ignore_ascii_case("ON") || value == "1");
-        }
-        // A server that owns the statement transactions records
-        // `@@tidb_last_txn_info` from its own store transaction when that
-        // ends; the catalog-counter record below stands in for it only on the
-        // tier without one.
-        if was_autocommit_statement
-            && !self.in_transaction()
-            && !self.statement_txns_are_external()
-        {
-            match &mut execution {
-                PendingExecution::Query(query) => {
-                    if query_reads_stored_table {
-                        query.transaction_end = QueryTransactionEnd::AutocommitRead;
-                    }
-                }
-                PendingExecution::Complete(StmtOutput::Affected(_) | StmtOutput::Done(_)) => {
-                    let (start_ts, commit_ts) = {
-                        let shared = self.lock_catalog()?;
-                        let start_ts = shared.allocate_tso();
-                        let commit_ts = shared.allocate_tso();
-                        shared.record_commit(commit_ts);
-                        (start_ts, commit_ts)
-                    };
-                    self.set_last_txn_info_committed(start_ts, commit_ts);
-                    if self.stats_collector.is_none() {
-                        self.publish_table_delta();
-                    }
-                }
-                PendingExecution::Complete(StmtOutput::Rows { .. }) if query_reads_stored_table => {
-                    let start_ts = self.lock_catalog()?.allocate_tso();
-                    self.set_last_txn_info_started(start_ts);
-                }
-                _ => {}
-            }
         }
         Ok(execution)
     }
@@ -2107,13 +1992,13 @@ impl Session {
             self.drain_eval_warnings(&statement_ctx);
             return Ok(PendingExecution::Complete(output));
         }
-        // BEGIN / COMMIT / ROLLBACK and SET both have their own entry points
-        // for the wire front, which answers them with an OK packet carrying
-        // a status flag. Routing them here too makes `run` the single door
-        // every statement can go through, which is what a client expects of
-        // one connection.
-        if self.control_transaction_stmt(&stmt)?.is_some() {
-            return Ok(PendingExecution::Complete(StmtOutput::Affected(0)));
+        // BEGIN / COMMIT / ROLLBACK and the savepoint statements are the
+        // store session's (`StoreSession::control_transaction_stmt`), which
+        // the connection routes them to before they reach this executor.
+        if tidb_planner::transaction_control::classify_transaction_control_stmt(&stmt).is_some() {
+            return Err(DriverError::unsupported(
+                "transaction statements run on the store session",
+            ));
         }
         match self.apply_set_stmt(&stmt) {
             Ok(Some(_)) => {
@@ -2247,7 +2132,6 @@ impl Session {
         // no database selected (captured). The driver's own
         // `split_table_path` raises it at the resolution point, which is
         // where Go's does.
-        self.begin_transaction_statement(&stmt)?;
         let output = match &stmt {
             Stmt::Query(query) => {
                 let current_db = self.current_db.clone();

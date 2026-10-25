@@ -62,8 +62,6 @@ pub(crate) mod sync_load;
 pub use sync_load::StatisticsLoadWorkers;
 mod statistics;
 pub use statistics::{PseudoStatsTable, StatisticsSource, StatisticsView};
-mod pessimistic_locks;
-pub use pessimistic_locks::{LockAcquire, PessimisticLockGuard, PessimisticLocks};
 
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
@@ -112,28 +110,6 @@ pub const DEFAULT_DATABASE: &str = "test";
 /// in. Spelled lower case, which is the name Go stores and reports.
 pub const SYSTEM_DATABASE: &str = "mysql";
 
-/// Why a transaction cannot be replayed onto a newer catalog image
-/// ([`Catalog::rebase_transaction`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RebaseRefusal {
-    /// Another transaction committed a key this one wrote: Go's write
-    /// conflict.
-    WriteConflict,
-    /// A table this transaction wrote changed definition: Go's
-    /// `ErrInfoSchemaChanged` (8028).
-    SchemaChanged,
-    /// This transaction changed state its staged keys do not describe; it
-    /// commits only over an unmoved image.
-    NotRebasable,
-}
-
-/// Whether two images of one table share its definition: the same id, and
-/// the very column and index metadata a DDL would have rebuilt.
-fn same_table_definition(left: &crate::KvTable, right: &crate::KvTable) -> bool {
-    left.table_id == right.table_id
-        && Arc::ptr_eq(&left.columns, &right.columns)
-        && left.indexes().as_ptr() == right.indexes().as_ptr()
-}
 
 /// Go `PseudoTable`'s schema inputs from a catalog table, whose columns and
 /// indexes are all public; a column past the visible ones is hidden.
@@ -287,9 +263,6 @@ pub struct Catalog {
     /// ID, store-global like the label rules (Go files it in the job's own
     /// transaction, which this tier commits as the DDL runs).
     ddl_job_history: Arc<std::sync::RwLock<BTreeMap<i64, Vec<u8>>>>,
-    /// The store's live pessimistic locks, which every session and staged
-    /// copy of this catalog shares as Go's sessions share TiKV's.
-    pessimistic_locks: Arc<PessimisticLocks>,
     /// Go's process-global `pdhelper.GlobalPDHelper` approximate-count
     /// cache, scoped to this in-process catalog and shared by its snapshots.
     pd_helper_cache: Arc<std::sync::Mutex<crate::pd_helper::ApproximateTableCountCache>>,
@@ -892,7 +865,6 @@ impl CatalogSnapshot {
             regions: Arc::clone(&owner.regions),
             label_rules: Arc::clone(&owner.label_rules),
             ddl_job_history: Arc::clone(&owner.ddl_job_history),
-            pessimistic_locks: Arc::clone(&owner.pessimistic_locks),
             pd_helper_cache: Arc::clone(&owner.pd_helper_cache),
             local_temporary_ids: owner.local_temporary_ids.clone(),
             databases: Arc::clone(&self.databases),
@@ -1086,7 +1058,6 @@ impl Catalog {
             regions: Arc::new(crate::region_map::LocalRegionStore::default()),
             label_rules: Arc::new(crate::label_manager::MockLabelManager::default()),
             ddl_job_history: Arc::default(),
-            pessimistic_locks: Arc::default(),
             // Go `defaultPDHelper`'s capacity and TTL.
             pd_helper_cache: Arc::new(std::sync::Mutex::new(
                 crate::pd_helper::ApproximateTableCountCache::new(
@@ -1366,19 +1337,6 @@ impl Catalog {
             database.tables.values().all(|entry| match entry.as_ref() {
                 TableEntry::Kv(table) => table.has_external_statement_rollback(),
                 _ => false,
-            })
-        })
-    }
-
-    /// Whether any table's rows live outside this catalog image -- a cluster
-    /// session's `KvTable`s, whose writes a session-owned buffer stages and
-    /// whose locks TiKV holds. An in-process store's rows are the image's
-    /// own, so a transaction over it stages, reads and locks them here.
-    #[must_use]
-    pub fn any_table_has_external_statement_rollback(&self) -> bool {
-        self.databases.values().any(|database| {
-            database.tables.values().any(|entry| {
-                matches!(entry.as_ref(), TableEntry::Kv(table) if table.has_external_statement_rollback())
             })
         })
     }
@@ -2626,321 +2584,11 @@ impl Catalog {
         Some(Arc::make_mut(entry))
     }
 
-    /// Go's optimistic commit when another transaction committed after this
-    /// one began: a transaction that read the image `base` and holds its
-    /// writes in `working` is replayed onto this newer image.
-    ///
-    /// Go's TiKV commit fails only on a key another transaction wrote in the
-    /// meantime (write conflict), and the schema validator only on a table
-    /// the transaction touched whose definition changed
-    /// (`ErrInfoSchemaChanged`). This tier's transaction holds a whole
-    /// catalog image, so the replay works per table: one only this
-    /// transaction changed is taken whole, one both changed is merged key
-    /// by key from `staged`, and anything else it changed that keys cannot
-    /// describe is refused as not rebasable. A key `held` answers for -- one
-    /// this transaction's pessimistic lock covers -- was read at the lock's
-    /// newer timestamp and is no conflict however its committed value moved
-    /// before that.
-    ///
-    /// # Errors
-    ///
-    /// The [`RebaseRefusal`] naming why the transaction cannot commit here;
-    /// nothing is applied then.
-    pub fn rebase_transaction(
-        &mut self,
-        base: &Catalog,
-        working: &Catalog,
-        staged: &crate::kv_table::StagedWrites,
-        held: &dyn Fn(&[u8]) -> bool,
-    ) -> Result<(), RebaseRefusal> {
-        enum Replay {
-            Whole(Arc<TableEntry>),
-            Keys(Vec<(Vec<u8>, Option<Vec<u8>>)>),
-        }
-        if working.metadata_version != base.metadata_version
-            || working.databases.len() != base.databases.len()
-        {
-            return Err(RebaseRefusal::NotRebasable);
-        }
-        let mut replays: Vec<(String, String, Replay)> = Vec::new();
-        for (database_name, database) in working.databases.iter() {
-            let Some(base_database) = base.databases.get(database_name) else {
-                return Err(RebaseRefusal::NotRebasable);
-            };
-            if database.tables.len() != base_database.tables.len() {
-                return Err(RebaseRefusal::NotRebasable);
-            }
-            for (table_name, entry) in &database.tables {
-                let Some(base_entry) = base_database.tables.get(table_name) else {
-                    return Err(RebaseRefusal::NotRebasable);
-                };
-                if Arc::ptr_eq(entry, base_entry) {
-                    continue;
-                }
-                let (TableEntry::Kv(written), TableEntry::Kv(read)) =
-                    (entry.as_ref(), base_entry.as_ref())
-                else {
-                    return Err(RebaseRefusal::NotRebasable);
-                };
-                let Some(keys) = staged.keys_of(written.table_id) else {
-                    return Err(RebaseRefusal::NotRebasable);
-                };
-                let Some(current) = self
-                    .databases
-                    .get(database_name)
-                    .and_then(|database| database.tables.get(table_name))
-                else {
-                    return Err(RebaseRefusal::SchemaChanged);
-                };
-                if Arc::ptr_eq(current, base_entry) {
-                    replays.push((
-                        database_name.clone(),
-                        table_name.clone(),
-                        Replay::Whole(Arc::clone(entry)),
-                    ));
-                    continue;
-                }
-                let TableEntry::Kv(committed) = current.as_ref() else {
-                    return Err(RebaseRefusal::SchemaChanged);
-                };
-                if !same_table_definition(committed, read) {
-                    return Err(RebaseRefusal::SchemaChanged);
-                }
-                if keys.is_empty() {
-                    return Err(RebaseRefusal::NotRebasable);
-                }
-                let (mut read, mut committed, mut written) = (
-                    read.as_ref().clone(),
-                    committed.as_ref().clone(),
-                    written.as_ref().clone(),
-                );
-                let mut writes = Vec::with_capacity(keys.len());
-                for key in keys {
-                    if !held(&key)
-                        && read.stored_raw_value(&key) != committed.stored_raw_value(&key)
-                    {
-                        return Err(RebaseRefusal::WriteConflict);
-                    }
-                    let value = written.stored_raw_value(&key);
-                    writes.push((key, value));
-                }
-                replays.push((
-                    database_name.clone(),
-                    table_name.clone(),
-                    Replay::Keys(writes),
-                ));
-            }
-        }
-        for (database_name, table_name, replay) in replays {
-            match replay {
-                Replay::Whole(entry) => {
-                    self.version += 1;
-                    if let Some(database) = self.database_mut(&database_name) {
-                        database.tables.insert(table_name, entry);
-                    }
-                }
-                Replay::Keys(writes) => {
-                    let Some(TableEntry::Kv(table)) =
-                        self.get_rows_mut_in(&database_name, &table_name)
-                    else {
-                        continue;
-                    };
-                    let table = Arc::make_mut(table);
-                    for (key, value) in writes {
-                        table
-                            .apply_committed_write(&key, value)
-                            .map_err(|_| RebaseRefusal::NotRebasable)?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Go's pessimistic statement read: this committed image, taken at the
-    /// statement's `for_update_ts`, with the transaction's own writes over
-    /// it -- the membuffer over a snapshot at the newer timestamp. `base` is
-    /// the image the transaction began on and `working` that image with its
-    /// writes.
-    ///
-    /// A table only the transaction changed is taken whole, and one both
-    /// sides changed takes the transaction's staged keys over the committed
-    /// rows. One whose definition changed meanwhile keeps the transaction's
-    /// own copy: Go's metadata lock would have held that DDL back, and the
-    /// transaction's COMMIT refuses it with `ErrInfoSchemaChanged`.
-    #[must_use]
-    pub fn with_transaction_writes(
-        mut self,
-        base: &Catalog,
-        working: &Catalog,
-        staged: &crate::kv_table::StagedWrites,
-    ) -> Catalog {
-        if working.metadata_version != base.metadata_version {
-            return working.clone();
-        }
-        let mut whole: Vec<(String, String, Arc<TableEntry>)> = Vec::new();
-        let mut keyed: Vec<(String, String, Vec<(Vec<u8>, Option<Vec<u8>>)>)> = Vec::new();
-        for (database_name, database) in working.databases.iter() {
-            let Some(base_database) = base.databases.get(database_name) else {
-                continue;
-            };
-            for (table_name, entry) in &database.tables {
-                let Some(base_entry) = base_database.tables.get(table_name) else {
-                    continue;
-                };
-                if Arc::ptr_eq(entry, base_entry) {
-                    continue;
-                }
-                let current = self
-                    .databases
-                    .get(database_name)
-                    .and_then(|database| database.tables.get(table_name));
-                let keys = match (entry.as_ref(), base_entry.as_ref(), current) {
-                    (TableEntry::Kv(written), TableEntry::Kv(read), Some(current))
-                        if !Arc::ptr_eq(current, base_entry) =>
-                    {
-                        match current.as_ref() {
-                            TableEntry::Kv(committed) if same_table_definition(committed, read) => {
-                                staged.keys_of(written.table_id).map(|keys| (written, keys))
-                            }
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                match keys {
-                    Some((written, keys)) => {
-                        let mut written = written.as_ref().clone();
-                        let writes = keys
-                            .into_iter()
-                            .map(|key| {
-                                let value = written.stored_raw_value(&key);
-                                (key, value)
-                            })
-                            .collect();
-                        keyed.push((database_name.clone(), table_name.clone(), writes));
-                    }
-                    None => {
-                        whole.push((database_name.clone(), table_name.clone(), Arc::clone(entry)))
-                    }
-                }
-            }
-        }
-        for (database_name, table_name, entry) in whole {
-            self.version += 1;
-            if let Some(database) = self.database_mut(&database_name) {
-                database.tables.insert(table_name, entry);
-            }
-        }
-        for (database_name, table_name, writes) in keyed {
-            if let Some(TableEntry::Kv(table)) = self.get_rows_mut_in(&database_name, &table_name) {
-                let table = Arc::make_mut(table);
-                for (key, value) in writes {
-                    let _ = table.apply_committed_write(&key, value);
-                }
-            }
-        }
-        self
-    }
-
-    /// Copies the values `keys` hold in `view` into this image: a
-    /// pessimistic statement's writes, made over a newer committed image,
-    /// folded into the transaction's own (Go releases the statement's
-    /// staging buffer into the membuffer). A temporary table's rows are the
-    /// session's, not the image's, and are left alone.
-    pub fn absorb_writes(&mut self, view: &Catalog, keys: &[Vec<u8>]) {
-        for (table_key, keys) in view.group_keys_by_table(keys) {
-            let Some(TableEntry::Kv(source)) = view
-                .databases
-                .get(&table_key.database)
-                .and_then(|database| database.tables.get(&table_key.table))
-                .map(AsRef::as_ref)
-            else {
-                continue;
-            };
-            if source.is_temporary() {
-                continue;
-            }
-            let mut source = source.as_ref().clone();
-            let writes: Vec<_> = keys
-                .into_iter()
-                .map(|key| {
-                    let value = source.stored_raw_value(key);
-                    (key, value)
-                })
-                .collect();
-            if let Some(TableEntry::Kv(table)) =
-                self.get_rows_mut_in(&table_key.database, &table_key.table)
-            {
-                let table = Arc::make_mut(table);
-                for (key, value) in writes {
-                    let _ = table.apply_committed_write(key, value);
-                }
-            }
-        }
-    }
-
-    /// Whether each of `keys` holds the same committed value here as in
-    /// `other`: Go's check that no transaction committed a key after the
-    /// timestamp it was read at.
-    #[must_use]
-    pub fn raw_values_match(&self, other: &Catalog, keys: &[Vec<u8>]) -> bool {
-        for (table_key, keys) in self.group_keys_by_table(keys) {
-            let table_of = |catalog: &Catalog| match catalog
-                .databases
-                .get(&table_key.database)
-                .and_then(|database| database.tables.get(&table_key.table))
-                .map(AsRef::as_ref)
-            {
-                Some(TableEntry::Kv(table)) => Some(table.as_ref().clone()),
-                _ => None,
-            };
-            let (Some(mut mine), Some(mut theirs)) = (table_of(self), table_of(other)) else {
-                return false;
-            };
-            if keys
-                .into_iter()
-                .any(|key| mine.stored_raw_value(key) != theirs.stored_raw_value(key))
-            {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// `keys` grouped by the table their encoded physical id names here; a
-    /// key naming no table of this image is dropped.
-    fn group_keys_by_table<'k>(
-        &self,
-        keys: &'k [Vec<u8>],
-    ) -> Vec<(Arc<CatalogTableKey>, Vec<&'k [u8]>)> {
-        let names = self.table_id_names();
-        let mut groups: Vec<(Arc<CatalogTableKey>, Vec<&'k [u8]>)> = Vec::new();
-        for key in keys {
-            let Some(name) = names.get(&tidb_codec::decode_table_id(key)) else {
-                continue;
-            };
-            match groups
-                .iter_mut()
-                .find(|(group, _)| Arc::ptr_eq(group, name))
-            {
-                Some((_, members)) => members.push(key),
-                None => groups.push((Arc::clone(name), vec![key])),
-            }
-        }
-        groups
-    }
 
     /// The catalog's mutation counter.
     #[must_use]
     pub fn version(&self) -> u64 {
         self.version
-    }
-
-    /// The store's pessimistic lock table, shared by every session over it.
-    #[must_use]
-    pub fn pessimistic_locks(&self) -> Arc<PessimisticLocks> {
-        Arc::clone(&self.pessimistic_locks)
     }
 
     /// Shared invalidation owner for embedded sessions over this catalog.

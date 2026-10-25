@@ -541,8 +541,8 @@ pub struct Session {
     /// Go's statement ctx values (`RUDetails`, resource-group taggers) of the
     /// statement that runs, shared with its transactions and requests.
     statement_kv_context: tidb_txnkv::StatementKvContextCell,
-    /// The open transaction, if any.
-    txn: Option<Transaction>,
+    /// Go `SessionVars.TxnCtx` of the open transaction; `Some` is `InTxn`.
+    txn_ctx: Option<txn::TxnCtx>,
     /// Go `LazyTxn.writeSLI`: transaction write-throughput state shared by
     /// every statement until the transaction ends.
     write_sli: tidb_util::sli::TxnWriteThroughputSli,
@@ -661,9 +661,6 @@ pub struct Session {
     /// transaction `decideTxnMode` made pessimistic, set by the storage owner
     /// for the statement attempt it runs.
     autocommit_pessimistic_statement: bool,
-    /// The running statement's read view and lock step inside an in-process
-    /// transaction ([`Session::begin_transaction_statement`]).
-    transaction_statement: Option<txn::TransactionStatement>,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     last_insert_id: u64,
@@ -748,7 +745,7 @@ pub struct Session {
     /// [`tidb_executor::kv_table::StagedWrites`].
     ///
     /// Reset by replacing the whole handle with a fresh, empty one at every
-    /// transaction/statement boundary that starts clean (`Transaction::open`
+    /// transaction/statement boundary that starts clean (`open_txn_ctx`
     /// for `BEGIN`/lazy activation; the `!in_transaction()` branch in
     /// dispatch for a plain autocommit statement) -- never by walking and
     /// clearing table-by-table, since nothing else ever holds a reference to
@@ -1075,7 +1072,7 @@ impl Session {
             previous_summary_statement: None,
             statement_stats: tidb_util::topsql_stmtstats::create_statement_stats(),
             statement_kv_context: tidb_txnkv::StatementKvContextCell::default(),
-            txn: None,
+            txn_ctx: None,
             write_sli: tidb_util::sli::TxnWriteThroughputSli::default(),
             local_temporary_tables: Vec::new(),
             hypo_indexes: Arc::default(),
@@ -1102,7 +1099,6 @@ impl Session {
             locked_tables: std::collections::BTreeMap::new(),
             selected_lock_keys: None,
             autocommit_pessimistic_statement: false,
-            transaction_statement: None,
             last_insert_id: 0,
             statement_insert_id: 0,
             statement_message: String::new(),
@@ -1404,6 +1400,7 @@ pub use savepoints::SavepointStack;
 mod txn;
 pub use txn::{
     HistoricalRead, HistoricalReadProvider, SnapshotSchemaProvider, StatementTxnActivator,
+    TxnManagerOps,
 };
 mod user_table;
 pub mod util_config;
@@ -1415,7 +1412,6 @@ pub(crate) use classify::{
 };
 pub use classify::{StmtKind, StoredStateChange};
 pub use prepared_ast::PreparedAst;
-pub(crate) use txn::Transaction;
 pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
 pub(crate) use warnings::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
@@ -1660,27 +1656,6 @@ impl Session {
         self.cluster_schema_version
             .as_ref()
             .map_or(0, |source| source())
-    }
-
-    /// Go's commit-side `LastTxnInfo` write: client-go marshals `TxnInfo`
-    /// in its commit callback (`.oracle/client-go/txnkv/transaction/
-    /// txn.go:1078-1092`), field for field. The narrow tier is one node
-    /// committing locally, so the mode is the plain "2pc" and the fallback
-    /// and pipeline fields are their zero values -- the same zeros Go's
-    /// struct marshals for a plain transaction.
-    pub(crate) fn set_last_txn_info_committed(&self, start_ts: u64, commit_ts: u64) {
-        self.record_committed_txn_info(start_ts, commit_ts, "2pc");
-    }
-
-    /// Whether a server owns this session's statement transactions, so that
-    /// `@@tidb_last_txn_info` is recorded from the store transaction's own
-    /// timestamps at its end (`setLastTxnInfoBeforeTxnEnd` and `CommitHook`)
-    /// and not from the catalog counter this tier's autocommit bookkeeping
-    /// uses. Such a statement that never activated a transaction (`USE`,
-    /// `SET`, `PREPARE`, `SELECT 1`) leaves the record alone, as Go's
-    /// `StartTS == 0` check does.
-    pub(crate) fn statement_txns_are_external(&self) -> bool {
-        self.statement_txn_activator.is_some()
     }
 
     /// Go's `kv.CommitHook` (`sessiontxn/isolation/base.go:510`): the cluster

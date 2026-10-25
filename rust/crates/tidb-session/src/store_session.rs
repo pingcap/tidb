@@ -25,10 +25,15 @@
 use tidb_ast::Stmt;
 use tidb_exec::sql_query_error::SqlQueryError;
 use tidb_executor::access_path::StatementReadShape;
+use tidb_executor::cluster_storage::BufferCheckpoint;
+use tidb_executor::DriverError;
 
-use crate::statement_lifecycle::{CatalogFollowing, SnapshotSlot, StatementLifecycle};
-use crate::txn_manager::{CommitHooks, TxnManager};
-use crate::{Session, StmtResult};
+use crate::statement_lifecycle::{
+    finish_snapshot, CatalogFollowing, SnapshotSlot, StatementLifecycle,
+};
+use crate::txn::driver_error_of;
+use crate::txn_manager::{CommitHooks, CommitTxnRegions, TxnManager};
+use crate::{Session, StmtResult, TxnManagerOps};
 
 /// A driver error as the client sees it: Go's code, SQLSTATE and message, with
 /// the error's own identity and its typed cause (Go `errors.Cause`) carried
@@ -99,6 +104,23 @@ impl<F: CatalogFollowing> StoreSession<F> {
             hooks,
             activate_statement_txn: self.activate_statement_txn,
         }
+    }
+
+    /// The `SimpleExec` transaction statements (`BEGIN`, `COMMIT`,
+    /// `ROLLBACK`, `SAVEPOINT`, `RELEASE SAVEPOINT`) over this session's
+    /// transaction manager: [`Session::control_transaction_stmt`] with the
+    /// store half through [`StoreTxnOps`].
+    pub fn control_transaction_stmt(&mut self, stmt: &Stmt) -> Result<Option<bool>, SqlQueryError> {
+        let hooks = self.commit_hooks();
+        let mut ops = StoreTxnOps {
+            txn: &mut self.txn,
+            slot: &self.slot,
+            follower: &mut self.follower,
+            hooks,
+        };
+        self.session
+            .control_transaction_stmt(stmt, &mut ops)
+            .map_err(sql_query_error)
     }
 
     /// Rebinds the session's tables to the latest catalog, unless a
@@ -252,5 +274,55 @@ impl<F: CatalogFollowing> StoreSession<F> {
         let affected_rows = attempt?;
         self.session.add_statement_read_keys(affected_rows);
         Ok((affected_rows, self.session.statement_insert_id()))
+    }
+}
+
+/// Go `sessiontxn.GetTxnManager(sctx)` as the `SimpleExec` transaction arms
+/// reach it: the store session's [`TxnManager`] with the snapshot slot, the
+/// catalog follower and the commit hooks it needs.
+struct StoreTxnOps<'a, F: CatalogFollowing> {
+    txn: &'a mut TxnManager,
+    slot: &'a SnapshotSlot,
+    follower: &'a mut F,
+    hooks: Box<dyn CommitHooks>,
+}
+
+impl<F: CatalogFollowing> TxnManagerOps for StoreTxnOps<'_, F> {
+    fn commit_txn(&mut self, session: &mut Session) -> Result<(), DriverError> {
+        let _commit_txn = CommitTxnRegions::begin(true);
+        finish_snapshot(self.slot).map_err(driver_error_of)?;
+        self.txn
+            .commit(session, self.hooks.as_ref())
+            .map_err(driver_error_of)
+    }
+
+    fn rollback_txn(&mut self, session: &mut Session) -> Result<(), DriverError> {
+        finish_snapshot(self.slot).map_err(driver_error_of)?;
+        self.txn.rollback(session).map_err(driver_error_of)
+    }
+
+    fn enter_new_txn_with_begin(&mut self, session: &mut Session) -> Result<(), DriverError> {
+        // The refresh runs before the transaction pins its schema view: Go
+        // activates a transaction with the LATEST schema at start, on a
+        // connection of any age.
+        self.follower.rebuild(session);
+        let resource_group = session.current_resource_group().to_owned();
+        self.txn
+            .open(session, &resource_group, self.follower.schema_version())
+            .map_err(driver_error_of)
+    }
+
+    fn savepoint_checkpoint(
+        &mut self,
+        session: &mut Session,
+    ) -> Result<Option<BufferCheckpoint>, DriverError> {
+        let resource_group = session.current_resource_group().to_owned();
+        self.txn
+            .savepoint_checkpoint(session, &resource_group, self.follower.schema_version())
+            .map_err(driver_error_of)
+    }
+
+    fn rollback_to_checkpoint(&mut self, checkpoint: &BufferCheckpoint) {
+        self.txn.rollback_to_checkpoint(checkpoint);
     }
 }

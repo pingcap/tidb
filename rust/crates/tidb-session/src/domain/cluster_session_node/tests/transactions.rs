@@ -1082,7 +1082,11 @@ fn ending_the_transaction_clears_the_cluster_savepoint_stack() {
         session.control_transaction("BEGIN").expect("begin");
         session.control_transaction("SAVEPOINT s1").expect("s1");
         session.control_transaction(ending).expect("ending");
-        assert!(session.store.txn.savepoints_is_empty(), "{ending} kept a savepoint");
+        // The stack is the transaction's `TxnCtx.Savepoints`, which ends with it.
+        assert!(
+            !session.store.session.in_transaction(),
+            "{ending} kept the transaction context"
+        );
         session.control_transaction("BEGIN").expect("begin");
         assert!(
             session.control_transaction("ROLLBACK TO s1").is_err(),

@@ -432,6 +432,56 @@ pub fn planner_statistics(stats: &tidb_stats::Table, table: &TableInfo) -> Table
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The store half of a transaction for a session these tests drive over
+    /// storage they own: the test holds the buffer, so committing or rolling
+    /// it back is the test's business, not a store session's.
+    struct TestOwnedStore;
+
+    impl crate::TxnManagerOps for TestOwnedStore {
+        fn commit_txn(&mut self, _session: &mut Session) -> Result<(), tidb_executor::DriverError> {
+            Ok(())
+        }
+
+        fn rollback_txn(
+            &mut self,
+            _session: &mut Session,
+        ) -> Result<(), tidb_executor::DriverError> {
+            Ok(())
+        }
+
+        fn enter_new_txn_with_begin(
+            &mut self,
+            _session: &mut Session,
+        ) -> Result<(), tidb_executor::DriverError> {
+            Ok(())
+        }
+
+        fn savepoint_checkpoint(
+            &mut self,
+            _session: &mut Session,
+        ) -> Result<
+            Option<tidb_executor::cluster_storage::BufferCheckpoint>,
+            tidb_executor::DriverError,
+        > {
+            Ok(None)
+        }
+
+        fn rollback_to_checkpoint(
+            &mut self,
+            _checkpoint: &tidb_executor::cluster_storage::BufferCheckpoint,
+        ) {
+        }
+    }
+
+    /// `BEGIN` on a session over test-owned storage.
+    fn begin(session: &mut Session) {
+        let stmt = tidb_parser::parse("BEGIN").unwrap();
+        session
+            .control_transaction_stmt(&stmt, &mut TestOwnedStore)
+            .unwrap()
+            .expect("a transaction statement");
+    }
     use std::collections::BTreeMap;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -860,7 +910,7 @@ mod tests {
 
         // inside the transaction that wrote it (through a union scan).
 
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         assert!(matches!(
             session
                 .run("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 30)")
@@ -954,7 +1004,7 @@ mod tests {
         session.run("USE app").unwrap();
         // The statements share one uncommitted buffer, which Go reads only
         // inside the transaction that wrote it (through a union scan).
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         session.run("INSERT INTO d (id) VALUES (1)").unwrap();
         let StmtResult::Rows(rows) = session.run("SELECT v FROM d").unwrap() else {
             panic!("expected rows");
@@ -1003,7 +1053,7 @@ mod tests {
         session.run("USE app").unwrap();
         // The statements share one uncommitted buffer, which Go reads only
         // inside the transaction that wrote it (through a union scan).
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         session
             .run("INSERT INTO t(id,v) VALUES (1,10),(2,20)")
             .unwrap();
@@ -1063,7 +1113,7 @@ mod tests {
         session.run("USE app").unwrap();
         // The statements share one uncommitted buffer, which Go reads only
         // inside the transaction that wrote it (through a union scan).
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         session.run("INSERT INTO t(id) VALUES (1),(2),(3)").unwrap();
         let StmtResult::Rows(rows) = session.run("SELECT * FROM t ORDER BY id").unwrap() else {
             panic!("expected rows");
@@ -1455,7 +1505,7 @@ mod tests {
         session.run("USE app").unwrap();
         // The statements share one uncommitted buffer, which Go reads only
         // inside the transaction that wrote it (through a union scan).
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         session
             .run("INSERT INTO ci (id, c) VALUES (1,'a'),(2,'B'),(3,'b'),(4,'C')")
             .unwrap();
@@ -1520,7 +1570,7 @@ mod tests {
         session.run("USE app").unwrap();
         // The statements share one uncommitted buffer, which Go reads only
         // inside the transaction that wrote it (through a union scan).
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         session
             .run("INSERT INTO ci (id,c) VALUES (1,'B'),(2,'b')")
             .unwrap();
@@ -1556,7 +1606,7 @@ mod tests {
         session.run("USE app").unwrap();
         // The statements share one uncommitted buffer, which Go reads only
         // inside the transaction that wrote it (through a union scan).
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         // Write one row through the driver, promote its staged bytes into the
         // snapshot, and start over: that is what a COMMIT leaves behind for the
         // next statement to read.
@@ -1802,7 +1852,7 @@ mod tests {
         session.run("USE app").unwrap();
         // The statements share one uncommitted buffer, which Go reads only
         // inside the transaction that wrote it (through a union scan).
-        session.run("BEGIN").unwrap();
+        begin(&mut session);
         session
             .run("INSERT INTO ci(id,c) VALUES (1,'alphabet'),(2,'alphanumeric'),(3,'beta')")
             .unwrap();
@@ -1979,7 +2029,7 @@ mod tests {
             session.run("USE app").unwrap();
             // The statements share one uncommitted buffer, which Go reads only
             // inside the transaction that wrote it (through a union scan).
-            session.run("BEGIN").unwrap();
+            begin(&mut session);
             session
                 .run("INSERT INTO iv (id, a) VALUES (1, 10), (2, 20), (3, 30)")
                 .unwrap();

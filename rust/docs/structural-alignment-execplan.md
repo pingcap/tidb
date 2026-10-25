@@ -290,16 +290,44 @@ What the catalog `Transaction` holds, and where each part goes:
 
 Stages, top-down. As instructed, all are written before any build, then one verification pass.
 
-- [ ] V1, this design and inventory.
-- [ ] V2, `TxnCtx` in `Session`: the per-transaction context replaces `Session.txn: Option<Transaction>`. Readers (`in_transaction`, `txn_mode`, `is_read_committed`, `statement_txn_mode`, `historical_read_ts`, stmt_ctx, table_lock, identity, prepared_ast, expensivequery) read it.
-- [ ] V3, one savepoint stack: `TxnCtx.savepoints` with the combined record; `TxnManager`'s stack is deleted.
-- [ ] V4, the `SimpleExec` transaction arms on `StoreSession` (`execute_begin`, `execute_commit`, `execute_rollback`, `execute_savepoint`, `execute_release_savepoint`), including the implicit commit at `BEGIN`, the noop-clause refusal and stale `BEGIN ... AS OF`. The node's `control_transaction_parsed_inner` keeps the front door (sandbox check, regions, schema refresh) and calls them. The session's `control_transaction_stmt` / `commit` / rollback arm are deleted.
-- [ ] V5, one `autocommit=0` opener: `begin_implicit_transaction` is deleted; `TxnManager::enter_if_autocommit_off` (`PrepareTxnCtx`) remains.
-- [ ] V6, stale transactions through the manager: `open_stale_transaction` / `discard_stale_statement_transaction` become `TxnManager` staleness (Go `StalenessTxnContextProvider`), with the historical catalog on the statement snapshot.
-- [ ] V7, one statement loop: the in-process lock step and retry are deleted.
-- [ ] V8, one autocommit commit: the catalog-tier bookkeeping, `current_tso()` publishing by the session and `statement_txns_are_external` are deleted.
-- [ ] V9, catalog scope without a transaction image: `with_catalog_scope` reads the statement snapshot or the committed catalog; `with_staged_catalog*` follow the statement snapshot.
-- [ ] V10, the catalog commit machinery with no caller left is deleted (`Catalog::rebase_transaction`, `raw_values_match`, the in-process `PessimisticLockGuard` locks, the presumed-insert set), each after a grep proves no caller. Then documents and inventories, then the verification pass.
+- [x] V1, this design and inventory.
+- [x] V2, `TxnCtx` in `Session`: the per-transaction context replaces `Session.txn: Option<Transaction>`. Readers (`in_transaction`, `txn_mode`, `is_read_committed`, `statement_txn_mode`, `historical_read_ts`, stmt_ctx, table_lock, identity, prepared_ast, expensivequery) read it.
+- [x] V3, one savepoint stack: `TxnCtx.savepoints` with the combined record; `TxnManager`'s stack is deleted.
+- [x] V4, the `SimpleExec` transaction arms on `StoreSession` (`execute_begin`, `execute_commit`, `execute_rollback`, `execute_savepoint`, `execute_release_savepoint`), including the implicit commit at `BEGIN`, the noop-clause refusal and stale `BEGIN ... AS OF`. The node's `control_transaction_parsed_inner` keeps the front door (sandbox check, regions, schema refresh) and calls them. The session's `control_transaction_stmt` / `commit` / rollback arm are deleted.
+- [x] V5, one `autocommit=0` opener: `begin_implicit_transaction` is deleted; `TxnManager::enter_if_autocommit_off` (`PrepareTxnCtx`) remains.
+- [x] V6, stale transactions through the manager: `open_stale_transaction` / `discard_stale_statement_transaction` become `TxnManager` staleness (Go `StalenessTxnContextProvider`), with the historical catalog on the statement snapshot.
+- [x] V7, one statement loop: the in-process lock step and retry are deleted.
+- [x] V8, one autocommit commit: the catalog-tier bookkeeping, `current_tso()` publishing by the session and `statement_txns_are_external` are deleted.
+- [x] V9, catalog scope without a transaction image: `with_catalog_scope` reads the statement snapshot or the committed catalog; `with_staged_catalog*` follow the statement snapshot.
+- [x] V10, the catalog commit machinery with no caller left is deleted, each after a grep proved no caller:
+  - `Catalog::rebase_transaction`, `with_transaction_writes`, `absorb_writes`, `raw_values_match`, `RebaseRefusal`, `any_table_has_external_statement_rollback`;
+  - the in-process `PessimisticLocks` / `PessimisticLockGuard` lock table;
+  - `StagedWrites`' statement log and presumed-insert set;
+  - `StmtContext::txn_read_snapshot` (`TABLESAMPLE` reads the store snapshot through `ClusterTableStorage::snapshot_first`).
+  Kept, because they serve another open mismatch: the catalog counter (`allocate_tso`, `record_commit`, `state_as_of`) still feeds the session's in-process DDL job history (`ddl_jobs.rs`, `stats_lock_arm.rs`), which belongs to "DDL exists twice".
+- Decisions made while writing:
+  - The `SimpleExec` arms live once, in `Session::control_transaction_stmt`, and reach the store half through `TxnManagerOps`, as Go's executors reach `sessiontxn.GetTxnManager(sctx)`. `StoreSession::control_transaction_stmt` supplies `StoreTxnOps` (`TxnManager`, snapshot slot, catalog follower, commit hooks).
+  - `COMMIT` only leaves `TxnCtx` (Go `executeCommit` -> `SetInTxn(false)`); the node's finish commits the store transaction (`commit_explicit`, Go `finishStmt` -> `CommitTxn`). DDL / GRANT / `SET autocommit = 1` likewise only leave the context, and `commit_if_session_left_transaction` (Go `autoCommitAfterStmt`) commits at statement finish.
+  - `BEGIN`'s implicit commit is `CommitBeforeEnterNewTxn`: commit when in a transaction, then drop any pending store transaction or leftover buffer; the schema refresh runs inside `enter_new_txn_with_begin`, before the pin.
+  - The session half of the `autocommit = 0` opener stays at its call site (`begin_implicit_transaction` for statements that read or write, Go's `ActivateTxn` setting `InTxn`) and now writes only `TxnCtx`.
+  - The node's `ROLLBACK` previously recorded a start-only `@@tidb_last_txn_info` at the catalog counter's timestamp even when the store transaction never activated; only a stale transaction records it now, and the store transaction records its own (`setLastTxnInfoBeforeTxnEnd`'s `StartTS == 0` skip).
+
+## Milestone W: DDL once, internal SQL on internal sessions (inventory, 2026-10-25)
+
+Measured after Milestone V, as the next item in dependency order. `tidb-executor/src/ddl` (about 23,800 lines) mixes two things:
+- Go `pkg/ddl` validation helpers that the job path uses (`check_*`, `validate_*`, `storage_class`, `index_prefix`, `column_field_type`, `check_constraint`, `modify_column_type`, `job_history`);
+- one-step appliers (`run_create_table_in`, `run_alter_table_in`, `run_drop_table_in`, `run_create_index_in`, `run_truncate_table_in`, `run_rename_table_in`, `run_create_view_in`, the sequence appliers) that mutate an in-memory `Catalog` at once.
+
+Go has the helpers once, beside the job workers, and no one-step applier.
+
+Production users of the one-step appliers:
+- The DDL job path itself: `tidb-exec/src/cluster_ddl.rs` `apply_partition_change` replays the in-process `ALTER` over a scratch catalog to compute an ADD/DROP PARTITION result. Go builds it from `TableInfo` / `PartitionInfo` (`buildAddedPartitionInfo`, `checkAddPartition`, `checkDropTablePartition`).
+- The session's local temporary DDL (`dispatch.rs`: `run_create_table_in`, `run_drop_table_stmt_in`; `classify.rs`). Go builds the `TableInfo` (`BuildTableInfoWithStmt`) and edits `SessionVars.LocalTemporaryTables` (`createSessionTemporaryTable`, `DropLocalTemporaryTable`); no catalog applier is involved.
+- `ALTER TABLE ... COMPACT` (`run_compact_table_in`), Go's session statement `CompactTableStmt`.
+
+The session also reads and writes `mysql.*` tables through in-process executors on the connection's own catalog: `run_select_meta_in` in `account_password.rs`, `user_table.rs`, `instance_state.rs`, `account_state.rs`, `gcutil.rs`, `blacklist.rs`, and `run_insert_in` / `run_update_in` / `run_delete_in` in `binding_arm.rs`. Go runs these as restricted SQL on an internal session in its own transaction (`ExecRestrictedSQL`, `sysSessionPool`). Here they run inside the issuing statement's snapshot and buffer, which is the open "in-process restricted SQL runs in the issuing session's transaction" item.
+
+The executor's own unit tests drive the appliers at about 600 call sites.
 
 ## Milestone 4 progress: EXPLAIN ANALYZE execution info
 

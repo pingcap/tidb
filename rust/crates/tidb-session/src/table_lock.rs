@@ -300,10 +300,7 @@ impl Session {
         if self.has_locked_tables() {
             return Ok(true);
         }
-        Ok(match &self.txn {
-            Some(txn) => txn.working.has_table_locks(),
-            None => self.lock_catalog()?.has_table_locks(),
-        })
+        self.with_txn_catalog(Catalog::has_table_locks)
     }
 
     /// Go `core.CheckTableLock` over one statement's visit infos, after
@@ -315,14 +312,8 @@ impl Session {
         if !table_lock_enabled() {
             return Ok(());
         }
-        let shared;
-        let catalog = match &self.txn {
-            Some(txn) => &txn.working,
-            None => {
-                shared = self.lock_catalog()?;
-                &*shared
-            }
-        };
+        let shared = self.lock_catalog()?;
+        let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
         if !self.table_lock_check_needed(catalog) {
             return Ok(());
         }

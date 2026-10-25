@@ -49,6 +49,11 @@ pub trait CatalogFollowing {
     /// Rebinds the session's tables to the latest catalog, unless a
     /// transaction has pinned the one it started with.
     fn rebuild_if_stale(&mut self, session: &mut Session, txn: &TxnManager);
+    /// Rebinds the session's tables to the latest catalog unconditionally:
+    /// a transaction starts with the LATEST schema (Go
+    /// `domain.GetSnapshotInfoSchema(startTS)`), so a table committed before
+    /// `BEGIN` is visible to every statement of the new transaction.
+    fn rebuild(&mut self, session: &mut Session);
 }
 
 /// Go `kv.retryBackOffBase`, in milliseconds (`pkg/kv/txn.go:182-183`; the
@@ -326,7 +331,8 @@ impl StatementLifecycle<'_> {
             // Go handlePessimisticDML: with deferred uniqueness we cannot
             // identify which earlier statement caused the terminal failure.
             // End the SQL and native owners after releasing the statement stage.
-            let _ = self.session.control_transaction("ROLLBACK");
+            // Go `RollbackTxn`: the session half, then the store's.
+            self.session.leave_txn_ctx_for_rollback();
             let _ = self.discard_explicit();
             // `exeerrors.ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())`:
             // the inner error's text keeps its `[class:code]` prefix.

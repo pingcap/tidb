@@ -982,38 +982,7 @@ type StagedKey = smallvec::SmallVec<[u8; 32]>;
 #[derive(Debug, Default)]
 pub struct StagedWrites(
     std::sync::Mutex<std::collections::HashMap<i64, std::collections::HashSet<StagedKey>>>,
-    /// The keys an INSERT presumed absent (Go `SetPresumeKeyNotExists`) on a
-    /// store that writes through, each with its duplicate text, for COMMIT
-    /// to check against the committed rows.
-    std::sync::Mutex<Vec<PresumedKey>>,
-    /// While a pessimistic statement runs, the keys it writes -- Go's
-    /// statement staging buffer, whose keys `KeysNeedToLock` locks.
-    std::sync::Mutex<Option<StatementLog>>,
 );
-
-/// One statement's writes within [`StagedWrites`].
-#[derive(Debug, Default)]
-struct StatementLog {
-    /// Every key the statement wrote.
-    written: std::collections::BTreeSet<(i64, StagedKey)>,
-    /// The keys the transaction had not written before this statement, which
-    /// a failed statement takes back out of the transaction's record.
-    fresh: Vec<(i64, StagedKey)>,
-}
-
-/// One key a lazy INSERT presumed absent: Go's `PresumeKeyNotExists` flag
-/// and the duplicate error `addRecord`/`addIndices` composed for it.
-#[derive(Clone, Debug)]
-pub struct PresumedKey {
-    /// The logical table the key belongs to.
-    pub table_id: i64,
-    /// The record or index key.
-    pub key: Vec<u8>,
-    /// The duplicate entry's value text.
-    pub value: String,
-    /// The duplicate entry's key name (`t.PRIMARY`, `t.idx`).
-    pub index: String,
-}
 
 /// The transaction's [`StagedWrites`] attached to one table's store for one
 /// write, Go's membuffer for a backend that writes through (see
@@ -1025,9 +994,8 @@ pub struct TxnStaging {
     /// The logical table whose store is written.
     pub table_id: i64,
     /// Whether the transaction is optimistic. Its log also answers Go's
-    /// `GetLocal` and keeps the keys an INSERT presumed absent; a pessimistic
-    /// transaction's log only records the keys it wrote, which its COMMIT
-    /// replays and its statements lock.
+    /// `GetLocal`; a pessimistic transaction's log only records the keys it
+    /// wrote.
     pub optimistic: bool,
 }
 
@@ -1035,78 +1003,12 @@ impl StagedWrites {
     /// Records that `table_id` staged a row write under `key` -- Go
     /// `membuf.Set(key)`.
     pub fn note(&self, table_id: i64, key: &[u8]) {
-        let fresh = self
-            .0
+        self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(table_id)
             .or_default()
             .insert(StagedKey::from_slice(key));
-        if let Some(statement) = self
-            .2
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_mut()
-        {
-            statement
-                .written
-                .insert((table_id, StagedKey::from_slice(key)));
-            if fresh {
-                statement.fresh.push((table_id, StagedKey::from_slice(key)));
-            }
-        }
-    }
-
-    /// Starts recording the keys the next statement writes, alongside the
-    /// transaction's own record -- Go's `MemBuffer.Staging()`.
-    pub fn begin_statement_log(&self) {
-        *self
-            .2
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Default::default());
-    }
-
-    /// The keys written since [`Self::begin_statement_log`].
-    #[must_use]
-    pub fn statement_log_keys(&self) -> Vec<Vec<u8>> {
-        self.2
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .map(|statement| {
-                statement
-                    .written
-                    .iter()
-                    .map(|(_, key)| key.to_vec())
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    /// Stops recording the statement's writes. A statement that failed
-    /// (`succeeded` false) takes back the keys the transaction had not
-    /// written before it -- Go's `StagingHandle.Cleanup`.
-    pub fn end_statement_log(&self, succeeded: bool) {
-        let Some(statement) = self
-            .2
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
-        else {
-            return;
-        };
-        if succeeded {
-            return;
-        }
-        let mut staged = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (table_id, key) in statement.fresh {
-            if let Some(keys) = staged.get_mut(&table_id) {
-                keys.remove(&key);
-            }
-        }
     }
 
     /// Marks `table_id` dirty with no specific key -- DDL that rewrites a
@@ -1162,25 +1064,6 @@ impl StagedWrites {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&table_id)
             .map(|keys| keys.iter().map(|key| key.to_vec()).collect())
-    }
-
-    /// Go `SetPresumeKeyNotExists` with the duplicate text kept for COMMIT.
-    pub fn presume(&self, key: PresumedKey) {
-        self.1
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(key);
-    }
-
-    /// The keys presumed absent so far, emptied: COMMIT's constraint check
-    /// consumes them.
-    pub fn take_presumed(&self) -> Vec<PresumedKey> {
-        std::mem::take(
-            &mut *self
-                .1
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
     }
 }
 

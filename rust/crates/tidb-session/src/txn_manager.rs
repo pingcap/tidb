@@ -16,12 +16,13 @@
 //! `sessiontxn.TxnManager` with the `LazyTxn` it drives.
 //!
 //! It owns the open transaction of the session -- the store transaction
-//! (`BEGIN`'s, or the pending one an `autocommit = 0` statement enters), its
-//! savepoints, the schema pin that stands for Go's metadata lock, and the
-//! staged writes -- and the moves that start and end it: `EnterNewTxn`
+//! (`BEGIN`'s, or the pending one an `autocommit = 0` statement enters), the
+//! schema pin that stands for Go's metadata lock, and the staged writes --
+//! and the moves that start and end it: `EnterNewTxn`
 //! (`pkg/session/txnmanager.go:156`), `CommitTxn` / `RollbackTxn`
-//! (`pkg/session/session.go:982`, `:1022`) and the savepoint statements
-//! (`pkg/executor/simple.go:662`). The server that drives a statement hands in
+//! (`pkg/session/session.go:982`, `:1022`) and the membuffer checkpoints the
+//! savepoint statements take (`pkg/executor/simple.go:662`). The savepoint
+//! stack itself is the session's `TxnCtx.Savepoints`. The server that drives a statement hands in
 //! the pieces only it owns -- the schema lease checker, the binding cache and
 //! the catalog a write-conflict message is rewritten against -- as
 //! [`CommitHooks`], the way Go's commit reads them off the session.
@@ -37,7 +38,7 @@ use crate::cluster_transactions::{
     ClusterTransactions, CommittedTxnInfo, OpenClusterTransaction, WriteTransactionSlot,
 };
 use crate::lazy_transaction::{LazyClusterTransaction, TransactionOpener};
-use crate::{SavepointStack, Session};
+use crate::Session;
 
 /// Go `SetOptionsOnTxnActive`: capture the validated session values once.
 pub fn transaction_options(vars: &crate::SessionVars) -> SessionTransactionOptions {
@@ -103,12 +104,26 @@ pub trait CommitHooks {
     fn rewrite_write_conflict(&self, error: SqlQueryError) -> SqlQueryError;
 }
 
-/// One savepoint's record: the mutation-buffer checkpoint and the statistics
-/// delta map at the time it was declared.
-pub type SavepointRecord = (
-    BufferCheckpoint,
-    std::collections::HashMap<i64, tidb_stats_handle_usage::TableDelta>,
-);
+/// Go `session.CommitTxn` and, over a valid transaction, the
+/// `session.doCommitWithRetry` it calls; the commit runs under both until
+/// the value drops.
+pub(crate) struct CommitTxnRegions {
+    // Dropped in declaration order: the inner region ends first.
+    _do_commit: Option<tidb_util::tracing::ThreadRegion>,
+    _commit_txn: tidb_util::tracing::ThreadRegion,
+}
+
+impl CommitTxnRegions {
+    pub(crate) fn begin(valid: bool) -> Self {
+        let commit_txn = tidb_util::tracing::start_thread_region_ex("session.CommitTxn");
+        let do_commit =
+            valid.then(|| tidb_util::tracing::start_thread_region_ex("session.doCommitWithRetry"));
+        Self {
+            _do_commit: do_commit,
+            _commit_txn: commit_txn,
+        }
+    }
+}
 
 /// See the module documentation.
 pub struct TxnManager {
@@ -125,10 +140,6 @@ pub struct TxnManager {
     pub explicit: Option<Box<dyn OpenClusterTransaction>>,
     /// Go `LazyTxn` captures this policy when the transaction becomes valid.
     lazy_uniqueness_check_enabled: bool,
-    /// The transaction's savepoints. The session's catalog-tier stack and this
-    /// one apply the same rules to the same statement sequence, and the
-    /// session's error arm runs first.
-    savepoints: SavepointStack<SavepointRecord>,
     /// Held from `BEGIN` to `COMMIT`/`ROLLBACK`.
     pin: Option<Box<dyn Send>>,
     /// Go `doCommitWithRetry`'s `txnSize`, read from the buffer just before
@@ -153,7 +164,6 @@ impl TxnManager {
             buffer,
             explicit: None,
             lazy_uniqueness_check_enabled: false,
-            savepoints: SavepointStack::default(),
             pin: None,
             autocommit_txn_bytes: 0,
         }
@@ -322,51 +332,29 @@ impl TxnManager {
         Ok(())
     }
 
-    /// Go's `executeSavepoint` calls `Txn(true)`, so with autocommit OFF the
-    /// SAVEPOINT is what ACTIVATES the pending transaction. In autocommit the
-    /// statement succeeds while recording nothing, exactly as the session's
-    /// does -- which is what leaves a later `ROLLBACK TO` to report 1305
-    /// (captured).
-    pub fn add_savepoint(
+    /// Go `executeSavepoint`'s `Txn(true)` and `GetMemBuffer().Checkpoint()`:
+    /// with autocommit OFF the SAVEPOINT is what ACTIVATES the pending
+    /// transaction. In autocommit no transaction is open and there is nothing
+    /// to mark (`None`), which is what leaves a later `ROLLBACK TO` to report
+    /// 1305 (captured).
+    pub fn savepoint_checkpoint(
         &mut self,
         session: &Session,
-        name: &str,
         resource_group: &str,
         schema_version: i64,
-    ) -> Result<(), SqlQueryError> {
+    ) -> Result<Option<BufferCheckpoint>, SqlQueryError> {
         self.enter_if_autocommit_off(session, resource_group, schema_version);
-        if let Some(transaction) = self.explicit.as_ref() {
-            transaction.activate().map_err(SqlQueryError::unknown)?;
-        }
-        if self.explicit.is_none() {
-            return Ok(());
-        }
-        let image = self.buffer.checkpoint();
-        let delta = session.table_delta_savepoint();
-        self.savepoints.add(name, (image, delta));
-        Ok(())
+        let Some(transaction) = self.explicit.as_ref() else {
+            return Ok(None);
+        };
+        transaction.activate().map_err(SqlQueryError::unknown)?;
+        Ok(Some(self.buffer.checkpoint()))
     }
 
-    /// Go `TxnCtx.RollbackToSavepoint`: puts the named checkpoint back and
-    /// drops the savepoints above it, keeping the named one so it can be rolled
-    /// back to again. The session already refused an unknown name.
-    pub fn rollback_to_savepoint(&mut self, session: &Session, name: &str) {
-        if let Some((image, delta)) = self.savepoints.rollback_to(name) {
-            self.buffer.restore(image.clone());
-            session.restore_table_delta_savepoint(delta.clone());
-        }
-    }
-
-    /// Go `TxnCtx.ReleaseSavepoint`: drops the named savepoint and those above
-    /// it, touching no bytes.
-    pub fn release_savepoint(&mut self, name: &str) {
-        self.savepoints.release(name);
-    }
-
-    /// Whether the transaction has declared no savepoint.
-    #[must_use]
-    pub fn savepoints_is_empty(&self) -> bool {
-        self.savepoints.is_empty()
+    /// Go `RollbackMemDBToCheckpoint`: the staged writes go back to the
+    /// checkpoint a savepoint took.
+    pub fn rollback_to_checkpoint(&mut self, checkpoint: &BufferCheckpoint) {
+        self.buffer.restore(checkpoint.clone());
     }
 
     /// Go `doCommitWithRetry`'s `tryReplaceWriteConflictError`, then Go's
@@ -503,7 +491,6 @@ impl TxnManager {
         session: &mut Session,
         hooks: &dyn CommitHooks,
     ) -> Result<(), SqlQueryError> {
-        self.savepoints.clear();
         session.current_tso().clear();
         self.pin = None;
         let Some(mut transaction) = self.explicit.take() else {
@@ -578,7 +565,6 @@ impl TxnManager {
     /// every write it staged (Go `RollbackTxn`).
     pub fn rollback(&mut self, session: &mut Session) -> Result<(), SqlQueryError> {
         session.clear_table_delta();
-        self.savepoints.clear();
         session.current_tso().clear();
         self.pin = None;
         let result = match self.explicit.take() {
