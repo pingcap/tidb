@@ -1,5 +1,7 @@
 # Align the Rust node's structure with Go TiDB, in dependency order
 
+Ordering note (2026-10-26): what is done next is decided by `rust/docs/top-down-structure-execplan.md` (structure first, top down); this plan keeps its audits and the Milestone W inventory.
+
 This ExecPlan is a living document. Keep Progress, Surprises and discoveries, Decision log and Outcomes current at every stopping point. It records the current state only; superseded text is removed, and git history keeps it.
 
 ## Purpose and outcome
@@ -335,8 +337,8 @@ Go's shape:
 - DDL: one implementation, the job workers. Their checks and builders (`checkAddPartition`, `buildAddedPartitionInfo`, `BuildTableInfoWithStmt`) work on `TableInfo`. Local temporary tables are `TableInfo`s in `SessionVars.LocalTemporaryTables` (`createSessionTemporaryTable`, `DropLocalTemporaryTable`, `truncateLocalTemporaryTable`).
 
 Stages, top-down. As instructed, all are written before any build, then one verification pass.
-- [ ] W1, Go's `sqlexec.RestrictedSQLExecutor` on the session: `Session::exec_restricted_sql` runs over an executor the store session installs (Go `GetRestrictedSQLExecutor`). The node backs it with `ClusterSessionFactory::open_system_session`, an internal session in its own autocommit transaction; `ExecOptionUseCurSession` is the explicit opt-in Go has.
-- [ ] W2, the readers move onto it: `show_create_user_row`, `user_attributes_rows`, `gcutil::exec_restricted_sql`, `reload_expr_pushdown_blacklist`, `reload_opt_rule_blacklist`, the inspection metrics queries, and `user_table_rows` outside an account statement.
+- [x] W1 (`558eb81928`), Go's `sqlexec.RestrictedSQLExecutor` on the session: `Session::exec_restricted_sql` runs over an executor the store session installs (Go `GetRestrictedSQLExecutor`). The node backs it with `ClusterSessionFactory::open_system_session`, an internal session in its own autocommit transaction; `ExecOptionUseCurSession` is the explicit opt-in Go has.
+- [x] W2 (`558eb81928`), the readers move onto it: `show_create_user_row`, `user_attributes_rows`, `gcutil::exec_restricted_sql`, `reload_expr_pushdown_blacklist`, `reload_opt_rule_blacklist`, the inspection metrics queries, and `user_table_rows` outside an account statement.
 - [ ] W3, bindings write through a system session in their own transaction (Go `callWithSCtx(wrapTxn)`), not `run_insert_in` / `run_update_in` / `run_delete_in` on the connection's catalog.
 - [ ] W4, the job path builds partition changes from `TableInfo` (Go `buildAddedPartitionInfo` / `checkAddPartition` / `checkDropTablePartition`); `apply_partition_change`'s scratch-catalog replay of the in-process `ALTER` is deleted.
 - [ ] W5, local temporary DDL as Go has it: `CREATE TEMPORARY TABLE` builds the `TableInfo` with the job path's builder and registers it in the session's local temporary tables; `DROP` / `TRUNCATE` edit them; no one-step catalog applier is used.

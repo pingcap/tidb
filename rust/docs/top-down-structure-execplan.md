@@ -1,0 +1,83 @@
+# Make the Rust node Go-shaped, top down
+
+This ExecPlan is a living document. Keep Progress, Surprises and discoveries, Decision log and Outcomes current at every stopping point. It follows `PLANS.md` at the repository root. It supersedes the ordering of `rust/docs/structural-alignment-execplan.md`: that plan keeps its audits and its Milestone W inventory, and this plan decides what is done next.
+
+## Purpose and outcome
+
+The Rust TiDB node (`rust/`) is a transcreation of Go TiDB (`pkg/`). Its answers are measured against Go, but its structure is not Go's: a statement reaches its implementation through different layers, in a different order, and several decisions are made twice. Every wrong answer that comes from such a difference gets patched where it shows up, and the patches pile up. The user directive (2026-10-26) is to fix the structure first, from the highest layer to the lowest, with the whole picture in view: "Fix structural mismatch first, make structure correct, from high level to low level, top down principle with full picture."
+
+After this plan, a statement travels the path Go's does, layer for layer: the connection hands the session one parsed statement and gets back a result set or nothing; the session compiles it into a plan for every statement kind; an executor builder turns the plan into executors; executors read one immutable schema snapshot and write through the transaction's buffer; schema changes exist once, as DDL jobs. Observe it by reading the code (each layer names its Go counterpart and has one entry) and through the gates in "Validation and acceptance", which must stay green at every stage.
+
+## Context for a reader new to the repository
+
+The Go source of truth is `pkg/` in this repository. The Rust workspace is `rust/` (`rust/Cargo.toml`). The crates that matter here:
+
+`rust/crates/tidb-server` is Go's `pkg/server` plus `cmd/tidb-server`: the MySQL wire protocol (`src/mysql_connection.rs`), the composition root and the peer RPC server. `rust/crates/tidb-session` is Go's `pkg/session` and much more: `Session` (`src/lib.rs`), the statement dispatcher (`src/dispatch.rs`, `src/classify.rs`), statement implementations the session runs itself (`src/show*.rs`, `src/account*.rs`, `src/user_table.rs`, `src/binding_arm.rs`, `src/*_arm.rs`), and under `src/domain/` the node: `ClusterSessionFactory` (Go's `Domain` plus the server's `TiDBDriver`) and `ClusterServerSession` (one connection's session over the cluster store), with `src/domain/session_api.rs` defining `QuerySession`, the contract the server drives. `rust/crates/tidb-planner` is Go's `pkg/planner`. `rust/crates/tidb-executor` is Go's `pkg/executor` plus an in-memory schema and storage (`src/driver/catalog.rs`, `Catalog`), Go's `pkg/table` (`src/kv_table`), the optimizer driver (`src/driver/planner_bridge.rs`, `src/driver/physical_builder.rs`) and a one-step DDL implementation (`src/ddl`). `rust/crates/tidb-exec` is the cluster tier: DDL jobs (`src/cluster_ddl.rs`, `src/cluster_ddl/`), `TableInfo` builders, system-table writes. `rust/crates/tidb-ddl` is Go's DDL worker side.
+
+Terms. A "statement route" is how the Rust node decides which code runs a statement; Go has none, because Go's planner builds a plan for every statement and the executor builder picks the executor from the plan's type. A "one-step applier" is a Rust function that applies a schema change directly to the in-memory `Catalog`; Go has none, because every schema change is a persisted job a worker steps through schema states. "Restricted SQL" is Go's `ExecRestrictedSQL`: internal SQL run on a pooled internal session in that session's own transaction.
+
+## The full picture, layer by layer
+
+Each layer below states Go's shape, the Rust shape with its evidence, and the target. Sizes are non-test source lines.
+
+Layer 1, connection to session. Go: `clientConn.handleStmt` calls `QueryCtx.ExecuteStmt(ctx, stmt)` once (`pkg/server/conn.go:2271`, `pkg/server/driver_tidb.go:364`). A non-nil result set is written as rows; nil means an OK packet built from the session's status, affected rows and last insert id. LOAD DATA LOCAL and LOAD STATS run inside `ExecuteStmt` far enough to park a request on the session (`LoadDataVarKey`, `LoadStatsVarKey`); the connection then fetches the client file and finishes the statement. Rust: `tidb-server/src/mysql_connection.rs` decides the statement's shape itself by calling, in order, `local_infile_path_parsed`, `accept_local_infile_parsed` / `execute_local_infile_parsed`, `control_transaction_parsed`, `execute_write_parsed` and `execute_statement`, each with a text-only twin (`QuerySession` has 42 methods). The binary protocol repeats the choice. Target: `QuerySession::execute_stmt(stmt) -> Result<Option<ResultSet>>` with Go's accessors for the OK packet and a parked local-infile request; the server writes what comes back.
+
+Layer 2, the session. Go: one `session` (`pkg/session/session.go`) owning `sessionVars`, the transaction and the domain handle; `ExecuteStmt` (`session.go:2419`) prepares the transaction context, compiles, runs (`runStmt`, autocommit commit and retry) and finishes. Rust: four objects per connection: `ClusterServerSession` (`domain/cluster_session_node/mod.rs`, with its own router `StatementRoute`: Ordinary, Ddl, DdlSequence, LocalTemporaryDdl, MixedTemporaryDrop, Accounts, GlobalVars, Analyze, LoadStats, FlushStatsDelta, StatsLock, DropStats; and its own write/query split `statement_kind_parsed`), `StoreSession` (`store_session.rs`), `Session` (`lib.rs`, with its own dispatcher `dispatch.rs`) and, in tests, `MockStoreConnection` (`domain/mock_store.rs`), which swaps a `Session` into a `ClusterServerSession` for every statement. Connection setup is written twice (`open_session`, `create_session_4_test`). `tidb-session` is 124k lines against Go's 14k. Target: one `Session` with one `execute_stmt` doing Go's steps; the node-global parts of `ClusterSessionFactory` are the domain; the per-connection parts of `ClusterServerSession` move into `Session`.
+
+Layer 3, compile. Go: `executor.Compiler.Compile` runs the preprocessor and `planner.Optimize` for every statement kind (`PlanBuilder.Build` has an arm per kind: `buildSimple`, `buildDDL`, `buildShow`, `buildSet`, `buildAdmin`, `buildLoadData`, `buildInsert`, ...). Rust: only queries and DML are planned, and their optimization is driven from the executor crate (`tidb-executor/src/driver/planner_bridge.rs` calls `logical_optimize` and `find_best_task`; the planner has no `Optimize`); DDL is lowered by the node route into `tidb-exec`'s `DdlStatement`; accounts, SET, SHOW, ADMIN, bindings and statistics statements run as session arms with no plan. Target: `tidb_planner::optimize(stmt) -> Plan` for every statement kind, with the logical and physical drive moved out of the executor.
+
+Layer 4, executor build. Go: `executorBuilder.build(plan)` is one switch over plan types (`pkg/executor/builder.go`); every statement runs as an executor (`DDLExec`, `SimpleExec`, `ShowExec`, `SetExecutor`, `GrantExec`, `InsertExec`, ...). Rust: `tidb-executor/src/driver/physical_builder.rs` builds query and DML executors; everything else is session code; the executor crate also takes SQL text and parses it (`run_select_meta_in`, `run_insert_in`, `run_alter_table_in`). Target: one builder over every plan; the session arms become executors behind Go's `sessionctx.Context` seam; no SQL text below the session.
+
+Layer 5, schema and tables. Go: `infoschema.InfoSchema` is an immutable snapshot the domain loads from meta; ids come from meta's global id; DDL history is a table; regions and label rules come from PD; `table.Table` writes through the transaction's memory buffer. Rust: `Catalog` (`tidb-executor/src/driver/catalog.rs`) is cloned and mutated per transaction and holds the schema, id counters, a TSO counter (`allocate_tso`, `record_commit`, `state_as_of`), DDL job history, policies, resource groups, regions, label rules, limit copies and in-memory rows; a `KvTable` sits on either `MemTableStorage` or `ClusterTableStorage`; each connection rebuilds its catalog (`cluster_session_catalog_with_templates`). Target: an immutable schema snapshot; everything else back to meta, PD and the domain; one storage path.
+
+Layer 6, DDL. Go: one implementation, the job workers. Rust: the job path in `tidb-exec` plus the one-step appliers in `tidb-executor/src/ddl`. Target: Milestone W of `structural-alignment-execplan.md` (W1 and W2 done, `558eb81928`; W4's executor half is parked in `git stash` as "W4 partition planners").
+
+Layer 7, transactions and storage. Done in Milestones T and V of the older plan: one transaction object, the store on `ngaut/client-rust`.
+
+## Plan of work
+
+The order is top down. A stage makes one layer Go-shaped over the layers below it as they currently are, so the layer's contract is right before what is under it changes; the lower stages then shrink the upper bodies instead of reshaping them again. No stage adds an emulation for something a later stage removes.
+
+Stage 1 (layer 1): one `execute_stmt` on `QuerySession`. The server's text and binary paths call it once per statement and write the result set or the OK packet; transaction control, writes, queries and local infile all come back through it. Inside `ClusterServerSession` the existing routing becomes the body of `execute_stmt`, unchanged in behavior. Acceptance: `QuerySession` loses `control_transaction*`, `execute_write*`, `execute`, `execute_parsed`, `local_infile_path*`, `accept_local_infile_parsed` and `execute_local_infile*`; `mysql_connection.rs` has one call per statement; the gates stay green.
+
+Stage 2 (layer 2): one session. `ClusterServerSession`'s router and `Session`'s dispatcher merge into `Session::execute_stmt` with Go's step order (`prepareTxnCtx`, compile, `runStmt`, finish); `StoreSession` and `MockStoreConnection` dissolve; connection setup exists once. Prototype first: list every field of the four objects and map each to Go's `session`, `SessionVars` or `Domain`, recorded here before code moves.
+
+Stage 3 (layers 3 and 4): plans and executors for every statement kind, one statement family per gated commit (transaction control and SET first, then SHOW, accounts, ADMIN, statistics statements, DDL), each family's session arm deleted when its executor lands; `planner_bridge.rs`'s drive moves into `tidb_planner::optimize`.
+
+Stage 4 (layer 6): finish Milestone W (W3 to W10), which by then only has the job path and test fixtures to change.
+
+Stage 5 (layer 5): the schema snapshot. `Catalog` loses ids, history, policies, regions and rows; `MemTableStorage` goes; the bootstrap id layout follows.
+
+## Validation and acceptance
+
+Every stage commit passes: the tests of each crate it changes (`cd rust && cargo nextest run -p <crate>`), the in-process replay (`cd rust && cargo test -p difftest-result-tests --test integration_diff integrationtest_replay_matches_recorded_tidb_output`), the production replay (`cd rust && cargo test -p tidb-server --lib production_replay_stays_within_budget -- --ignored`), and the locked server build (`cd rust && cargo build --locked -p tidb-server`), which `hooks/pre-commit` runs only when `git config core.hooksPath hooks` is set (it is not set in this checkout, so run it by hand). Known environment failures that also fail on the pristine tip are listed in Surprises and are not regressions.
+
+## Idempotence and recovery
+
+Each stage is a sequence of commits on `hparser-integration`; a failed gate means the commit is not made. The pre-reset local state is kept on `backup/local-pre-reset-2026-10-26` and `backup/wip-2026-10-26`.
+
+## Progress
+
+- [x] (2026-10-26) Branch reset to `ngaut/hparser-integration` (`622891acc5`); the lost Milestone W commits were redone from the transcript as far as W1 and W2 (`558eb81928`).
+- [x] (2026-10-26) Full top-down picture recorded (this document).
+- [ ] Stage 1: one `execute_stmt` on `QuerySession`.
+- [ ] Stage 2: one session.
+- [ ] Stage 3: plans and executors for every statement kind.
+- [ ] Stage 4: Milestone W remainder.
+- [ ] Stage 5: the schema snapshot.
+
+## Surprises and discoveries
+
+Two `tidb-session` tests fail on the pristine tip on this machine and are environment-bound: `tests_core::session_state::session_migration_restored_timestamp_uses_shared_historical_read_owner` expects a PST-formatted time (passes under `TZ=America/Los_Angeles`), and `tests_show::remaining_information_schema_tables_answer_as_go` expects `CLUSTER_HARDWARE` to be empty.
+
+`core.hooksPath` is unset in this checkout, so `hooks/pre-commit` does not run on commit; the locked build has to be run by hand.
+
+The duplicated connection setup (`open_session` versus `create_session_4_test`) hid W1's executor from every `Session::new()` test until it moved into the shared `open_storage_session`.
+
+## Decision log
+
+2026-10-26, user: structure first, top down, with the full picture; this plan's stage order follows from it. Milestone W's remainder moves after the statement path (Stage 4) because its last steps (deleting the one-step appliers) are easier once statements no longer reach them through session arms.
+
+## Outcomes and retrospective
+
+None yet.
