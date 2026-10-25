@@ -131,6 +131,7 @@ type Executor interface {
 		oldMViewID int64,
 		shadowTableID int64,
 		buildReadTSO uint64,
+		buildSources []model.MViewRefreshSource,
 		expectedOldMViewRevision *uint64,
 		expectedLastSuccessReadTSO uint64,
 		expectedLastSuccessReadTSONull bool,

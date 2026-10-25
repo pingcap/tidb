@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -4438,10 +4439,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if refreshMode == ast.RefreshMaterializedViewModeFast && lockedRefreshInfo.lastSuccessReadTSONull {
 		return errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL")
 	}
-	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedRefreshInfo.lastSuccessReadTSO {
-		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
-		return nil
-	}
 	histSctx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -4450,6 +4447,23 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	histSQLExec := histSctx.GetSQLExecutor()
 	histLoc := histSctx.GetSessionVars().Location()
 
+	// Re-read the registration under the refresh-info row lock, in this transaction.
+	registeredLogs, err = mviewutil.ReadRefreshSourceIDs(kctx, sqlExec, mviewID)
+	if err != nil {
+		return err
+	}
+	if len(registeredLogs) == 0 {
+		return errors.New("refresh materialized view: input log records are missing")
+	}
+	if refreshMode == ast.RefreshMaterializedViewModeFast {
+		currentSources, err := mviewutil.ResolveRefreshSources(kctx, domain.GetDomain(e.Ctx()).InfoSchema(), mviewID)
+		if err != nil {
+			return err
+		}
+		if err := checkMVRefreshLogBaseline(currentSources, registeredLogs); err != nil {
+			return err
+		}
+	}
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
 		targetRefreshReadTSO > 0 &&
 		targetRefreshReadTSO > lockedRefreshInfo.lastSuccessReadTSO
@@ -4469,6 +4483,26 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if mlogIntegrity.hasRetainedLowerTSO {
 			mlogRetainedLowerTSO = mlogIntegrity.retainedLowerTSO
 		}
+	}
+
+	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedRefreshInfo.lastSuccessReadTSO {
+		readTSO, err := getRefreshReadTSOForSuccess(sessVars)
+		if err != nil {
+			return err
+		}
+		snapshotIS, err := domain.GetDomain(e.Ctx()).GetSnapshotInfoSchema(readTSO)
+		if err != nil {
+			return err
+		}
+		sources, err := mviewutil.ResolveRefreshSources(kctx, snapshotIS, mviewID)
+		if err != nil {
+			return err
+		}
+		if err := checkMVRefreshLogBaseline(sources, registeredLogs); err != nil {
+			return err
+		}
+		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
+		return nil
 	}
 
 	txn, err := refreshSctx.Txn(true)
@@ -4609,8 +4643,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 
 	executeDataChangesStart := time.Now()
+	input := &mvRefreshInput{targetID: mviewID}
 	if err := executeRefreshMaterializedViewDataChanges(
-		kctx,
+		context.WithValue(kctx, mvRefreshInputKey{}, input),
 		sqlExec,
 		sessVars,
 		s,
@@ -4639,7 +4674,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	})
 	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
 
-	actualRefreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
+	actualRefreshReadTSO := input.readTSO
+	confirmedSources, err := validateMVRefreshInput(kctx, refreshSctx, mviewID, input, actualRefreshReadTSO,
+		refreshMode == ast.RefreshMaterializedViewModeFast, registeredLogs)
 	if err != nil {
 		return finalizeFailure(err)
 	}
@@ -4677,6 +4714,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 
 	lastSuccessRefreshEndUnixSeconds := time.Now().Unix()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.persistRefreshInfo, func() error {
+		if refreshMode != ast.RefreshMaterializedViewModeFast {
+			confirmedLogs := mviewutil.RefreshSourceLogIDs(confirmedSources)
+			if !slices.Equal(registeredLogs, confirmedLogs) {
+				if err := mviewutil.ReplaceRefreshSourceIDs(kctx, sqlExec, mviewID, confirmedLogs); err != nil {
+					return err
+				}
+			}
+		}
+		failpoint.InjectCall("refreshMaterializedViewAfterReplaceSourceInfo", actualRefreshReadTSO)
+		failpoint.Inject("mockRefreshMaterializedViewAfterReplaceSourceInfoError", func() {
+			failpoint.Return(errors.New("mock refresh error after replacing source info"))
+		})
 		return persistRefreshSuccess(
 			kctx,
 			sqlExec,
@@ -4843,6 +4892,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 
 	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterCreateShadow")
 	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {})
+	shadowID, err := getMVRefreshOutOfPlaceShadowTableID(kctx, buildSctx, schemaName, shadowTableName)
+	if err != nil {
+		return 0, err
+	}
+	input := &mvRefreshInput{targetID: shadowID}
 	storeName := e.Ctx().GetStore().Name()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceLoadShadow, func() error {
 		expectedStoreName := mvRefreshImportIntoStoreName
@@ -4873,7 +4927,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if buildErr != nil {
 			return buildErr
 		}
-		if buildErr = executeRefreshMaterializedViewInternalSQL(kctx, buildSQLExec, buildSQL); buildErr != nil {
+		if buildErr = executeRefreshMaterializedViewInternalSQL(context.WithValue(kctx, mvRefreshInputKey{}, input), buildSQLExec, buildSQL); buildErr != nil {
 			return buildErr
 		}
 		shadowLoadStmtResult = newMVRefreshStmtResultFromWriteCounts(int64(buildSessVars.StmtCtx.AffectedRows()), 0, 0)
@@ -4891,16 +4945,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		}
 		failpoint.Return(uint64(0), errors.New("mock refresh materialized view out-of-place build error after load shadow"))
 	})
-	failpoint.Inject("mockRefreshMaterializedViewOutOfPlaceBuildReadTSO", func(val failpoint.Value) {
-		s, ok := val.(string)
-		if !ok {
-			return
-		}
-		overrideTSO, parseErr := strconv.ParseUint(s, 10, 64)
-		if parseErr == nil && overrideTSO > 0 {
-			buildReadTSO = overrideTSO
-		}
-	})
+	confirmedSources, err := validateMVRefreshInput(kctx, buildSctx, tblInfo.ID, input, buildReadTSO, false, nil)
+	if err != nil {
+		return 0, err
+	}
 	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterBuildDataLoad", buildReadTSO)
 	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterBuildDataLoad", func() {})
 	var shadowTableID int64
@@ -4945,6 +4993,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 			tblInfo.ID,
 			shadowTableID,
 			buildReadTSO,
+			confirmedSources,
 			&expectedOldMViewRevision,
 			expectedLastSuccessReadTSO,
 			expectedLastSuccessReadTSONull,

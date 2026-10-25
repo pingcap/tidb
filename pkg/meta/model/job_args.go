@@ -816,17 +816,26 @@ func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPu
 	return getOrDecodeArgs[*AlterMaterializedViewLogPurgeArgs](&AlterMaterializedViewLogPurgeArgs{}, job)
 }
 
+// MViewRefreshSource records a physical input binding at a refresh computation snapshot.
+// MLogID is zero when the source has no materialized view log.
+type MViewRefreshSource struct {
+	SchemaID int64 `json:"schema_id"`
+	TableID  int64 `json:"table_id"`
+	MLogID   int64 `json:"mlog_id"`
+}
+
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs is the arguments for
 // ActionMViewRefreshOutOfPlaceCutover ddl.
 type RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs struct {
-	OldMViewID                         int64   `json:"old_mview_id,omitempty"`
-	ShadowTableID                      int64   `json:"shadow_table_id,omitempty"`
-	BuildReadTSO                       uint64  `json:"build_read_tso,omitempty"`
-	ExpectedOldMViewRevision           *uint64 `json:"expected_old_mview_revision,omitempty"`
-	ExpectedLastSuccessReadTSO         uint64  `json:"expected_last_success_read_tso,omitempty"`
-	ExpectedLastSuccessReadTSONull     bool    `json:"expected_last_success_read_tso_null,omitempty"`
-	NextRefreshUnixSeconds             *int64  `json:"next_refresh_unix_seconds,omitempty"`
-	ShouldUpdateNextRefreshUnixSeconds bool    `json:"should_update_next_refresh_unix_seconds,omitempty"`
+	BuildSources                       []MViewRefreshSource `json:"build_sources"`
+	OldMViewID                         int64                `json:"old_mview_id,omitempty"`
+	ShadowTableID                      int64                `json:"shadow_table_id,omitempty"`
+	BuildReadTSO                       uint64               `json:"build_read_tso,omitempty"`
+	ExpectedOldMViewRevision           *uint64              `json:"expected_old_mview_revision,omitempty"`
+	ExpectedLastSuccessReadTSO         uint64               `json:"expected_last_success_read_tso,omitempty"`
+	ExpectedLastSuccessReadTSONull     bool                 `json:"expected_last_success_read_tso_null,omitempty"`
+	NextRefreshUnixSeconds             *int64               `json:"next_refresh_unix_seconds,omitempty"`
+	ShouldUpdateNextRefreshUnixSeconds bool                 `json:"should_update_next_refresh_unix_seconds,omitempty"`
 }
 
 func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) []any {
@@ -839,6 +848,7 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) getArgsV1(*Job) [
 		a.NextRefreshUnixSeconds,
 		a.ShouldUpdateNextRefreshUnixSeconds,
 		a.ExpectedOldMViewRevision,
+		a.BuildSources,
 	}
 }
 
@@ -852,6 +862,7 @@ func (a *RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) decodeV1(job *Job
 		&a.NextRefreshUnixSeconds,
 		&a.ShouldUpdateNextRefreshUnixSeconds,
 		&a.ExpectedOldMViewRevision,
+		&a.BuildSources,
 	))
 }
 

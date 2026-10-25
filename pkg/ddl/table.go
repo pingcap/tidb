@@ -1356,11 +1356,15 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 		return ver, errors.Trace(err)
 	}
 
+	if err := w.validateMViewRefreshBuildSources(job, args); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 	if err := w.migrateMViewRefreshInfoForOutOfPlaceCutover(jobCtx, args); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
-	if err := w.migrateMViewRefreshSourceInfo(jobCtx, args.OldMViewID, args.ShadowTableID); err != nil {
+	if err := w.migrateMViewRefreshSourceInfo(jobCtx, args.OldMViewID, args.ShadowTableID, args.BuildSources); err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -1541,7 +1545,15 @@ func (w *worker) migrateMViewRefreshInfoForOutOfPlaceCutover(
 	}
 
 	sql := "UPDATE mysql.tidb_mview_refresh_info SET MVIEW_ID = %?, LAST_SUCCESS_READ_TSO = %?, LAST_SUCCESS_REFRESH_END_UNIX_SECONDS = %?"
-	params := []any{args.ShadowTableID, args.BuildReadTSO, time.Now().Unix()}
+	buildReadTSO := args.BuildReadTSO
+	failpoint.Inject("mockMViewRefreshOutOfPlacePersistReadTSO", func(val failpoint.Value) {
+		if text, ok := val.(string); ok {
+			if ts, err := strconv.ParseUint(text, 10, 64); err == nil {
+				buildReadTSO = ts
+			}
+		}
+	})
+	params := []any{args.ShadowTableID, buildReadTSO, time.Now().Unix()}
 	if args.ShouldUpdateNextRefreshUnixSeconds {
 		sql += ", NEXT_REFRESH_UNIX_SECONDS = %?"
 		var nextRefreshUnixSeconds any

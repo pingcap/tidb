@@ -16,10 +16,13 @@ package ddl
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
@@ -53,7 +56,7 @@ func (w *worker) deleteMViewRefreshSourceInfos(jobCtx *jobContext, mviewIDs []in
 	return errors.Trace(err)
 }
 
-func (w *worker) migrateMViewRefreshSourceInfo(jobCtx *jobContext, oldMViewID, newMViewID int64) error {
+func (w *worker) migrateMViewRefreshSourceInfo(jobCtx *jobContext, oldMViewID, newMViewID int64, buildSources []model.MViewRefreshSource) error {
 	ctx := w.mviewRefreshSourceInfoContext(jobCtx)
 	// Keep this migration within the DDL step's full-transaction error handling.
 	jobCtx.mustRollbackTxnOnError = true
@@ -71,8 +74,52 @@ func (w *worker) migrateMViewRefreshSourceInfo(jobCtx *jobContext, oldMViewID, n
 	if len(newIDs) != 0 {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: shadow already has input log records")
 	}
-	_, err = w.sess.Execute(ctx,
-		"UPDATE mysql.tidb_mview_fast_refresh_source_info SET MVIEW_ID = %? WHERE MVIEW_ID = %?",
-		"mview-refresh-cutover-migrate-source-info", newMViewID, oldMViewID)
-	return errors.Trace(err)
+	if err := mviewutil.DeleteRefreshSourceInfo(ctx, w.sess.GetSQLExecutor(), []int64{oldMViewID}); err != nil {
+		return err
+	}
+	return mviewutil.InsertRefreshSourceIDs(ctx, w.sess.GetSQLExecutor(), newMViewID, mviewutil.RefreshSourceLogIDs(buildSources))
+}
+
+// Validate the persisted build bindings against historical metadata, not the
+// current input log. An upstream cutover after the build snapshot must not
+// silently replace the baseline confirmed by that build.
+func (w *worker) validateMViewRefreshBuildSources(job *model.Job, args *model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs) error {
+	snapshot := meta.NewReader(w.store.GetSnapshot(kv.NewVersion(args.BuildReadTSO)))
+	mv, err := snapshot.GetTable(job.SchemaID, args.OldMViewID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if mv == nil || mv.MaterializedView == nil || len(args.BuildSources) == 0 ||
+		len(args.BuildSources) != len(mv.MaterializedView.BaseTableIDs) {
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: build source set differs from the build snapshot")
+	}
+	seen := make(map[int64]struct{}, len(args.BuildSources))
+	for _, binding := range args.BuildSources {
+		if _, ok := seen[binding.TableID]; ok || !slices.Contains(mv.MaterializedView.BaseTableIDs, binding.TableID) {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: invalid build source set")
+		}
+		seen[binding.TableID] = struct{}{}
+		source, err := snapshot.GetTable(binding.SchemaID, binding.TableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if source == nil {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: build source is missing from the build snapshot")
+		}
+		var log *model.TableInfo
+		if binding.MLogID != 0 {
+			log, err = snapshot.GetTable(binding.SchemaID, binding.MLogID)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		actual, err := mviewutil.RefreshSourceBinding(binding.SchemaID, source, log)
+		if err != nil {
+			return err
+		}
+		if actual != binding {
+			return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: input log binding differs from the build snapshot")
+		}
+	}
+	return nil
 }

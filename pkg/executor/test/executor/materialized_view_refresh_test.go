@@ -847,6 +847,12 @@ func TestMaterializedViewRefreshFastAsOfTimestampNoOpStatementResult(t *testing.
 		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
 		mvID,
 	)).Check(testkit.Rows("0"))
+	// Even an empty interval must not bypass physical log baseline checks.
+	tk.MustExec(fmt.Sprintf("insert into mysql.tidb_mview_fast_refresh_source_info values (%d, 0)", mvID))
+	require.ErrorContains(t, tk.ExecToErr(fmt.Sprintf(
+		"refresh materialized view mv_refresh_result_noop fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	)), "run COMPLETE refresh")
 }
 
 func TestMaterializedViewRefreshCompleteDeltaApplyStatementResult(t *testing.T) {
@@ -4118,9 +4124,9 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverWithUnsignedBuildReadTS
 	require.NoError(t, err)
 	oldMViewID := mvTable.Meta().ID
 
-	// Keep buildReadTSO above MaxInt64 to guard against any signed-int conversion in cutover path.
+	// Exercise unsigned SQL persistence without using the synthetic TSO as a storage snapshot.
 	buildReadTSO := (uint64(1) << 63) + 12345
-	const overrideBuildTSFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildReadTSO"
+	const overrideBuildTSFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlacePersistReadTSO"
 	require.NoError(t, failpoint.Enable(overrideBuildTSFailpoint, fmt.Sprintf(`return("%d")`, buildReadTSO)))
 	defer func() {
 		require.NoError(t, failpoint.Disable(overrideBuildTSFailpoint))

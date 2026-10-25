@@ -15,10 +15,14 @@
 package mviewutil
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -73,4 +77,83 @@ func DeleteRefreshSourceInfo(ctx context.Context, exec sqlexec.SQLExecutor, mvie
 		}
 	}
 	return nil
+}
+
+// ResolveRefreshSources resolves all physical source/log bindings in the supplied schema.
+// A missing log is represented by zero; a broken owner binding is always an error.
+func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewID int64) ([]model.MViewRefreshSource, error) {
+	mv, ok := is.TableByID(ctx, mviewID)
+	if !ok || mv.Meta().MaterializedView == nil {
+		return nil, errors.Errorf("refresh materialized view: target %d is missing from the computation schema", mviewID)
+	}
+	sources := make([]model.MViewRefreshSource, 0, len(mv.Meta().MaterializedView.BaseTableIDs))
+	for _, id := range mv.Meta().MaterializedView.BaseTableIDs {
+		tbl, ok := is.TableByID(ctx, id)
+		if !ok {
+			return nil, errors.Errorf("refresh materialized view: source %d is missing from the computation schema", id)
+		}
+		source := tbl.Meta()
+		db, ok := infoschema.SchemaByTable(is, source)
+		if !ok {
+			return nil, errors.Errorf("refresh materialized view: source schema is missing for %d", id)
+		}
+		named, err := is.TableByName(ctx, db.Name, source.Name)
+		if err != nil || named.Meta().ID != id {
+			return nil, errors.Errorf("refresh materialized view: source %d no longer has its planned name binding; retry refresh", id)
+		}
+		var log *model.TableInfo
+		if source.MaterializedViewBase != nil && source.MaterializedViewBase.MLogID != 0 {
+			mlog, ok := is.TableByID(ctx, source.MaterializedViewBase.MLogID)
+			if !ok {
+				return nil, errors.Errorf("refresh materialized view: log %d is missing from the computation schema", source.MaterializedViewBase.MLogID)
+			}
+			log = mlog.Meta()
+			logDB, ok := infoschema.SchemaByTable(is, log)
+			if !ok || logDB.ID != db.ID {
+				return nil, errors.New("refresh materialized view: source and log schemas differ")
+			}
+		}
+		binding, err := RefreshSourceBinding(db.ID, source, log)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, binding)
+	}
+	slices.SortFunc(sources, func(a, b model.MViewRefreshSource) int { return cmp.Compare(a.TableID, b.TableID) })
+	if len(sources) == 0 {
+		return nil, errors.New("refresh materialized view: source set is empty")
+	}
+	return sources, nil
+}
+
+// RefreshSourceBinding validates a source's forward and reverse MLog ownership.
+func RefreshSourceBinding(schemaID int64, source, log *model.TableInfo) (model.MViewRefreshSource, error) {
+	binding := model.MViewRefreshSource{SchemaID: schemaID, TableID: source.ID}
+	if source.MaterializedViewBase != nil {
+		binding.MLogID = source.MaterializedViewBase.MLogID
+	}
+	if binding.MLogID != 0 && (log == nil || log.ID != binding.MLogID ||
+		log.MaterializedViewLog == nil || log.MaterializedViewLog.BaseTableID != source.ID) {
+		return model.MViewRefreshSource{}, errors.Errorf("refresh materialized view: invalid source/log owner binding for source %d", source.ID)
+	}
+	return binding, nil
+}
+
+// RefreshSourceLogIDs returns the sorted, distinct whole log set, including a
+// single zero placeholder if any source has no log.
+func RefreshSourceLogIDs(sources []model.MViewRefreshSource) []int64 {
+	ids := make([]int64, 0, len(sources))
+	for _, source := range sources {
+		ids = append(ids, source.MLogID)
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
+// ReplaceRefreshSourceIDs atomically replaces a baseline in the caller's transaction.
+func ReplaceRefreshSourceIDs(ctx context.Context, exec sqlexec.SQLExecutor, mviewID int64, mlogIDs []int64) error {
+	if err := DeleteRefreshSourceInfo(ctx, exec, []int64{mviewID}); err != nil {
+		return err
+	}
+	return InsertRefreshSourceIDs(ctx, exec, mviewID, mlogIDs)
 }
