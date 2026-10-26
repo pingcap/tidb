@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mjonss/samefn-poc/go/samefn"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -830,13 +831,13 @@ func TestSin(t *testing.T) {
 	}{
 		{nil, 0, true, false},
 		{int64(0), float64(0), false, false},
-		{math.Pi, math.Sin(math.Pi), false, false}, // Pie ==> 0
-		{-math.Pi, math.Sin(-math.Pi), false, false},
-		{math.Pi / 2, math.Sin(math.Pi / 2), false, false}, // Pie/2 ==> 1
-		{-math.Pi / 2, math.Sin(-math.Pi / 2), false, false},
-		{math.Pi / 6, math.Sin(math.Pi / 6), false, false}, // Pie/6(30 degrees) ==> 0.5
-		{-math.Pi / 6, math.Sin(-math.Pi / 6), false, false},
-		{math.Pi * 2, math.Sin(math.Pi * 2), false, false},
+		{math.Pi, samefn.SinV1(math.Pi), false, false}, // Pie ==> 0
+		{-math.Pi, samefn.SinV1(-math.Pi), false, false},
+		{math.Pi / 2, samefn.SinV1(math.Pi / 2), false, false}, // Pie/2 ==> 1
+		{-math.Pi / 2, samefn.SinV1(-math.Pi / 2), false, false},
+		{math.Pi / 6, samefn.SinV1(math.Pi / 6), false, false}, // Pie/6(30 degrees) ==> 0.5
+		{-math.Pi / 6, samefn.SinV1(-math.Pi / 6), false, false},
+		{math.Pi * 2, samefn.SinV1(math.Pi * 2), false, false},
 		{"adfsdfgs", 0, false, true},
 		{"0.000", 0, false, false},
 	}

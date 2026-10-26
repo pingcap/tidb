@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mjonss/samefn-poc/go/samefn"
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -2047,7 +2048,7 @@ func (b *builtinSinSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool,
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return math.Sin(val), false, nil
+	return samefn.SinV1(val), false, nil
 }
 
 type tanFunctionClass struct {
