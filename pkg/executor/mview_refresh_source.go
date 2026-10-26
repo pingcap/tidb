@@ -21,39 +21,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
-
-type mvRefreshInputKey struct{}
-
-// mvRefreshInput retains the final statement attempt before follow-up SQL can
-// overwrite its plan or advance for_update_ts. The compilation schema also
-// retains bindings for sources whose scans were eliminated (e.g. WHERE FALSE).
-type mvRefreshInput struct {
-	targetID   int64
-	plan       base.Plan
-	infoSchema infoschema.InfoSchema
-	readTSO    uint64
-}
-
-func (input *mvRefreshInput) matches(plan base.Plan) bool {
-	switch p := plan.(type) {
-	case *plannercore.MViewDeltaMerge:
-		return p.MVTableID == input.targetID
-	case *plannercore.MViewCompleteDeltaApply:
-		return p.MVTableID == input.targetID
-	case *plannercore.Insert:
-		return p.Table.Meta().ID == input.targetID
-	case *plannercore.ImportInto:
-		return p.Table.TableInfo.ID == input.targetID
-	}
-	return false
-}
 
 func checkMVRefreshLogBaseline(sources []model.MViewRefreshSource, registered []int64) error {
 	for _, source := range sources {
@@ -68,45 +41,32 @@ func checkMVRefreshLogBaseline(sources []model.MViewRefreshSource, registered []
 }
 
 func validateMVRefreshInput(
-	ctx context.Context, sctx sessionctx.Context, mviewID int64, input *mvRefreshInput, readTSO uint64,
+	ctx context.Context, sctx sessionctx.Context, mviewID int64, plan base.Plan, readTSO uint64,
 	fast bool, registered []int64,
 ) ([]model.MViewRefreshSource, error) {
-	if input.plan == nil || input.infoSchema == nil || readTSO == 0 {
+	if plan == nil || readTSO == 0 {
 		return nil, errors.New("refresh materialized view: computation snapshot or plan is missing")
-	}
-	compiled, err := mviewutil.ResolveRefreshSources(ctx, input.infoSchema, mviewID)
-	if err != nil {
-		return nil, err
 	}
 	snapshotIS, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(readTSO)
 	if err != nil {
 		return nil, errors.Annotate(err, "refresh materialized view: cannot load computation snapshot schema")
 	}
-	failpoint.InjectCall("mvRefreshValidateInputSnapshot", readTSO, input.plan, &snapshotIS)
+	failpoint.InjectCall("mvRefreshValidateInputSnapshot", readTSO, plan, &snapshotIS)
 	sources, err := mviewutil.ResolveRefreshSources(ctx, snapshotIS, mviewID)
 	if err != nil {
 		return nil, err
-	}
-	// COMPLETE does not consume input logs. It must still read the physical
-	// sources represented by schema@readTSO, then register that snapshot's logs.
-	if len(compiled) != len(sources) {
-		return nil, errors.New("refresh materialized view: source identities differ from the computation snapshot; retry refresh")
-	}
-	for i, source := range sources {
-		if compiled[i].SchemaID != source.SchemaID || compiled[i].TableID != source.TableID ||
-			(fast && compiled[i].MLogID != source.MLogID) {
-			return nil, errors.New("refresh materialized view: source identities differ from the computation snapshot; retry refresh")
-		}
 	}
 	if fast {
 		if err := checkMVRefreshLogBaseline(sources, registered); err != nil {
 			return nil, err
 		}
 	}
-	if err := checkMVRefreshPlanSources(input.plan, mviewID, compiled, fast); err != nil {
+	// COMPLETE does not consume input logs. Validate the sources still present
+	// in its plan, then register the logs resolved at the computation snapshot.
+	if err := checkMVRefreshPlanSources(plan, mviewID, sources, fast); err != nil {
 		return nil, err
 	}
-	if merge, ok := input.plan.(*plannercore.MViewDeltaMerge); ok && merge.FullUpdateSnapshot != nil {
+	if merge, ok := plan.(*plannercore.MViewDeltaMerge); ok && merge.FullUpdateSnapshot != nil {
 		// Bounded MIN/MAX probes use the requested upper bound, independently
 		// of the current MLog scan snapshot. Both must retain the same baseline.
 		historical, err := mviewutil.ResolveRefreshSources(ctx, merge.FullUpdateSnapshot.InfoSchema, mviewID)

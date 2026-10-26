@@ -501,17 +501,6 @@ func IsFastPlan(p base.Plan) bool {
 // like the INSERT, UPDATE statements, it executes in this function. If the Executor returns
 // result, execution is done after this function returns, in the returned sqlexec.RecordSet Next method.
 func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
-	if input, ok := ctx.Value(mvRefreshInputKey{}).(*mvRefreshInput); ok {
-		defer func() {
-			if err == nil && input.matches(a.Plan) {
-				// Retries may replace both the plan and its compilation schema.
-				input.plan, input.infoSchema = a.Plan, a.InfoSchema
-				input.readTSO = a.Ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
-				failpoint.InjectCall("mvRefreshInputCaptured", a.Ctx, input.readTSO)
-			}
-		}()
-	}
-
 	defer func() {
 		r := recover()
 		if r == nil {

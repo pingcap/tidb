@@ -4645,9 +4645,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	}
 
 	executeDataChangesStart := time.Now()
-	input := &mvRefreshInput{targetID: mviewID}
 	if err := executeRefreshMaterializedViewDataChanges(
-		context.WithValue(kctx, mvRefreshInputKey{}, input),
+		kctx,
 		sqlExec,
 		sessVars,
 		s,
@@ -4667,6 +4666,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 	executeDataChangesDur = time.Since(executeDataChangesStart)
+	// Retries update StmtCtx with the final plan. Retain it and the read TSO
+	// before any follow-up SQL can replace the statement context.
+	refreshPlan, _ := sessVars.StmtCtx.GetPlan().(plannercorebase.Plan)
+	actualRefreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
+	if err != nil {
+		return finalizeFailure(err)
+	}
+	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
+	failpoint.InjectCall("mvRefreshInputCaptured", refreshSctx, actualRefreshReadTSO)
 	failpoint.InjectCall("refreshMaterializedViewAfterDataChanges")
 	failpoint.Inject("mockRefreshMaterializedViewErrorAfterDataChanges", func(val failpoint.Value) {
 		if msg, ok := val.(string); ok {
@@ -4674,10 +4682,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		failpoint.Return(finalizeFailure(errors.New("mock refresh materialized view error after data changes")))
 	})
-	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
-
-	actualRefreshReadTSO := input.readTSO
-	confirmedSources, err := validateMVRefreshInput(kctx, refreshSctx, mviewID, input, actualRefreshReadTSO,
+	confirmedSources, err := validateMVRefreshInput(kctx, refreshSctx, mviewID, refreshPlan, actualRefreshReadTSO,
 		refreshMode == ast.RefreshMaterializedViewModeFast, registeredLogs)
 	if err != nil {
 		return finalizeFailure(err)
@@ -4894,11 +4899,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 
 	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterCreateShadow")
 	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {})
-	shadowID, err := getMVRefreshOutOfPlaceShadowTableID(kctx, buildSctx, schemaName, shadowTableName)
-	if err != nil {
-		return 0, err
-	}
-	input := &mvRefreshInput{targetID: shadowID}
+	var buildPlan plannercorebase.Plan
 	storeName := e.Ctx().GetStore().Name()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceLoadShadow, func() error {
 		expectedStoreName := mvRefreshImportIntoStoreName
@@ -4929,9 +4930,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if buildErr != nil {
 			return buildErr
 		}
-		if buildErr = executeRefreshMaterializedViewInternalSQL(context.WithValue(kctx, mvRefreshInputKey{}, input), buildSQLExec, buildSQL); buildErr != nil {
+		if buildErr = executeRefreshMaterializedViewInternalSQL(kctx, buildSQLExec, buildSQL); buildErr != nil {
 			return buildErr
 		}
+		buildPlan, _ = buildSessVars.StmtCtx.GetPlan().(plannercorebase.Plan)
 		shadowLoadStmtResult = newMVRefreshStmtResultFromWriteCounts(int64(buildSessVars.StmtCtx.AffectedRows()), 0, 0)
 		// Capture profile rows for the real shadow-load statement before any follow-up SQL (for example read tso query)
 		// overwrites session statement context.
@@ -4947,7 +4949,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		}
 		failpoint.Return(uint64(0), errors.New("mock refresh materialized view out-of-place build error after load shadow"))
 	})
-	confirmedSources, err := validateMVRefreshInput(kctx, buildSctx, tblInfo.ID, input, buildReadTSO, false, nil)
+	confirmedSources, err := validateMVRefreshInput(kctx, buildSctx, tblInfo.ID, buildPlan, buildReadTSO, false, nil)
 	if err != nil {
 		return 0, err
 	}

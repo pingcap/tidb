@@ -285,11 +285,19 @@ func (is *mviewRefreshSourceSnapshot) TableByName(ctx context.Context, db, name 
 
 func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 	for _, method := range []string{"fast", "complete delta apply", "complete in place", "complete out of place"} {
-		for _, change := range []string{"source replaced", "log replaced", "missing log", "invalid owner", "planned input replaced"} {
+		for _, change := range []string{"source replaced", "eliminated source replaced", "log replaced", "missing log", "invalid owner", "planned input replaced"} {
 			t.Run(method+"/"+change, func(t *testing.T) {
 				_, tk, mviewID, mlogID := newMViewRefreshSourceFixture(t)
+				if change == "eliminated source replaced" {
+					tk.MustExec("drop materialized view mv_source_init")
+					tk.MustExec("create materialized view mv_source_init (a, s, cnt) refresh fast as select a, sum(b), count(*) from t_source_init where false group by a")
+					id, err := strconv.ParseInt(fmt.Sprint(tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_schema = 'test' and table_name = 'mv_source_init'").Rows()[0][0]), 10, 64)
+					require.NoError(t, err)
+					mviewID = id
+				}
 				before := tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows()
 				beforeSources := tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows()
+				beforeData := tk.MustQuery("select * from mv_source_init order by a").Rows()
 				tk.MustExec("insert into t_source_init values (1, 5)")
 				var checked bool
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", func(_ uint64, plan base.Plan, snapshot *infoschema.InfoSchema) {
@@ -303,7 +311,7 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					newMV, newSource, newLog := mv.Meta().Clone(), source.Meta().Clone(), log.Meta().Clone()
 					replacements := map[int64]table.Table{}
 					switch change {
-					case "source replaced":
+					case "source replaced", "eliminated source replaced":
 						newSource.ID += 10000
 						newLog.MaterializedViewLog.BaseTableID = newSource.ID
 						newMV.MaterializedView.BaseTableIDs = []int64{newSource.ID}
@@ -335,10 +343,17 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					*snapshot = &mviewRefreshSourceSnapshot{InfoSchema: *snapshot, replaced: replacements}
 				})
 				err := tk.ExecToErr("refresh materialized view mv_source_init " + method)
-				if (change == "log replaced" || change == "missing log") && method != "fast" {
+				if (change == "eliminated source replaced" || change == "log replaced" || change == "missing log") && method != "fast" {
 					require.NoError(t, err)
-					tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
-					expectedLogID := mlogID + 10000
+					if change == "eliminated source replaced" {
+						tk.MustQuery("select * from mv_source_init").Check(testkit.Rows())
+					} else {
+						tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
+					}
+					expectedLogID := mlogID
+					if change == "log replaced" {
+						expectedLogID += 10000
+					}
 					if change == "missing log" {
 						expectedLogID = 0
 					}
@@ -347,7 +362,7 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					require.Error(t, err)
 					require.Equal(t, before, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
 					require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows())
-					tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
+					require.Equal(t, beforeData, tk.MustQuery("select * from mv_source_init order by a").Rows())
 				}
 				require.True(t, checked)
 			})
@@ -360,8 +375,11 @@ func TestMViewRefreshSourceInfoReadTSAfterRetry(t *testing.T) {
 	tk.MustExec("insert into t_source_init values (1, 5)")
 	var computationTS, metadataTS uint64
 	var refreshSession sessionctx.Context
+	var computationPlan base.Plan
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshInputCaptured", func(sctx sessionctx.Context, ts uint64) {
 		refreshSession, computationTS = sctx, ts
+		computationPlan, _ = sctx.GetSessionVars().StmtCtx.GetPlan().(base.Plan)
+		require.NotNil(t, computationPlan)
 	})
 	var retries int
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforePessimisticStmtErrorForNextAction", func() { retries++ })
@@ -375,7 +393,15 @@ func TestMViewRefreshSourceInfoReadTSAfterRetry(t *testing.T) {
 		require.NoError(t, err)
 		metadataTS = refreshSession.GetSessionVars().TxnCtx.GetForUpdateTS()
 	})
+	var validated bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", func(ts uint64, plan base.Plan, _ *infoschema.InfoSchema) {
+		validated = true
+		require.Equal(t, computationTS, ts)
+		require.Same(t, computationPlan, plan)
+		require.NotSame(t, computationPlan, refreshSession.GetSessionVars().StmtCtx.GetPlan())
+	})
 	tk.MustExec("refresh materialized view mv_source_init fast")
+	require.True(t, validated)
 	require.Positive(t, retries)
 	require.Greater(t, metadataTS, computationTS)
 	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Check(testkit.Rows(fmt.Sprint(computationTS)))
