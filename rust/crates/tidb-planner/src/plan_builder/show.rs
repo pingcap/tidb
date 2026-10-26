@@ -62,12 +62,8 @@ fn show_contents(show: &ShowStmt) -> ShowContents {
         index_name: show.index_name.clone(),
         resource_group_name: show.resource_group_name.clone(),
         flag: show.flag,
-        user: show.user.as_ref().map(|user| format!("{}@{}", user.user, user.host)),
-        roles: show
-            .roles
-            .iter()
-            .map(|role| format!("{}@{}", role.user, role.host))
-            .collect(),
+        user: show.user.clone(),
+        roles: show.roles.clone(),
         count_warnings_or_errors: show.count_warnings_or_errors,
         full: show.full,
         if_not_exists: show.if_not_exists,

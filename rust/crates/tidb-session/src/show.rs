@@ -381,16 +381,6 @@ pub(crate) fn text_columns_output(columns: &[&str]) -> StmtOutput {
     }
 }
 
-pub(crate) fn string_column_output(column: &str, values: Vec<String>) -> StmtOutput {
-    let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-    StmtOutput::Rows {
-        columns: vec![(column.to_owned(), field_type)],
-        rows: values
-            .into_iter()
-            .map(|value| vec![Datum::Bytes(value.into_bytes())])
-            .collect(),
-    }
-}
 
 
 
@@ -1153,6 +1143,14 @@ impl Session {
             | T::CreateDatabase
             | T::CreatePlacementPolicy
             | T::CreateResourceGroup => self.show_create_rows(contents)?,
+            T::Grants => self.show_grants_rows(contents.user.as_ref(), &contents.roles)?,
+            T::CreateUser => {
+                let spec = contents
+                    .user
+                    .as_ref()
+                    .ok_or_else(|| DriverError::unsupported("SHOW CREATE USER without a user"))?;
+                self.show_create_user_rows(spec)?
+            }
             // Go `fetchShowIndex`: one row per index COLUMN, ordered
             // with the clustered primary key first, then the table's own
             // indexes in definition order.
@@ -1908,14 +1906,6 @@ impl Session {
             }
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Grants => Ok(Some(self.show_grants_stmt(show)?)),
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::CreateUser => {
-                let spec = show
-                    .user
-                    .as_ref()
-                    .ok_or_else(|| DriverError::unsupported("SHOW CREATE USER without a user"))?;
-                Ok(Some(self.show_create_user_stmt(spec)?))
-            }
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsTopN => self.stats_topn_stmt(show).map(Some),
@@ -2350,6 +2340,8 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::CreateDatabase
             | T::CreatePlacementPolicy
             | T::CreateResourceGroup
+            | T::Grants
+            | T::CreateUser
     )
 }
 

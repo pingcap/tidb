@@ -78,10 +78,11 @@ pub struct ShowContents {
     pub resource_group_name: String,
     /// Go `Flag`, e.g. the parsed `FULL`.
     pub flag: i64,
-    /// Go `User.String()`, for `SHOW GRANTS`.
-    pub user: Option<String>,
-    /// Go `Roles`, by name.
-    pub roles: Vec<String>,
+    /// Go `User`, for SHOW GRANTS / SHOW CREATE USER (`CURRENT_USER`
+    /// resolved by the preprocessor).
+    pub user: Option<tidb_ast::UserSpec>,
+    /// Go `Roles`, for SHOW GRANTS ... USING.
+    pub roles: Vec<tidb_ast::UserSpec>,
     /// Go `CountWarningsOrErrors`.
     pub count_warnings_or_errors: bool,
     /// Go `Full`.

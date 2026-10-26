@@ -24,7 +24,6 @@
 //! the credential statements live here.
 
 use crate::account::{tls_policy_of, PasswordOrLockOptions};
-use crate::show::string_column_output;
 use crate::*;
 use tidb_hack::GoToLower;
 use tidb_util::stringutil::go_to_lower;
@@ -533,10 +532,10 @@ impl Session {
     /// DOES reflect the real `account_locked` flag (shared with `is_role`;
     /// a `CREATE ROLE` account therefore prints `ACCOUNT LOCK` here, matching
     /// Go).
-    pub(crate) fn show_create_user_stmt(
+    pub(crate) fn show_create_user_rows(
         &mut self,
         spec: &tidb_ast::UserSpec,
-    ) -> Result<StmtOutput, DriverError> {
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let (user, host) = self.resolve_account(spec)?;
         // Go `executor/show.go`'s `fetchShowCreateUser` (around line 1873):
         // this statement renders `IDENTIFIED WITH '<plugin>' AS '<hash>'`,
@@ -664,12 +663,8 @@ impl Session {
         let show_str = format!(
             "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause}{token_issuer}{max_user_connections} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY {history} PASSWORD REUSE INTERVAL {reuse_interval}{failed_login_attempts}{password_lock_time}{attribute_clause}"
         );
-        // Go: `fmt.Sprintf("CREATE USER for %s", s.User)` -- `s.User.String()`
-        // is unquoted `user@host` (same shape `SHOW GRANTS`'s header uses).
-        Ok(string_column_output(
-            &format!("CREATE USER for {user}@{host}"),
-            vec![show_str],
-        ))
+        // The column is `buildShowSchema`'s `CREATE USER for <User>`.
+        Ok(vec![vec![Datum::Bytes(show_str.into_bytes())]])
     }
 
     /// Go `fetchShowCreateUser`'s `ExecRestrictedSQL` over `mysql.user`,

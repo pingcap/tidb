@@ -1329,8 +1329,8 @@ fn session_migration_batch_grant_accounts_print_raw_in_single_quotes() {
         session.run(&format!("SET sql_mode={sql_mode}")).unwrap();
         assert_eq!(
             session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
-            StmtResult::Rows(vec![vec![Datum::Bytes(
-                b"GRANT USAGE ON *.* TO 'quote`\"user'@'%'".to_vec()
+            StmtResult::Rows(vec![vec![Datum::new_string(
+                "GRANT USAGE ON *.* TO 'quote`\"user'@'%'"
             )]])
         );
     }

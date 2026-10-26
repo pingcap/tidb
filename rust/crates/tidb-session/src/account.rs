@@ -20,7 +20,6 @@
 //! all read and write the same `mysql.user` / privilege-registry state the
 //! `privilege` module models.
 
-use crate::show::string_column_output;
 use crate::*;
 use tidb_hack::GoCaseCompare;
 use tidb_util::password_validation::{self, GlobalVarAccessor, PasswordUser, PwdError};
@@ -2213,11 +2212,12 @@ impl Session {
     /// nothing (captured: root's `SHOW GRANTS FOR 'u1'@'%'` omits the
     /// database line that u1's own `SHOW GRANTS` shows through its active
     /// role).
-    pub(crate) fn show_grants_stmt(
+    pub(crate) fn show_grants_rows(
         &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let is_own = match &show.user {
+        show_user: Option<&tidb_ast::UserSpec>,
+        show_roles: &[tidb_ast::UserSpec],
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let is_own = match show_user {
             None => true,
             Some(spec) => {
                 spec.current_user
@@ -2226,7 +2226,7 @@ impl Session {
                         .is_some_and(|(user, host)| spec.user == user && spec.host == host)
             }
         };
-        let (user, host) = match &show.user {
+        let (user, host) = match show_user {
             None => {
                 let Some((user, host)) = self.current_identity() else {
                     return Err(DriverError::unsupported(
@@ -2250,7 +2250,7 @@ impl Session {
             // before calling the SkipWithGrant-aware `ShowGrants`. The
             // former deliberately returns false in bypass mode, so USING
             // reports 3530 while the role-less form reaches the fixed 1141.
-            if let Some(spec) = show.roles.first() {
+            if let Some(spec) = show_roles.first() {
                 let role_host = if spec.host.is_empty() {
                     "%".to_owned()
                 } else {
@@ -2295,8 +2295,8 @@ impl Session {
         // Go `fetchShowGrants` merges the session's active roles only for a
         // bare SHOW GRANTS or FOR CURRENT_USER(); naming the account -- even
         // one's own -- shows its own grants.
-        let names_current_user = show.user.as_ref().is_none_or(|spec| spec.current_user);
-        let roles = if show.roles.is_empty() {
+        let names_current_user = show_user.is_none_or(|spec| spec.current_user);
+        let roles = if show_roles.is_empty() {
             if names_current_user {
                 self.active_roles.to_vec()
             } else {
@@ -2305,7 +2305,7 @@ impl Session {
         } else {
             // `USING` names roles through the account grammar, so the same
             // omitted-host default applies.
-            show.roles
+            show_roles
                 .iter()
                 .map(|spec| {
                     let host = if spec.host.is_empty() {
@@ -2334,19 +2334,13 @@ impl Session {
         let Some(lines) = registry.show_grants(&user, &host, &roles, self.vars.sql_mode()) else {
             return Err(DriverError::NonexistingGrant { user, host });
         };
-        // Go: `fmt.Sprintf("Grants for %s", s.User)` -- `s.User.String()` is
-        // unquoted `user@host` -- or "Grants for User" when no FOR names the
-        // account. One row per GLOBAL/DB/TABLE-scope line, in that order
-        // (`registry.show_grants`'s captured ordering).
-        let header = if show.user.is_some() {
-            format!("Grants for {user}@{host}")
-        } else {
-            "Grants for User".to_owned()
-        };
-        Ok(string_column_output(
-            &header,
-            lines.split('\n').map(str::to_owned).collect(),
-        ))
+        // Go `fetchShowGrants`: one row per GLOBAL/DB/TABLE-scope line, in
+        // that order (`registry.show_grants`'s captured ordering), under the
+        // `Grants for <User>` column `buildShowSchema` names.
+        Ok(lines
+            .split('\n')
+            .map(|line| vec![Datum::Bytes(line.as_bytes().to_vec())])
+            .collect())
     }
 }
 
