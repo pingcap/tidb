@@ -2162,7 +2162,7 @@ pub(crate) fn physical_show_plan(
     catalog: &Catalog,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+) -> Result<tidb_planner::common_plans::Plan, tidb_planner::plan_base::PlanError> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -2179,6 +2179,9 @@ pub(crate) fn physical_show_plan(
         let plan = builder.build_show(show)?;
         Ok((plan, builder.get_opt_flag()))
     })?;
+    let tidb_planner::common_plans::Plan::Logical(plan) = plan else {
+        return Ok(plan);
+    };
     let logical = optimize_built_logical(
         plan,
         opt_flag,
@@ -2190,6 +2193,7 @@ pub(crate) fn physical_show_plan(
         &ctx.session_zone(),
     )?;
     physical_plan_for_logical(&logical, &plan_ids, &column_ids, ctx)
+        .map(tidb_planner::common_plans::Plan::Physical)
 }
 
 /// Go `planner.Optimize` for `ADMIN SHOW DDL JOBS [n] [WHERE ...]`:

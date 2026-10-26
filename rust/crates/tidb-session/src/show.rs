@@ -538,7 +538,7 @@ impl Session {
         });
         let ctx = self.statement_context(false);
         let current_db = self.vars.current_db.clone();
-        let mut physical = self.with_catalog_mut(|catalog| {
+        let plan = self.with_catalog_mut(|catalog| {
             tidb_executor::driver::plan_show_stmt(
                 show,
                 auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
@@ -547,6 +547,30 @@ impl Session {
                 &ctx,
             )
         })?;
+        let mut physical = match plan {
+            tidb_planner::common_plans::Plan::Physical(physical) => physical,
+            // Go `executorBuilder.buildShowNextRowID`.
+            tidb_planner::common_plans::Plan::ShowNextRowID(plan) => {
+                let rows = self.show_next_row_id_rows(&plan.table_name)?;
+                let columns = plan
+                    .names
+                    .iter()
+                    .zip(&plan.schema.columns)
+                    .map(|(name, column)| {
+                        (
+                            name.names.column.original.clone(),
+                            column.ret_type.clone().unwrap_or_else(|| {
+                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
+                            }),
+                        )
+                    })
+                    .collect();
+                return Ok(StmtOutput::Rows { columns, rows });
+            }
+            tidb_planner::common_plans::Plan::Logical(_) => {
+                return Err(DriverError::unsupported("an unoptimized SHOW plan"))
+            }
+        };
         // A selection the optimizer folded to false leaves no `PhysicalShow`
         // to fetch for, as Go builds no `ShowExec` under a `TableDual`.
         if let Some(leaf) = tidb_executor::driver::physical_show_of(&physical).cloned() {
@@ -834,6 +858,41 @@ impl Session {
             Datum::Bytes(reported.into_bytes()),
             Datum::Bytes(text.into_bytes()),
         ]])
+    }
+
+    /// Go `ShowNextRowIDExec.Next`: one row per allocator of the table, read
+    /// through the domain's infoschema, which holds no local temporary table.
+    fn show_next_row_id_rows(&mut self, path: &[String]) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let [database, table_name] = path else {
+            return Err(DriverError::unsupported("SHOW TABLE NEXT_ROW_ID without its table"));
+        };
+        let ids = self.with_catalog_mut(|catalog| {
+            let Some(entry) = catalog.persistent_table_in(database, table_name) else {
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{database}.{table_name}"
+                ))));
+            };
+            let tidb_executor::TableEntry::Kv(table) = entry else {
+                return Err(DriverError::unsupported(
+                    "SHOW TABLE NEXT_ROW_ID needs a storage-backed table",
+                ));
+            };
+            table
+                .next_global_row_ids()
+                .map_err(|error| DriverError::AutoIdUnavailable(error.0))
+        })?;
+        Ok(ids
+            .into_iter()
+            .map(|(column, next, id_type)| {
+                vec![
+                    Datum::Bytes(database.as_bytes().to_vec()),
+                    Datum::Bytes(table_name.as_bytes().to_vec()),
+                    Datum::Bytes(column.into_bytes()),
+                    Datum::Int(next),
+                    Datum::Bytes(id_type.as_bytes().to_vec()),
+                ]
+            })
+            .collect())
     }
 
     /// Go `ShowExec.fetchAll`: the rows of one planned SHOW, by its type.
@@ -1594,60 +1653,6 @@ impl Session {
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::CreateProcedure => {
                 Ok(None)
             }
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::TableNextRowId => {
-                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
-                    // go resolves a QUALIFIED name without consulting the
-                    // session database: `SHOW INDEX FROM d3p.t2` answers with
-                    // no `USE` in sight. Only the bare form needs one, and go
-                    // answers 1046 (`ErrNoDB`) for it.
-                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
-                    [database, table] => (database.clone(), table.clone()),
-                    _ => return Err(DriverError::unsupported("empty table name")),
-                };
-                let ids = self.with_catalog_mut(|catalog| {
-                    // Go `ShowNextRowIDExec` reads the domain's infoschema,
-                    // which holds no local temporary table.
-                    let Some(entry) = catalog.persistent_table_in(&database, &table_name) else {
-                        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                            "{database}.{table_name}"
-                        ))));
-                    };
-                    let tidb_executor::TableEntry::Kv(table) = entry else {
-                        return Err(DriverError::unsupported(
-                            "SHOW TABLE NEXT_ROW_ID needs a storage-backed table",
-                        ));
-                    };
-                    table
-                        .next_global_row_ids()
-                        .map_err(|error| DriverError::AutoIdUnavailable(error.0))
-                })?;
-                let rows = ids
-                    .into_iter()
-                    .map(|(column, next, id_type)| {
-                        vec![
-                            Datum::Bytes(database.as_bytes().to_vec()),
-                            Datum::Bytes(table_name.as_bytes().to_vec()),
-                            Datum::Bytes(column.into_bytes()),
-                            Datum::Int(next),
-                            Datum::Bytes(id_type.as_bytes().to_vec()),
-                        ]
-                    })
-                    .collect();
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let number =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        ("DB_NAME".to_owned(), text()),
-                        ("TABLE_NAME".to_owned(), text()),
-                        ("COLUMN_NAME".to_owned(), text()),
-                        ("NEXT_GLOBAL_ROW_ID".to_owned(), number()),
-                        ("ID_TYPE".to_owned(), text()),
-                    ],
-                    rows,
-                }))
-            }
             // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
             // (pkg/executor/simple.go:3584-3611): the statement answers
             // success immediately, and a 1-second-delayed task SIGTERMs this
@@ -1827,6 +1832,7 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::Distributions
             | T::ImportJobs
             | T::ImportGroups
+            | T::TableNextRowId
     )
 }
 

@@ -85,6 +85,7 @@ pub mod cardinality;
 pub mod cascades_base;
 pub mod column_length;
 pub mod configured_order_limit_contract;
+pub mod common_plans;
 pub mod constraint;
 pub mod core_usage;
 pub mod cost_factors;

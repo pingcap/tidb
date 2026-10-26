@@ -21,6 +21,7 @@ use tidb_expr::ZonedNoColumns;
 use super::catalog::{SourceTable, TableSource};
 use super::PlanBuilder;
 use crate::expression_rewriter::ColumnIdAllocator;
+use crate::common_plans::Plan;
 use crate::logical::LogicalPlan;
 use crate::plan_base::PlanIdAllocator;
 
@@ -119,6 +120,7 @@ fn show_tables_literal_like_is_extracted_not_selected() {
     let plan = builder
         .build_show(&parse_show("show tables like 'T%'", "test"))
         .expect("SHOW TABLES plans");
+    let Plan::Logical(plan) = plan else { panic!("a logical SHOW plan") };
     assert_eq!(plan_shape(&plan), ["Show"]);
     assert_eq!(column_names(&plan), ["Tables_in_test (T%)"]);
     let LogicalPlan::Show(show) = &plan else { unreachable!() };
@@ -137,6 +139,7 @@ fn show_where_selects_under_a_projection_and_variables_sort() {
     let plan = builder
         .build_show(&parse_show("show variables where variable_name = 'x'", ""))
         .expect("SHOW VARIABLES plans");
+    let Plan::Logical(plan) = plan else { panic!("a logical SHOW plan") };
     assert_eq!(plan_shape(&plan), ["Sort", "Projection", "Selection", "Show"]);
     assert_eq!(column_names(&plan), ["Variable_name", "Value"]);
     assert_ne!(builder.opt_flag & crate::logical::rule::flags::ELIMINATE_PROJECTION, 0);
@@ -150,6 +153,7 @@ fn show_warnings_like_is_a_selection_on_the_first_column() {
     let plan = builder
         .build_show(&parse_show("show warnings like 'Note'", ""))
         .expect("SHOW WARNINGS plans");
+    let Plan::Logical(plan) = plan else { panic!("a logical SHOW plan") };
     assert_eq!(plan_shape(&plan), ["Projection", "Selection", "Show"]);
     assert_eq!(column_names(&plan), ["Level", "Code", "Message"]);
 }

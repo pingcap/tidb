@@ -744,7 +744,7 @@ pub fn plan_show_stmt(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+) -> Result<tidb_planner::common_plans::Plan, DriverError> {
     let mut show = show.clone();
     tidb_planner::preprocess::resolve_show_stmt(&mut show, current_db, auth_user)
         .map_err(planner_error_to_driver)?;

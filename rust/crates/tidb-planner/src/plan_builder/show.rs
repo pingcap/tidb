@@ -16,8 +16,6 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `ShowTableNextRowId` returns Go's `ShowNextRowID` plan, which has no
-//!   Rust counterpart yet; it is refused as not supported here.
 //! * The SHOW STATS_BUCKETS / HISTOGRAMS / META / LOCKED visit reads
 //!   `show.Table`, which those statements never set; the visit names no
 //!   table, which is what Go's would name had it a table to read.
@@ -37,11 +35,12 @@ use super::PlanBuilder;
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
 use crate::logical::sort::LogicalSort;
+use crate::common_plans::{Plan, ShowNextRowID};
 use crate::logical::show_ddl_jobs::LogicalShowDDLJobs;
 use crate::logical::{LogicalPlan, LogicalShow, ShowContents, ShowPredicateExtractor};
 use crate::plan_base::PlanError;
 use crate::show_predicate_extractor::ShowBaseExtractor;
-use crate::show_schema::{build_show_ddl_jobs_fields, build_show_schema};
+use crate::show_schema::{build_show_ddl_jobs_fields, build_show_next_row_id, build_show_schema};
 
 /// Go `show.Table.Schema.L` / `show.Table.Name.L`, empty when no table.
 fn table_names(show: &ShowStmt) -> (String, String) {
@@ -121,7 +120,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// `ErrNoDB` for SHOW TABLES / TABLE STATUS without a database, the
     /// missing table of SHOW TABLE REGIONS / DISTRIBUTIONS, the temporary-table
     /// and not-yet-supported refusals, and any LIKE / WHERE build error.
-    pub fn build_show(&mut self, show: &ShowStmt) -> Result<LogicalPlan, PlanError> {
+    pub fn build_show(&mut self, show: &ShowStmt) -> Result<Plan, PlanError> {
         use ShowStmtType as T;
         let mut p = LogicalShow::new(self.base(LogicalShow::TYPE), show_contents(show));
         let mut is_view = false;
@@ -227,7 +226,18 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 },
             ),
             T::TableNextRowId => {
-                return Err(PlanError::not_supported_yet("SHOW TABLE NEXT_ROW_ID plan"));
+                let (schema, names) = build_show_next_row_id();
+                self.append_show_visit(
+                    tidb_mysql::SelectPriv,
+                    &schema_l,
+                    &table_l,
+                    VisitAuthError::PrivilegeCheckFail,
+                );
+                return Ok(Plan::ShowNextRowID(ShowNextRowID {
+                    table_name: show.table.clone().unwrap_or_default(),
+                    schema,
+                    names,
+                }));
             }
             T::StatsExtended | T::StatsHealthy | T::StatsTopN | T::HistogramsInFlight
             | T::ColumnStatsUsage => {
@@ -335,7 +345,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             sort.base.set_children(vec![np]);
             np = LogicalPlan::Sort(sort);
         }
-        Ok(np)
+        Ok(Plan::Logical(np))
     }
 
     /// Go `buildAdmin`'s `AdminShowDDLJobs` arm: a `LogicalShowDDLJobs` with
