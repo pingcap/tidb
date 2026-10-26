@@ -40,3 +40,26 @@ jobs:
           # Avoid the TiDB CI path that assumes Jenkins-owned temp directories.
           unset CI
           make check-bazel-prepare
+      - name: Test x/tools export-data formats
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset CI
+          # External tests are not included by TiDB's //... target pattern.
+          bazel test @org_golang_x_tools//internal/pkgbits:pkgbits_test \
+            --test_output=all \
+            --nocache_test_results \
+            --flaky_test_attempts=1 \
+            --test_arg=-test.v
+      - name: Check Linux cgo test linking
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset CI
+          # Link a test executable that failed in Jenkins; do not run business tests.
+          bazel build --config=ci //pkg/sessionctx/stmtctx:stmtctx_test \
+            --linkopt=-Wl,-z,nocopyreloc \
+            --jobs=2 \
+            --local_ram_resources=4096 \
+            --verbose_failures

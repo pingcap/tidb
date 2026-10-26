@@ -91,6 +91,7 @@ func (b *baseSemiJoin) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRema
 		candidateRow := tagHelper.toUnsafePointer(b.matchedRowsHeaders[b.currentProbeRow])
 		if isRightSideBuild || !meta.isCurrentRowUsedWithAtomic(candidateRow) {
 			if isKeyMatched(meta.keyMode, b.serializedKeys[b.currentProbeRow], candidateRow, meta) {
+				b.addJoinedRow()
 				b.appendBuildRowToCachedBuildRowsV1(b.currentProbeRow, candidateRow, joinedChk, 0, true)
 				b.matchedRowsForCurrentProbeRow++
 				*joinedChkRemainCap--

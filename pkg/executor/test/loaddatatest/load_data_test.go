@@ -27,17 +27,27 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
+	mockctx "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -81,33 +91,102 @@ func checkCases(
 }
 
 func TestLoadDataInitParam(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	ctx := tk.Session().(sessionctx.Context)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	sctx := mockctx.NewContext()
+	defer sctx.Close()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists load_data_test")
-	tk.MustExec("create table load_data_test (a varchar(10), b varchar(10))")
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("load_data_test"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("b"),
+				Offset:    1,
+				State:     model.StatePublic,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+			},
+		},
+	}
+	tbl := tables.MockTableFromMeta(tblInfo)
+	require.NotNil(t, tbl)
+	tableName := &resolve.TableNameW{
+		TableName: &ast.TableName{
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("load_data_test"),
+		},
+		DBInfo: &model.DBInfo{
+			ID:   1,
+			Name: ast.NewCIStr("test"),
+		},
+		TableInfo: tblInfo,
+	}
+	buildController := func(sql string) (*importer.LoadDataController, error) {
+		node, err := parser.New().ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		stmt, ok := node.(*ast.LoadDataStmt)
+		require.True(t, ok)
+		plan := &plannercore.LoadData{
+			FileLocRef:         stmt.FileLocRef,
+			OnDuplicate:        stmt.OnDuplicate,
+			Path:               stmt.Path,
+			Format:             stmt.Format,
+			Table:              tableName,
+			Charset:            stmt.Charset,
+			Columns:            stmt.Columns,
+			FieldsInfo:         stmt.FieldsInfo,
+			LinesInfo:          stmt.LinesInfo,
+			IgnoreLines:        stmt.IgnoreLines,
+			ColumnAssignments:  stmt.ColumnAssignments,
+			ColumnsAndUserVars: stmt.ColumnsAndUserVars,
+		}
+		importPlan, err := importer.NewPlanFromLoadDataPlan(sctx, plan)
+		if err != nil {
+			return nil, err
+		}
+		return importer.NewLoadDataController(importPlan, tbl, importer.ASTArgsFromPlan(plan))
+	}
+	assertErrorContains := func(sql string, contains string) {
+		ld, err := buildController(sql)
+		require.Nil(t, ld)
+		require.ErrorContains(t, err, contains)
+	}
+	assertErrorIs := func(sql string, target error) {
+		ld, err := buildController(sql)
+		require.Nil(t, ld)
+		require.ErrorIs(t, err, target)
+	}
+	assertValid := func(sql string) {
+		ld, err := buildController(sql)
+		require.NoError(t, err)
+		require.NotNil(t, ld)
+		defer ld.Close()
+	}
 
-	require.ErrorIs(t, tk.ExecToErr("load data infile '' into table load_data_test"),
+	assertErrorIs("load data infile '' into table load_data_test",
 		exeerrors.ErrLoadDataEmptyPath)
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields defined null by 'a' optionally enclosed"),
+	assertErrorContains("load data infile '/a' into table load_data_test fields defined null by 'a' optionally enclosed",
 		"must specify FIELDS [OPTIONALLY] ENCLOSED BY")
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test lines terminated by ''"),
+	assertErrorContains("load data infile '/a' into table load_data_test lines terminated by ''",
 		"LINES TERMINATED BY is empty")
-	require.ErrorContains(t, tk.ExecToErr("load data infile '/a' into table load_data_test fields enclosed by 'a' terminated by 'a'"),
+	assertErrorContains("load data infile '/a' into table load_data_test fields enclosed by 'a' terminated by 'a'",
 		"must not be prefix of each other")
 
 	// null def values
 	testFunc := func(sql string, expectedNullDef []string, expectedNullOptEnclosed bool) {
-		require.ErrorContains(t, tk.ExecToErr(sql), "reader is nil")
-		defer ctx.SetValue(executor.LoadDataVarKey, nil)
-		ld, ok := ctx.Value(executor.LoadDataVarKey).(*executor.LoadDataWorker)
-		require.True(t, ok)
+		ld, err := buildController(sql)
+		require.NoError(t, err)
 		require.NotNil(t, ld)
-		require.Equal(t, expectedNullDef, ld.GetController().FieldNullDef)
-		require.Equal(t, expectedNullOptEnclosed, ld.GetController().NullValueOptEnclosed)
+		defer ld.Close()
+		require.Equal(t, expectedNullDef, ld.FieldNullDef)
+		require.Equal(t, expectedNullOptEnclosed, ld.NullValueOptEnclosed)
 	}
 	testFunc("load data local infile '/a' into table load_data_test",
 		[]string{"\\N"}, false)
@@ -123,34 +202,25 @@ func TestLoadDataInitParam(t *testing.T) {
 		[]string{"NULL"}, false)
 
 	// positive case
-	require.ErrorContains(
-		t, tk.ExecToErr(
-			"load data local infile '/a' format 'sql file' into table"+
-				" load_data_test",
-		), "reader is nil",
+	assertValid(
+		"load data local infile '/a' format 'sql file' into table" +
+			" load_data_test",
 	)
-	ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.ErrorContains(
-		t, tk.ExecToErr(
-			"load data local infile '/a' into table load_data_test fields"+
-				" terminated by 'a'",
-		), "reader is nil",
+	assertValid(
+		"load data local infile '/a' into table load_data_test fields" +
+			" terminated by 'a'",
 	)
-	ctx.SetValue(executor.LoadDataVarKey, nil)
-	require.ErrorContains(
-		t, tk.ExecToErr(
-			"load data local infile '/a' format 'delimited data' into"+
-				" table load_data_test fields terminated by 'a'",
-		), "reader is nil",
+	assertValid(
+		"load data local infile '/a' format 'delimited data' into" +
+			" table load_data_test fields terminated by 'a'",
 	)
-	ctx.SetValue(executor.LoadDataVarKey, nil)
 
 	// According to https://dev.mysql.com/doc/refman/8.0/en/load-data.html , fixed-row format should be used when fields
 	// terminated by '' and enclosed by ''. However, tidb doesn't support it yet and empty terminator leads to infinite
 	// loop in `indexOfTerminator` (see https://github.com/pingcap/tidb/issues/33298).
-	require.ErrorIs(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''"),
+	assertErrorIs("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by ''",
 		exeerrors.ErrLoadDataWrongFormatConfig)
-	require.ErrorIs(t, tk.ExecToErr("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''"),
+	assertErrorIs("load data local infile '/tmp/nonexistence.csv' into table load_data_test fields terminated by '' enclosed by ''",
 		exeerrors.ErrLoadDataWrongFormatConfig)
 }
 
@@ -351,26 +421,40 @@ func TestLoadDataEscape(t *testing.T) {
 
 // TestLoadDataSpecifiedColumns reuse TestLoadDataEscape's test case :-)
 func TestLoadDataSpecifiedColumns(t *testing.T) {
-	trivialMsg := "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test; drop table if exists load_data_test;")
 	tk.MustExec(`create table load_data_test (id int PRIMARY KEY AUTO_INCREMENT, c1 int, c2 varchar(255) default "def", c3 int default 0);`)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' into table load_data_test (c1, c2)"
 	ctx := tk.Session().(sessionctx.Context)
-	// test
-	tests := []testCase{
-		{[]byte("7\ta string\n"), []string{"1|7|a string|0"}, trivialMsg},
-		{[]byte("8\tstr \\t\n"), []string{"2|8|str \t|0"}, trivialMsg},
-		{[]byte("9\tstr \\n\n"), []string{"3|9|str \n|0"}, trivialMsg},
-		{[]byte("10\tboth \\t\\n\n"), []string{"4|10|both \t\n|0"}, trivialMsg},
-		{[]byte("11\tstr \\\\\n"), []string{"5|11|str \\|0"}, trivialMsg},
-		{[]byte("12\t\\r\\t\\n\\0\\Z\\b\n"), []string{"6|12|" + string([]byte{'\r', '\t', '\n', 0, 26, '\b'}) + "|0"}, trivialMsg},
-		{[]byte("\\N\ta string\n"), []string{"7|<nil>|a string|0"}, trivialMsg},
+
+	var reader io.ReadCloser = mydump.NewStringReader("7\ta string\n" +
+		"8\tstr \\t\n" +
+		"9\tstr \\n\n" +
+		"10\tboth \\t\\n\n" +
+		"11\tstr \\\\\n" +
+		"12\t\\r\\t\\n\\0\\Z\\b\n" +
+		"\\N\ta string\n")
+	var readerBuilder = executor.LoadDataReaderBuilder{
+		Build: func(_ string) (
+			r io.ReadCloser, err error,
+		) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
 	}
-	deleteSQL := "delete from load_data_test"
-	selectSQL := "select * from load_data_test;"
-	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	tk.MustExec(loadSQL)
+	require.Equal(t, "Records: 7  Deleted: 0  Skipped: 0  Warnings: 0", tk.Session().LastMessage())
+	tk.MustQuery("select * from load_data_test order by id;").Check(testkit.RowsWithSep("|",
+		"1|7|a string|0",
+		"2|8|str \t|0",
+		"3|9|str \n|0",
+		"4|10|both \t\n|0",
+		"5|11|str \\|0",
+		"6|12|"+string([]byte{'\r', '\t', '\n', 0, 26, '\b'})+"|0",
+		"7|<nil>|a string|0",
+	))
 }
 
 func TestLoadDataIgnoreLines(t *testing.T) {

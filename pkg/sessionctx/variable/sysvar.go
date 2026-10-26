@@ -242,7 +242,7 @@ var defaultSysVars = []*SysVar{
 		return "", false, nil
 	}},
 	/* TiDB specific variables */
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBTxnReadTS, Value: "", Hidden: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBTxnReadTS, Value: "", Hidden: true, GetStateValue: getTxnReadTSState, SetSession: func(s *SessionVars, val string) error {
 		return setTxnReadTS(s, val)
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return normalizedValue, nil
@@ -315,7 +315,7 @@ var defaultSysVars = []*SysVar{
 		vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGenByArgs(vardef.TiDBEnableTiFlashPipelineMode))
 		return normalizedValue, nil
 	}},
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBSnapshot, Value: "", skipInit: true, GetStateValue: getSnapshotTSState, SetSession: func(s *SessionVars, val string) error {
 		err := setSnapshotTS(s, val)
 		if err != nil {
 			return err
@@ -919,6 +919,15 @@ var defaultSysVars = []*SysVar{
 				return "", errors.Errorf("the value of %s should be greater than or equal to %f", vardef.TiDBAutoAnalyzeRatio, minRatio)
 			}
 			return normalizedValue, nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAnalyzeSampledNDVThreshold, Value: strconv.Itoa(vardef.DefTiDBAnalyzeSampledNDVThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64,
+		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+			return strconv.FormatInt(vardef.AnalyzeSampledNDVThreshold.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
+			vardef.AnalyzeSampledNDVThreshold.Store(TidbOptInt64(val, vardef.DefTiDBAnalyzeSampledNDVThreshold))
+			return nil
 		},
 	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBAutoAnalyzeStartTime, Value: vardef.DefAutoAnalyzeStartTime, Type: vardef.TypeTime},
@@ -2115,6 +2124,7 @@ var defaultSysVars = []*SysVar{
 	{
 		Scope:                   vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:                    vardef.TimeZone,
+		Depended:                true, // tx_read_ts is restored as a datetime in this timezone.
 		Value:                   "SYSTEM",
 		IsHintUpdatableVerified: true,
 		Validation: func(
@@ -2219,7 +2229,7 @@ var defaultSysVars = []*SysVar{
 		s.SetStatusFlag(mysql.ServerStatusAutocommit, isAutocommit)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.CharsetDatabase, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.CharsetDatabase, Value: mysql.DefaultCharset, skipInit: true, Depended: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, vardef.CharsetDatabase)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if cs, err := charset.GetCharsetInfo(val); err == nil {
@@ -2270,7 +2280,7 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatUint(sv.GroupConcatMaxLen, 10), nil
 		},
 	},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.CharacterSetConnection, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.CharacterSetConnection, Value: mysql.DefaultCharset, skipInit: true, Depended: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, vardef.CharacterSetConnection)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if cs, err := charset.GetCharsetInfo(val); err == nil {
@@ -2278,7 +2288,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.CharacterSetServer, Value: mysql.DefaultCharset, skipInit: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.CharacterSetServer, Value: mysql.DefaultCharset, skipInit: true, Depended: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		return checkCharacterSet(normalizedValue, vardef.CharacterSetServer)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if cs, err := charset.GetCharsetInfo(val); err == nil {
@@ -2799,7 +2809,7 @@ var defaultSysVars = []*SysVar{
 			s.EnableFastAnalyze = TiDBOptOn(val)
 			return nil
 		}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(vardef.DefTiDBSkipIsolationLevelCheck), Type: vardef.TypeBool},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBSkipIsolationLevelCheck, Value: BoolToOnOff(vardef.DefTiDBSkipIsolationLevelCheck), Type: vardef.TypeBool, Depended: true},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableRateLimitAction, Value: BoolToOnOff(vardef.DefTiDBEnableRateLimitAction), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnabledRateLimitAction = TiDBOptOn(val)
 		return nil
@@ -3370,6 +3380,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRangeMaxSize, Value: strconv.FormatInt(vardef.DefTiDBOptRangeMaxSize, 10), Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.RangeMaxSize = TidbOptInt64(val, vardef.DefTiDBOptRangeMaxSize)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRangeMaxCount, Value: strconv.FormatInt(vardef.DefTiDBOptRangeMaxCount, 10), Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.RangeMaxCount = TidbOptInt64(val, vardef.DefTiDBOptRangeMaxCount)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptAdvancedJoinHint, Value: BoolToOnOff(vardef.DefTiDBOptAdvancedJoinHint), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -4361,6 +4375,9 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		varVal = vardef.On
 	case vardef.TiDBEnableAdaptiveLimitScan:
 		varVal = vardef.On
+	case vardef.TiDBAnalyzeSampledNDVThreshold:
+		// New clusters sample NDV for tables and partitions above 500 million rows.
+		varVal = "500000000"
 	case vardef.TiDBPessimisticTransactionFairLocking:
 		if kerneltype.IsNextGen() {
 			varVal = vardef.Off

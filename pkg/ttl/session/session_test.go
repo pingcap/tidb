@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/metrics"
+	tidbsession "github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -171,7 +172,18 @@ func TestSessionKill(t *testing.T) {
 		}
 		require.FailNow(t, "wait sleep stmt timeout")
 	})
-	// the killed sleep stmt will return "1"
-	tk.MustQuery(sleepStmt).Check(testkit.Rows("1"))
+	queryStart := time.Now()
+	rs, err := tk.Exec(sleepStmt)
+	require.NoError(t, err)
+	require.NotNil(t, rs)
+	rows, err := tidbsession.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+	require.Less(t, time.Since(queryStart), 30*time.Second)
+	// The kill may be observed either before SLEEP starts or inside SLEEP.
+	if err != nil {
+		require.NoError(t, rs.Close())
+		require.ErrorContains(t, err, "Query execution was interrupted")
+	} else {
+		require.Equal(t, [][]string{{"1"}}, rows)
+	}
 	wg.Wait()
 }

@@ -627,8 +627,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	restart                    "RESTART"
 	restore                    "RESTORE"
 	restores                   "RESTORES"
+	result                     "RESULT"
 	resume                     "RESUME"
 	retain                     "RETAIN"
+	returnKwd                  "RETURN"
 	returning                  "RETURNING"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
@@ -3787,6 +3789,10 @@ AnalyzeOption:
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
 	}
+|	"DEFAULT" "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate}
+	}
 
 /*******************************************************************************************/
 Assignment:
@@ -5644,6 +5650,12 @@ ViewCheckOption:
 	/* EMPTY */
 	{
 		$$ = nil
+	}
+|	"WITH" "CHECK" "OPTION"
+	{
+		// Omitting the CASCADED or LOCAL qualifier is equivalent to CASCADED.
+		// See https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+		$$ = ast.CheckOptionCascaded
 	}
 |	"WITH" "CASCADED" "CHECK" "OPTION"
 	{
@@ -8153,6 +8165,8 @@ UnReservedKeyword:
 |	"PERCENT"
 |	"PAUSE"
 |	"RESUME"
+|	"RESULT"
+|	"RETURN"
 |	"RETURNING"
 |	"OFF"
 |	"OPTIONAL"
@@ -15895,10 +15909,20 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
+	"RECOMMEND" "INDEX" "RETURN" "RESULT" "FOR" stringLit RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "run",
+			Action:  ast.RecommendIndexActionReturn,
+			SQL:     $6,
+			Options: $7.([]ast.RecommendIndexOption),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
+	{
+		x := &ast.RecommendIndexStmt{
+			Action:  ast.RecommendIndexActionRun,
 			SQL:     $5,
 			Options: $6.([]ast.RecommendIndexOption),
 		}
@@ -15908,7 +15932,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "RUN" RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "run",
+			Action:  ast.RecommendIndexActionRun,
 			Options: $4.([]ast.RecommendIndexOption),
 		}
 
@@ -15917,7 +15941,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "SHOW" "OPTION"
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "show",
+			Action: ast.RecommendIndexActionShow,
 		}
 
 		$$ = x
@@ -15925,7 +15949,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "APPLY" NUM
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "apply",
+			Action: ast.RecommendIndexActionApply,
 			ID:     $4.(int64),
 		}
 
@@ -15934,7 +15958,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "IGNORE" NUM
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "ignore",
+			Action: ast.RecommendIndexActionIgnore,
 			ID:     $4.(int64),
 		}
 
@@ -15943,7 +15967,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "SET" RecommendIndexOptionList
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "set",
+			Action:  ast.RecommendIndexActionSet,
 			Options: $4.([]ast.RecommendIndexOption),
 		}
 

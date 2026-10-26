@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
@@ -240,6 +241,50 @@ func TestPickBackfillType(t *testing.T) {
 		require.True(t, job.ReorgMeta.UseCloudStorage)
 		require.Equal(t, model.ReorgTypeIngest, job.ReorgMeta.ReorgTp)
 	})
+}
+
+func TestInitForReorgIndexesRequiresGlobalSort(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("global sort is only enforced on the NextGen kernel")
+	}
+
+	oldCloudStorageURI := vardef.CloudStorageURI.Load()
+	oldLitInitialized := ingest.LitInitialized
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(oldCloudStorageURI)
+		ingest.LitInitialized = oldLitInitialized
+	})
+
+	newJob := func(isFastReorg bool) *model.Job {
+		return &model.Job{
+			ID: 1,
+			ReorgMeta: &model.DDLReorgMeta{
+				IsFastReorg: isFastReorg,
+				IsDistReorg: isFastReorg,
+			},
+		}
+	}
+	w := &worker{workCtx: context.Background(), ddlCtx: &ddlCtx{}}
+
+	// Without the lightning/ingest env the backfill falls back to txn-merge,
+	// which does not sort locally, so the job is allowed even without cloud
+	// storage.
+	ingest.LitInitialized = false
+	vardef.CloudStorageURI.Store("")
+	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
+
+	// local sort is rejected on NextGen when the ingest environment is available.
+	ingest.LitInitialized = true
+	err := initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}})
+	require.ErrorIs(t, err, dbterror.ErrNotSupportedYet)
+	require.ErrorContains(t, err, "add index or modify column with local sort")
+
+	// jobs without fast reorg don't sort locally, so they are still allowed
+	require.NoError(t, initForReorgIndexes(w, newJob(false), []*model.IndexInfo{{}}))
+
+	// global sort is allowed
+	vardef.CloudStorageURI.Store("s3://bucket")
+	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

@@ -116,11 +116,18 @@ func cancelJobOnExternalTTLWorkloadError(job *model.Job, err error) error {
 
 // tblInfo must be non-nil.
 func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
-	manager, ok := dc.externalWorkloadManager()
-	if !ok || tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
+	if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
 		return nil
 	}
-	return manager.RegisterTTLTableInfo(ctx, tblInfo.ID, vardef.EnableTTLJob.Load())
+	return dc.registerTTLTableIDToExternalWorkload(ctx, tblInfo.ID)
+}
+
+func (dc *ddlCtx) registerTTLTableIDToExternalWorkload(ctx context.Context, tableID int64) error {
+	manager, ok := dc.externalWorkloadManager()
+	if !ok {
+		return nil
+	}
+	return manager.RegisterTTLTableInfo(ctx, tableID, vardef.EnableTTLJob.Load())
 }
 
 // tblInfo must be non-nil.
