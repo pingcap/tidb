@@ -536,8 +536,77 @@ func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 }
 
 // CloneForPlanCache implements the base.Plan interface.
+<<<<<<< HEAD:pkg/planner/core/plan_clone_generated.go
 func (op *PhysicalLock) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalLock)
+=======
+func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalTableScan)
+	*cloned = *op
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.PhysicalSchemaProducer = *basePlan
+	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
+	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.FilterCondition, nil)
+	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
+	cloned.ForcedLateMaterializationFilterColumnIDs = make([]int64, len(op.ForcedLateMaterializationFilterColumnIDs))
+	copy(cloned.ForcedLateMaterializationFilterColumnIDs, op.ForcedLateMaterializationFilterColumnIDs)
+	cloned.HandleIdx = make([]int, len(op.HandleIdx))
+	copy(cloned.HandleIdx, op.HandleIdx)
+	if op.HandleCols != nil {
+		cloned.HandleCols = op.HandleCols.Clone()
+	}
+	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
+	cloned.PlanPartInfo = op.PlanPartInfo.CloneForPlanCache()
+	if op.SampleInfo != nil {
+		return nil, false
+	}
+	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
+	copy(cloned.constColsByCond, op.constColsByCond)
+	if op.runtimeFilterList != nil {
+		return nil, false
+	}
+	if op.UsedColumnarIndexes != nil {
+		return nil, false
+	}
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalIndexScan)
+	*cloned = *op
+	basePlan, baseOK := op.PhysicalSchemaProducer.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.PhysicalSchemaProducer = *basePlan
+	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
+	cloned.IdxCols = utilfuncp.CloneColumnsForPlanCache(op.IdxCols, nil)
+	cloned.IdxColLens = make([]int, len(op.IdxColLens))
+	copy(cloned.IdxColLens, op.IdxColLens)
+	if op.GenExprs != nil {
+		return nil, false
+	}
+	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
+	if op.PkIsHandleCol != nil {
+		if op.PkIsHandleCol.SafeToShareAcrossSession() {
+			cloned.PkIsHandleCol = op.PkIsHandleCol
+		} else {
+			cloned.PkIsHandleCol = op.PkIsHandleCol.Clone().(*expression.Column)
+		}
+	}
+	cloned.ConstColsByCond = make([]bool, len(op.ConstColsByCond))
+	copy(cloned.ConstColsByCond, op.ConstColsByCond)
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalSelection)
+>>>>>>> e2f259adf7d (planner: support TiFlash LM filter hint (#72191)):pkg/planner/core/operator/physicalop/plan_clone_generated.go
 	*cloned = *op
 	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {

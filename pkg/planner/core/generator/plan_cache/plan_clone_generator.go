@@ -96,7 +96,11 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 		}
 
 		switch f.Type.String() {
+<<<<<<< HEAD
 		case "[]int", "[]byte", "[]float", "[]bool", "[]uint32", "[]string": // simple slice
+=======
+		case "[]int", "[]int64", "[]byte", "[]float", "[]bool", "[]uint32": // simple slice
+>>>>>>> e2f259adf7d (planner: support TiFlash LM filter hint (#72191))
 			c.write("cloned.%v = make(%v, len(op.%v))", f.Name, f.Type, f.Name)
 			c.write("copy(cloned.%v, op.%v)", f.Name, f.Name)
 		case "core.physicalSchemaProducer", "core.basePhysicalAgg", "core.basePhysicalJoin":

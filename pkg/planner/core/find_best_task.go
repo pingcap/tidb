@@ -2649,6 +2649,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	if !candidate.path.IsSingleScan {
 		// On this way, it's double read case.
+<<<<<<< HEAD
 		ts := PhysicalTableScan{
 			Columns:         util.CloneColInfos(ds.Columns),
 			Table:           is.Table,
@@ -2658,6 +2659,17 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			physicalTableID: ds.PhysicalTableID,
 			tblCols:         ds.TblCols,
 			tblColHists:     ds.TblColHists,
+=======
+		ts := physicalop.PhysicalTableScan{
+			Columns:                                  sliceutil.DeepClone(ds.Columns),
+			Table:                                    is.Table,
+			TableAsName:                              ds.TableAsName,
+			DBName:                                   ds.DBName,
+			PhysicalTableID:                          ds.PhysicalTableID,
+			TblCols:                                  ds.TblCols,
+			TblColHists:                              ds.TblColHists,
+			ForcedLateMaterializationFilterColumnIDs: slices.Clone(ds.TiFlashLMFilterColumnIDs),
+>>>>>>> e2f259adf7d (planner: support TiFlash LM filter hint (#72191))
 		}.Init(ds.SCtx(), is.QueryBlockOffset())
 		ts.SetSchema(ds.Schema().Clone())
 		// We set `StatsVersion` here and fill other fields in `(*copTask).finishIndexPlan`. Since `copTask.indexPlan` may
