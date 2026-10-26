@@ -1783,7 +1783,7 @@ impl SysVarDef {
         // below one full multiple; the remainder can never take the value to
         // zero here.
         //
-        // NOT MODELLED (needs a coded error this tier's `VarErrorKind` does
+        // NOT MODELLED (needs a coded error this tier's `VarError` does
         // not carry): Go additionally REFUSES `SET SESSION max_allowed_packet`
         // with `ErrReadOnly` (1621, "SESSION variable 'max_allowed_packet' is
         // read-only. Use SET GLOBAL to assign the value"), and refuses

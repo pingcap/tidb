@@ -45,4 +45,21 @@ pub enum VarError {
     /// A `SysVar.Validation` closure's own `errors.Errorf`, whose wording is
     /// the whole error (Go gives it no code, so it reports as 1105).
     ValidationRefused(String),
+    /// Go `ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or
+    /// SYSTEM_VARIABLES_ADMIN")` (1227): `SET GLOBAL` without SUPER or the
+    /// dynamic `SYSTEM_VARIABLES_ADMIN` privilege.
+    SetGlobalAccessDenied,
+    /// Go `ErrUnsupportedIsolationLevel` (8048), from `checkIsolationLevel`
+    /// (`pkg/sessionctx/variable/varsutil.go:116`): `SERIALIZABLE` and
+    /// `READ-UNCOMMITTED` are refused unless
+    /// `tidb_skip_isolation_level_check` is ON, which downgrades the same
+    /// error to a warning.
+    UnsupportedIsolationLevel(String),
+    /// Go `ErrReadOnly` (1621), from `max_allowed_packet`'s `Validation`
+    /// (`pkg/sessionctx/variable/sysvar.go:2193`): the variable is settable
+    /// only at GLOBAL scope, even though it HAS session scope for reading.
+    ///
+    /// The three arguments are Go's: the scope that was refused, the
+    /// variable, and the scope to use instead.
+    SessionScopeIsReadOnly(String),
 }

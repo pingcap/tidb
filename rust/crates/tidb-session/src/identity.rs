@@ -95,7 +95,7 @@ impl Session {
             Ok(())
         } else {
             Err(DriverError::Var(
-                tidb_executor::VarErrorKind::SetGlobalAccessDenied,
+                tidb_executor::VarError::SetGlobalAccessDenied,
             ))
         }
     }

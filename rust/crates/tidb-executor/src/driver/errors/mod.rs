@@ -33,7 +33,7 @@ pub use driver_error::DriverError;
 pub(crate) use exec::coprocessor_evaluation_error;
 pub use schema::SchemaErrorKind;
 pub use txn::TxnErrorKind;
-pub use var::VarErrorKind;
+pub use var::VarError;
 
 impl From<ExecError> for DriverError {
     fn from(err: ExecError) -> Self {
@@ -1604,25 +1604,25 @@ impl DriverError {
             )
         }
         // Go: "Incorrect argument type to variable '%-.64s'".
-        DriverError::Var(crate::VarErrorKind::WrongTypeForVar(name)) => {
+        DriverError::Var(crate::VarError::WrongTypeForVar(name)) => {
             MysqlError::terror(
                 &tidb_error::catalog::variable::ERR_WRONG_TYPE_FOR_VAR,
                 format!("Incorrect argument type to variable '{name}'"),
             )
         }
         // Go: "Variable '%-.64s' can't be set to the value of '%-.200s'".
-        DriverError::Var(crate::VarErrorKind::WrongValueForVar(
+        DriverError::Var(crate::VarError::WrongValueForVar(
             name,
             value,
         )) => MysqlError::terror(
             &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR,
             format!("Variable '{name}' can't be set to the value of '{value}'"),
         ),
-        DriverError::Var(crate::VarErrorKind::SqlError(error)) => {
+        DriverError::Var(crate::VarError::SqlError(error)) => {
             MysqlError::from_sql_error(error.clone())
         }
         // Go: "Unknown system variable '%-.64s'".
-        DriverError::Var(crate::VarErrorKind::UnknownSystemVariable(
+        DriverError::Var(crate::VarError::UnknownSystemVariable(
             name,
         )) => MysqlError::terror(
             &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR,
@@ -1631,7 +1631,7 @@ impl DriverError {
         // Go `ErrVariableNoLongerSupported` (8136): a removed option is
         // accepted by SET for compatibility, but reads explain the removal
         // instead of returning dummy data.
-        DriverError::Var(crate::VarErrorKind::RemovedSystemVariable {
+        DriverError::Var(crate::VarError::RemovedSystemVariable {
             name,
             reason,
         }) => MysqlError::terror(
@@ -1639,7 +1639,7 @@ impl DriverError {
             format!("option '{name}' is no longer supported. Reason: {reason}"),
         ),
         // Go: "Variable '%-.192s' is a %s variable".
-        DriverError::Var(crate::VarErrorKind::ReadOnlyVariable(name)) => {
+        DriverError::Var(crate::VarError::ReadOnlyVariable(name)) => {
             MysqlError::terror(
                 &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE,
                 format!("Variable '{name}' is a read only variable"),
@@ -1647,41 +1647,41 @@ impl DriverError {
         }
         // Go `ErrLocalVariable` (1228): "Variable '%-.64s' is a SESSION
         // variable and can't be used with SET GLOBAL".
-        DriverError::Var(crate::VarErrorKind::SessionOnlyVariable(name)) => MysqlError::terror(
+        DriverError::Var(crate::VarError::SessionOnlyVariable(name)) => MysqlError::terror(
             &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE,
             format!("Variable '{name}' is a SESSION variable and can't be used with SET GLOBAL"),
         ),
         // Go `ErrGlobalVariable` (1229): "Variable '%-.64s' is a GLOBAL
         // variable and should be set with SET GLOBAL".
-        DriverError::Var(crate::VarErrorKind::GlobalOnlyVariable(name)) => MysqlError::terror(
+        DriverError::Var(crate::VarError::GlobalOnlyVariable(name)) => MysqlError::terror(
             &tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE,
             format!("Variable '{name}' is a GLOBAL variable and should be set with SET GLOBAL"),
         ),
         // Go `ErrIncorrectGlobalLocalVar` (1238), read side: "Variable
         // '%-.192s' is a SESSION variable".
-        DriverError::Var(crate::VarErrorKind::NoGlobalCopy(name)) => MysqlError::terror(
+        DriverError::Var(crate::VarError::NoGlobalCopy(name)) => MysqlError::terror(
             &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE,
             format!("Variable '{name}' is a SESSION variable"),
         ),
         // Go `ErrIncorrectScope`: "Variable '%-.192s' is a %s variable".
-        DriverError::Var(crate::VarErrorKind::IncorrectScope(name, allowed)) => MysqlError::terror(
+        DriverError::Var(crate::VarError::IncorrectScope(name, allowed)) => MysqlError::terror(
             &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE,
             format!("Variable '{name}' is a {allowed} variable"),
         ),
         // Go `ErrSpecificAccessDenied` (1227): `SET GLOBAL` without SUPER or
         // SYSTEM_VARIABLES_ADMIN.
-        DriverError::Var(crate::VarErrorKind::SetGlobalAccessDenied) => MysqlError::terror(
+        DriverError::Var(crate::VarError::SetGlobalAccessDenied) => MysqlError::terror(
             &tidb_error::plannererrors::ERR_SPECIFIC_ACCESS_DENIED,
             "Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN \
              privilege(s) for this operation"
                 .to_owned(),
         ),
         // A Validation closure's own `errors.Errorf`: no code, so 1105.
-        DriverError::Var(crate::VarErrorKind::ValidationRefused(message)) => {
+        DriverError::Var(crate::VarError::ValidationRefused(message)) => {
             MysqlError::unknown(message.clone())
         }
         // Go `ErrUnsupportedIsolationLevel` (8048).
-        DriverError::Var(crate::VarErrorKind::UnsupportedIsolationLevel(level)) => {
+        DriverError::Var(crate::VarError::UnsupportedIsolationLevel(level)) => {
             MysqlError::terror(
                 &tidb_error::catalog::variable::ERR_UNSUPPORTED_ISOLATION_LEVEL,
                 format!(
@@ -1692,7 +1692,7 @@ impl DriverError {
         }
         // Go `ErrReadOnly` (1621): "%s variable '%s' is read-only. Use SET %s
         // to assign the value".
-        DriverError::Var(crate::VarErrorKind::SessionScopeIsReadOnly(name)) => MysqlError::terror(
+        DriverError::Var(crate::VarError::SessionScopeIsReadOnly(name)) => MysqlError::terror(
             &tidb_error::catalog::variable::ERR_READ_ONLY,
             format!("SESSION variable '{name}' is read-only. Use SET GLOBAL to assign the value"),
         ),

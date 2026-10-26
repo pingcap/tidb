@@ -849,7 +849,7 @@ impl Session {
             .is_ok_and(|value| value.eq_ignore_ascii_case("ON"));
         if !skip {
             return Err(DriverError::Var(
-                tidb_executor::VarErrorKind::UnsupportedIsolationLevel(normalized),
+                tidb_executor::VarError::UnsupportedIsolationLevel(normalized),
             ));
         }
         self.append_warning(
@@ -922,7 +922,7 @@ impl Session {
             }
         }
         Err(DriverError::Var(
-            tidb_executor::VarErrorKind::SessionScopeIsReadOnly("max_allowed_packet".to_owned()),
+            tidb_executor::VarError::SessionScopeIsReadOnly("max_allowed_packet".to_owned()),
         ))
     }
 

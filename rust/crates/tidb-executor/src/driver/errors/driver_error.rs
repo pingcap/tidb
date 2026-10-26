@@ -16,7 +16,7 @@ use std::borrow::Cow;
 
 use tidb_error::terror::TerrorError;
 
-use super::{SchemaErrorKind, TxnErrorKind, VarErrorKind};
+use super::{SchemaErrorKind, TxnErrorKind, VarError};
 use crate::executor::ExecError;
 
 /// A failure while running a SQL string through the driver.
@@ -176,7 +176,7 @@ pub enum DriverError {
     /// A transaction could not be committed.
     Txn(TxnErrorKind),
     /// A session-variable statement failed.
-    Var(VarErrorKind),
+    Var(VarError),
     /// Go `variable.ErrSnapshotTooOld` (8055).
     SnapshotTooOld(String),
     /// A schema statement failed.

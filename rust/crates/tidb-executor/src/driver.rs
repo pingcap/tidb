@@ -86,7 +86,7 @@ pub(crate) use subquery::*;
 pub(crate) use write_cast::*;
 
 pub(crate) use errors::coprocessor_evaluation_error;
-pub use errors::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarErrorKind};
+pub use errors::{DriverError, MysqlError, SchemaErrorKind, TxnErrorKind, VarError};
 
 /// Parses and runs a `FROM`-less `SELECT`, returning its rows as `Datum`s.
 pub fn run_select(sql: &str) -> Result<Vec<Vec<Datum>>, DriverError> {

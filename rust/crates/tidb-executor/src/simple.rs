@@ -64,27 +64,6 @@ pub fn execute_use(
 /// A variable error as the driver error the wire layer renders.
 impl From<tidb_variable::VarError> for DriverError {
     fn from(error: tidb_variable::VarError) -> Self {
-        use tidb_variable::VarError;
-        DriverError::Var(match error {
-            VarError::UnknownSystemVariable(name) => {
-                crate::VarErrorKind::UnknownSystemVariable(name)
-            }
-            VarError::RemovedSystemVariable { name, reason } => {
-                crate::VarErrorKind::RemovedSystemVariable { name, reason }
-            }
-            VarError::ReadOnlyVariable(name) => crate::VarErrorKind::ReadOnlyVariable(name),
-            VarError::WrongTypeForVar(name) => crate::VarErrorKind::WrongTypeForVar(name),
-            VarError::WrongValueForVar(name, value) => {
-                crate::VarErrorKind::WrongValueForVar(name, value)
-            }
-            VarError::SqlError(error) => crate::VarErrorKind::SqlError(error),
-            VarError::SessionOnlyVariable(name) => crate::VarErrorKind::SessionOnlyVariable(name),
-            VarError::GlobalOnlyVariable(name) => crate::VarErrorKind::GlobalOnlyVariable(name),
-            VarError::NoGlobalCopy(name) => crate::VarErrorKind::NoGlobalCopy(name),
-            VarError::IncorrectScope(name, allowed) => {
-                crate::VarErrorKind::IncorrectScope(name, allowed.to_owned())
-            }
-            VarError::ValidationRefused(message) => crate::VarErrorKind::ValidationRefused(message),
-        })
+        DriverError::Var(error)
     }
 }
