@@ -34,6 +34,7 @@ case "${GOVERSION}" in
 		;;
 	go1.27.*)
 		# Patch releases are accepted only while every ABI source checksum matches.
+		gosrc_md5+=("src/internal/runtime/maps/group.go 5fa9c74d18b3345d87d6912a13fbd2da")
 		gosrc_md5+=("src/internal/runtime/maps/map.go 6090f219f484a55f27e90c03b60e7772")
 		gosrc_md5+=("src/internal/runtime/maps/table.go add944889d7fdee7504bc970f19d11ff")
 		gosrc_md5+=("src/internal/abi/map.go cb52c8e2b3886c7836b126553133e912")

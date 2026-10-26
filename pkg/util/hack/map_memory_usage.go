@@ -16,6 +16,8 @@
 
 package hack
 
+// mapSplitGroupEnabled is used only by the Go 1.27 ABI tests and shares
+// the memory constants' build constraints to select the expected layout.
 const mapSplitGroupEnabled = false
 
 // Memory usage constants for interleaved map groups.
