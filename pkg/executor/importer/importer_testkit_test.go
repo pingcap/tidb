@@ -44,10 +44,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/mock/gomock"
@@ -330,15 +332,22 @@ func TestProcessChunkWith(t *testing.T) {
 		ti := getTableImporter(ctx, t, store, "t", "", nil)
 		defer ti.Backend().CloseEngineMgr()
 		rowsCh := make(chan importer.QueryRow, 3)
+		// Bootstrap changes can shift table IDs, which are part of each KV key.
+		expectedChecksum := verify.NewKVChecksumWithKeyspace(keyspace)
+		rowEncoder := rowcodec.Encoder{Enable: true}
 		for i := 1; i <= 3; i++ {
-			rowsCh <- importer.QueryRow{
-				ID: int64(i),
-				Data: []types.Datum{
-					types.NewIntDatum(int64((i-1)*3 + 1)),
-					types.NewIntDatum(int64((i-1)*3 + 2)),
-					types.NewIntDatum(int64((i-1)*3 + 3)),
-				},
+			row := []types.Datum{
+				types.NewIntDatum(int64((i-1)*3 + 1)),
+				types.NewIntDatum(int64((i-1)*3 + 2)),
+				types.NewIntDatum(int64((i-1)*3 + 3)),
 			}
+			rowsCh <- importer.QueryRow{ID: int64(i), Data: row}
+			value, err := rowEncoder.Encode(time.UTC, []int64{1, 2, 3}, row, nil, nil)
+			require.NoError(t, err)
+			expectedChecksum.UpdateOne(common.KvPair{
+				Key: tablecodec.EncodeRowKeyWithHandle(ti.Table.Meta().ID, kv.IntHandle(i)),
+				Val: value,
+			})
 		}
 		close(rowsCh)
 		ti.SetSelectedRowCh(rowsCh)
@@ -349,7 +358,7 @@ func TestProcessChunkWith(t *testing.T) {
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 17084019350544669372), *checksumMap[verify.DataKVGroupID])
+		require.Equal(t, *expectedChecksum, *checksumMap[verify.DataKVGroupID])
 	})
 }
 

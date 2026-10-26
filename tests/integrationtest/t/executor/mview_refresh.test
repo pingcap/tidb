@@ -166,3 +166,33 @@ show tables like 'mv_drop_owned_log';
 show tables like '$mlog$mv_drop_owned_log';
 drop materialized view log on t_mv_drop_owned_log;
 drop table t_mv_drop_owned_log;
+
+# Input log registration, missing-record checks, and existing leaf OOP.
+
+create table t_mv_source_info (a int not null, b int not null);
+insert into t_mv_source_info values (1, 10), (2, 20);
+create materialized view log on t_mv_source_info (a, b);
+create materialized view mv_source_info (a, s, cnt) refresh fast as
+select a, sum(b), count(*) from t_mv_source_info group by a;
+set @source_mv_old_id = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_source_info');
+set @source_log_id = (select mlog_id from information_schema.tidb_mlogs where table_schema = 'test' and mlog_name = '$mlog$t_mv_source_info');
+select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+
+insert into t_mv_source_info values (1, 5);
+refresh materialized view mv_source_info fast;
+select * from mv_source_info order by a;
+select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+
+refresh materialized view mv_source_info complete out of place;
+set @source_mv_new_id = (select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'mv_source_info');
+select @source_mv_new_id <> @source_mv_old_id as target_replaced;
+select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_old_id;
+select MLOG_ID = @source_log_id as input_log_matches from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_new_id;
+delete from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_new_id;
+-- error 1105
+refresh materialized view mv_source_info fast;
+select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID = @source_mv_new_id;
+drop materialized view mv_source_info;
+select count(*) from mysql.tidb_mview_fast_refresh_source_info where MVIEW_ID in (@source_mv_old_id, @source_mv_new_id);
+drop materialized view log on t_mv_source_info;
+drop table t_mv_source_info;

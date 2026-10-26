@@ -7,6 +7,7 @@ go_test(
         "executor_test.go",
         "main_test.go",
         "materialized_view_refresh_test.go",
+        "mview_refresh_source_test.go",
     ],
     flaky = True,
     shard_count = 50,

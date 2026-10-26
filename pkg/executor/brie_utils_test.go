@@ -46,13 +46,23 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	d := dom.DDL()
 	require.NotNil(t, d)
 
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	var restoredIDs []int64
+	// Reserve the restored IDs so later DDL allocation cannot reuse them.
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		var err error
+		restoredIDs, err = meta.NewMutator(txn).GenGlobalIDs(2)
+		return err
+	})
+	require.NoError(t, err)
+
 	infos1 := []*model.TableInfo{}
 	infos1 = append(infos1, &model.TableInfo{
-		ID:   124,
+		ID:   restoredIDs[0],
 		Name: pmodel.NewCIStr("table_id_resued1"),
 	})
 	infos1 = append(infos1, &model.TableInfo{
-		ID:   125,
+		ID:   restoredIDs[1],
 		Name: pmodel.NewCIStr("table_id_resued2"),
 	})
 
@@ -60,15 +70,14 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 
 	// keep/reused table id verification
 	sctx.SetValue(sessionctx.QueryString, "skip")
-	err := executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos1, ddl.WithIDAllocated(true))
+	err = executor.SplitBatchCreateTableForTest(sctx, pmodel.NewCIStr("test"), infos1, ddl.WithIDAllocated(true))
 	require.NoError(t, err)
 	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").
-		Check(testkit.Rows("124"))
+		Check(testkit.Rows(fmt.Sprint(restoredIDs[0])))
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued2'").
-		Check(testkit.Rows("125"))
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		Check(testkit.Rows(fmt.Sprint(restoredIDs[1])))
 
 	// allocate new table id verification
 	// query the global id
@@ -84,7 +93,7 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 
 	infos2 := []*model.TableInfo{}
 	infos2 = append(infos2, &model.TableInfo{
-		ID:   124,
+		ID:   restoredIDs[0],
 		Name: pmodel.NewCIStr("table_id_new"),
 	})
 

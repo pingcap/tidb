@@ -772,6 +772,13 @@ const (
 		NEXT_REFRESH_UNIX_SECONDS bigint DEFAULT NULL,
 		PRIMARY KEY(MVIEW_ID))`
 
+	// CreateTiDBMViewFastRefreshSourceInfoTable stores the input log identities registered by each materialized view.
+	CreateTiDBMViewFastRefreshSourceInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_fast_refresh_source_info (
+		MVIEW_ID bigint NOT NULL,
+		MLOG_ID bigint NOT NULL,
+		PRIMARY KEY(MVIEW_ID, MLOG_ID) CLUSTERED,
+		KEY idx_mlog (MLOG_ID, MVIEW_ID))`
+
 	// CreateTiDBMLogPurgeInfoTable is a table to store current purge scheduling info for each materialized view log.
 	CreateTiDBMLogPurgeInfoTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_info (
 		MLOG_ID bigint NOT NULL,
@@ -1296,12 +1303,16 @@ const (
 	// Add OPERATE VIEW static privilege to grant tables.
 	version222 = 222
 
-	// next version should start with 223
+	// version 223
+	// Register materialized view input log identities.
+	version223 = 223
+
+	// next version should start with 224
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version222
+var currentBootstrapVersion int64 = version223
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1479,6 +1490,7 @@ var (
 		upgradeToVer220,
 		upgradeToVer221,
 		upgradeToVer222,
+		upgradeToVer223,
 	}
 )
 
@@ -3376,6 +3388,13 @@ func upgradeToVer222(s sessiontypes.Session, ver int64) {
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Operate_view_priv='Y' WHERE Super_priv='Y'")
 }
 
+func upgradeToVer223(s sessiontypes.Session, ver int64) {
+	if ver >= version223 {
+		return
+	}
+	doReentrantDDL(s, CreateTiDBMViewFastRefreshSourceInfoTable)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3528,6 +3547,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateKernelOptionsTable)
 	// create mysql.tidb_mview_refresh_info/mysql.tidb_mlog_purge_info/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist/mysql.tidb_mview_refresh_alert
 	mustExecute(s, CreateTiDBMViewRefreshInfoTable)
+	mustExecute(s, CreateTiDBMViewFastRefreshSourceInfoTable)
 	mustExecute(s, CreateTiDBMLogPurgeInfoTable)
 	mustExecute(s, CreateTiDBMViewRefreshHistTable)
 	mustExecute(s, CreateTiDBMLogPurgeHistTable)

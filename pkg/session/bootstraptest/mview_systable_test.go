@@ -32,6 +32,7 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	for _, tbl := range []string{
 		"tidb_mview_refresh_info",
+		"tidb_mview_fast_refresh_source_info",
 		"tidb_mlog_purge_info",
 		"tidb_mview_refresh_hist",
 		"tidb_mview_refresh_alert",
@@ -42,12 +43,14 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_refresh_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mview_id"))
-	// The out-of-place MV refresh cutover path updates this table through the
-	// table API in migrateMViewRefreshInfoForOutOfPlaceCutover. If this schema
-	// or the MVIEW_ID handle property changes, update that function together
-	// with this test.
 	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_refresh_info' order by ordinal_position").
 		Check(testkit.Rows("mview_id bigint(20) NO", "last_success_read_tso bigint(20) unsigned YES", "last_success_refresh_end_unix_seconds bigint(20) YES", "next_refresh_unix_seconds bigint(20) YES"))
+	tk.MustQuery("select lower(column_name), lower(column_type), is_nullable from information_schema.columns where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' order by ordinal_position").
+		Check(testkit.Rows("mview_id bigint(20) NO", "mlog_id bigint(20) NO"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' and index_name='PRIMARY' order by seq_in_index").
+		Check(testkit.Rows("mview_id", "mlog_id"))
+	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mview_fast_refresh_source_info' and index_name='idx_mlog' order by seq_in_index").
+		Check(testkit.Rows("mlog_id", "mview_id"))
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mlog_purge_info' and index_name='PRIMARY' order by seq_in_index").
 		Check(testkit.Rows("mlog_id"))
@@ -169,6 +172,29 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("6"))
 }
 
+func TestUpgradeToVer223MViewRefreshSourceInfo(t *testing.T) {
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop table mysql.tidb_mview_fast_refresh_source_info")
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(222))
+	require.NoError(t, txn.Commit(ctx))
+	revertVersionAndVariables(t, tk.Session(), 222)
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+	domUpgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+
+	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select count(*) from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows("0"))
+}
+
 func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -183,7 +209,7 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 	require.NoError(t, txn.Commit(ctx))
 
 	revertVersionAndVariables(t, seV220, 220)
-	session.MustExec(t, seV220, "drop table if exists mysql.tidb_mview_refresh_info, mysql.tidb_mlog_purge_info, mysql.tidb_mview_refresh_hist, mysql.tidb_mview_refresh_alert, mysql.tidb_mlog_purge_hist")
+	session.MustExec(t, seV220, "drop table if exists mysql.tidb_mview_refresh_info, mysql.tidb_mview_fast_refresh_source_info, mysql.tidb_mlog_purge_info, mysql.tidb_mview_refresh_hist, mysql.tidb_mview_refresh_alert, mysql.tidb_mlog_purge_hist")
 	session.MustExec(t, seV220, "create user 'v222_super'@'%'")
 	session.MustExec(t, seV220, "create user 'v222_normal'@'%'")
 	session.MustExec(t, seV220, "update mysql.user set Super_priv='Y', Operate_view_priv='N' where User='v222_super' and Host='%'")
@@ -208,6 +234,7 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 		Check(testkit.Rows("v222_normal N", "v222_super Y"))
 	for _, tbl := range []string{
 		"tidb_mview_refresh_info",
+		"tidb_mview_fast_refresh_source_info",
 		"tidb_mlog_purge_info",
 		"tidb_mview_refresh_hist",
 		"tidb_mview_refresh_alert",

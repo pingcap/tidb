@@ -505,7 +505,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, errors.Trace(err)
 		}
 		extraInfos = append(extraInfos, extras...)
-
 		ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -527,7 +526,7 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		return ver, nil
 
 	case model.StateWriteReorganization:
-		// Phase-2: run initial build and persist refresh read tso in mysql.tidb_mview_refresh_info.
+		// Phase-2: run initial build, then publish its input logs, read tso and Ready state together.
 		// CREATE MATERIALIZED VIEW build is non-resumable in this stage. For normal retry/recovery
 		// paths, if this step restarts without an active reorg context and MV table already has
 		// rows, fail fast and roll back the whole job to avoid duplicate build writes.
@@ -579,7 +578,23 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid build read tso")
 		}
 
+		// The job's source/MLog DDL dependencies keep these bindings stable throughout build.
+		finishedTableInfos := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
+		mlogIDs := make([]int64, 0, len(baseTableIDs))
+		for _, baseTableID := range baseTableIDs {
+			baseTblInfo, getErr := onCreateMaterializedViewBaseCheck(jobCtx.metaMut, job.SchemaID, baseTableID, job.SchemaName)
+			if getErr != nil {
+				job.State = model.JobStateRollingback
+				return ver, errors.Trace(getErr)
+			}
+			finishedTableInfos = append(finishedTableInfos, baseTblInfo)
+			mlogIDs = append(mlogIDs, baseTblInfo.MaterializedViewBase.MLogID)
+		}
 		if err = w.upsertCreateMaterializedViewRefreshInfo(jobCtx, job.SchemaName, mviewTableInfo, job.SnapshotVer); err != nil {
+			job.State = model.JobStateRollingback
+			return ver, errors.Trace(err)
+		}
+		if err := w.insertMViewRefreshSourceInfo(jobCtx, mviewTableInfo.ID, mlogIDs); err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
@@ -599,14 +614,6 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
-		}
-		finishedTableInfos := make([]*model.TableInfo, 0, len(baseTableIDs)+1)
-		for _, baseTableID := range baseTableIDs {
-			baseTblInfo, getErr := getTableInfo(jobCtx.metaMut, baseTableID, job.SchemaID)
-			if getErr != nil {
-				return ver, errors.Trace(getErr)
-			}
-			finishedTableInfos = append(finishedTableInfos, baseTblInfo)
 		}
 		finishedTableInfos = append(finishedTableInfos, mviewTableInfo)
 		job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, finishedTableInfos)
@@ -1102,6 +1109,9 @@ func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 func (w *worker) deleteCreateMaterializedViewRefreshInfos(jobCtx *jobContext, mviewIDs []int64) error {
 	if len(mviewIDs) == 0 {
 		return nil
+	}
+	if err := w.deleteMViewRefreshSourceInfos(jobCtx, mviewIDs); err != nil {
+		return errors.Trace(err)
 	}
 	ctx := jobCtx.stepCtx
 	if ctx == nil {

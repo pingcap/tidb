@@ -4223,6 +4223,15 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schemaName, tblInfo.Name)
 	}
+	// CREATE registers input logs before publishing a ready MV. Missing records
+	// indicate inconsistent metadata and must not be reconstructed during refresh.
+	registeredLogs, err := mviewutil.ReadRefreshSourceIDs(kctx, sqlExec, mviewID)
+	if err != nil {
+		return err
+	}
+	if len(registeredLogs) == 0 {
+		return errors.Errorf("refresh materialized view: input log records are missing for %s.%s", schemaName.O, tblInfo.Name.O)
+	}
 	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
 		if baseInfo := currentTbl.Meta().MaterializedViewBase; baseInfo != nil && baseInfo.MLogID != 0 {
 			return errors.Errorf(
