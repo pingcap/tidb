@@ -2192,6 +2192,44 @@ pub(crate) fn physical_show_plan(
     physical_plan_for_logical(&logical, &plan_ids, &column_ids, ctx)
 }
 
+/// Go `planner.Optimize` for `ADMIN SHOW DDL JOBS [n] [WHERE ...]`:
+/// `buildAdmin`'s `LogicalShowDDLJobs` under its selection, optimized.
+pub(crate) fn physical_admin_show_ddl_jobs_plan(
+    job_number: i64,
+    where_clause: Option<&tidb_ast::Expr>,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+    };
+    let (plan, opt_flag) = parts.build(None, None, |builder| {
+        let plan = builder.build_admin_show_ddl_jobs(job_number, where_clause)?;
+        Ok((plan, builder.get_opt_flag()))
+    })?;
+    let logical = optimize_built_logical(
+        plan,
+        opt_flag,
+        catalog,
+        ctx,
+        false,
+        &plan_ids,
+        &column_ids,
+        &ctx.session_zone(),
+    )?;
+    physical_plan_for_logical(&logical, &plan_ids, &column_ids, ctx)
+}
+
 /// Go `PlanBuilder.Build` for a query: the logical plan before any
 /// optimization, with the optimizer flags the build collected.
 /// `building_view` names the view whose stored body this is, which Go builds

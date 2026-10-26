@@ -238,6 +238,29 @@ pub fn build_show_next_row_id() -> (Schema, Vec<FieldName>) {
     )
 }
 
+/// Go `buildShowDDLJobsFields`.
+pub fn build_show_ddl_jobs_fields() -> (Schema, Vec<FieldName>) {
+    use FieldTypeCode::{Datetime, LongLong, Varchar};
+    fixed_schema(
+        "",
+        &[
+            ("JOB_ID", LongLong, 4),
+            ("DB_NAME", Varchar, 64),
+            ("TABLE_NAME", Varchar, 64),
+            ("JOB_TYPE", Varchar, 64),
+            ("SCHEMA_STATE", Varchar, 64),
+            ("SCHEMA_ID", LongLong, 4),
+            ("TABLE_ID", LongLong, 4),
+            ("ROW_COUNT", LongLong, 4),
+            ("CREATE_TIME", Datetime, 19),
+            ("START_TIME", Datetime, 19),
+            ("END_TIME", Datetime, 19),
+            ("STATE", Varchar, 64),
+            ("COMMENTS", Varchar, 65_535),
+        ],
+    )
+}
+
 /// Go `importIntoSchemaNames` / `ImportIntoSchemaFTypes`.
 const IMPORT_INTO_SCHEMA: &[(&str, FieldTypeCode)] = {
     use FieldTypeCode::{LongLong, String, Timestamp};

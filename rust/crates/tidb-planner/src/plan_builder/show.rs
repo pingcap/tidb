@@ -37,10 +37,11 @@ use super::PlanBuilder;
 use crate::logical::projection::LogicalProjection;
 use crate::logical::rule::flags;
 use crate::logical::sort::LogicalSort;
+use crate::logical::show_ddl_jobs::LogicalShowDDLJobs;
 use crate::logical::{LogicalPlan, LogicalShow, ShowContents, ShowPredicateExtractor};
 use crate::plan_base::PlanError;
 use crate::show_predicate_extractor::ShowBaseExtractor;
-use crate::show_schema::build_show_schema;
+use crate::show_schema::{build_show_ddl_jobs_fields, build_show_schema};
 
 /// Go `show.Table.Schema.L` / `show.Table.Name.L`, empty when no table.
 fn table_names(show: &ShowStmt) -> (String, String) {
@@ -335,6 +336,31 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             np = LogicalPlan::Sort(sort);
         }
         Ok(np)
+    }
+
+    /// Go `buildAdmin`'s `AdminShowDDLJobs` arm: a `LogicalShowDDLJobs` with
+    /// `buildShowDDLJobsFields`' columns under a selection for WHERE.
+    ///
+    /// # Errors
+    ///
+    /// The WHERE's build error.
+    pub fn build_admin_show_ddl_jobs(
+        &mut self,
+        job_number: i64,
+        where_clause: Option<&Expr>,
+    ) -> Result<LogicalPlan, PlanError> {
+        let mut p = LogicalShowDDLJobs::new(self.base(LogicalShowDDLJobs::TYPE), job_number);
+        let (mut schema, names) = build_show_ddl_jobs_fields();
+        for column in &mut schema.columns {
+            column.unique_id = self.column_ids.alloc();
+        }
+        p.base.base.set_schema(Some(schema));
+        p.base.base.set_output_names(names);
+        let plan = LogicalPlan::ShowDDLJobs(p);
+        match where_clause {
+            Some(where_clause) => self.build_selection(plan, where_clause, &BTreeMap::new()),
+            None => Ok(plan),
+        }
     }
 
     /// Go `buildShow`'s closing projection: every column of the stacked plan,

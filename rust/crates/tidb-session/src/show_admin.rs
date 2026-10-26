@@ -603,56 +603,43 @@ impl crate::Session {
     ) -> Result<StmtOutput, DriverError> {
         /// Go `ddl.DefNumHistoryJobs`.
         const DEF_NUM_HISTORY_JOBS: usize = 10;
-        let job_number = if show.job_number > 0 {
-            usize::try_from(show.job_number).unwrap_or(usize::MAX)
-        } else {
-            DEF_NUM_HISTORY_JOBS
-        };
-        // Go `ShowDDLJobsExec.Next`: every running job, then at most
-        // `job_number` history jobs.
-        let (running, history) = self.all_ddl_jobs()?;
-        // Go `ShowDDLJobsExec.Open`: names resolve through the statement's
-        // InfoSchema (`DDLJobRetriever.is = e.is`).
-        let rows = self.with_catalog_mut(|catalog| {
-            Ok(running
-                .iter()
-                .chain(history.iter().take(job_number))
-                .flat_map(|job| crate::ddl_jobs::ddl_job_rows(job, true, catalog))
-                .collect::<Vec<_>>())
+        // Go `buildAdmin`: `LogicalShowDDLJobs` under the WHERE's selection.
+        let ctx = self.statement_context(false);
+        let current_db = self.vars.current_db.clone();
+        let mut physical = self.with_catalog_mut(|catalog| {
+            tidb_executor::driver::plan_admin_show_ddl_jobs(
+                show.job_number,
+                show.where_clause.as_ref(),
+                catalog,
+                &current_db,
+                &ctx,
+            )
         })?;
-        let varchar = || FieldType::new(FieldTypeCode::Varchar);
-        let longlong = || FieldType::new(FieldTypeCode::LongLong);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("JOB_ID".to_owned(), longlong()),
-                ("DB_NAME".to_owned(), varchar()),
-                ("TABLE_NAME".to_owned(), varchar()),
-                ("JOB_TYPE".to_owned(), varchar()),
-                ("SCHEMA_STATE".to_owned(), varchar()),
-                ("SCHEMA_ID".to_owned(), longlong()),
-                ("TABLE_ID".to_owned(), longlong()),
-                ("ROW_COUNT".to_owned(), longlong()),
-                (
-                    "CREATE_TIME".to_owned(),
-                    FieldType::new(FieldTypeCode::Datetime),
-                ),
-                (
-                    "START_TIME".to_owned(),
-                    FieldType::new(FieldTypeCode::Datetime),
-                ),
-                (
-                    "END_TIME".to_owned(),
-                    FieldType::new(FieldTypeCode::Datetime),
-                ),
-                ("STATE".to_owned(), varchar()),
-                ("COMMENTS".to_owned(), varchar()),
-            ],
-            rows,
-        };
-        match &show.where_clause {
-            None => Ok(output),
-            Some(expr) => self.filter_show_output(output, Some(expr)),
+        if let Some(leaf) = tidb_executor::driver::physical_show_ddl_jobs_of(&physical) {
+            let job_number = if leaf.job_number > 0 {
+                usize::try_from(leaf.job_number).unwrap_or(usize::MAX)
+            } else {
+                DEF_NUM_HISTORY_JOBS
+            };
+            let plan_id = leaf.base.base.id();
+            // Go `ShowDDLJobsExec.Next`: every running job, then at most
+            // `job_number` history jobs.
+            let (running, history) = self.all_ddl_jobs()?;
+            // Go `ShowDDLJobsExec.Open`: names resolve through the
+            // statement's InfoSchema (`DDLJobRetriever.is = e.is`).
+            let rows = self.with_catalog_mut(|catalog| {
+                Ok(running
+                    .iter()
+                    .chain(history.iter().take(job_number))
+                    .flat_map(|job| crate::ddl_jobs::ddl_job_rows(job, true, catalog))
+                    .collect::<Vec<_>>())
+            })?;
+            ctx.show_retrieval().supply(plan_id, rows);
         }
+        let (columns, rows) = self.with_catalog_retrieving(&ctx, |catalog| {
+            tidb_executor::driver::open_show_plan(&mut physical, catalog, &ctx)?.collect()
+        })?;
+        Ok(StmtOutput::Rows { columns, rows })
     }
 }
 

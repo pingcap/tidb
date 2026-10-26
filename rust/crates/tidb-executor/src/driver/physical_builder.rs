@@ -7122,9 +7122,9 @@ fn build_with_state(
         }
         PhysicalPlan::CTE(cte) => build_cte(plan, cte, catalog, ctx, state),
         PhysicalPlan::CTETable(table) => build_cte_table(plan, table, state, ctx),
-        // Go `executorBuilder.buildShow`: a `ShowExec` whose `fetchAll` rows
-        // the session supplied for this node.
-        PhysicalPlan::Show(_) => {
+        // Go `executorBuilder.buildShow` / `buildShowDDLJobs`: a `ShowExec` /
+        // `ShowDDLJobsExec` whose rows the session supplied for this node.
+        PhysicalPlan::Show(_) | PhysicalPlan::ShowDDLJobs(_) => {
             let rows = ctx
                 .show_retrieval()
                 .rows(plan.base().base.id())

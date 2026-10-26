@@ -765,6 +765,40 @@ pub fn physical_show_of(
     }
 }
 
+/// Go `Compile` for `ADMIN SHOW DDL JOBS [n] [WHERE ...]`.
+///
+/// # Errors
+///
+/// The WHERE's build error and any optimization failure.
+pub fn plan_admin_show_ddl_jobs(
+    job_number: i64,
+    where_clause: Option<&tidb_ast::Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    planner_bridge::physical_admin_show_ddl_jobs_plan(
+        job_number,
+        where_clause,
+        catalog,
+        current_db,
+        ctx,
+    )
+    .map_err(planner_error_to_driver)
+}
+
+/// The `PhysicalShowDDLJobs` a planned ADMIN SHOW DDL JOBS reads, whose rows
+/// the session supplies through [`crate::StmtContext::show_retrieval`].
+#[must_use]
+pub fn physical_show_ddl_jobs_of(
+    plan: &tidb_planner::physical::PhysicalPlan,
+) -> Option<&tidb_planner::physical::PhysicalShowDDLJobs> {
+    match plan {
+        tidb_planner::physical::PhysicalPlan::ShowDDLJobs(show) => Some(show),
+        other => other.children().iter().find_map(physical_show_ddl_jobs_of),
+    }
+}
+
 /// Go `executorBuilder.build` + `ExecStmt.Exec` for a planned SHOW whose
 /// rows the session supplied.
 ///

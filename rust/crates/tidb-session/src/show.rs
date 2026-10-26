@@ -27,7 +27,6 @@
 use crate::show_index::show_index_rows;
 use crate::*;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
-use tidb_hack::GoCaseCompare;
 use tidb_util::stringutil::go_to_lower;
 
 /// The `Type` cell of a `SHOW COLUMNS`/`DESCRIBE` row: Go `NewColDesc`'s
@@ -394,100 +393,6 @@ const SHOW_STATUS_VARS: &[(&str, &str, bool)] = &[
     ("Ssl_verify_mode", "0", false),
     ("Ssl_version", "", false),
 ];
-
-/// A resolver over one row of a virtual `SHOW` result, so the statement's own
-/// `WHERE` can be evaluated against it.
-///
-/// Go builds the same thing as a real selection over the show output; this
-/// tier evaluates the predicate per row instead, which is the same filter
-/// without a plan to carry it.
-struct ShowRowResolver<'a> {
-    columns: &'a [&'a str],
-    row: &'a [Datum],
-}
-
-impl tidb_executor::Columns for ShowRowResolver<'_> {
-    fn get(&self, path: &[String]) -> Option<Datum> {
-        let name = path.last()?;
-        let index = self
-            .columns
-            .iter()
-            .position(|candidate| candidate.go_lower_eq(name))?;
-        self.row.get(index).cloned()
-    }
-}
-
-/// Whether one virtual `SHOW` row satisfies the statement's `WHERE`.
-fn show_row_matches(
-    predicate: &tidb_ast::Expr,
-    columns: &[&str],
-    row: &[Datum],
-) -> Result<bool, DriverError> {
-    // go's SHOW WHERE resolves names against the statement's OWN output
-    // columns; a name outside that list is ErrBadField with the 'where
-    // clause' clause -- even when it names a DATA column of the inspected
-    // table (oracle: `SHOW COLUMNS FROM sy WHERE b IS NOT NULL` fails
-    // `Unknown column 'b' in 'where clause'`).
-    if let Some(missing) = first_unknown_output_column(predicate, columns) {
-        return Err(DriverError::UnknownColumnInClause {
-            column: missing,
-            clause: "where clause".into(),
-        });
-    }
-    let resolver = ShowRowResolver { columns, row };
-    let value = tidb_executor::eval_in(predicate, &resolver)
-        .map_err(|e| DriverError::Exec(tidb_executor::ExecError::Eval(e)))?;
-    let truthy = tidb_executor::truthy_of(&value)
-        .map_err(|e| DriverError::Exec(tidb_executor::ExecError::Eval(e)))?;
-    Ok(truthy.unwrap_or(false))
-}
-
-/// The first referenced column name that is not one of the SHOW output's own
-/// columns, in evaluation order.
-fn first_unknown_output_column(predicate: &tidb_ast::Expr, columns: &[&str]) -> Option<String> {
-    struct Collector<'a> {
-        columns: &'a [&'a str],
-        missing: Option<String>,
-    }
-    impl tidb_ast::Visitor for Collector<'_> {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if let Some(name) = node
-                .downcast_ref::<tidb_ast::Expr>()
-                .and_then(|expr| match expr {
-                    tidb_ast::Expr::Column(path) => path.last().cloned(),
-                    _ => None,
-                })
-            {
-                if !self.columns.iter().any(|column| column.go_lower_eq(&name)) {
-                    self.missing = Some(name);
-                }
-                // A column leaf has no children; false keeps the walk alive
-                // for sibling keys (`WHERE a = 1 AND b = 2`).
-                return false;
-            }
-            // Descend into compound expressions: `enter` returning true
-            // SKIPS the subtree, which would never reach the operands.
-            false
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-    let mut probe = predicate.clone();
-    let mut collector = Collector {
-        columns,
-        missing: None,
-    };
-    tidb_ast::Visitable::accept(&mut probe, &mut collector);
-    collector.missing
-}
-
-/// The SHOW result Go's `buildShow` hands its `LogicalSelection` when a
-/// `WHERE` reads a subquery: the rows as a table the planner reads, under a
-/// schema name no statement can write.
-const SHOW_SELECTION_SCHEMA: &str = "__tidb_show_selection";
-const SHOW_SELECTION_TABLE: &str = "show_rows";
 
 impl Session {
     /// Go `buildShow`'s selections over a virtual SHOW result: `LIKE`
@@ -1180,75 +1085,6 @@ impl Session {
         })
     }
 
-    pub(crate) fn filter_show_output(
-        &mut self,
-        output: StmtOutput,
-        where_clause: Option<&tidb_ast::Expr>,
-    ) -> Result<StmtOutput, DriverError> {
-        let Some(predicate) =
-            where_clause.filter(|predicate| predicate.flags() & tidb_ast::FLAG_HAS_SUBQUERY != 0)
-        else {
-            return filter_show_rows(output, where_clause);
-        };
-        let StmtOutput::Rows { columns, rows } = filter_show_rows(output, None)?
-        else {
-            unreachable!("filtering keeps a row result a row result")
-        };
-        let mut query = match tidb_parser::parse(&format!(
-            "SELECT * FROM `{SHOW_SELECTION_SCHEMA}`.`{SHOW_SELECTION_TABLE}`"
-        )) {
-            Ok(Stmt::Query(query)) => query,
-            _ => unreachable!("the selection template parses as a query"),
-        };
-        let tidb_ast::QueryStmt::Select(select) = &mut *query else {
-            unreachable!("the selection template is a SELECT")
-        };
-        select.where_clause = Some(predicate.clone());
-        let current_db = self.vars.current_db.clone();
-        let ctx = self.statement_context(false);
-        let table = tidb_executor::MemTable {
-            columns: columns.clone(),
-            rows,
-        };
-        let (_, rows) = self.with_catalog_mut(|catalog| {
-            let mut scratch = catalog.clone();
-            scratch.register_mem_in(SHOW_SELECTION_SCHEMA, SHOW_SELECTION_TABLE, table);
-            tidb_executor::driver::open_query_meta_stmt_with_physical(
-                &query,
-                None,
-                &scratch,
-                &current_db,
-                &ctx,
-            )?
-            .collect()
-        })?;
-        Ok(StmtOutput::Rows { columns, rows })
-    }
-}
-
-/// Applies a `WHERE` over a virtual result (ADMIN SHOW DDL JOBS), evaluating
-/// the predicate row by row against the result's columns.
-pub(crate) fn filter_show_rows(
-    output: StmtOutput,
-    where_clause: Option<&tidb_ast::Expr>,
-) -> Result<StmtOutput, DriverError> {
-    let StmtOutput::Rows { columns, rows } = output else {
-        return Ok(output);
-    };
-    let column_names: Vec<&str> = columns.iter().map(|(name, _)| name.as_str()).collect();
-    let mut filtered = Vec::with_capacity(rows.len());
-    for row in rows {
-        if let Some(predicate) = where_clause {
-            if !show_row_matches(predicate, &column_names, &row)? {
-                continue;
-            }
-        }
-        filtered.push(row);
-    }
-    Ok(StmtOutput::Rows {
-        columns,
-        rows: filtered,
-    })
 }
 
 impl Session {
