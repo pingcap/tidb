@@ -500,7 +500,9 @@ func (helper extractHelper) extractLikePattern(
 		if fn.FuncName.L == ast.Ilike && !toLower {
 			return true, "(?i:" + pattern + ")", true
 		}
-		return true, pattern, false
+		// Case-folding extractors only provide a prefilter for LIKE: its
+		// collation may require a case-sensitive match of the original value.
+		return true, pattern, fn.FuncName.L == ast.Like && toLower
 	case ast.Regexp, ast.RegexpLike:
 		return true, datums[0].GetString(), false
 	default:

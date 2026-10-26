@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort/orphandata"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -46,6 +48,8 @@ var (
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of task cleanup.
 	DefaultCleanUpInterval = 10 * time.Minute
+	// DefaultExpiredFileCleanInterval is the interval of owner-side expired-file cleanup.
+	DefaultExpiredFileCleanInterval = 3 * time.Hour
 	// metric scraping mostly happens at 15s intervals, it's meaningless to update
 	// internal collected date more frequently, so we align with that.
 	defaultCollectMetricsInterval = 15 * time.Second
@@ -100,6 +104,36 @@ func (sm *Manager) getSchedulers() []Scheduler {
 	return slices.Clone(sm.mu.schedulers)
 }
 
+type orphanDataMonitor interface {
+	// Trigger scans and publishes the orphan data size. It runs synchronously
+	// on the caller's goroutine and can block for the duration of a storage
+	// scan, so callers must not expect to react to context cancellation until
+	// the scan returns.
+	Trigger(context.Context)
+	// Reset clears the published orphan data size, so an instance that no
+	// longer owns the scheduler stops exporting a stale value.
+	Reset()
+}
+
+// noopOrphanDataMonitor is used when orphan data monitoring is not enabled.
+type noopOrphanDataMonitor struct{}
+
+func (noopOrphanDataMonitor) Trigger(context.Context) {}
+
+func (noopOrphanDataMonitor) Reset() {}
+
+type orphanDataActiveProducerChecker struct {
+	taskMgr TaskManager
+}
+
+func (c orphanDataActiveProducerChecker) HasActiveProducers(ctx context.Context) (bool, error) {
+	summary, err := c.taskMgr.GetActiveTaskCountsByKeyspace(ctx)
+	if err != nil {
+		return false, err
+	}
+	return summary.Total > 0, nil
+}
+
 // Manager manage a bunch of schedulers.
 // Scheduler schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
@@ -129,6 +163,9 @@ type Manager struct {
 	nodeRes *proto.NodeResource
 	// initialized on demand
 	metricCollector *dxfmetric.Collector
+	// orphanMonitor publishes global-sort orphan data size while this node owns
+	// the scheduler. It is a no-op when orphan data monitoring is not enabled.
+	orphanMonitor orphanDataMonitor
 }
 
 // NewManager creates a scheduler struct.
@@ -157,13 +194,29 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 		logger: logger,
 		// finishCh must be able to buffer finish signals for the largest runtime
 		// value of maxConcurrentTask. Otherwise, raising the limit after startup
-		// can make non-blocking sends drop signals until the periodic cleanup loop runs.
+		// can make non-blocking sends drop signals until the cleanup ticker runs.
 		finishCh: make(chan struct{}, proto.MaxConcurrentTaskUpperBound),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
+	schedulerManager.orphanMonitor = newOrphanDataMonitor(schedulerManager)
 
 	return schedulerManager
+}
+
+// newOrphanDataMonitor builds the orphan data monitor for this manager. Orphan
+// global-sort data only exists in the NextGen kernel, where cloud storage is
+// the shared spill area; elsewhere monitoring is a no-op.
+func newOrphanDataMonitor(sm *Manager) orphanDataMonitor {
+	if !kerneltype.IsNextGen() {
+		return noopOrphanDataMonitor{}
+	}
+	return orphandata.NewMonitor(orphandata.Config{
+		ActiveProducerChecker: orphanDataActiveProducerChecker{taskMgr: sm.taskMgr},
+		GetStorageURI:         func() string { return handle.GetCloudStorageURI(sm.ctx, sm.store) },
+		Logger:                sm.logger,
+		RetainedPrefixes:      []string{conflictpath.StoragePrefix},
+	})
 }
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
@@ -174,6 +227,9 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanTaskLoop)
+	if kerneltype.IsNextGen() {
+		sm.wg.Run(sm.expiredFileCleanLoop)
+	}
 	sm.wg.Run(sm.collectLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
@@ -205,6 +261,10 @@ func (sm *Manager) Stop() {
 	// clear existing counters on owner change
 	dxfmetric.WorkerCount.Reset()
 	dxfmetric.FinishedTaskCounter.Reset()
+	// The orphan data size is only meaningful while this node owns the
+	// scheduler. Reset it on owner change, otherwise a former owner keeps
+	// exporting the last value it observed.
+	sm.orphanMonitor.Reset()
 }
 
 // Initialized check the manager initialized.
@@ -406,6 +466,7 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
 	sm.drainCleanTaskBatches()
+	sm.orphanMonitor.Trigger(sm.ctx)
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -417,6 +478,50 @@ func (sm *Manager) cleanTaskLoop() {
 			sm.drainCleanTaskBatches()
 		case <-ticker.C:
 			sm.drainCleanTaskBatches()
+			sm.orphanMonitor.Trigger(sm.ctx)
+		}
+	}
+}
+
+func (sm *Manager) expiredFileCleanLoop() {
+	sm.logger.Info("expired file cleanup loop start")
+	defer sm.logger.Info("expired file cleanup loop exits")
+	sm.runExpiredFileClean()
+	ticker := time.NewTicker(DefaultExpiredFileCleanInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sm.ctx.Done():
+			return
+		case <-ticker.C:
+			sm.runExpiredFileClean()
+		}
+	}
+}
+
+func (sm *Manager) runExpiredFileClean() {
+	// NextGen deployments use one cluster-wide cloud storage URI for global sort,
+	// so the current global setting covers the conflict files from every task.
+	cloudStorageURI := handle.GetCloudStorageURI(sm.ctx, sm.store)
+	if cloudStorageURI == "" {
+		return
+	}
+
+	factories := getCleanerFactories()
+	for _, factory := range factories {
+		cleaner, ok := factory.ctor().(ExpiredFileCleaner)
+		if !ok {
+			continue
+		}
+		if err := cleaner.CleanExpiredFiles(sm.ctx, sm.taskMgr, cloudStorageURI); err != nil {
+			if sm.ctx.Err() != nil {
+				return
+			}
+			// Expired-file cleanup is owner-wide rather than task-specific.
+			dxfmetric.ScheduleEventCounter.WithLabelValues("-", dxfmetric.EventExpiredFileCleanupFailed).Inc()
+			sm.logger.Warn("expired file cleanup failed",
+				zap.Stringer("task-type", factory.taskType),
+				zap.Error(errors.Trace(err)))
 		}
 	}
 }

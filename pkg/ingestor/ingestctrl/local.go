@@ -1849,6 +1849,9 @@ func (local *Backend) GetDupeController(ctx context.Context, dupeConcurrency int
 // close the engine. Make sure the engine is flushed manually before calling
 // this method.
 func (local *Backend) UnsafeImportAndReset(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+	failpoint.Inject("mockUnsafeImportAndResetError", func() {
+		failpoint.Return(errors.New("mock unsafe import and reset error"))
+	})
 	// DO NOT call be.abstract.CloseEngine()! The engine should still be writable after
 	// calling UnsafeImportAndReset().
 	logger := log.Wrap(tidblogutil.Logger(ctx)).With(

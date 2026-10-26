@@ -693,6 +693,11 @@ func (e *HashJoinV2Exec) Close() error {
 		w.joinChkResourceCh = nil
 	}
 
+	defer func() {
+		for _, w := range e.ProbeWorkers {
+			w.JoinProbe.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+		}
+	}()
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
@@ -759,6 +764,9 @@ func (e *HashJoinV2Exec) OpenSelf() error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 
+	for _, w := range e.ProbeWorkers {
+		w.JoinProbe.resetJoinedRows(e.RuntimeStats() != nil)
+	}
 	if e.RuntimeStats() != nil && e.stats == nil {
 		e.stats = &hashJoinRuntimeStatsV2{concurrent: int(e.Concurrency)}
 	}
@@ -1121,9 +1129,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 
 		e.waiterWg.Wait()
 		if !e.ProbeSideTupleFetcher.buildSuccess {
-			if e.hashStateStats != nil {
-				e.hashStateStats.Invalidate()
-			}
 			return
 		}
 		e.collectSpillStats()
@@ -1139,9 +1144,6 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		restoredPartition := e.spillHelper.stack.pop()
 		if restoredPartition == nil {
 			// No more data to restore
-			if e.hashStateStats != nil {
-				e.hashStateStats.Complete()
-			}
 			return
 		}
 		e.spillHelper.round = restoredPartition.round

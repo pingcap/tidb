@@ -246,6 +246,74 @@ func NewDefaultFileRouter(logger log.Logger) (FileRouter, error) {
 	return NewFileRouter(defaultFileRouteRules, logger)
 }
 
+var (
+	auroraDataPattern = regexp.MustCompile(`^(?:(.*)/)?([^/]+)/([^/]+\.[^/]+)/(?:[a-zA-Z0-9]+/)?(?i:part-[^/]+\.parquet)$`)
+	dataFileSuffix    = regexp.MustCompile(`(?i)\.(sql|csv|parquet)(\.[^./]+)?$`)
+)
+
+// Validate the complete inventory before filters can hide other exports or data.
+// Only opted-in loaders call this; global default file rules remain unchanged.
+func newAuroraFileRouter(files []RawFile, fallback FileRouter, logger log.Logger) (FileRouter, error) {
+	var rules []*config.FileRouteRule
+	var root, unexpected string
+	schemas := make(map[string]bool)
+	for _, file := range files {
+		path := filepath.ToSlash(file.Path)
+		parts := auroraDataPattern.FindStringSubmatch(path)
+		if parts == nil {
+			if dataFileSuffix.MatchString(path) {
+				res, err := fallback.Route(path)
+				if err != nil {
+					return nil, err
+				}
+				if res == nil || res.Type == SourceTypeSQL || res.Type == SourceTypeCSV || res.Type == SourceTypeParquet {
+					unexpected = path
+				}
+			}
+			continue
+		}
+		// Check the raw export root and filename too, before generating wildcards.
+		if strings.ContainsAny(path, "*?[]\\") {
+			return nil, errors.New("Aurora file path contains glob metacharacters")
+		}
+		// Native keys are raw. Strip the exact schema prefix, not the last dot.
+		schema := parts[2]
+		table, ok := strings.CutPrefix(parts[3], schema+".")
+		if !ok || table == "" {
+			return nil, errors.Errorf("inconsistent Aurora database/table directory: %s", path)
+		}
+		// AWS's underscore conversion is lossy; import wildcards also cannot
+		// safely represent glob metacharacters. Require explicit routes instead.
+		if strings.ContainsAny(schema+table, "_\\`\" *?[]") {
+			return nil, errors.Errorf("ambiguous Aurora identifier in %s; provide an explicit file route with the original name", path)
+		}
+		if len(rules) > 0 && root != parts[1] {
+			return nil, errors.New("multiple Aurora export roots; scope the source URL to one export")
+		}
+		root = parts[1]
+		if !schemas[schema] {
+			prefix := root
+			if prefix != "" {
+				prefix += "/"
+			}
+			// One source-scoped rule per schema handles dotted names without
+			// another router implementation or URL-decoding native identifiers.
+			rules = append(rules, &config.FileRouteRule{
+				Pattern: "^" + regexp.QuoteMeta(prefix) + "(" + regexp.QuoteMeta(schema) + ")/" + regexp.QuoteMeta(schema+".") + `([^/]+)/(?:[a-zA-Z0-9]+/)?(?i:part-[^/]+\.parquet)$`,
+				Schema:  "$1", Table: "$2", Type: TypeParquet,
+			})
+			schemas[schema] = true
+		}
+	}
+	if len(rules) > 0 && unexpected != "" {
+		return nil, errors.Errorf("mixed or unmatched data in Aurora source: %s", unexpected)
+	}
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	return NewFileRouter(rules, logger)
+}
+
 // RegexRouter is a `FileRouter` implement that apply specific regex pattern to filepath.
 // if regex pattern match, then each extractors with capture the matched regexp pattern and
 // set value to target field in `RouteResult`

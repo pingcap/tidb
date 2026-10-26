@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	parsermysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -74,6 +75,7 @@ type Dumper struct {
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
+	status        atomic.Pointer[DumpStatus]
 }
 
 // NewDumper returns a new Dumper
@@ -113,7 +115,8 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	err = adjustConfig(conf,
 		buildTLSConfig,
 		validateSpecifiedSQL,
-		adjustFileFormat)
+		adjustFileFormat,
+		validateIncludeGeneratedColumns)
 	if err != nil {
 		return nil, err
 	}
@@ -316,9 +319,8 @@ func (d *Dumper) Dump() (dumpErr error) {
 	summary.SetUnit(summary.BackupUnit)
 	defer summary.Summary(summary.BackupUnit)
 
-	logProgressCtx, logProgressCancel := tctx.WithCancel()
-	go d.runLogProgress(logProgressCtx)
-	defer logProgressCancel()
+	stopLogProgress := d.startLogProgress(tctx)
+	defer stopLogProgress()
 
 	tableDataStartTime := time.Now()
 
@@ -512,11 +514,8 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 }
 
 func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
-	tableCount := 0
-	for _, tables := range conf.Tables {
-		tableCount += len(tables)
-	}
-	conf.columnProjection = make(map[tableName]columnProjection, tableCount)
+	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
+	anyFilteredColumns := false
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
@@ -524,6 +523,89 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
+			anyFilteredColumns = anyFilteredColumns || projection.hasFilteredColumns()
+		}
+	}
+	if conf.NoSchemas || !anyFilteredColumns {
+		return nil
+	}
+
+	for _, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type == TableTypeView {
+				return errors.New("schema output with an active column filter is not supported when the dump includes views")
+			}
+		}
+	}
+
+	schemaParser := parser.New()
+	if value, ok := conf.SessionParams["sql_mode"]; ok {
+		sqlMode, err := parsermysql.GetSQLMode(parsermysql.FormatSQLModeStr(fmt.Sprint(value)))
+		if err != nil {
+			return errors.Annotate(err, "failed to parse session sql_mode")
+		}
+		schemaParser.SetSQLMode(sqlMode)
+	}
+	schemas := make(projectedTableSchemas, calculateTableCount(conf.Tables))
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			projection := conf.columnProjection[key]
+			createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			if projection.hasFilteredColumns() {
+				schemas[key], err = buildProjectedTableSchema(
+					schemaParser,
+					createTableSQL,
+					columnNames(projection.selectedTypes),
+				)
+			} else {
+				schemas[key], err = parseTableSchema(schemaParser, createTableSQL)
+			}
+			if err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to analyze schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			projection.schemaSQL = createTableSQL
+			if projection.hasFilteredColumns() {
+				projection.schemaSQL, err = restoreProjectedSchema(schemas[key].createTable)
+				if err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to restore schema projection for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+			}
+			conf.columnProjection[key] = projection
+		}
+	}
+
+	// Runs after all schemas are built: map order is random, and an unbuilt parent is treated as "outside the dump" (skipped), so merging into the loop above would drop FK validation nondeterministically.
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			if err := validateForeignKeyParents(dbName, schemas[key], schemas); err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to validate schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
 		}
 	}
 	return nil
@@ -540,7 +622,8 @@ func buildColumnProjection(
 		return columnProjection{}, nil
 	}
 
-	sourceColumns, hasGeneratedColumn, err := getWritableColumnNames(tctx, conn, dbName, table.Name)
+	sourceColumns, needExplicitFields, err := getWritableColumnNames(
+		tctx, conn, dbName, table.Name, conf.includeStoredGeneratedColumns())
 	if err != nil {
 		return columnProjection{}, err
 	}
@@ -558,7 +641,7 @@ func buildColumnProjection(
 	projection := columnProjection{
 		selectField: strings.Join(selectedFields, ","),
 	}
-	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
+	if !needExplicitFields && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"
 	}
 
@@ -1487,9 +1570,12 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
-	if err != nil {
-		return nil, err
+	createTableSQL := projection.schemaSQL
+	if createTableSQL == "" {
+		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
+		if err != nil {
+			return nil, err
+		}
 	}
 	meta.showCreateTable = createTableSQL
 	return meta, nil
@@ -1579,7 +1665,7 @@ func startHTTPService(d *Dumper) error {
 	conf := d.conf
 	if conf.StatusAddr != "" {
 		go func() {
-			err := startDumplingService(d.tctx, conf.StatusAddr)
+			err := startDumplingService(d.tctx, conf.StatusAddr, d)
 			if err != nil {
 				d.L().Info("meet error when stopping dumpling http service", log.ShortError(err))
 			}
@@ -1678,9 +1764,15 @@ func validateResolveAutoConsistency(d *Dumper) error {
 
 // tidbResolveKeyspaceMetaForGC is an initialization step of Dumper.
 //
-// For a premium (keyspace) cluster, cloud control will pass `--pd`.
+// For a premium (keyspace) cluster, cloud control may pass `--pd`.
 // Dumpling resolves the keyspace from information_schema.KEYSPACE_META and uses
-// the keyspace ID for the keyspace-level GC barrier.
+// the keyspace ID for the keyspace-level GC barrier. `--pd` is optional: when it
+// is not specified, dumpling disables the automatic GC pause and only warns.
+//
+// On a next-gen (keyspace) cluster KEYSPACE_META is always available, so a lookup
+// failure there is fatal: silently falling back to the classical global-safepoint
+// path would leave the keyspace's GC unprotected while the operator believes it is
+// paused. The lenient fallback is only meant for pre-KEYSPACE_META classical clusters.
 //
 // If KEYSPACE_META reports a classical cluster, `--pd` must not be specified.
 func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
@@ -1694,8 +1786,9 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 
 	keyspaceName, keyspaceID, err := queryCurrentKeyspaceNameAndID(tctx, db)
 	if err != nil {
-		// If the user explicitly passes premium GC parameters, do not ignore this error.
-		if conf.PDAddr != "" {
+		// If the user explicitly passes premium GC parameters, or the server is a
+		// next-gen (keyspace) cluster, do not ignore this error.
+		if conf.PDAddr != "" || conf.ServerInfo.NextGen {
 			return err
 		}
 
@@ -1720,9 +1813,6 @@ func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
 	}
 
 	// Premium cluster.
-	if conf.PDAddr == "" {
-		return errors.New("premium keyspace cluster requires --pd")
-	}
 	if keyspaceID == "" {
 		return errors.Errorf("empty keyspace id from KEYSPACE_META for keyspace %q", keyspaceName)
 	}
@@ -1745,15 +1835,26 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		return nil
 	}
 
-	// Premium cluster: PD endpoints are passed from cloud control.
+	// Premium cluster: PD endpoints are optionally passed from cloud control.
 	if d.tidbKeyspaceName != "" {
+		// --pd is optional for a premium keyspace cluster: without it we cannot
+		// reach PD, so skip the automatic GC pause and only warn.
+		if conf.PDAddr == "" {
+			tctx.L().Warn("dumping a keyspace cluster but --pd is not specified; automatic GC pause is disabled",
+				zap.String("keyspace-name", d.tidbKeyspaceName))
+			return nil
+		}
+
 		pdAddrs := strings.Split(conf.PDAddr, ",")
 		pdAddrs = slices.DeleteFunc(pdAddrs, func(s string) bool { return strings.TrimSpace(s) == "" })
 		for i := range pdAddrs {
 			pdAddrs[i] = strings.TrimSpace(pdAddrs[i])
 		}
 		if len(pdAddrs) == 0 {
-			return errors.New("invalid --pd: empty PD endpoints")
+			// --pd was provided but holds no usable endpoint (for example "," or
+			// " , "). Surface it as an actionable error instead of silently
+			// disabling the GC pause, so a user typo is not mistaken for "unset".
+			return errors.Errorf("invalid --pd %q: no valid PD endpoint found", conf.PDAddr)
 		}
 
 		apiCtx := pd.NewAPIContextV2(d.tidbKeyspaceName)

@@ -22,9 +22,14 @@ import (
 	"testing"
 	"time"
 
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
+	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -36,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -45,6 +52,13 @@ import (
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
+
+func TestDiagnosticModeDisallowsSwitchMDL(t *testing.T) {
+	t.Cleanup(diagnosticmode.SetForTest(true))
+
+	d := &ddl{}
+	require.ErrorIs(t, d.SwitchMDL(true), diagnosticmode.ErrDDLNotAllowed)
+}
 
 // DDLForTest exports for testing.
 type DDLForTest interface {
@@ -68,11 +82,210 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
 }
 
+type ddlJobRUReport struct {
+	resourceGroupName string
+	tikvRUV2          float64
+	tidbRUV2          float64
+	tiflashRUV2       float64
+}
+
+type ddlJobRUReporter struct {
+	reports []ddlJobRUReport
+	panic   bool
+}
+
+func (*ddlJobRUReporter) ReportConsumption(string, *rmpb.Consumption) {}
+
+func (r *ddlJobRUReporter) ReportRUV2Consumption(
+	resourceGroupName string,
+	tikvRUV2, tidbRUV2, tiflashRUV2 float64,
+) {
+	if r.panic {
+		panic("reporter panic")
+	}
+	r.reports = append(r.reports, ddlJobRUReport{
+		resourceGroupName: resourceGroupName,
+		tikvRUV2:          tikvRUV2,
+		tidbRUV2:          tidbRUV2,
+		tiflashRUV2:       tiflashRUV2,
+	})
+}
+
+type ddlJobRUReportingContext struct {
+	*mock.Context
+	dctx *distsqlctx.DistSQLContext
+}
+
+func (c *ddlJobRUReportingContext) GetDistSQLCtx() *distsqlctx.DistSQLContext {
+	return c.dctx
+}
+
+func TestAccountJobRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.DDLWeights.TxnKVBytes = 2
+	})
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	sessCtx := mock.NewContext()
+	sessCtx.Store = store
+	w := worker{tp: generalWorker, sess: sess.NewSession(sessCtx)}
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	discardedTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, discardedTxn.Set(kv.Key("discarded-key"), []byte("discarded-payload-is-longer")))
+	discardedSize := discardedTxn.Size()
+	w.sess.Rollback()
+
+	require.NoError(t, w.sess.Begin(context.Background()))
+	t.Cleanup(w.sess.Rollback)
+	activeTxn, err := w.sess.Txn()
+	require.NoError(t, err)
+	require.NoError(t, activeTxn.Set(kv.Key("active"), []byte("value")))
+	require.NotEqual(t, discardedSize, activeTxn.Size())
+
+	job := &model.Job{RU: 7}
+	require.NoError(t, w.accountJobRU(job))
+	expectedRU := float64(7)
+	if kerneltype.IsNextGen() {
+		expectedRU += 2 * float64(activeTxn.Size())
+	}
+	require.Equal(t, expectedRU, job.RU)
+
+	accountedRU := job.RU
+	w.tp = addIdxWorker
+	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
+	require.Equal(t, accountedRU, job.RU)
+
+	w.tp = backgroundWorker
+	require.NoError(t, w.accountJobRU(job))
+	if kerneltype.IsNextGen() {
+		accountedRU += 2 * float64(activeTxn.Size())
+	}
+	require.Equal(t, accountedRU, job.RU)
+
+	t.Run("reports through the DDL session resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{RU: 42})
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: resourcegroup.DefaultResourceGroupName,
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("reports reorganization jobs through the persisted resource group", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{
+			RU: 42,
+			ReorgMeta: &model.DDLReorgMeta{
+				ResourceGroupName: "non-default-group",
+			},
+		})
+
+		require.Equal(t, []ddlJobRUReport{{
+			resourceGroupName: "non-default-group",
+			tikvRUV2:          42,
+			tidbRUV2:          0,
+			tiflashRUV2:       0,
+		}}, reporter.reports)
+	})
+
+	t.Run("skips invalid reporting contexts", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		w.reportJobRUConsumption(&model.Job{RU: 42})
+		sessCtx.dctx = nil
+		w.reportJobRUConsumption(&model.Job{RU: 42})
+
+		require.Empty(t, reporter.reports)
+	})
+
+	t.Run("propagates reporter panics", func(t *testing.T) {
+		reporter := &ddlJobRUReporter{panic: true}
+		sessCtx := &ddlJobRUReportingContext{
+			Context: mock.NewContext(),
+			dctx: &distsqlctx.DistSQLContext{
+				ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
+				RUConsumptionReporter: reporter,
+			},
+		}
+		w := worker{sess: sess.NewSession(sessCtx)}
+
+		require.Panics(t, func() {
+			w.reportJobRUConsumption(&model.Job{RU: 42})
+		})
+	})
+}
+
 func NewJobSubmitterForTest() *JobSubmitter {
 	syncMap := generic.NewSyncMap[int64, chan struct{}](8)
 	return &JobSubmitter{
 		ddlJobDoneChMap: &syncMap,
 	}
+}
+
+// PruneStorageClassTransitionHistoryForTest exposes history pruning to external tests.
+func PruneStorageClassTransitionHistoryForTest(ctx context.Context, se *sess.Session) error {
+	return pruneStorageClassTransitionHistory(ctx, se)
+}
+
+// PollStorageClassTransitionsForTest runs one owner polling iteration.
+func PollStorageClassTransitionsForTest(ctx context.Context, d DDL, se *sess.Session) (bool, error) {
+	dd, ok := d.(*ddl)
+	if !ok {
+		return false, fmt.Errorf("unexpected DDL implementation %T", d)
+	}
+	return dd.storageClassTransitionManager.poll(ctx, se, false)
+}
+
+// ReconcileStorageClassTransitionTopologyForTest exposes topology reconciliation to external tests.
+func ReconcileStorageClassTransitionTopologyForTest(
+	ctx context.Context,
+	se *sess.Session,
+	tblInfo *model.TableInfo,
+) error {
+	operations, err := loadRunningStorageClassTransitionsForTable(ctx, se, tblInfo.ID)
+	if err != nil {
+		return err
+	}
+	if len(operations) != 1 {
+		return fmt.Errorf("expected one running storage class transition, got %d", len(operations))
+	}
+	return reconcileStorageClassTransitionTopology(ctx, se, nil, tblInfo, operations[0], operations[0].schemaVersion)
 }
 
 func (s *JobSubmitter) DDLJobDoneChMap() *generic.SyncMap[int64, chan struct{}] {
@@ -607,6 +820,14 @@ func TestGetJobCheckIntervalForCreateMaterializedView(t *testing.T) {
 	val, changed = getJobCheckInterval(model.ActionCreateMaterializedView, len(slowDDLIntervalPolicy))
 	require.Equal(t, slowDDLIntervalPolicy[len(slowDDLIntervalPolicy)-1], val)
 	require.False(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedViewShadow, 0)
+	require.Equal(t, fastDDLIntervalPolicy[0], val)
+	require.True(t, changed)
+
+	val, changed = getJobCheckInterval(model.ActionCreateMaterializedViewShadow, len(fastDDLIntervalPolicy))
+	require.Equal(t, fastDDLIntervalPolicy[len(fastDDLIntervalPolicy)-1], val)
+	require.False(t, changed)
 }
 
 func TestIsCreateMaterializedViewBaseCheckCancelledErr(t *testing.T) {
@@ -698,4 +919,56 @@ func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, sql, "READ_FROM_STORAGE(TIFLASH[`test`.`src`])")
 	require.Contains(t, sql, "HASH_JOIN_PROBE(`test`.`src`)")
+}
+
+func TestReplaceMaterializedViewID(t *testing.T) {
+	ids, replaced := replaceMaterializedViewID([]int64{10, 20}, 30, 40)
+	require.False(t, replaced)
+	require.Equal(t, []int64{10, 20}, ids)
+
+	ids, replaced = replaceMaterializedViewID([]int64{10, 20, 10}, 10, 30)
+	require.True(t, replaced)
+	require.Equal(t, []int64{30, 20}, ids)
+}
+
+func TestCheckHistoryJobStmtType(t *testing.T) {
+	p := parser.New()
+	parseStmt := func(sql string) ast.StmtNode {
+		stmt, _, err := p.ParseSQL(sql)
+		require.NoError(t, err)
+		require.Len(t, stmt, 1)
+		return stmt[0]
+	}
+
+	createTableStmt := parseStmt("create table t (a int)")
+	createMViewStmt := parseStmt("create materialized view mv (a, c) as select a, count(1) from t group by a")
+	createMLogStmt := parseStmt("create materialized view log on t (a)")
+	refreshMViewStmt := parseStmt("refresh materialized view mv complete out of place")
+	dropTableStmt := parseStmt("drop table t")
+	createDBStmt := parseStmt("create database test")
+	createPolicyStmt := parseStmt("create placement policy p followers=1")
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTable, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMViewStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, refreshMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewShadow, createTableStmt))
+	require.True(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, dropTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionDropMaterializedViewShadow, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateSchema, createDBStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateSchema, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createPolicyStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
 }

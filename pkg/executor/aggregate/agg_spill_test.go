@@ -734,7 +734,7 @@ func TestGetCorrectResult(t *testing.T) {
 	executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
 	hashState, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashAggRuntimeStatsPlanID)
 	require.True(t, found)
-	require.True(t, hashState.Complete())
+	require.False(t, hashState.Invalid())
 	require.Equal(t, int64(len(result)*2), hashState.Rows)
 
 	finished.Store(true)

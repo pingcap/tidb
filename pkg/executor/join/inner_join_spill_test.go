@@ -186,7 +186,7 @@ func testUnderApplyExec(t *testing.T, ctx *mock.Context, expectedResult []chunk.
 	}
 	snapshot, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
 	require.True(t, found)
-	require.True(t, snapshot.Complete())
+	require.False(t, snapshot.Invalid())
 	require.Positive(t, snapshot.Rows)
 }
 
@@ -398,6 +398,10 @@ func TestInnerJoinUnderApplyExec(t *testing.T) {
 
 	expectedResult := getExpectedResults(t, ctx, info, retTypes, leftDataSource, rightDataSource)
 	testUnderApplyExec(t, ctx, expectedResult, info, retTypes, leftDataSource, rightDataSource)
+	joinedRows, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(info.planID)
+	require.True(t, found)
+	// One non-spilling reference run plus ten executions that spill and restore.
+	require.Equal(t, int64(11*len(expectedResult)), joinedRows)
 	util.CheckNoLeakFiles(t, testFuncName)
 }
 
@@ -452,10 +456,21 @@ func TestHashJoinV2HashStateAcrossRepeatedOpen(t *testing.T) {
 	snapshot, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
 	require.True(t, found)
 	require.Equal(t, int64(18), snapshot.Rows)
-	require.True(t, snapshot.Complete())
+	require.False(t, snapshot.Invalid())
 
-	// A failed repeated execution must poison the merged evidence instead of
-	// preserving the previously complete state.
+	joinedRows, found := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(hashJoinExec.ID())
+	require.True(t, found)
+	require.Equal(t, int64(18), joinedRows)
+
+	// Opening and closing without probing must not publish the previous count again.
+	require.NoError(t, hashJoinExec.Open(t.Context()))
+	require.NoError(t, hashJoinExec.Close())
+	joinedRows, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(hashJoinExec.ID())
+	require.True(t, found)
+	require.Equal(t, int64(18), joinedRows)
+
+	// A later attempt failing before lookup construction must retain the rows
+	// already built. Statement outcome, not the counter, controls publication.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/issue51998", "return(true)")
 	leftDataSource.PrepareChunks()
 	rightDataSource.PrepareChunks()
@@ -463,6 +478,9 @@ func TestHashJoinV2HashStateAcrossRepeatedOpen(t *testing.T) {
 	require.EqualError(t, err, "issue51998 build return error")
 	snapshot, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootHashStateRowsSnapshot(hashJoinExec.ID())
 	require.True(t, found)
-	require.False(t, snapshot.Complete())
-	require.True(t, snapshot.Invalid())
+	require.False(t, snapshot.Invalid())
+	require.Equal(t, int64(18), snapshot.Rows)
+	joinedRows, found = ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootJoinedRows(hashJoinExec.ID())
+	require.True(t, found)
+	require.Equal(t, int64(18), joinedRows)
 }

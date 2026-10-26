@@ -20,6 +20,94 @@
 # - tikv-worker: 19000
 tiflash_compute_pid=""
 schema_manager_dir="/tmp/tidb-realtikvtest-schemas"
+cluster_start_timeout_seconds="${NEXT_GEN_CLUSTER_START_TIMEOUT_SECONDS:-120}"
+
+function print_log_tail() {
+    local service_name="$1"
+    local log_file="$2"
+
+    if [[ -f "${log_file}" ]]; then
+        echo "Last 50 lines of ${service_name} log (${log_file}):" >&2
+        tail -n 50 "${log_file}" >&2
+    fi
+}
+
+function require_process_alive() {
+    local service_name="$1"
+    local pid="$2"
+    local log_file="$3"
+
+    if kill -0 "${pid}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "${service_name} exited before it became ready." >&2
+    print_log_tail "${service_name}" "${log_file}"
+    return 1
+}
+
+function wait_for_cluster_ready() {
+    local pd0_pid="$1"
+    local pd1_pid="$2"
+    local pd2_pid="$3"
+    local tikv0_pid="$4"
+    local tikv1_pid="$5"
+    local tikv2_pid="$6"
+    local deadline=$((SECONDS + cluster_start_timeout_seconds))
+    local stores
+    local up_store_count
+
+    while ((SECONDS < deadline)); do
+        require_process_alive "PD 0" "${pd0_pid}" pd0.log || return 1
+        require_process_alive "PD 1" "${pd1_pid}" pd1.log || return 1
+        require_process_alive "PD 2" "${pd2_pid}" pd2.log || return 1
+        require_process_alive "TiKV 0" "${tikv0_pid}" tikv0.log || return 1
+        require_process_alive "TiKV 1" "${tikv1_pid}" tikv1.log || return 1
+        require_process_alive "TiKV 2" "${tikv2_pid}" tikv2.log || return 1
+
+        if curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:20180/status >/dev/null &&
+            curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:20181/status >/dev/null &&
+            curl -fsS --connect-timeout 1 --max-time 2 http://127.0.0.1:20182/status >/dev/null &&
+            stores="$(curl -fsSL --connect-timeout 1 --max-time 2 http://127.0.0.1:2379/pd/api/v1/stores)"; then
+            up_store_count="$(printf '%s\n' "${stores}" | grep -oE '"state_name"[[:space:]]*:[[:space:]]*"Up"' | wc -l | tr -d '[:space:]')"
+            if [[ "${up_store_count}" -ge 3 ]]; then
+                echo "PD and all TiKV stores are ready."
+                return 0
+            fi
+        fi
+        sleep 1
+    done
+
+    echo "PD and TiKV did not become ready within ${cluster_start_timeout_seconds} seconds." >&2
+    print_log_tail "PD 0" pd0.log
+    print_log_tail "PD 1" pd1.log
+    print_log_tail "PD 2" pd2.log
+    print_log_tail "TiKV 0" tikv0.log
+    print_log_tail "TiKV 1" tikv1.log
+    print_log_tail "TiKV 2" tikv2.log
+    return 1
+}
+
+function wait_for_http_service_ready() {
+    local service_name="$1"
+    local pid="$2"
+    local health_url="$3"
+    local log_file="$4"
+    local deadline=$((SECONDS + cluster_start_timeout_seconds))
+
+    while ((SECONDS < deadline)); do
+        require_process_alive "${service_name}" "${pid}" "${log_file}" || return 1
+        if curl -fsS --connect-timeout 1 --max-time 2 "${health_url}" >/dev/null 2>&1; then
+            echo "${service_name} is ready."
+            return 0
+        fi
+        sleep 1
+    done
+
+    echo "${service_name} did not become ready within ${cluster_start_timeout_seconds} seconds." >&2
+    print_log_tail "${service_name}" "${log_file}"
+    return 1
+}
 
 function main() {
     local data_base_dir
@@ -41,22 +129,40 @@ function main() {
 
     # init a bucket "next-gen-test", the bucket will be used for testing, do not change it.
     mkdir -pv ${data_base_dir}/minio/data/next-gen-test
-    start_minio ${data_base_dir}/minio/data
+    if ! start_minio ${data_base_dir}/minio/data; then
+        return 1
+    fi
 
     # start the servers.
     bin/pd-server --name=pd-0 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-0/data --peer-urls=http://127.0.0.1:2380 --advertise-peer-urls=http://127.0.0.1:2380 --client-urls=http://127.0.0.1:2379 --advertise-client-urls=http://127.0.0.1:2379 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd0.log &
+    local pd0_pid="$!"
     bin/pd-server --name=pd-1 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-1/data --peer-urls=http://127.0.0.1:2381 --advertise-peer-urls=http://127.0.0.1:2381 --client-urls=http://127.0.0.1:2382 --advertise-client-urls=http://127.0.0.1:2382 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd1.log &
+    local pd1_pid="$!"
     bin/pd-server --name=pd-2 --config=${config_dir}/pd.toml --data-dir=${data_base_dir}/pd-2/data --peer-urls=http://127.0.0.1:2383 --advertise-peer-urls=http://127.0.0.1:2383 --client-urls=http://127.0.0.1:2384 --advertise-client-urls=http://127.0.0.1:2384 --initial-cluster=pd-0=http://127.0.0.1:2380,pd-1=http://127.0.0.1:2381,pd-2=http://127.0.0.1:2383 --force-new-cluster --log-file=pd2.log &
-    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-0/data --addr=127.0.0.1:20160 --advertise-addr=127.0.0.1:20160 --status-addr=127.0.0.1:20180 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv0.log &
-    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-1/data --addr=127.0.0.1:20161 --advertise-addr=127.0.0.1:20161 --status-addr=127.0.0.1:20181 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv1.log &
-    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}tikv-2/data --addr=127.0.0.1:20162 --advertise-addr=127.0.0.1:20162 --status-addr=127.0.0.1:20182 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv2.log &
+    local pd2_pid="$!"
+    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}/tikv-0/data --addr=127.0.0.1:20160 --advertise-addr=127.0.0.1:20160 --status-addr=127.0.0.1:20180 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv0.log &
+    local tikv0_pid="$!"
+    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}/tikv-1/data --addr=127.0.0.1:20161 --advertise-addr=127.0.0.1:20161 --status-addr=127.0.0.1:20181 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv1.log &
+    local tikv1_pid="$!"
+    bin/tikv-server --config=${config_dir}/tikv.toml --data-dir=${data_base_dir}/tikv-2/data --addr=127.0.0.1:20162 --advertise-addr=127.0.0.1:20162 --status-addr=127.0.0.1:20182 --pd=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv2.log &
+    local tikv2_pid="$!"
+
+    if ! wait_for_cluster_ready "${pd0_pid}" "${pd1_pid}" "${pd2_pid}" "${tikv0_pid}" "${tikv1_pid}" "${tikv2_pid}"; then
+        return 1
+    fi
+
     bin/tikv-worker --config=${config_dir}/tikv-worker.toml --data-dir=${data_base_dir}/tikv-worker/data --addr=127.0.0.1:19000 --pd-endpoints=http://127.0.0.1:2379,http://127.0.0.1:2382,http://127.0.0.1:2384 --log-file=tikv-worker.log &
+    local tikv_worker_pid="$!"
+
+    if ! wait_for_http_service_ready "TiKV worker" "${tikv_worker_pid}" "http://127.0.0.1:19000/healthz" tikv-worker.log; then
+        return 1
+    fi
 
     if is_true "${STARTER_COLUMNAR_AP:-}"; then
         start_tiflash_compute "${data_base_dir}"
+        sleep 10
     fi
 
-    sleep 10
     NEXT_GEN=1 "$@"
 }
 
@@ -183,15 +289,7 @@ function start_minio() {
     "$MINIO_BIN_PATH" server "$data_base_dir" --address ":$MINIO_PORT" > minio.log 2>&1 &
     MINIO_PID=$!
 
-    # Wait for MinIO to be ready (simple check)
-    for i in {1..10}; do
-        if curl -s "http://127.0.0.1:$MINIO_PORT/minio/health/ready" | grep -q "OK"; then
-            echo "MinIO is up"
-            break
-        fi
-        sleep 1
-    done
-    echo "🎉 MinIO server started successfully"
+    wait_for_http_service_ready "MinIO" "${MINIO_PID}" "http://127.0.0.1:${MINIO_PORT}/minio/health/ready" minio.log
 }
 
 function cleanup() {

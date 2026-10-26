@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -295,8 +294,47 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowDistributionJobs(ctx)
 	case ast.ShowAffinity:
 		return e.fetchShowAffinity(ctx)
+	case ast.ShowStorageClassTransitions:
+		return e.fetchShowStorageClassTransitions(ctx)
 	}
 	return nil
+}
+
+func (e *ShowExec) fetchShowStorageClassTransitions(ctx context.Context) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	timeZoneSetup := sqlexec.ExecOptionWithSessionVarsSetup(
+		storageClassTransitionTimeZoneSetup(e.Ctx().GetSessionVars().Location()))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{timeZoneSetup},
+		`SELECT * FROM information_schema.tikv_storage_class_transitions`)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	for _, row := range rows {
+		if checker != nil && !checker.RequestVerification(
+			e.Ctx().GetSessionVars().ActiveRoles,
+			strings.ToLower(row.GetString(0)),
+			strings.ToLower(row.GetString(1)),
+			"",
+			mysql.AllPrivMask,
+		) {
+			continue
+		}
+		e.result.AppendRow(row)
+	}
+	return nil
+}
+
+func storageClassTransitionTimeZoneSetup(location *time.Location) sqlexec.SessionVarsSetup {
+	return func(vars *variable.SessionVars) func() {
+		originalTimeZone := vars.TimeZone
+		vars.TimeZone = location
+		return func() {
+			vars.TimeZone = originalTimeZone
+		}
+	}
 }
 
 // visibleChecker checks if a stmt is visible for a certain user.
@@ -1432,81 +1470,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	var parse *parser.Parser
-	// Show table region split policy
-	if tableInfo.TableSplitPolicy != nil {
-		parse = parser.New()
-		buf.WriteString("\n/*T![region_split] ")
-		buf.WriteString("SPLIT BETWEEN (")
-
-		policy := tableInfo.TableSplitPolicy
-
-		for i, val := range policy.Lower {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		buf.WriteString(") AND (")
-
-		for i, val := range policy.Upper {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
-		buf.WriteString(" */")
-	}
-
-	// Show index region split policies
-	for _, indexInfo := range tableInfo.Indices {
-		if indexInfo.RegionSplitPolicy == nil {
-			continue
-		}
-		if parse == nil {
-			parse = parser.New()
-		}
-
-		policy := indexInfo.RegionSplitPolicy
-		buf.WriteString("\n/*T![region_split] ")
-
-		fmt.Fprintf(buf, "SPLIT ")
-		if indexInfo.Name.O == mysql.PrimaryKeyName {
-			fmt.Fprintf(buf, "PRIMARY KEY ")
-		} else {
-			fmt.Fprintf(buf, "INDEX ")
-		}
-		fmt.Fprintf(buf, "%s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
-
-		for i, val := range policy.Lower {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		buf.WriteString(") AND (")
-
-		for i, val := range policy.Upper {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
-		buf.WriteString(" */")
-	}
-
 	if tableInfo.TTLInfo != nil {
 		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
@@ -1568,6 +1531,95 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+
+	// Region split policies follow the partition clause in the CREATE TABLE
+	// grammar: `CreateTableStmt: ... PartitionOpt SplitIndexListOpt ...`.
+	// Emitting them before `PARTITION BY` produces DDL that cannot be parsed
+	// again, so they are appended after the partition info
+	// (https://github.com/pingcap/tidb/issues/71468).
+	return appendRegionSplitPolicies(buf, tableInfo, sqlMode)
+}
+
+// appendRegionSplitPolicies writes the table-level and index-level region split
+// policies of a table using the `SPLIT ...` clause form accepted by the CREATE
+// TABLE grammar.
+func appendRegionSplitPolicies(buf *bytes.Buffer, tableInfo *model.TableInfo, sqlMode mysql.SQLMode) error {
+	var parse *parser.Parser
+	// Show table region split policy
+	if tableInfo.TableSplitPolicy != nil {
+		parse = parser.New()
+		buf.WriteString("\n/*T![region_split] ")
+		buf.WriteString("SPLIT BETWEEN (")
+
+		policy := tableInfo.TableSplitPolicy
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
+
+	// Show index region split policies
+	for _, indexInfo := range tableInfo.Indices {
+		if indexInfo.RegionSplitPolicy == nil {
+			continue
+		}
+		if parse == nil {
+			parse = parser.New()
+		}
+
+		policy := indexInfo.RegionSplitPolicy
+		buf.WriteString("\n/*T![region_split] ")
+
+		// Note: the primary key branch of the region split policy grammar does not
+		// accept an index name, so only non-PRIMARY indexes are emitted as
+		// `SPLIT INDEX <name>`.
+		if indexInfo.Name.O == mysql.PrimaryKeyName {
+			buf.WriteString("SPLIT PRIMARY KEY BETWEEN (")
+		} else {
+			fmt.Fprintf(buf, "SPLIT INDEX %s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
+		}
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
+
 	return nil
 }
 
@@ -1887,7 +1939,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	if len(rows) == 0 {
 		// FIXME: the error returned is not escaped safely
 		return exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
-			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
+			fmt.Sprintf("'%s'@'%s'", userName, hostName))
 	}
 
 	authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
@@ -1984,9 +2036,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
-	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	// FIXME: authPlugin, authData, tokenIssuer, and userAttributes are not escaped safely.
+	account := stringutil.Escape(userName, sessVars.SQLMode) + "@" +
+		stringutil.Escape(hostName, sessVars.SQLMode)
+	showStr := fmt.Sprintf("CREATE USER %s IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		account, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }
@@ -2231,9 +2285,9 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
+	storeCodec := e.Ctx().GetStore().GetCodec()
 	for idx, pid := range physicalIDs {
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+		startKey, endKey := storeCodec.EncodeRegionRange(tablecodec.GenTablePrefix(pid), tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
 		resp, err = infosync.GetRegionDistributionByKeyRange(ctx, startKey, endKey, "")
 		if err != nil {
@@ -2632,11 +2686,23 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 		}
 		jobs = append(jobs, job)
 	}
+	keyspaceID, inKeyspace := distributionKeyspaceID(e.Ctx().GetStore())
+	fillJob := func(job map[string]any) error {
+		alias := job["alias"].(string)
+		if inKeyspace {
+			var visible bool
+			// only show the jobs of the current keyspace.
+			if alias, visible = trimDistributionAliasKeyspace(alias, keyspaceID); !visible {
+				return nil
+			}
+		}
+		return fillDistributionJobToChunk(ctx, job, alias, e.result)
+	}
 	if e.DistributionJobID != nil {
 		for _, job := range jobs {
 			jobID, ok := job["job-id"].(float64)
 			if ok && *e.DistributionJobID == int64(jobID) {
-				if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+				if err := fillJob(job); err != nil {
 					return err
 				}
 				break
@@ -2644,7 +2710,7 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 		}
 	} else {
 		for _, job := range jobs {
-			if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+			if err := fillJob(job); err != nil {
 				return err
 			}
 		}
@@ -2652,10 +2718,10 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 	return nil
 }
 
-// fillDistributionJobToChunk fills the distribution job to the chunk
-func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) error {
-	// alias is {db_name}.{table_name}.{partition_name}
-	alias := strings.Split(job["alias"].(string), ".")
+// fillDistributionJobToChunk fills the distribution job to the chunk.
+// jobAlias is {db_name}.{table_name}.{partition_name} without the keyspace ID prefix.
+func fillDistributionJobToChunk(ctx context.Context, job map[string]any, jobAlias string, result *chunk.Chunk) error {
+	alias := strings.Split(jobAlias, ".")
 	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
 	if len(alias) != 3 {
 		return errs.ErrClientProtoUnmarshal.FastGenByArgs(fmt.Sprintf("alias:%s is invalid", job["alias"].(string)))

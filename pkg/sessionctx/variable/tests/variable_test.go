@@ -70,6 +70,24 @@ func TestSysVar(t *testing.T) {
 	f = variable.GetSysVar("tidb_enable_vectorized_expression")
 	require.Equal(t, "ON", f.Value)
 
+	f = variable.GetSysVar(vardef.TiDBEnableTiKVShortCircuitExpression)
+	require.NotNil(t, f)
+	require.True(t, f.HasGlobalScope())
+	require.True(t, f.HasSessionScope())
+	require.True(t, f.IsHintUpdatableVerified)
+	require.Equal(t, vardef.TypeBool, f.Type)
+	require.Equal(t, vardef.Off, f.Value)
+
+	vars := variable.NewSessionVars(nil)
+	require.False(t, vars.EnableTiKVShortCircuitExpression)
+	require.False(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+	require.NoError(t, f.SetSessionFromHook(vars, vardef.On))
+	require.True(t, vars.EnableTiKVShortCircuitExpression)
+	require.True(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+	require.NoError(t, f.SetSessionFromHook(vars, vardef.Off))
+	require.False(t, vars.EnableTiKVShortCircuitExpression)
+	require.False(t, vars.StmtCtx.EnableTiKVShortCircuitExpression)
+
 	autoBuildStats := variable.GetSysVar(vardef.TiDBAutoBuildStatsConcurrency)
 	require.NotNil(t, autoBuildStats)
 	buildStats := variable.GetSysVar(vardef.TiDBBuildStatsConcurrency)
@@ -720,9 +738,28 @@ func TestTimeValidationWithTimezone(t *testing.T) {
 }
 
 func TestOrderByDependency(t *testing.T) {
+	for _, pair := range []struct{ charset, collation string }{
+		{vardef.CharacterSetConnection, vardef.CollationConnection},
+		{vardef.CharsetDatabase, vardef.CollationDatabase},
+		{vardef.CharacterSetServer, vardef.CollationServer},
+	} {
+		t.Run(pair.charset, func(t *testing.T) {
+			vars := map[string]string{pair.charset: "utf8mb4", pair.collation: "utf8mb4_general_ci"}
+			// Repeat to exercise different map iteration orders.
+			for range 100 {
+				names := variable.OrderByDependency(vars)
+				require.Less(t, slices.Index(names, pair.charset), slices.Index(names, pair.collation))
+			}
+		})
+	}
 	// Some other exceptions:
 	// - tidb_snapshot and tidb_read_staleness can not be set at the same time. It doesn't affect dependency.
 	vars := map[string]string{
+		vardef.TimeZone:                                "+08:00",
+		vardef.TiDBTxnReadTS:                           "2020-01-02 03:04:05",
+		vardef.TiDBSkipIsolationLevelCheck:             "1",
+		vardef.TxnIsolation:                            "SERIALIZABLE",
+		vardef.TransactionIsolation:                    "SERIALIZABLE",
 		"unknown":                                      "1",
 		vardef.TxReadOnly:                              "1",
 		vardef.SQLAutoIsNull:                           "1",
@@ -734,6 +771,9 @@ func TestOrderByDependency(t *testing.T) {
 		vardef.TiDBEnableHistoricalStats:               "1",
 	}
 	names := variable.OrderByDependency(vars)
+	require.Less(t, slices.Index(names, vardef.TimeZone), slices.Index(names, vardef.TiDBTxnReadTS))
+	require.Less(t, slices.Index(names, vardef.TiDBSkipIsolationLevelCheck), slices.Index(names, vardef.TxnIsolation))
+	require.Less(t, slices.Index(names, vardef.TiDBSkipIsolationLevelCheck), slices.Index(names, vardef.TransactionIsolation))
 	require.Greater(t, slices.Index(names, vardef.TxReadOnly), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.SQLAutoIsNull), slices.Index(names, vardef.TiDBEnableNoopFuncs))
 	require.Greater(t, slices.Index(names, vardef.TiDBEnforceMPPExecution), slices.Index(names, vardef.TiDBAllowMPPExecution))

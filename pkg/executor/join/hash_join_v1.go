@@ -175,6 +175,11 @@ func (e *HashJoinV1Exec) Close() error {
 	if e.stats != nil && e.RowContainer != nil {
 		e.stats.hashStat = *e.RowContainer.stat
 	}
+	defer func() {
+		for _, w := range e.ProbeWorkers {
+			w.Joiner.registerJoinedRows(e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl, e.ID())
+		}
+	}()
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
@@ -219,6 +224,9 @@ func (e *HashJoinV1Exec) OpenSelf() error {
 	e.closeCh = make(chan struct{})
 	e.finished.Store(false)
 
+	for _, w := range e.ProbeWorkers {
+		w.Joiner.resetJoinedRows(e.RuntimeStats() != nil)
+	}
 	if e.RuntimeStats() != nil {
 		e.stats = &hashJoinRuntimeStats{
 			concurrent: int(e.Concurrency),
@@ -1147,6 +1155,10 @@ func (e *HashJoinV1Exec) handleFetchAndBuildHashTablePanic(r any) {
 }
 
 func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
+	if e.hashStateStats != nil {
+		// A parent may cancel the fetcher after some lookup entries were built.
+		defer func() { e.hashStateStats.AddRows(e.RowContainer.hashStateRows()) }()
+	}
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
@@ -1185,10 +1197,6 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 		if err = <-fetchBuildSideRowsOk; err != nil {
 			e.buildFinished <- err
 		}
-	}
-	if err == nil && e.hashStateStats != nil {
-		e.hashStateStats.AddRows(e.RowContainer.hashStateRows())
-		e.hashStateStats.Complete()
 	}
 }
 

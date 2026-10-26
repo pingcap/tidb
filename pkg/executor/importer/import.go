@@ -192,6 +192,7 @@ var (
 	}
 
 	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		diskQuotaOption:       {},
 		threadOption:          {},
 		disablePrecheckOption: {},
 	}
@@ -1268,17 +1269,11 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
+	u, _, err2 := e.parseDataSourcePath()
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
+		return err2
 	}
 
-	if objstore.IsLocal(u) {
-		u.Path = filepath.Dir(e.Path)
-	} else {
-		u.Path = ""
-	}
 	s, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
 	if err != nil {
 		return err
@@ -1291,6 +1286,111 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 			return err3
 		}
 		e.globalSortStore = store
+	}
+	return nil
+}
+
+// parseDataSourcePath parses e.Path and returns the URL of the storage holding
+// the data source, together with the file name or glob pattern to look for in
+// that storage.
+//
+// For local path, the returned URL points to the parent directory and the file
+// name is the base name, so that importing from server disk is confined to the
+// requested file or pattern. For remote storage, the file name is the object
+// path without the leading slash.
+func (e *LoadDataController) parseDataSourcePath() (*url.URL, string, error) {
+	u, err := objstore.ParseRawURL(e.Path)
+	if err != nil {
+		return nil, "", exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err.Error())
+	}
+
+	var fileNameKey string
+	if objstore.IsLocal(u) {
+		u.Path = filepath.Dir(e.Path)
+		fileNameKey = filepath.Base(e.Path)
+	} else {
+		fileNameKey = strings.Trim(u.Path, "/")
+		u.Path = ""
+	}
+	return u, fileNameKey, nil
+}
+
+// checkDataSourceGlob checks that the file name or glob pattern of the data
+// source is well-formed.
+func checkDataSourceGlob(fileNameKey string) error {
+	// matching an empty name is enough to detect a malformed pattern.
+	if _, err := filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), ""); err != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			"Glob pattern error: "+err.Error())
+	}
+	return nil
+}
+
+// CheckDataSourceAccess checks whether the data source can be accessed without
+// discovering all matching files. It is used before submitting a task whose
+// full file discovery runs asynchronously.
+//
+// It is only called by CheckRequirementsBeforeInitDataFiles, i.e. on the
+// NextGen async-prepare path, where the import uses global sort and the data
+// source is on cloud storage (import from server disk is rejected when SEM is
+// enabled). Credentials of such a data source normally grant access to the
+// whole directory rather than to individual files, so probing a single object
+// is a good enough access check: matching, empty-file validation and size
+// limits are still done by the asynchronous prepare.
+func (e *LoadDataController) CheckDataSourceAccess(ctx context.Context) error {
+	u, fileNameKey, err := e.parseDataSourcePath()
+	if err != nil {
+		return err
+	}
+	// Check malformed glob patterns before probing the store.
+	if err = checkDataSourceGlob(fileNameKey); err != nil {
+		return err
+	}
+
+	sourceStore, err := initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	defer sourceStore.Close()
+
+	idx := strings.IndexAny(fileNameKey, "*[")
+	if idx == -1 {
+		reader, err := sourceStore.Open(ctx, fileNameKey, nil)
+		if err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+				errors.GetErrStackMsg(err), "Please check the file location is correct")
+		}
+		terror.Log(reader.Close())
+		return nil
+	}
+
+	commonPrefix := ""
+	if !objstore.IsLocal(u) {
+		commonPrefix = fileNameKey[:idx]
+	}
+	// Keep the default page size: a page can contain entries that are not
+	// openable files, such as s3's empty directory items, and a smaller page
+	// size would make us issue one list request per skipped entry before
+	// finding one.
+	err = sourceStore.WalkDir(ctx, &storeapi.WalkOption{
+		ObjPrefix:  commonPrefix,
+		SkipSubDir: true,
+	}, func(remotePath string, _ int64) error {
+		reader, err := sourceStore.Open(ctx, remotePath, nil)
+		if err != nil {
+			return err
+		}
+		terror.Log(reader.Close())
+		// Stop after the first object. File matching and complete discovery are
+		// intentionally deferred to asynchronous prepare. The object opened here
+		// does not have to match the pattern: credentials of a cloud data source
+		// normally cover the whole directory, so any object in it is readable.
+		return io.EOF
+	})
+	if err != nil && errors.Cause(err) != io.EOF {
+		return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(
+			errors.GetErrStackMsg(err), "failed to access data source")
 	}
 	return nil
 }
@@ -1463,13 +1563,11 @@ func (r *compressionEstimator) estimate(
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, err2 := objstore.ParseRawURL(e.Path)
+	u, fileNameKey, err2 := e.parseDataSourcePath()
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			err2.Error())
+		return err2
 	}
 
-	var fileNameKey string
 	if objstore.IsLocal(u) {
 		// LOAD DATA don't support server file.
 		if !e.InImportInto {
@@ -1493,16 +1591,10 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				err.Error())
 		}
-
-		fileNameKey = filepath.Base(e.Path)
-	} else {
-		fileNameKey = strings.Trim(u.Path, "/")
 	}
 	// try to find pattern error in advance
-	_, err2 = filepath.Match(stringutil.EscapeGlobQuestionMark(fileNameKey), "")
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
-			"Glob pattern error: "+err2.Error())
+	if err2 = checkDataSourceGlob(fileNameKey); err2 != nil {
+		return err2
 	}
 
 	if err2 = e.InitDataStore(ctx); err2 != nil {

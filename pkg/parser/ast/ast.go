@@ -232,6 +232,12 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "DropMaterializedView"
 	case *DropMaterializedViewLogStmt:
 		return "DropMaterializedViewLog"
+	case *PurgeMaterializedViewLogStmt:
+		return "PurgeMaterializedViewLog"
+	case *RefreshMaterializedViewStmt:
+		return "RefreshMaterializedView"
+	case *CancelMaterializedViewJobStmt:
+		return "CancelMaterializedViewJob"
 	case *ExplainStmt:
 		if _, ok := x.Stmt.(*ShowStmt); ok {
 			return "DescTable"
@@ -285,6 +291,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Savepoint"
 	case *OptimizeTableStmt:
 		return "Optimize"
+	case *RecommendIndexStmt:
+		return RecommendIndexStmtLabel
 	}
 	return "other"
 }

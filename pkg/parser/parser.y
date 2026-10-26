@@ -349,6 +349,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	any                        "ANY"
 	apply                      "APPLY"
 	ascii                      "ASCII"
+	async                      "ASYNC"
 	attribute                  "ATTRIBUTE"
 	attributes                 "ATTRIBUTES"
 	auto                       "AUTO"
@@ -401,6 +402,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	commit                     "COMMIT"
 	committed                  "COMMITTED"
 	compact                    "COMPACT"
+	complete                   "COMPLETE"
 	compressed                 "COMPRESSED"
 	compression                "COMPRESSION"
 	compressionLevel           "COMPRESSION_LEVEL"
@@ -429,6 +431,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	declare                    "DECLARE"
 	definer                    "DEFINER"
 	delayKeyWrite              "DELAY_KEY_WRITE"
+	delta                      "DELTA"
 	digest                     "DIGEST"
 	directory                  "DIRECTORY"
 	disable                    "DISABLE"
@@ -584,6 +587,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	percent                    "PERCENT"
 	per_db                     "PER_DB"
 	per_table                  "PER_TABLE"
+	place                      "PLACE"
 	pipesAsOr
 	plugins                    "PLUGINS"
 	point                      "POINT"
@@ -623,8 +627,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	restart                    "RESTART"
 	restore                    "RESTORE"
 	restores                   "RESTORES"
+	result                     "RESULT"
 	resume                     "RESUME"
 	retain                     "RETAIN"
+	returnKwd                  "RETURN"
 	returning                  "RETURNING"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
@@ -714,6 +720,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	traditional                "TRADITIONAL"
 	transaction                "TRANSACTION"
 	transactional              "TRANSACTIONAL"
+	transitions                "TRANSITIONS"
 	triggers                   "TRIGGERS"
 	truncate                   "TRUNCATE"
 	tsoType                    "TSO"
@@ -1050,6 +1057,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	AlterMaterializedViewLogStmt  "ALTER MATERIALIZED VIEW LOG statement"
 	DropMaterializedViewStmt      "DROP MATERIALIZED VIEW statement"
 	DropMaterializedViewLogStmt   "DROP MATERIALIZED VIEW LOG statement"
+	PurgeMaterializedViewLogStmt  "PURGE MATERIALIZED VIEW LOG statement"
+	CancelMaterializedViewJobStmt "CANCEL MATERIALIZED VIEW LOG PURGE JOB statement"
+	RefreshMaterializedViewStmt   "REFRESH MATERIALIZED VIEW statement"
 	CreateUserStmt                "CREATE User statement"
 	CreateRoleStmt                "CREATE Role statement"
 	CreateDatabaseStmt            "Create Database Statement"
@@ -1231,6 +1241,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	ConstraintColumnarIndex                "columnar index"
 	ConstraintWithColumnarIndex            "table constraint with columnar index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
+	CreateSequenceTableOptionListOpt       "create sequence table option list opt"
+	CreateTableOption                      "CREATE TABLE-specific option"
+	CreateTableOptionList                  "CREATE TABLE-specific option list"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
 	DatabaseOption                         "CREATE Database specification"
@@ -1529,6 +1542,9 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
+	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
+	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
+	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -3757,6 +3773,26 @@ AnalyzeOption:
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate, Value: ast.NewValueExpr($1, "", "")}
 	}
+|	"DEFAULT" "BUCKETS"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumBuckets}
+	}
+|	"DEFAULT" "TOPN"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumTopN}
+	}
+|	"DEFAULT" "SAMPLES"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNumSamples}
+	}
+|	"DEFAULT" "SAMPLERATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
+	}
+|	"DEFAULT" "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate}
+	}
 
 /*******************************************************************************************/
 Assignment:
@@ -5615,6 +5651,12 @@ ViewCheckOption:
 	{
 		$$ = nil
 	}
+|	"WITH" "CHECK" "OPTION"
+	{
+		// Omitting the CASCADED or LOCAL qualifier is equivalent to CASCADED.
+		// See https://dev.mysql.com/doc/refman/5.7/en/create-view.html
+		$$ = ast.CheckOptionCascaded
+	}
 |	"WITH" "CASCADED" "CHECK" "OPTION"
 	{
 		$$ = ast.CheckOptionCascaded
@@ -5951,6 +5993,77 @@ DropMaterializedViewLogStmt:
 	"DROP" "MATERIALIZED" "VIEW" "LOG" IfExists "ON" TableName
 	{
 		$$ = &ast.DropMaterializedViewLogStmt{IfExists: $5.(bool), Table: $7.(*ast.TableName)}
+	}
+
+PurgeMaterializedViewLogStmt:
+	"PURGE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	{
+		$$ = &ast.PurgeMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
+	}
+
+CancelMaterializedViewJobStmt:
+	"CANCEL" "MATERIALIZED" "VIEW" "REFRESH" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{Tp: ast.CancelMaterializedViewJobTypeRefresh, JobID: $6.(int64)}
+	}
+|	"CANCEL" "MATERIALIZED" "VIEW" "LOG" "PURGE" "JOB" Int64Num
+	{
+		$$ = &ast.CancelMaterializedViewJobStmt{
+			Tp:    ast.CancelMaterializedViewJobTypeLogPurge,
+			JobID: $7.(int64),
+		}
+	}
+
+RefreshMaterializedViewStmt:
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteMode RefreshMaterializedViewObserveOpt
+	{
+		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithAsyncMode: $5.(bool), Type: ast.RefreshMaterializedViewTypeComplete, CompleteType: $7.(ast.RefreshMaterializedViewCompleteType), ObserveType: $8.(ast.RefreshMaterializedViewObserveType)}
+	}
+|	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "FAST" AsOfClauseOpt RefreshMaterializedViewObserveOpt
+	{
+		var asOf *ast.AsOfClause
+		if $7 != nil {
+			asOf = $7.(*ast.AsOfClause)
+		}
+		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithAsyncMode: $5.(bool), Type: ast.RefreshMaterializedViewTypeFast, CompleteType: ast.RefreshMaterializedViewCompleteTypeInPlace, AsOf: asOf, ObserveType: $8.(ast.RefreshMaterializedViewObserveType)}
+	}
+
+RefreshMaterializedViewObserveOpt:
+	/* EMPTY */
+	{
+		$$ = ast.RefreshMaterializedViewObserveNone
+	}
+|	"DRY" "RUN"
+	{
+		$$ = ast.RefreshMaterializedViewObserveDryRun
+	}
+|	"WITH" "PROFILE"
+	{
+		$$ = ast.RefreshMaterializedViewObserveProfile
+	}
+
+RefreshWithAsyncModeOpt:
+	/* EMPTY */
+	{
+		$$ = false
+	}
+|	"WITH" "ASYNC" "MODE"
+	{
+		$$ = true
+	}
+
+RefreshCompleteMode:
+	"IN" "PLACE"
+	{
+		$$ = ast.RefreshMaterializedViewCompleteTypeInPlace
+	}
+|	"OUT" "OF" "PLACE"
+	{
+		$$ = ast.RefreshMaterializedViewCompleteTypeOutOfPlace
+	}
+|	"DELTA" "APPLY"
+	{
+		$$ = ast.RefreshMaterializedViewCompleteTypeDeltaApply
 	}
 
 /******************************************************************
@@ -7700,6 +7813,7 @@ UnReservedKeyword:
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
 |	"AUTO"
+|	"ASYNC"
 |	"AFFINITY"
 |	"AFTER"
 |	"ALERT"
@@ -7723,12 +7837,14 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
 |	"CONSISTENT"
 |	"CURRENT"
 |	"DATA"
 |	"DATE" %prec lowerThanStringLitToken
+|	"DELTA"
 |	"DATETIME"
 |	"DAY"
 |	"DEALLOCATE"
@@ -7743,6 +7859,7 @@ UnReservedKeyword:
 |	"ENGINE_ATTRIBUTE"
 |	"SECONDARY_ENGINE_ATTRIBUTE"
 |	"STORAGE_CLASS"
+|	"TRANSITIONS"
 |	"ENUM"
 |	"ERROR"
 |	"ERRORS"
@@ -7937,6 +8054,7 @@ UnReservedKeyword:
 |	"CONTEXT"
 |	"SWITCHES"
 |	"PAGE"
+|	"PLACE"
 |	"FAULTS"
 |	"IPC"
 |	"SWAPS"
@@ -8047,6 +8165,8 @@ UnReservedKeyword:
 |	"PERCENT"
 |	"PAUSE"
 |	"RESUME"
+|	"RESULT"
+|	"RETURN"
 |	"RETURNING"
 |	"OFF"
 |	"OPTIONAL"
@@ -12980,6 +13100,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowEngines}
 	}
+|	"STORAGE_CLASS" "TRANSITIONS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowStorageClassTransitions}
+	}
 |	"DATABASES"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowDatabases}
@@ -13492,8 +13616,11 @@ Statement:
 |	CreateStatisticsStmt
 |	DistributeTableStmt
 |	DoStmt
+|	RefreshMaterializedViewStmt
 |	DropMaterializedViewStmt
 |	DropMaterializedViewLogStmt
+|	PurgeMaterializedViewLogStmt
+|	CancelMaterializedViewJobStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
@@ -14056,7 +14183,32 @@ CreateTableOptionListOpt:
 	{
 		$$ = []*ast.TableOption{}
 	}
-|	TableOptionList %prec lowerThanComma
+|	CreateTableOptionList %prec lowerThanComma
+
+CreateTableOptionList:
+	CreateTableOption
+	{
+		$$ = []*ast.TableOption{$1.(*ast.TableOption)}
+	}
+|	CreateTableOptionList CreateTableOption
+	{
+		$$ = append($1.([]*ast.TableOption), $2.(*ast.TableOption))
+	}
+|	CreateTableOptionList ',' CreateTableOption
+	{
+		$$ = append($1.([]*ast.TableOption), $3.(*ast.TableOption))
+	}
+
+CreateTableOption:
+	TableOption
+|	"START" "TRANSACTION"
+	{
+		if !parser.enableUnsupportedMySQLSyntax {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionStartTransaction}
+	}
 
 TableOptionList:
 	TableOption
@@ -14071,6 +14223,13 @@ TableOptionList:
 	{
 		$$ = append($1.([]*ast.TableOption), $3.(*ast.TableOption))
 	}
+
+CreateSequenceTableOptionListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
+	{
+		$$ = []*ast.TableOption{}
+	}
+|	TableOptionList %prec lowerThanComma
 
 OptTable:
 	{}
@@ -15750,10 +15909,20 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
+	"RECOMMEND" "INDEX" "RETURN" "RESULT" "FOR" stringLit RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "run",
+			Action:  ast.RecommendIndexActionReturn,
+			SQL:     $6,
+			Options: $7.([]ast.RecommendIndexOption),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
+	{
+		x := &ast.RecommendIndexStmt{
+			Action:  ast.RecommendIndexActionRun,
 			SQL:     $5,
 			Options: $6.([]ast.RecommendIndexOption),
 		}
@@ -15763,7 +15932,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "RUN" RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "run",
+			Action:  ast.RecommendIndexActionRun,
 			Options: $4.([]ast.RecommendIndexOption),
 		}
 
@@ -15772,7 +15941,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "SHOW" "OPTION"
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "show",
+			Action: ast.RecommendIndexActionShow,
 		}
 
 		$$ = x
@@ -15780,7 +15949,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "APPLY" NUM
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "apply",
+			Action: ast.RecommendIndexActionApply,
 			ID:     $4.(int64),
 		}
 
@@ -15789,7 +15958,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "IGNORE" NUM
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "ignore",
+			Action: ast.RecommendIndexActionIgnore,
 			ID:     $4.(int64),
 		}
 
@@ -15798,7 +15967,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "SET" RecommendIndexOptionList
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "set",
+			Action:  ast.RecommendIndexActionSet,
 			Options: $4.([]ast.RecommendIndexOption),
 		}
 
@@ -17039,7 +17208,7 @@ AlterPolicyStmt:
  *	[table_options]
  ********************************************************************************************/
 CreateSequenceStmt:
-	"CREATE" "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateTableOptionListOpt
+	"CREATE" "SEQUENCE" IfNotExists TableName CreateSequenceOptionListOpt CreateSequenceTableOptionListOpt
 	{
 		$$ = &ast.CreateSequenceStmt{
 			IfNotExists: $3.(bool),

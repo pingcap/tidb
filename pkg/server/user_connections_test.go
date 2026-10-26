@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/arena"
@@ -49,7 +49,7 @@ func TestUserConnectionCount(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "zak",
 	}

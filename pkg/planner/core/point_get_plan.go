@@ -1469,22 +1469,28 @@ func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.Physical
 }
 
 // TODO: Remove this, by enabling all types of partitioning
-// and update/add tests
-func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *ast.CIStr {
-	pi := tbl.GetPartitionInfo()
+// and update/add tests.
+func getHashOrKeyPartitionColumnName(tbl table.Table) *ast.CIStr {
+	if tbl == nil {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo == nil {
+		return nil
+	}
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
 	if pi.Type != ast.PartitionTypeHash && pi.Type != ast.PartitionTypeKey {
 		return nil
 	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(context.Background(), tbl.ID)
+	partTable, ok := tbl.(base.PartitionTable)
 	if !ok {
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(base.PartitionTable).PartitionExpr()
+	partitionExpr := partTable.PartitionExpr()
 	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {
