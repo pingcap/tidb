@@ -1603,16 +1603,12 @@ impl Session {
                     }
                     Some(tidb_ast::ShowDatabasesFilter::Where(expr)) => (None, Some(expr)),
                 };
-                let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
-                // Go `fetchShowDatabases` (`executor/show.go` around line
-                // 462): one `DBIsVisible` per schema, so an account sees
-                // only what it holds some evidence for -- plus
-                // `information_schema`, which is visible to everyone and is
-                // already first in `database_names`.
-                let names = names
-                    .into_iter()
-                    .filter(|name| self.database_is_visible(name))
-                    .collect();
+                let names = {
+                    let catalog = self.shared_catalog();
+                    let catalog =
+                        catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    tidb_executor::show::fetch_show_databases(self, &catalog)
+                };
                 let column_name = like_pattern.as_ref().map_or_else(
                     || "Database".into(),
                     |pattern| pattern.column_name("Database"),

@@ -84,3 +84,13 @@ pub fn fetch_show_variables(
     }
     rows
 }
+
+/// Go `ShowExec.fetchShowDatabases`: every schema the session can see (one
+/// `DBIsVisible` per schema), `information_schema` first as the schema lists
+/// it.
+pub fn fetch_show_databases(ctx: &dyn SessionContext, is: &crate::Catalog) -> Vec<String> {
+    is.database_names()
+        .into_iter()
+        .filter(|name| ctx.privilege_manager().db_is_visible(name))
+        .collect()
+}
