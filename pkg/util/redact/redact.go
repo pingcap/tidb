@@ -255,6 +255,12 @@ func (t TaskInfoRedacted) String() string {
 					s3Copy.SessionToken = "[REDACTED]"
 				}
 				s3Copy.SseKmsKeyId = "[REDACTED]"
+				if s3Copy.SessionToken != "" {
+					s3Copy.SessionToken = "[REDACTED]"
+				}
+				if s3Copy.SseKmsEncryptionContext != "" {
+					s3Copy.SseKmsEncryptionContext = "[REDACTED]"
+				}
 				storageCopy.Backend = &backup.StorageBackend_S3{S3: &s3Copy}
 			}
 

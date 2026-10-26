@@ -27,6 +27,8 @@ Hard requirements remain in the repository root `AGENTS.md`.
 - Typical changes: runtime operator semantics, builtin behavior, evaluation edge cases.
 - First tests to inspect:
   - package unit tests under the same path
+  - `pkg/executor/test/materializedview/` for materialized view refresh
+  - `pkg/executor/test/materializedviewlog/` for materialized view log purge and related checks
   - SQL integration tests for user-visible behavior
 
 ### Session, variables, protocol

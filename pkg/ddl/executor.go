@@ -8023,8 +8023,9 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	// KILL can cancel this DDL job.
 	ctx.GetSessionVars().StmtCtx.DDLJobID = jobID
 
-	// For a job from start to end, the state of it will be none -> delete only -> write only -> reorganization -> public
-	// For every state changes, we will wait as lease 2 * lease time, so here the ticker check is 10 * lease.
+	// A DDL job may pass through several schema states, depending on its action.
+	// Without MDL, each state change may wait up to 2 * lease for schema sync; with
+	// MDL, it waits until MDL synchronization completes. The ticker is capped at 10 * lease.
 	// But we use etcd to speed up, normally it takes less than 0.5s now, so we use 0.5s or 1s or 3s as the max value.
 	initInterval, _ := getJobCheckInterval(ddlAction, 0)
 	ticker := time.NewTicker(chooseLeaseTime(10*e.lease, initInterval))
