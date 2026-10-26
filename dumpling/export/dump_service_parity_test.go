@@ -49,6 +49,46 @@ func TestDumpServiceMatchesSQLDump(t *testing.T) {
 	server := servertestkit.CreateTidbTestSuite(t)
 	t.Run("types", func(t *testing.T) { testDumpServiceColumnTypes(t, server) })
 	t.Run("generated", func(t *testing.T) { testDumpServiceGeneratedColumns(t, server) })
+	t.Run("preamble", func(t *testing.T) { testDumpServiceSQLPreamble(t, server) })
+}
+
+// Compare import-session settings in every SQL data and schema file against a
+// normal MySQL-protocol export, regardless of the number of data chunks.
+func testDumpServiceSQLPreamble(t *testing.T, server *servertestkit.TidbTestSuite) {
+	db, err := sql.Open("mysql", server.GetDSN())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	dbt := testkit.NewDBTestKit(t, db)
+	dbt.MustExec("create database parity")
+	t.Cleanup(func() { dbt.MustExec("drop database parity") })
+	dbt.MustExec("create table parity.t (id int primary key)")
+	dbt.MustExec("insert into parity.t values (1), (2)")
+
+	format := dumpServiceParityFormat{
+		fileType: FileFormatSQLTextString,
+		read: func(t *testing.T, dir string) []string {
+			t.Helper()
+			paths := parityDataFiles(t, dir, ".sql")
+			require.NotEmpty(t, paths, "the export must contain SQL data files")
+			paths = append(paths, filepath.Join(dir, "parity-schema-create.sql"), filepath.Join(dir, "parity.t-schema.sql"))
+			var preamble string
+			for _, path := range paths {
+				content, err := os.ReadFile(path)
+				require.NoError(t, err)
+				lines := strings.SplitN(string(content), "\n", 3)
+				require.Len(t, lines, 3, path)
+				require.True(t, strings.HasPrefix(lines[0], "/*!"), "missing SQL preamble in %s", path)
+				header := strings.Join(lines[:2], "\n")
+				if preamble == "" {
+					preamble = header
+				}
+				require.Equal(t, preamble, header, path)
+			}
+			return []string{preamble}
+		},
+	}
+	sqlOutput, serviceOutput := dumpParityOutputs(t, server, format, nil, nil)
+	require.Equal(t, sqlOutput, serviceOutput)
 }
 
 // Compare driver-derived types and serialized values, including numeric limits,

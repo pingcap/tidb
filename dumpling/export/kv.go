@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/dumpservice"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -70,18 +71,21 @@ func newKVTableMeta(database string, table *model.TableInfo, createSQL string, i
 	}
 }
 
-func (*kvTableMeta) SpecialComments() StringIter { return newStringIter() }
-func (m *kvTableMeta) DatabaseName() string      { return m.database }
-func (m *kvTableMeta) TableName() string         { return m.table }
-func (m *kvTableMeta) ColumnCount() uint         { return uint(len(m.columns)) }
-func (m *kvTableMeta) ColumnTypes() []string     { return m.types }
-func (m *kvTableMeta) ColumnNames() []string     { return m.names }
-func (m *kvTableMeta) SelectedField() string     { return m.selected }
-func (m *kvTableMeta) SelectedLen() int          { return len(m.columns) }
-func (m *kvTableMeta) ShowCreateTable() string   { return m.create }
-func (*kvTableMeta) ShowCreateView() string      { return "" }
-func (*kvTableMeta) AvgRowLength() uint64        { return 0 }
-func (*kvTableMeta) HasImplicitRowID() bool      { return false }
+func (*kvTableMeta) SpecialComments() StringIter {
+	return newStringIter(getSpecialComments(version.ServerTypeDumpService)...)
+}
+
+func (m *kvTableMeta) DatabaseName() string    { return m.database }
+func (m *kvTableMeta) TableName() string       { return m.table }
+func (m *kvTableMeta) ColumnCount() uint       { return uint(len(m.columns)) }
+func (m *kvTableMeta) ColumnTypes() []string   { return m.types }
+func (m *kvTableMeta) ColumnNames() []string   { return m.names }
+func (m *kvTableMeta) SelectedField() string   { return m.selected }
+func (m *kvTableMeta) SelectedLen() int        { return len(m.columns) }
+func (m *kvTableMeta) ShowCreateTable() string { return m.create }
+func (*kvTableMeta) ShowCreateView() string    { return "" }
+func (*kvTableMeta) AvgRowLength() uint64      { return 0 }
+func (*kvTableMeta) HasImplicitRowID() bool    { return false }
 
 func (m *kvTableMeta) ColumnInfos() []*ColumnInfo {
 	infos := make([]*ColumnInfo, len(m.columns))

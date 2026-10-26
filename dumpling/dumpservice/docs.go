@@ -79,6 +79,9 @@
 // stored calendar fields. The output does not set the importing session's time
 // zone; configure the importing tool to interpret TIMESTAMP values as UTC.
 //
+// SQL schema and data files carry the ordinary TiDB preamble, which disables
+// FOREIGN_KEY_CHECKS and sets NAMES binary in the importing session.
+//
 // # Export lifecycle
 //
 // Service exports use Dumpling's ordinary task writers, progress reporting, and

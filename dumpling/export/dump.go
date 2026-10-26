@@ -134,6 +134,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	})
 
 	if conf.DumpService != "" {
+		conf.ServerInfo = version.ServerInfo{ServerType: version.ServerTypeDumpService}
 		err = runSteps(d,
 			initLogger,
 			createExternalStore,
