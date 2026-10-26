@@ -69,7 +69,10 @@ Each stage is a sequence of commits on `hparser-integration`; a failed gate mean
 - [x] (2026-10-26) Branch reset to `ngaut/hparser-integration` (`622891acc5`); the lost Milestone W commits were redone from the transcript as far as W1 and W2 (`558eb81928`).
 - [x] (2026-10-26) Full top-down picture recorded (this document).
 - [x] Stage 1: one `execute_stmt` on `QuerySession` (tidb-server 313/313, tidb-session green but the two environment-bound tests; replays deferred to the Stage 2 milestone).
-- [ ] Stage 2: one session.
+- [x] (2026-10-26) Stage 2a-2c: one statement body (`7d7e60dd64`), internal SQL through `execute_internal`, one connection setup. Stage 2d (merging the four objects) waits for the in-process tier to go.
+- [x] (2026-10-26) The sessionctx seam, bottom first: `tidb_util::tiflashcompute` and `tidb_util::execdetails` (`d088600bd8`); the `tidb-variable` crate (Go `pkg/sessionctx/variable`: sysvar catalog, session_vars, varsutil, slow-log rules, `VarError`, `101b32d758`); `SessionVars` / `GlobalSysvars` / `GlobalVarAccessor` into it, `OomAction` to `tidb-vardef`, `fixcontrol` to `tidb-util`, `tidb-stmtsummary` off `tidb-exec` (`ffb3ff63b4`); 25 `Session` fields that are Go `SessionVars` fields moved onto `SessionVars` (`09b57f5c1a`, `57b76a7a46`). Batch suite: 8438/8440 (the two environment-bound tests).
+- [x] (2026-10-26) Stage 3 starts: the node's `compile` returns Go's plan kind and `execute_stmt` dispatches on it (`9b8ad75031`); `tidb_executor::sessionctx` (Go `sessionctx.Context` + `privilege.Manager`) and `tidb_executor::simple::execute_use`, the first executor moved out of a session arm (`51d5175120`).
+- [ ] Stage 3 next: the rest of the session arms as executors over `SessionContext` (SHOW families, SET, account statements, ADMIN, statistics statements); `VarErrorKind` duplicates `VarError` and goes; the remaining Go `SessionVars` fields whose types still live above `tidb-variable` (`TxnCtx`, local temporary tables, hypothetical indexes, prepared statements, user variables); Go `stmtctx` (Session's statement-scoped fields and the executor's `StmtContext`).
 - [ ] Stage 3: plans and executors for every statement kind.
 - [ ] Stage 4: Milestone W remainder.
 - [ ] Stage 5: the schema snapshot.
