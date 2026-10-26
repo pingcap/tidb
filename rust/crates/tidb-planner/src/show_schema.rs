@@ -738,18 +738,18 @@ mod tests {
     #[test]
     fn resolve_show_stmt_fills_database_and_current_user() {
         let mut tables = ShowStmt::new(ShowStmtType::Tables);
-        crate::preprocess::resolve_show_stmt(&mut tables, "test", None);
+        crate::preprocess::resolve_show_stmt(&mut tables, "test", None).unwrap();
         assert_eq!(column_names(&build_show_schema(&tables, false, false).1), ["Tables_in_test"]);
 
         let mut index = ShowStmt::new(ShowStmtType::Index);
         index.table = Some(vec!["d1".to_owned(), "t".to_owned()]);
-        crate::preprocess::resolve_show_stmt(&mut index, "test", None);
+        crate::preprocess::resolve_show_stmt(&mut index, "test", None).unwrap();
         assert_eq!(index.db_name, "d1");
 
         let mut columns = ShowStmt::new(ShowStmtType::Columns);
         columns.db_name = "d2".to_owned();
         columns.table = Some(vec!["t".to_owned()]);
-        crate::preprocess::resolve_show_stmt(&mut columns, "test", None);
+        crate::preprocess::resolve_show_stmt(&mut columns, "test", None).unwrap();
         assert_eq!(columns.table, Some(vec!["d2".to_owned(), "t".to_owned()]));
 
         let mut grants = ShowStmt::new(ShowStmtType::Grants);
@@ -758,7 +758,7 @@ mod tests {
             user: String::new(),
             host: String::new(),
         });
-        crate::preprocess::resolve_show_stmt(&mut grants, "", Some(("u1", "%")));
+        crate::preprocess::resolve_show_stmt(&mut grants, "", Some(("u1", "%"))).unwrap();
         assert_eq!(column_names(&build_show_schema(&grants, false, false).1), ["Grants for u1@%"]);
     }
 }

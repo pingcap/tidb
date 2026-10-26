@@ -14,9 +14,8 @@
 
 //! `SHOW CREATE PLACEMENT POLICY`.
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::Datum;
 
-use crate::StmtOutput;
 
 /// Go `ShowExec.fetchShowCreatePlacementPolicy` (`executor/show.go:1774`):
 /// one row of the policy's ORIGINAL-cased name and its `CREATE` text.
@@ -26,21 +25,14 @@ use crate::StmtOutput;
 /// is `PlacementSettings.String()`. Go interpolates the name with `%s`
 /// between literal backticks rather than escaping it.
 #[must_use]
-pub(crate) fn output(name: &str, settings_clause: &str) -> StmtOutput {
+pub(crate) fn rows(name: &str, settings_clause: &str) -> Vec<Vec<Datum>> {
     let create = if settings_clause.is_empty() {
         format!("CREATE PLACEMENT POLICY `{name}` ")
     } else {
         format!("CREATE PLACEMENT POLICY `{name}` {settings_clause}")
     };
-    let field_type = FieldType::new(FieldTypeCode::VarString);
-    StmtOutput::Rows {
-        columns: vec![
-            ("Policy".to_owned(), field_type.clone()),
-            ("Create Policy".to_owned(), field_type),
-        ],
-        rows: vec![vec![
-            Datum::Bytes(name.as_bytes().to_vec()),
-            Datum::Bytes(create.into_bytes()),
-        ]],
-    }
+    vec![vec![
+        Datum::Bytes(name.as_bytes().to_vec()),
+        Datum::Bytes(create.into_bytes()),
+    ]]
 }

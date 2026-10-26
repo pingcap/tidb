@@ -1400,10 +1400,10 @@ mod tests {
         let StmtResult::Rows(rows) = session.run("SHOW CREATE TABLE clustered").unwrap() else {
             panic!("expected SHOW CREATE rows");
         };
-        let Datum::Bytes(create) = &rows[0][1] else {
+        let Datum::String(create) = &rows[0][1] else {
             panic!("expected CREATE TABLE text");
         };
-        let create = String::from_utf8_lossy(create);
+        let create = String::from_utf8_lossy(create.bytes());
         assert_eq!(create.matches("PRIMARY KEY").count(), 1, "{create}");
     }
 

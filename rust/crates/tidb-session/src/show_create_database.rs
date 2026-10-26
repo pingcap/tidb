@@ -12,20 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::Datum;
 use tidb_executor::TableCharset;
 
-use crate::StmtOutput;
 
 /// Go `ConstructResultOfShowCreateDatabase`: the name is escaped by the
 /// session's sql_mode (`stringutil.Escape`).
-pub(crate) fn output(
+pub(crate) fn rows(
     database: String,
     charset: TableCharset,
     placement_policy: Option<&str>,
     if_not_exists: bool,
     ansi_quotes: bool,
-) -> StmtOutput {
+) -> Vec<Vec<Datum>> {
     let mut text = String::from("CREATE DATABASE ");
     if if_not_exists {
         text.push_str("IF NOT EXISTS ");
@@ -44,15 +43,8 @@ pub(crate) fn output(
         text.push_str(&tidb_executor::escape_identifier(policy, ansi_quotes));
         text.push_str(" */");
     }
-    let field_type = FieldType::new(FieldTypeCode::VarString);
-    StmtOutput::Rows {
-        columns: vec![
-            ("Database".to_owned(), field_type.clone()),
-            ("Create Database".to_owned(), field_type),
-        ],
-        rows: vec![vec![
-            Datum::Bytes(database.into_bytes()),
-            Datum::Bytes(text.into_bytes()),
-        ]],
-    }
+    vec![vec![
+        Datum::Bytes(database.into_bytes()),
+        Datum::Bytes(text.into_bytes()),
+    ]]
 }

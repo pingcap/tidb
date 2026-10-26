@@ -148,16 +148,22 @@ pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result
     Ok(())
 }
 
-/// Go `preprocessor.resolveShowStmt` (`pkg/planner/core/preprocess.go:2028`):
-/// a SHOW without a database takes its table's schema, else the current
-/// database; one with a database qualifies an unqualified table with it; and
+/// Go `preprocessor.resolveShowStmt` (`pkg/planner/core/preprocess.go:2028`)
+/// and the `handleTableName` the preprocessor then runs on `Table`: a SHOW
+/// without a database takes its table's schema, else the current database;
+/// one with a database qualifies an unqualified table with it;
 /// `CURRENT_USER` becomes the session's authenticated account
-/// (`auth_user`), when the session has one.
+/// (`auth_user`), when the session has one; and a table still unqualified
+/// takes the current database.
+///
+/// # Errors
+///
+/// `ErrNoDB` for an unqualified table with no current database.
 pub fn resolve_show_stmt(
     node: &mut tidb_ast::ShowStmt,
     current_db: &str,
     auth_user: Option<(&str, &str)>,
-) {
+) -> Result<(), PlanError> {
     if node.db_name.is_empty() {
         node.db_name = match node.table.as_deref() {
             Some([schema, _]) if !schema.is_empty() => schema.clone(),
@@ -174,4 +180,13 @@ pub fn resolve_show_stmt(
             user.host = auth_hostname.to_owned();
         }
     }
+    if let Some(table) = node.table.as_mut() {
+        if let [name] = table.as_slice() {
+            if current_db.is_empty() {
+                return Err(PlanError::no_db());
+            }
+            *table = vec![current_db.to_owned(), name.clone()];
+        }
+    }
+    Ok(())
 }

@@ -81,7 +81,8 @@ fn parse_show(sql: &str, current_db: &str) -> tidb_ast::ShowStmt {
         Stmt::Admin(admin) => match admin.into_inner() {
             tidb_ast::AdminStmt::Show(show) => {
                 let mut show = *show;
-                crate::preprocess::resolve_show_stmt(&mut show, current_db, None);
+                crate::preprocess::resolve_show_stmt(&mut show, current_db, None)
+                    .expect("the SHOW preprocesses");
                 show
             }
             other => panic!("expected a SHOW, got {other:?}"),

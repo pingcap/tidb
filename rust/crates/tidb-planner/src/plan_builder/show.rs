@@ -144,6 +144,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 }
             }
             T::CreateTable | T::CreateSequence | T::PlacementForTable | T::PlacementForPartition => {
+                // Go `b.is.TableByName` over the session's infoschema, which
+                // holds views and sequences beside tables (this source keeps
+                // them apart) and in which a local temporary table hides a
+                // persistent object of its name.
                 let mut is_temp_table_local = false;
                 if let Some(table) = self.source.find_table(&schema_l, &table_l) {
                     if let Some(info) = &table.table_info {
@@ -152,6 +156,10 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                         is_sequence = info.is_sequence();
                         is_temp_table_local = info.temp_table_type == TempTableType::LOCAL;
                     }
+                } else if self.source.find_view(&schema_l, &table_l).is_some() {
+                    is_view = true;
+                } else if self.source.find_sequence(&schema_l, &table_l).is_some() {
+                    is_sequence = true;
                 }
                 if is_view {
                     self.append_show_visit(

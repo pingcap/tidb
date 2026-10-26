@@ -772,39 +772,38 @@ impl Session {
     /// preprocessed (`resolveShowStmt`) and planned (`buildShow` and the
     /// optimizer), its `PhysicalShow`'s rows fetched ([`Self::fetch_show`],
     /// Go `ShowExec.fetchAll`), and the plan's selections, limit, projection
-    /// and sort run over them. The catalog is held while planning and
-    /// running, not while fetching: a fetcher takes it as it needs it.
+    /// and sort run over them. Planning and running read the statement's
+    /// catalog (its snapshot and temporary tables); fetching holds none, so
+    /// a fetcher reads it as it needs.
     pub(crate) fn run_planned_show(
         &mut self,
         show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let mut show = show.clone();
         let auth_user = self.vars.current_user.clone().and_then(|identity| {
             identity
                 .split_once('@')
                 .map(|(user, host)| (user.to_owned(), host.to_owned()))
         });
-        tidb_planner::preprocess::resolve_show_stmt(
-            &mut show,
-            &self.vars.current_db,
-            auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
-        );
         let ctx = self.statement_context(false);
         let current_db = self.vars.current_db.clone();
-        let shared = self.shared_catalog();
-        let mut physical = {
-            let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            tidb_executor::driver::plan_show_stmt(&show, &catalog, &current_db, &ctx)?
-        };
+        let mut physical = self.with_catalog_mut(|catalog| {
+            tidb_executor::driver::plan_show_stmt(
+                show,
+                auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
+                catalog,
+                &current_db,
+                &ctx,
+            )
+        })?;
         // A selection the optimizer folded to false leaves no `PhysicalShow`
         // to fetch for, as Go builds no `ShowExec` under a `TableDual`.
         if let Some(leaf) = tidb_executor::driver::physical_show_of(&physical).cloned() {
             let rows = self.fetch_show(&leaf)?;
             ctx.show_retrieval().supply(leaf.base.base.id(), rows);
         }
-        let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (columns, rows) =
-            tidb_executor::driver::open_show_plan(&mut physical, &catalog, &ctx)?.collect()?;
+        let (columns, rows) = self.with_catalog_retrieving(&ctx, |catalog| {
+            tidb_executor::driver::open_show_plan(&mut physical, catalog, &ctx)?.collect()
+        })?;
         Ok(StmtOutput::Rows { columns, rows })
     }
 
@@ -908,6 +907,183 @@ impl Session {
         Ok(rows)
     }
 
+    /// Go `ShowExec.fetchShowCreate{Database,ResourceGroup,PlacementPolicy,
+    /// Table,Sequence,View}`: the one row a SHOW CREATE answers.
+    fn show_create_rows(
+        &mut self,
+        contents: &tidb_planner::logical::ShowContents,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        if contents.tp == tidb_ast::ShowStmtType::CreateDatabase {
+            let database = &contents.db_name;
+            let (reported, charset, placement) = self.with_catalog_mut(|catalog| {
+                let (reported, charset) =
+                    catalog.database_definition(database).ok_or_else(|| {
+                        DriverError::Schema(SchemaErrorKind::UnknownDatabase(
+                            database.clone(),
+                        ))
+                    })?;
+                let placement = catalog
+                    .database_placement_policy(database)
+                    .map(|reference| reference.name.original().to_owned());
+                Ok((reported, charset, placement))
+            })?;
+            return Ok(crate::show_create_database::rows(
+                reported,
+                charset,
+                placement.as_deref(),
+                contents.if_not_exists,
+                self.vars.sql_mode().has_ansi_quotes_mode(),
+            ));
+        }
+        // Go `fetchShowCreateResourceGroup`: the group by name
+        // (`ErrResourceGroupNotExists` when absent), reported under
+        // the name as written beside `CREATE RESOURCE GROUP`
+        // followed by its settings.
+        if contents.tp == tidb_ast::ShowStmtType::CreateResourceGroup {
+            let group_name = &contents.resource_group_name;
+            let text = self.with_catalog_mut(|catalog| {
+                let group = catalog.resource_group(group_name).ok_or_else(|| {
+                    crate::resource_group::resource_group_not_exists(group_name)
+                })?;
+                let settings = group
+                    .settings
+                    .as_ref()
+                    .map(|settings| settings.to_string())
+                    .unwrap_or_default();
+                Ok(format!(
+                    "CREATE RESOURCE GROUP `{}` {settings}",
+                    group.name.original()
+                ))
+            })?;
+            return Ok(vec![vec![
+                Datum::Bytes(group_name.clone().into_bytes()),
+                Datum::Bytes(text.into_bytes()),
+            ]]);
+        }
+        // Go `fetchShowCreatePlacementPolicy` (`executor/show.go:1774`)
+        // looks the policy up and reports `ErrPlacementPolicyNotExists`
+        // (8239) for a name that is not there. The row is the policy's
+        // ORIGINAL-cased name beside
+        // `ConstructResultOfShowCreatePlacementPolicy` (`:1742`).
+        if contents.tp == tidb_ast::ShowStmtType::CreatePlacementPolicy {
+            let policy_name = &contents.db_name;
+            let (reported, clause) = self.with_catalog_mut(|catalog| {
+                catalog
+                    .policy(policy_name)
+                    .map(|policy| {
+                        let settings = policy
+                            .placement_settings
+                            .as_ref()
+                            .map(|settings| settings.read().to_clause())
+                            .unwrap_or_default();
+                        (policy.name.original().to_owned(), settings)
+                    })
+                    .ok_or_else(|| {
+                        DriverError::PlacementPolicyNotExists(policy_name.clone())
+                    })
+            })?;
+            return Ok(crate::show_create_placement_policy::rows(&reported, &clause));
+        }
+        // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
+        // SAME path: Go's `buildShow` picks the column names from
+        // whether the session-visible object IS a sequence, not from
+        // the keyword written, and `fetchShowCreateTable` prints a
+        // sequence's own DDL (`constructResultOfShowCreateTable`'s
+        // `IsSequence` arm). `SHOW CREATE SEQUENCE` reads the
+        // persistent object, which a local temporary table of the
+        // same name does not shadow, and refuses anything that is not
+        // a sequence (`fetchShowCreateSequence`'s ErrWrongObject).
+        let want_view = match contents.tp {
+            tidb_ast::ShowStmtType::CreateTable | tidb_ast::ShowStmtType::CreateSequence => {
+                false
+            }
+            tidb_ast::ShowStmtType::CreateView => true,
+            other => {
+                return Err(DriverError::unsupported(format!(
+                    "SHOW {other:?} has no SHOW CREATE row"
+                )))
+            }
+        };
+        let want_sequence = contents.tp == tidb_ast::ShowStmtType::CreateSequence;
+        let (database, table_name) =
+            (contents.db_name.clone(), contents.table_name.clone().unwrap_or_default());
+        self.require_show_create_privilege(&database, &table_name)?;
+        let ctx = self.statement_context(false);
+        // A view answers either spelling with the same row, which
+        // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
+        // table is refused.
+        let ansi_quotes = self.vars.sql_mode().has_ansi_quotes_mode();
+        // Go `preprocess.go` detaches the LOCAL temporary tables for
+        // `SHOW CREATE VIEW` as for `SHOW CREATE SEQUENCE`: a
+        // temporary table of the same name does not shadow either.
+        let include_local = !want_sequence && !want_view;
+        let shown = self.with_catalog_scope(include_local, |catalog| {
+            let Some(entry) = catalog.table_in(&database, &table_name) else {
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{database}.{table_name}"
+                ))));
+            };
+            match entry {
+                // Go prints the object's stored name
+                // (`TableInfo.Name.O`), not the name as written.
+                tidb_executor::TableEntry::View(view) => Ok((
+                    show_create_view_text(view, ansi_quotes),
+                    view.name.clone(),
+                    Some((
+                        view.character_set_client.clone(),
+                        view.collation_connection.clone(),
+                    )),
+                )),
+                _ if want_view => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
+                    name: format!("{database}.{table_name}"),
+                    expected: "VIEW",
+                })),
+                tidb_executor::TableEntry::Sequence(sequence) => Ok((
+                    tidb_executor::show_create_sequence(sequence),
+                    sequence.name.clone(),
+                    None,
+                )),
+                _ if want_sequence => {
+                    Err(DriverError::Schema(SchemaErrorKind::WrongObject {
+                        name: format!("{database}.{table_name}"),
+                        expected: "SEQUENCE",
+                    }))
+                }
+                tidb_executor::TableEntry::Kv(table) => {
+                    let stored = if table.name().is_empty() {
+                        table_name.as_str()
+                    } else {
+                        table.name()
+                    };
+                    Ok((
+                        show_create_table_text(&database, stored, table, &ctx)?,
+                        stored.to_owned(),
+                        None,
+                    ))
+                }
+                tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
+                    "SHOW CREATE TABLE needs a storage-backed table",
+                )),
+            }
+        });
+        let (text, reported, view_charset) = shown?;
+        // Go's view form carries the session's character set and
+        // collation; `buildShowSchema` names the columns from the
+        // object, not the keyword written.
+        if let Some((character_set_client, collation_connection)) = view_charset {
+            return Ok(vec![vec![
+                Datum::Bytes(reported.into_bytes()),
+                Datum::Bytes(text.into_bytes()),
+                Datum::Bytes(character_set_client.into_bytes()),
+                Datum::Bytes(collation_connection.into_bytes()),
+            ]]);
+        }
+        Ok(vec![vec![
+            Datum::Bytes(reported.into_bytes()),
+            Datum::Bytes(text.into_bytes()),
+        ]])
+    }
+
     /// Go `ShowExec.fetchAll`: the rows of one planned SHOW, by its type.
     /// Only the kinds [`is_planned_show`] lists reach it.
     fn fetch_show(
@@ -971,6 +1147,12 @@ impl Session {
             }
             T::Privileges => crate::show_admin::show_privileges_rows(),
             T::Status => self.show_status_rows(contents.global_scope)?,
+            T::CreateTable
+            | T::CreateView
+            | T::CreateSequence
+            | T::CreateDatabase
+            | T::CreatePlacementPolicy
+            | T::CreateResourceGroup => self.show_create_rows(contents)?,
             // Go `fetchShowIndex`: one row per index COLUMN, ordered
             // with the clustered primary key first, then the table's own
             // indexes in definition order.
@@ -980,12 +1162,7 @@ impl Session {
             // Comment empty, as Go writes them; Expression is NULL when no
             // expression key part exists; Global is the stored
             // `IndexInfo.Global` flag.
-            // An unqualified table without a current database is the
-            // preprocessor's `ErrNoDB`.
             T::Index => {
-                if contents.db_name.is_empty() {
-                    self.require_current_database()?;
-                }
                 let database = contents.db_name.clone();
                 let table_name = contents.table_name.clone().unwrap_or_default();
                 self.with_catalog_mut(|catalog| {
@@ -1016,12 +1193,8 @@ impl Session {
                     }))
                 })?
             }
-            // Go `fetchShowColumns`: an unqualified table without a current
-            // database is the preprocessor's `ErrNoDB`.
+            // Go `fetchShowColumns`.
             T::Columns => {
-                if contents.db_name.is_empty() {
-                    self.require_current_database()?;
-                }
                 let table = [
                     contents.db_name.clone(),
                     contents.table_name.clone().unwrap_or_default(),
@@ -1910,230 +2083,10 @@ impl Session {
             tidb_ast::AdminStmt::AdminCleanupIndex(cleanup) => {
                 self.admin_cleanup_index_stmt(cleanup.as_ref()).map(Some)
             }
-            tidb_ast::AdminStmt::Show(show)
-                if matches!(
-                    show.tp,
-                    tidb_ast::ShowStmtType::CreateTable
-                        | tidb_ast::ShowStmtType::CreateView
-                        | tidb_ast::ShowStmtType::CreateSequence
-                        | tidb_ast::ShowStmtType::CreateDatabase
-                        | tidb_ast::ShowStmtType::CreatePlacementPolicy
-                        | tidb_ast::ShowStmtType::CreateResourceGroup
-                        | tidb_ast::ShowStmtType::CreateProcedure
-                ) =>
-            {
-                if show.tp == tidb_ast::ShowStmtType::CreateDatabase {
-                    let database = &show.db_name;
-                    let (reported, charset, placement) = self.with_catalog_mut(|catalog| {
-                        let (reported, charset) =
-                            catalog.database_definition(database).ok_or_else(|| {
-                                DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-                                    database.clone(),
-                                ))
-                            })?;
-                        let placement = catalog
-                            .database_placement_policy(database)
-                            .map(|reference| reference.name.original().to_owned());
-                        Ok((reported, charset, placement))
-                    })?;
-                    return Ok(Some(crate::show_create_database::output(
-                        reported,
-                        charset,
-                        placement.as_deref(),
-                        show.if_not_exists,
-                        self.vars.sql_mode().has_ansi_quotes_mode(),
-                    )));
-                }
-                // Go `fetchShowCreateResourceGroup`: the group by name
-                // (`ErrResourceGroupNotExists` when absent), reported under
-                // the name as written beside `CREATE RESOURCE GROUP`
-                // followed by its settings.
-                if show.tp == tidb_ast::ShowStmtType::CreateResourceGroup {
-                    let group_name = &show.resource_group_name;
-                    let text = self.with_catalog_mut(|catalog| {
-                        let group = catalog.resource_group(group_name).ok_or_else(|| {
-                            crate::resource_group::resource_group_not_exists(group_name)
-                        })?;
-                        let settings = group
-                            .settings
-                            .as_ref()
-                            .map(|settings| settings.to_string())
-                            .unwrap_or_default();
-                        Ok(format!(
-                            "CREATE RESOURCE GROUP `{}` {settings}",
-                            group.name.original()
-                        ))
-                    })?;
-                    let field_type =
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
-                    return Ok(Some(StmtOutput::Rows {
-                        columns: vec![
-                            ("Resource_Group".to_owned(), field_type.clone()),
-                            ("Create Resource Group".to_owned(), field_type),
-                        ],
-                        rows: vec![vec![
-                            Datum::Bytes(group_name.clone().into_bytes()),
-                            Datum::Bytes(text.into_bytes()),
-                        ]],
-                    }));
-                }
-                // Go `fetchShowCreatePlacementPolicy` (`executor/show.go:1774`)
-                // looks the policy up and reports `ErrPlacementPolicyNotExists`
-                // (8239) for a name that is not there. The row is the policy's
-                // ORIGINAL-cased name beside
-                // `ConstructResultOfShowCreatePlacementPolicy` (`:1742`).
-                if show.tp == tidb_ast::ShowStmtType::CreatePlacementPolicy {
-                    let policy_name = &show.db_name;
-                    let (reported, clause) = self.with_catalog_mut(|catalog| {
-                        catalog
-                            .policy(policy_name)
-                            .map(|policy| {
-                                let settings = policy
-                                    .placement_settings
-                                    .as_ref()
-                                    .map(|settings| settings.read().to_clause())
-                                    .unwrap_or_default();
-                                (policy.name.original().to_owned(), settings)
-                            })
-                            .ok_or_else(|| {
-                                DriverError::PlacementPolicyNotExists(policy_name.clone())
-                            })
-                    })?;
-                    return Ok(Some(crate::show_create_placement_policy::output(
-                        &reported, &clause,
-                    )));
-                }
-                // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
-                // SAME path: Go's `buildShow` picks the column names from
-                // whether the session-visible object IS a sequence, not from
-                // the keyword written, and `fetchShowCreateTable` prints a
-                // sequence's own DDL (`constructResultOfShowCreateTable`'s
-                // `IsSequence` arm). `SHOW CREATE SEQUENCE` reads the
-                // persistent object, which a local temporary table of the
-                // same name does not shadow, and refuses anything that is not
-                // a sequence (`fetchShowCreateSequence`'s ErrWrongObject).
-                let want_view = match show.tp {
-                    tidb_ast::ShowStmtType::CreateTable | tidb_ast::ShowStmtType::CreateSequence => {
-                        false
-                    }
-                    tidb_ast::ShowStmtType::CreateView => true,
-                    _ => return Ok(None),
-                };
-                let want_sequence = show.tp == tidb_ast::ShowStmtType::CreateSequence;
-                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
-                    // go resolves a QUALIFIED name without consulting the
-                    // session database: `SHOW INDEX FROM d3p.t2` answers with
-                    // no `USE` in sight. Only the bare form needs one, and go
-                    // answers 1046 (`ErrNoDB`) for it.
-                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
-                    [database, table] => (database.clone(), table.clone()),
-                    _ => return Err(DriverError::unsupported("empty table name")),
-                };
-                self.require_show_create_privilege(&database, &table_name)?;
-                let ctx = self.statement_context(false);
-                // A view answers either spelling with the same row, which
-                // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
-                // table is refused.
-                let ansi_quotes = self.vars.sql_mode().has_ansi_quotes_mode();
-                // The header follows the object the session sees.
-                let visible_is_sequence = self.with_catalog_mut(|catalog| {
-                    Ok(matches!(
-                        catalog.table_in(&database, &table_name),
-                        Some(tidb_executor::TableEntry::Sequence(_))
-                    ))
-                })?;
-                // Go `preprocess.go` detaches the LOCAL temporary tables for
-                // `SHOW CREATE VIEW` as for `SHOW CREATE SEQUENCE`: a
-                // temporary table of the same name does not shadow either.
-                let include_local = !want_sequence && !want_view;
-                let shown = self.with_catalog_scope(include_local, |catalog| {
-                    let Some(entry) = catalog.table_in(&database, &table_name) else {
-                        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                            "{database}.{table_name}"
-                        ))));
-                    };
-                    match entry {
-                        // Go prints the object's stored name
-                        // (`TableInfo.Name.O`), not the name as written.
-                        tidb_executor::TableEntry::View(view) => Ok((
-                            show_create_view_text(view, ansi_quotes),
-                            view.name.clone(),
-                            Some((
-                                view.character_set_client.clone(),
-                                view.collation_connection.clone(),
-                            )),
-                        )),
-                        _ if want_view => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
-                            name: format!("{database}.{table_name}"),
-                            expected: "VIEW",
-                        })),
-                        tidb_executor::TableEntry::Sequence(sequence) => Ok((
-                            tidb_executor::show_create_sequence(sequence),
-                            sequence.name.clone(),
-                            None,
-                        )),
-                        _ if want_sequence => {
-                            Err(DriverError::Schema(SchemaErrorKind::WrongObject {
-                                name: format!("{database}.{table_name}"),
-                                expected: "SEQUENCE",
-                            }))
-                        }
-                        tidb_executor::TableEntry::Kv(table) => {
-                            let stored = if table.name().is_empty() {
-                                table_name.as_str()
-                            } else {
-                                table.name()
-                            };
-                            Ok((
-                                show_create_table_text(&database, stored, table, &ctx)?,
-                                stored.to_owned(),
-                                None,
-                            ))
-                        }
-                        tidb_executor::TableEntry::Mem(_) => Err(DriverError::unsupported(
-                            "SHOW CREATE TABLE needs a storage-backed table",
-                        )),
-                    }
-                });
-                let (text, reported, view_charset) = shown?;
-                let field_type =
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                // Go's view form carries its own header and the session's
-                // character set and collation.
-                if let Some((character_set_client, collation_connection)) = view_charset {
-                    return Ok(Some(StmtOutput::Rows {
-                        columns: vec![
-                            ("View".to_owned(), field_type.clone()),
-                            ("Create View".to_owned(), field_type.clone()),
-                            ("character_set_client".to_owned(), field_type.clone()),
-                            ("collation_connection".to_owned(), field_type),
-                        ],
-                        rows: vec![vec![
-                            Datum::Bytes(reported.into_bytes()),
-                            Datum::Bytes(text.into_bytes()),
-                            Datum::Bytes(character_set_client.into_bytes()),
-                            Datum::Bytes(collation_connection.into_bytes()),
-                        ]],
-                    }));
-                }
-                // Go `buildShow` names these columns from `isSequence`, so a
-                // sequence reports `Sequence | Create Sequence` whichever
-                // keyword was written.
-                let (name_column, text_column) = if visible_is_sequence {
-                    ("Sequence", "Create Sequence")
-                } else {
-                    ("Table", "Create Table")
-                };
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        (name_column.to_owned(), field_type.clone()),
-                        (text_column.to_owned(), field_type),
-                    ],
-                    rows: vec![vec![
-                        Datum::Bytes(reported.into_bytes()),
-                        Datum::Bytes(text.into_bytes()),
-                    ]],
-                }))
+            // Go `fetchShowCreateProcedure`'s object is not stored here: the
+            // statement answers nothing.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::CreateProcedure => {
+                Ok(None)
             }
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::TableNextRowId => {
                 let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
@@ -2391,6 +2344,12 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::TableStatus
             | T::Columns
             | T::Index
+            | T::CreateTable
+            | T::CreateView
+            | T::CreateSequence
+            | T::CreateDatabase
+            | T::CreatePlacementPolicy
+            | T::CreateResourceGroup
     )
 }
 
