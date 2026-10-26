@@ -17,6 +17,7 @@ package mviewdeltamergeagg
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	executil "github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -27,9 +28,67 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMergeRuntimeStats(t *testing.T) {
+	stats := newMergeRuntimeStats(2)
+	stats.readerTime = time.Second
+	stats.writerTime = 2 * time.Second
+	stats.mergeWorkerTime[0] = 3 * time.Second
+	stats.writerDetail = mergeWriterStats{chunks: 1, rowOps: 2, insertRows: 1, noopRows: 1}
+
+	clone := stats.Clone().(*mergeRuntimeStats)
+	require.Equal(t, stats.String(), clone.String())
+	require.Equal(t, execdetails.TpMViewDeltaMergeAggRuntimeStats, clone.Tp())
+
+	other := newMergeRuntimeStats(2)
+	other.readerTime = time.Second
+	other.mergeWorkerTime[1] = 4 * time.Second
+	other.writerDetail = mergeWriterStats{chunks: 2, rowOps: 3, updateRows: 2}
+	stats.Merge(other)
+	require.Equal(t, 2*time.Second, stats.readerTime)
+	require.Equal(t, int64(3), stats.writerDetail.chunks)
+	require.Contains(t, stats.String(), "active:2")
+}
+
+func TestEncodeChunkKeyRows(t *testing.T) {
+	keyTypes := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeVarchar)}
+	keyTypes[1].SetCollate("utf8mb4_bin")
+	rows := [][]any{
+		{1, "same"}, {2, "same"}, {nil, "same"},
+		{1, nil}, {2, nil}, {nil, nil}, {1, ""}, {1, "same"},
+	}
+	chk := chunk.NewChunkWithCapacity(keyTypes, len(rows))
+	for _, row := range rows {
+		datums := types.MakeDatums(row...)
+		for colIdx := range datums {
+			chk.AppendDatum(colIdx, &datums[colIdx])
+		}
+	}
+	typeCtx := mock.NewContext().GetSessionVars().StmtCtx.TypeCtx()
+	keys, nulls, err := encodeChunkKeyRows(typeCtx, chk, []int{0, 1}, keyTypes, []int{0, 1, 2, 3, 4, 5, 6, 7}, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, keys[0], keys[7])
+	want := make([]string, len(keys))
+	seen := make(map[string]bool)
+	for i, key := range keys {
+		want[i] = string(key)
+		if i < len(rows)-1 {
+			require.NotEmpty(t, key)
+			require.False(t, seen[want[i]], "duplicate key for row %v", rows[i])
+			seen[want[i]] = true
+		}
+	}
+	usedRows := []int{7, 3, 1, 4}
+	keys, _, err = encodeChunkKeyRows(typeCtx, chk, []int{0, 1}, keyTypes, usedRows, nulls, keys)
+	require.NoError(t, err)
+	for i, rowIdx := range usedRows {
+		require.Equal(t, want[rowIdx], string(keys[i]))
+	}
+}
 
 type mockSource struct {
 	exec.BaseExecutor

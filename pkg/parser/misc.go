@@ -720,7 +720,9 @@ var tokenMap = map[string]int{
 	"RESTORES":                       restores,
 	"RESTORED_TS":                    restoredTS,
 	"RESTRICT":                       restrict,
+	"RESULT":                         result,
 	"RETAIN":                         retain,
+	"RETURN":                         returnKwd,
 	"RETURNING":                      returning,
 	"REVERSE":                        reverse,
 	"REVOKE":                         revoke,
@@ -1130,6 +1132,7 @@ var hintTokenMap = map[string]int{
 	"LEADING":                  hintLeading,
 	"SEMI_JOIN_REWRITE":        hintSemiJoinRewrite,
 	"NO_DECORRELATE":           hintNoDecorrelate,
+	"TIFLASH_LM_FILTER":        hintTiFlashLMFilter,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

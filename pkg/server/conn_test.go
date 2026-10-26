@@ -51,8 +51,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/server/internal"
 	"github.com/pingcap/tidb/pkg/server/internal/handshake"
+	"github.com/pingcap/tidb/pkg/server/internal/packetio"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
@@ -121,7 +121,7 @@ func TestMatchIdentityWithVariantsStarter(t *testing.T) {
 			connectionID: connectionID,
 			alloc:        arena.NewAllocator(1024),
 			chunkAlloc:   chunk.NewAllocator(),
-			pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+			pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 			server:       srv,
 			user:         user,
 			peerHost:     "localhost",
@@ -199,7 +199,7 @@ func TestReadHandshakeGatewayTLSAttrStarter(t *testing.T) {
 	packet := append([]byte{byte(len(data)), byte(len(data) >> 8), byte(len(data) >> 16), 0}, data...)
 
 	brc := serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: *bytes.NewBuffer(packet)})
-	pkt := internal.NewPacketIO(brc)
+	pkt := packetio.New(brc)
 	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
 
 	store := testkit.CreateMockStore(t)
@@ -293,7 +293,7 @@ func TestIssue33699(t *testing.T) {
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:          packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -411,7 +411,7 @@ func TestChangeUserAndResetSessionResourceGroupCounter(t *testing.T) {
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:          packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -647,7 +647,7 @@ func TestInitialHandshake(t *testing.T) {
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       srv,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:          packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 	}
 
 	err = cc.writeInitialHandshake(context.TODO())
@@ -985,7 +985,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:          packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 		bufReadConn:  serverutil.NewBufferedReadConn(conn),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
@@ -1357,7 +1357,7 @@ func TestPrefetchPointKeys4Update(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
@@ -1406,7 +1406,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
@@ -1458,7 +1458,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 		defer tk.MustExec("rollback")
 		tk.MustQuery("select c from prefetch where a = 1 and b = 1").Check(testkit.Rows("10"))
 		var response bytes.Buffer
-		cc.pkt = internal.NewPacketIOForTest(bufio.NewWriter(&response))
+		cc.pkt = packetio.NewForTest(bufio.NewWriter(&response))
 		var registrySizes, scalarTreeCounts []int
 		tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, func(_ string) {
 			vars := tk.Session().GetSessionVars()
@@ -1482,7 +1482,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 		t.Logf("multi-statement registry sizes=%v flattened scalar trees=%v", registrySizes, scalarTreeCounts)
 
 		// Each one-column result has a header, column definition, EOF, row and EOF.
-		packets := internal.NewPacketIO(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: response}))
+		packets := packetio.New(serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: response}))
 		for _, expected := range []string{"30", "20"} {
 			for range 3 {
 				_, err = packets.ReadPacket()
@@ -1505,7 +1505,7 @@ func TestPrefetchBatchPointGet(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
@@ -1540,7 +1540,7 @@ func TestPrefetchPartitionTable(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
@@ -1587,7 +1587,7 @@ func TestTiFlashFallback(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 
 	tk := testkit.NewTestKit(t, store)
@@ -1706,7 +1706,7 @@ func TestShowErrors(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
@@ -1748,7 +1748,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1767,7 +1767,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1788,7 +1788,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1808,7 +1808,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1829,7 +1829,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1850,7 +1850,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1871,7 +1871,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1891,7 +1891,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1913,7 +1913,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1934,7 +1934,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1955,7 +1955,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1975,7 +1975,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -1997,7 +1997,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -2018,7 +2018,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -2039,7 +2039,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -2059,7 +2059,7 @@ func TestHandleAuthPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "unativepassword",
 	}
@@ -2091,7 +2091,7 @@ func TestChangeUserAuth(t *testing.T) {
 		peerHost:     "localhost",
 		collation:    mysql.DefaultCollationID,
 		capability:   defaultCapability,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "root",
 	}
@@ -2140,7 +2140,7 @@ func TestChangeUserAuthFailureRestoresOldSession(t *testing.T) {
 		peerHost:     "localhost",
 		collation:    mysql.DefaultCollationID,
 		capability:   mysql.ClientProtocol41,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "root",
 		dbname:       "old_db",
@@ -2184,7 +2184,7 @@ func TestAuthPlugin2(t *testing.T) {
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
 		chunkAlloc:   chunk.NewAllocator(),
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "root",
 	}
@@ -2241,7 +2241,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 		chunkAlloc:   chunk.NewAllocator(),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "auth_session_token",
 	}
@@ -2312,7 +2312,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	_, err := inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc := serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt := internal.NewPacketIO(brc)
+	pkt := packetio.New(brc)
 	pkt.SetMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.ReadPacket()
 	require.NoError(t, err)
@@ -2325,7 +2325,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt = internal.NewPacketIO(brc)
+	pkt = packetio.New(brc)
 	pkt.SetMaxAllowedPacket(maxAllowedPacket)
 	_, err = pkt.ReadPacket()
 	require.Error(t, err)
@@ -2337,7 +2337,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt = internal.NewPacketIO(brc)
+	pkt = packetio.New(brc)
 	pkt.SetMaxAllowedPacket(maxAllowedPacket)
 	readBytes, err = pkt.ReadPacket()
 	require.NoError(t, err)
@@ -2380,7 +2380,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 		_, err = inBuffer.Write(bytes)
 		require.NoError(t, err)
 		brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-		cc := &clientConn{pkt: internal.NewPacketIO(brc)}
+		cc := &clientConn{pkt: packetio.New(brc)}
 		cc.SetCtx(tc)
 		_, err = cc.readPacket()
 		require.ErrorContains(t, err, "Got a packet bigger than 'max_allowed_packet' bytes")
@@ -2403,7 +2403,7 @@ func TestOkEof(t *testing.T) {
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:          packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -2464,7 +2464,7 @@ func TestExtensionChangeUser(t *testing.T) {
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:          packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -2573,7 +2573,7 @@ func TestAuthSha(t *testing.T) {
 		connectionID: 1,
 		salt:         []byte{0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14},
 		server:       server,
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:          packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 		collation:    mysql.DefaultCollationID,
 		peerHost:     "localhost",
 		alloc:        arena.NewAllocator(512),
@@ -2606,7 +2606,7 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	ctx := context.Background()
 
@@ -2645,7 +2645,7 @@ func TestLDAPAuthSwitch(t *testing.T) {
 		connectionID: 1,
 		alloc:        arena.NewAllocator(1024),
 		chunkAlloc:   chunk.NewAllocator(),
-		pkt:          internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:          packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 		server:       srv,
 		user:         "test_simple_ldap",
 	}
@@ -2739,7 +2739,7 @@ func TestCloseConn(t *testing.T) {
 			0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
 		},
 		server:     server,
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		pkt:        packetio.NewForTest(bufio.NewWriter(&outBuffer)),
 		collation:  mysql.DefaultCollationID,
 		peerHost:   "localhost",
 		alloc:      arena.NewAllocator(512),
@@ -2767,7 +2767,7 @@ func TestConnAddMetrics(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk.MustExec("use test")
 	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
@@ -2847,7 +2847,7 @@ func TestStatementDurationMetrics(t *testing.T) {
 	cc := &clientConn{
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
+		pkt:        packetio.NewForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tc := &TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)}
 	cc.SetCtx(tc)
@@ -3254,7 +3254,7 @@ func TestIssue54335(t *testing.T) {
 		server: &Server{
 			capability: defaultCapability,
 		},
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(io.Discard)),
+		pkt:        packetio.NewForTest(bufio.NewWriter(io.Discard)),
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
 	}

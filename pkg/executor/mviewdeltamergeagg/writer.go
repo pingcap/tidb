@@ -44,7 +44,7 @@ type tableResultWriter struct {
 	stats *mergeWriterStats
 }
 
-func (w *tableResultWriter) setWriterStats(stats *mergeWriterStats) {
+func (w *tableResultWriter) setRuntimeStats(stats *mergeWriterStats) {
 	w.stats = stats
 }
 
