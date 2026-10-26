@@ -8,6 +8,7 @@ fn show_create(session: &mut Session, table: &str) -> String {
     match session.run(&format!("show create table {table}")).unwrap() {
         tidb_session::StmtResult::Rows(rows) => match &rows[0][1] {
             tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            tidb_datatype::Datum::String(string) => String::from_utf8_lossy(string.bytes()).into_owned(),
             other => panic!("{other:?}"),
         },
         other => panic!("{other:?}"),

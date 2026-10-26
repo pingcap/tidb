@@ -122,25 +122,6 @@ fn column_collation_cell(field_type: &tidb_datatype::FieldType) -> Datum {
     }
 }
 
-/// Go `table.ColDescFieldNames(false)`: the columns `SHOW COLUMNS` and
-/// `DESCRIBE` produce.
-const COL_DESC_FIELD_NAMES: &[&str] = &["Field", "Type", "Null", "Key", "Default", "Extra"];
-
-/// Go `table.ColDescFieldNames(true)`: the extra columns `SHOW FULL COLUMNS`
-/// inserts between `Type` and `Null`, plus the trailing `Privileges` and
-/// `Comment` columns.
-const FULL_COL_DESC_FIELD_NAMES: &[&str] = &[
-    "Field",
-    "Type",
-    "Collation",
-    "Null",
-    "Key",
-    "Default",
-    "Extra",
-    "Privileges",
-    "Comment",
-];
-
 /// Go's mock session's fixed grant string for every column of every table
 /// (`fetchShowColumns`): this tier grants no per-column privileges of its
 /// own, so it reports the same static capture MySQL/TiDB print for a column
@@ -815,11 +796,12 @@ impl Session {
             let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             tidb_executor::driver::plan_show_stmt(&show, &catalog, &current_db, &ctx)?
         };
-        let leaf = tidb_executor::driver::physical_show_of(&physical)
-            .cloned()
-            .ok_or_else(|| DriverError::unsupported("a SHOW plan without its PhysicalShow"))?;
-        let rows = self.fetch_show(&leaf)?;
-        ctx.show_retrieval().supply(leaf.base.base.id(), rows);
+        // A selection the optimizer folded to false leaves no `PhysicalShow`
+        // to fetch for, as Go builds no `ShowExec` under a `TableDual`.
+        if let Some(leaf) = tidb_executor::driver::physical_show_of(&physical).cloned() {
+            let rows = self.fetch_show(&leaf)?;
+            ctx.show_retrieval().supply(leaf.base.base.id(), rows);
+        }
         let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (columns, rows) =
             tidb_executor::driver::open_show_plan(&mut physical, &catalog, &ctx)?.collect()?;
@@ -989,6 +971,24 @@ impl Session {
             }
             T::Privileges => crate::show_admin::show_privileges_rows(),
             T::Status => self.show_status_rows(contents.global_scope)?,
+            // Go `fetchShowColumns`: an unqualified table without a current
+            // database is the preprocessor's `ErrNoDB`.
+            T::Columns => {
+                if contents.db_name.is_empty() {
+                    self.require_current_database()?;
+                }
+                let table = [
+                    contents.db_name.clone(),
+                    contents.table_name.clone().unwrap_or_default(),
+                ];
+                self.show_column_rows(
+                    &contents.db_name,
+                    &table,
+                    extractor,
+                    contents.full,
+                    contents.extended,
+                )?
+            }
             // Go `fetchShowTableStatus`: the 1044 gate SHOW TABLES applies,
             // the unknown schema, then its restricted SQL over
             // `information_schema.tables` for the schema, ordered by table
@@ -1134,31 +1134,21 @@ pub(crate) fn filter_show_rows(
 }
 
 impl Session {
-    /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
-    /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
-    /// The schema `SHOW COLUMNS` / `DESCRIBE` default to: the `FROM db` clause,
-    /// else the current database -- `ErrNoDB` only for an unqualified table, as
-    /// a `db.tbl` path names its own schema and needs no current one.
-    fn show_columns_database(
-        &self,
-        explicit: Option<&str>,
-        table_path: &[String],
-    ) -> Result<String, DriverError> {
-        match (explicit, table_path) {
-            (Some(database), _) => Ok(database.to_owned()),
-            (None, [_, _]) => Ok(String::new()),
-            (None, _) => self.require_current_database().map(str::to_owned),
-        }
-    }
-
-    fn show_columns(
+    /// Go `ShowExec.fetchShowColumns`: one row per column of the table (its
+    /// hidden ones too with `extended`), the `FULL` shape with `full`, each
+    /// column the extractor admits by its lowercased name.
+    fn show_column_rows(
         &mut self,
         database: &str,
         table_path: &[String],
-        column: Option<&str>,
+        extractor: tidb_executor::show::Extractor<'_>,
         full: bool,
         extended: bool,
-    ) -> Result<StmtOutput, DriverError> {
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let admits = |name: &str| {
+            let lower = go_to_lower(name);
+            tidb_executor::show::extractor_admits(extractor, &lower, &lower)
+        };
         // A `db.tbl` path names its own schema, as everywhere else.
         let (database, table_name) = match table_path {
             [name] => (database.to_owned(), name.clone()),
@@ -1208,7 +1198,7 @@ impl Session {
                 let columns = tidb_executor::view_column_list(&view, &database, catalog, &ctx)?;
                 return Ok(columns
                     .iter()
-                    .filter(|(candidate, _)| column.is_none_or(|name| candidate.go_lower_eq(name)))
+                    .filter(|(candidate, _)| admits(candidate))
                     .map(|(name, field_type)| view_column_description(name, field_type, full))
                     .collect::<Vec<_>>());
             }
@@ -1227,23 +1217,11 @@ impl Session {
             listed
                 .iter()
                 .enumerate()
-                .filter(|(_, candidate)| column.is_none_or(|name| candidate.name.go_lower_eq(name)))
+                .filter(|(_, candidate)| admits(&candidate.name))
                 .map(|(offset, candidate)| column_description(candidate, offset, table, full, &ctx))
                 .collect::<Result<Vec<_>, _>>()
         })?;
-        let field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let field_names = if full {
-            FULL_COL_DESC_FIELD_NAMES
-        } else {
-            COL_DESC_FIELD_NAMES
-        };
-        Ok(StmtOutput::Rows {
-            columns: field_names
-                .iter()
-                .map(|name| ((*name).to_owned(), field_type.clone()))
-                .collect(),
-            rows,
-        })
+        Ok(rows)
     }
 
     /// Go `buildShow` for SHOW CREATE TABLE/SEQUENCE/VIEW: a view needs SHOW
@@ -2273,36 +2251,15 @@ impl Session {
                 let where_clause = show.r#where.as_ref();
                 self.filter_show_output(output, None, where_clause).map(Some)
             }
-            // Go `fetchShowColumns`.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Columns => {
-                let (like_pattern, where_clause) = match show_filter(show) {
-                    None => (None, None),
-                    Some(ShowFilter::Like(expr)) => {
-                        let value = datum_text(&self.eval_value(expr)?);
-                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-                    }
-                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
-                };
-                let table = show.table.as_deref().unwrap_or_default();
-                let database = self.show_columns_database(show_db_name(show), table)?;
-                let output = self.show_columns(&database, table, None, show.full, show.extended)?;
-                self.filter_show_output(output, like_pattern, where_clause)
-                    .map(Some)
-            }
-            // Go's parser rewrites `DESCRIBE tbl [col]` into a SHOW
-            // COLUMNS statement; this parser keeps a node of its own, so
-            // the same output is produced from it here.
+            // Go's parser makes `DESCRIBE tbl [col]` an `ExplainStmt` over
+            // `ShowStmt{Tp: ShowColumns, Table, Column}`, which
+            // `buildExplain` hands to `buildShow`; this parser keeps a node
+            // of its own, so the same statement is built from it here.
             tidb_ast::AdminStmt::DescribeTable(describe) => {
-                let database = self.show_columns_database(None, &describe.table)?;
-                let column = describe.column.as_ref().and_then(|path| path.last());
-                self.show_columns(
-                    &database,
-                    &describe.table,
-                    column.map(String::as_str),
-                    false,
-                    false,
-                )
-                .map(Some)
+                let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::Columns);
+                show.table = Some(describe.table.clone());
+                show.column = describe.column.as_ref().and_then(|path| path.last().cloned());
+                self.run_planned_show(&show).map(Some)
             }
             // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
             // (pkg/executor/simple.go:3584-3611): the statement answers
@@ -2374,11 +2331,11 @@ mod column_description_source_tests {
         );
 
         assert_eq!(
-            COL_DESC_FIELD_NAMES,
+            tidb_planner::show_schema::col_desc_field_names(false),
             ["Field", "Type", "Null", "Key", "Default", "Extra"]
         );
         assert_eq!(
-            FULL_COL_DESC_FIELD_NAMES,
+            tidb_planner::show_schema::col_desc_field_names(true),
             [
                 "Field",
                 "Type",
@@ -2455,6 +2412,7 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::Errors
             | T::Status
             | T::TableStatus
+            | T::Columns
     )
 }
 

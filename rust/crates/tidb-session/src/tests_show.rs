@@ -289,9 +289,11 @@ fn show_columns_and_describe() {
             vec!["v", "bigint", "YES", "", "NULL", ""],
         ]
     );
-    assert!(describe(&mut session, "SHOW COLUMNS FROM t LIKE NULL")
-        .1
-        .is_empty());
+    // Go: the NULL literal is an empty exact field, which filters nothing.
+    assert_eq!(
+        describe(&mut session, "SHOW COLUMNS FROM t LIKE NULL").1,
+        describe(&mut session, "SHOW COLUMNS FROM t").1
+    );
 
     // Go reports auto_increment in Extra; captured from TiDB's DESCRIBE:
     // [[id bigint(20) NO PRI <nil> auto_increment] [v bigint(20) YES  <nil> ]]

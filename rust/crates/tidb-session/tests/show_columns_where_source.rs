@@ -11,6 +11,7 @@ fn rows(session: &mut Session, sql: &str) -> String {
                 row.iter()
                     .map(|d| match d {
                         tidb_datatype::Datum::Bytes(b) => String::from_utf8_lossy(b).into_owned(),
+                        tidb_datatype::Datum::String(s) => String::from_utf8_lossy(s.bytes()).into_owned(),
                         other => format!("{other:?}"),
                     })
                     .collect::<Vec<_>>()

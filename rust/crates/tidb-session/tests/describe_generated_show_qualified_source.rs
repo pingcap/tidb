@@ -15,7 +15,7 @@ fn strings(session: &mut Session, sql: &str) -> Vec<String> {
                             String::from_utf8_lossy(bytes).into_owned()
                         }
                         tidb_datatype::Datum::String(s) => {
-                            format!("'{}'", String::from_utf8_lossy(&s.bytes()))
+                            String::from_utf8_lossy(s.bytes()).into_owned()
                         }
                         other => format!("{other:?}"),
                     })
