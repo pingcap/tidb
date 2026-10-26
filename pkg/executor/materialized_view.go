@@ -4464,6 +4464,28 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			return err
 		}
 	}
+	// Empty intervals do not read log contents. Validate their snapshot baseline
+	// before returning, without consulting purge watermarks.
+	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedRefreshInfo.lastSuccessReadTSO {
+		readTSO, err := getRefreshReadTSOForSuccess(sessVars)
+		if err != nil {
+			return err
+		}
+		snapshotIS, err := domain.GetDomain(e.Ctx()).GetSnapshotInfoSchema(readTSO)
+		if err != nil {
+			return err
+		}
+		sources, err := mviewutil.ResolveRefreshSources(kctx, snapshotIS, mviewID)
+		if err != nil {
+			return err
+		}
+		if err := checkMVRefreshLogBaseline(sources, registeredLogs); err != nil {
+			return err
+		}
+		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
+		return nil
+	}
+
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
 		targetRefreshReadTSO > 0 &&
 		targetRefreshReadTSO > lockedRefreshInfo.lastSuccessReadTSO
@@ -4483,26 +4505,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if mlogIntegrity.hasRetainedLowerTSO {
 			mlogRetainedLowerTSO = mlogIntegrity.retainedLowerTSO
 		}
-	}
-
-	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedRefreshInfo.lastSuccessReadTSO {
-		readTSO, err := getRefreshReadTSOForSuccess(sessVars)
-		if err != nil {
-			return err
-		}
-		snapshotIS, err := domain.GetDomain(e.Ctx()).GetSnapshotInfoSchema(readTSO)
-		if err != nil {
-			return err
-		}
-		sources, err := mviewutil.ResolveRefreshSources(kctx, snapshotIS, mviewID)
-		if err != nil {
-			return err
-		}
-		if err := checkMVRefreshLogBaseline(sources, registeredLogs); err != nil {
-			return err
-		}
-		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
-		return nil
 	}
 
 	txn, err := refreshSctx.Txn(true)
