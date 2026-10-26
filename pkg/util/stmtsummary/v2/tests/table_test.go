@@ -760,6 +760,75 @@ func TestStmtSummaryHistoryPreparedTimeRange(t *testing.T) {
 		require.Equal(t, testkit.Rows("window0"), baseline)
 		tk.MustQuery(fc.query, fc.end, fc.begin).Check(baseline)
 	}
+
+	// Time pruning must preserve windows containing both bounds, and bounds
+	// outside UnixNano's range must not turn into unrelated historical dates.
+	for _, cache := range []int{0, 1} {
+		for _, ca := range []struct {
+			name      string
+			predicate string
+			args      []any
+			want      []string
+		}{
+			{
+				name:      "CrossedEndpoints",
+				predicate: "summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+				args:      []any{begin + 100, begin + 500},
+				want:      []string{"window0"},
+			},
+			{
+				name:      "StrictPoint",
+				predicate: "summary_begin_time < from_unixtime(?) and summary_end_time > from_unixtime(?)",
+				args:      []any{begin + 300, begin + 300},
+				want:      []string{"window0"},
+			},
+			{
+				name:      "FractionalPoint",
+				predicate: "summary_begin_time < from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+				args:      []any{fmt.Sprintf("%d.000500", begin), begin},
+				want:      []string{"window0"},
+			},
+			{
+				name:      "FutureOverflow",
+				predicate: "summary_begin_time <= from_unixtime(?)",
+				args:      []any{int64(32536771199)},
+				want:      []string{"window0", "window1", "window2"},
+			},
+			{
+				name:      "FutureOverflowWithSafeLowerBound",
+				predicate: "summary_begin_time <= from_unixtime(?) and summary_end_time >= from_unixtime(?)",
+				args:      []any{int64(32536771199), begin + 3600},
+				want:      []string{"window1", "window2"},
+			},
+		} {
+			t.Run(fmt.Sprintf("%s/cache%d", ca.name, cache), func(t *testing.T) {
+				tk := newTestKitWithRoot(t, store)
+				tk.MustExec("set time_zone = '+00:00'")
+				tk.MustExec(fmt.Sprintf("set tidb_enable_prepared_plan_cache = %d", cache))
+				// Exclude the live summary so collecting the test SQL cannot affect
+				// the far-future upper-bound baseline between repeated executions.
+				query := "select digest from information_schema.statements_summary_history where digest in ('window0', 'window1', 'window2') and " + ca.predicate + " order by digest"
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor", "return(true)")
+				baseline := tk.MustQuery(query, ca.args...).Rows()
+				testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/planner/core/operator/logicalop/skipExtractor")
+				require.Equal(t, testkit.Rows(ca.want...), baseline)
+				tk.MustQuery(query, ca.args...).Check(baseline)
+
+				tk.MustExec("prepare review_stmt from '" + strings.ReplaceAll(query, "'", "''") + "'")
+				vars := make([]string, 0, len(ca.args))
+				for i, arg := range ca.args {
+					name := fmt.Sprintf("@review%d", i)
+					value := fmt.Sprint(arg)
+					if _, ok := arg.(string); ok {
+						value = "'" + strings.ReplaceAll(value, "'", "''") + "'"
+					}
+					tk.MustExec("set " + name + " = " + value)
+					vars = append(vars, name)
+				}
+				tk.MustQuery("execute review_stmt using " + strings.Join(vars, ", ")).Check(baseline)
+			})
+		}
+	}
 }
 
 func TestStmtSummaryHistoryPreparedTimeRangeDST(t *testing.T) {

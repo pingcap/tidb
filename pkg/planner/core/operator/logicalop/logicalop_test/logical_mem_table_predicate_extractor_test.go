@@ -379,6 +379,92 @@ func TestStatementsSummaryExtractorPreparedTimeRangeDST(t *testing.T) {
 	}
 }
 
+func TestStatementsSummaryExtractorConservativeTimeRange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	se.GetSessionVars().TimeZone = time.UTC
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.UTC)
+	p := parser.New()
+	for _, ca := range []struct {
+		name      string
+		predicate string
+		start     string
+		end       string
+	}{
+		{
+			name:      "CrossedEndpoints",
+			predicate: "summary_begin_time <= '2022-12-27 02:01:00' and summary_end_time >= '2022-12-27 02:02:00'",
+		},
+		{
+			name:      "StrictPoint",
+			predicate: "summary_begin_time < '2022-12-27 02:05:00' and summary_end_time > '2022-12-27 02:05:00'",
+			start:     "2022-12-27T02:05:00Z",
+			end:       "2022-12-27T02:05:00Z",
+		},
+		{
+			name:      "FractionalPoint",
+			predicate: "summary_begin_time < '2022-12-27 02:00:00.000500' and summary_end_time >= '2022-12-27 02:00:00'",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "2022-12-27T02:00:00.000500Z",
+		},
+		{
+			name:      "FutureOverflow",
+			predicate: "summary_begin_time <= '3001-01-18 23:59:59'",
+		},
+		{
+			name:      "PastOverflow",
+			predicate: "summary_end_time >= '1000-01-01 00:00:00'",
+		},
+		{
+			name:      "SafeBoundSurvives",
+			predicate: "summary_begin_time <= '3001-01-18 23:59:59' and summary_end_time >= '2022-12-27 02:00:00'",
+			start:     "2022-12-27T02:00:00Z",
+			end:       "9999-12-31T23:59:59.999999Z",
+		},
+		{
+			name:      "StrictUnixNanoMaximum",
+			predicate: "summary_end_time > '2262-04-11 23:47:16.854775'",
+			start:     "2262-04-11T23:47:16.854775Z",
+			end:       "9999-12-31T23:59:59.999999Z",
+		},
+		{
+			name:      "AboveUnixNanoMaximum",
+			predicate: "summary_begin_time <= '2262-04-11 23:47:16.854776'",
+		},
+		{
+			name:      "StrictUnixNanoMinimum",
+			predicate: "summary_begin_time < '1677-09-21 00:12:43.145225'",
+			start:     "0001-01-01T00:00:00Z",
+			end:       "1677-09-21T00:12:43.145225Z",
+		},
+		{
+			name:      "BelowUnixNanoMinimum",
+			predicate: "summary_end_time >= '1677-09-21 00:12:43.145224'",
+		},
+	} {
+		t.Run(ca.name, func(t *testing.T) {
+			memTable, ok, remained := getLogicalMemTableWithRemained(t, dom, se, p,
+				"select digest from information_schema.statements_summary_history where "+ca.predicate)
+			require.True(t, ok)
+			extractor := memTable.Extractor.(*plannercore.StatementsSummaryExtractor)
+			require.False(t, extractor.SkipRequest)
+			require.NotEmpty(t, remained)
+			if ca.start == "" {
+				require.Nil(t, extractor.CoarseTimeRange)
+				return
+			}
+			require.NotNil(t, extractor.CoarseTimeRange)
+			start, err := time.Parse(time.RFC3339Nano, ca.start)
+			require.NoError(t, err)
+			end, err := time.Parse(time.RFC3339Nano, ca.end)
+			require.NoError(t, err)
+			require.True(t, start.Equal(extractor.CoarseTimeRange.StartTime))
+			require.True(t, end.Equal(extractor.CoarseTimeRange.EndTime))
+		})
+	}
+}
+
 func TestClusterLogTableExtractor(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
