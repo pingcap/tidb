@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use tidb_ast::Stmt;
 
-use super::{ClusterServerSession, ClusterSessionFactory, InternalBindingWriter};
+use super::{ClusterServerSession, ClusterSessionFactory};
 use crate::domain::resultset_source::ResultSetSource;
 use crate::domain::session_api::{QuerySession, SqlQueryError};
 use crate::{Session, StmtOutput};

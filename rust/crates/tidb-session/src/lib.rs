@@ -34,7 +34,7 @@ use std::time::Duration;
 use tidb_ast::Stmt;
 use tidb_datatype::{Datum, FieldType};
 use tidb_executor::{Catalog, DriverError, MysqlRng};
-use tidb_executor::{SchemaErrorKind, DEFAULT_DATABASE};
+use tidb_executor::SchemaErrorKind;
 pub use load_stats_arm::ClientLocalFileReader;
 pub use tidb_planner::txn_mode::{
     txn_mode_for_begin, txn_mode_for_statement, SessionTxnMode, StatementTxnModeInputs,

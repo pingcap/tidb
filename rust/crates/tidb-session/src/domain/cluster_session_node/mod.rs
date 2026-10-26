@@ -356,6 +356,24 @@ pub use transactions::{ClusterTransactions, OpenClusterTransaction, RealClusterT
 /// [`ClusterDdl`], the accounts through
 /// [`crate::domain::cluster_account_seam::ClusterAccountWriter`] -- and each has its
 /// own refusals.
+/// Go `Compile`'s plan kind for one statement, as the node dispatches on
+/// it: [`ClusterServerSession::compile`].
+enum CompiledStatement {
+    /// A stored-state change, lowered (Go `core.DDL`, the account
+    /// `core.Simple` statements, a GLOBAL `core.Set`, `core.Analyze`,
+    /// `core.LoadStats` and the statistics-lock plans).
+    StoredState(StatementRoute),
+    /// Go `core.Set` for session variables.
+    Set,
+    /// A plan with no result schema: Go's Insert/Update/Delete and the other
+    /// write plans, answered with an OK packet.
+    Write,
+    /// Go `core.Trace`.
+    Trace,
+    /// A plan with a result schema.
+    Query,
+}
+
 enum StatementRoute {
     /// Changes nothing stored outside this process.
     Ordinary,
@@ -6795,12 +6813,29 @@ impl QuerySession for ClusterServerSession {
             return Ok(None);
         }
         self.begin_statement();
-        match self.run_without_result(sql, stmt) {
-            Ok(Some(outcome)) => {
-                self.ok_packet = outcome;
-                return Ok(None);
+        let compiled = match self.compile(sql, stmt) {
+            Ok(CompiledStatement::Query) => {
+                let _execute_stmt =
+                    tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+                return self.open_query(sql, stmt).map(Some);
             }
-            Ok(None) => {}
+            // Go `TraceExec` runs the statement it wraps and reports its spans.
+            Ok(CompiledStatement::Trace) => {
+                let Stmt::Admin(admin) = stmt else {
+                    unreachable!("a TRACE plan compiles from ADMIN TRACE")
+                };
+                let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() else {
+                    unreachable!("a TRACE plan compiles from ADMIN TRACE")
+                };
+                return self.execute_trace(trace).map(Some);
+            }
+            compiled => compiled,
+        };
+        match compiled.and_then(|compiled| self.run_without_result(compiled, sql, stmt)) {
+            Ok(outcome) => {
+                self.ok_packet = outcome;
+                Ok(None)
+            }
             Err(error) => {
                 // Go `TiDBContext.ExecuteStmt` appends the error to the
                 // statement context; the data-conversion codes a DML filed as
@@ -6812,17 +6847,9 @@ impl QuerySession for ClusterServerSession {
                         .session
                         .record_ddl_failure(error.code, error.message.clone());
                 }
-                return Err(error);
+                Err(error)
             }
         }
-        // Go `TraceExec` runs the statement it wraps and reports its spans.
-        if let Stmt::Admin(admin) = stmt {
-            if let tidb_ast::AdminStmt::Trace(trace) = admin.as_ref() {
-                return self.execute_trace(trace).map(Some);
-            }
-        }
-        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-        self.open_query(sql, stmt).map(Some)
     }
 
     fn affected_rows(&self) -> u64 {
@@ -7539,7 +7566,10 @@ impl ClusterServerSession {
             }));
         }
         self.begin_statement();
-        self.run_without_result(sql, stmt)
+        match self.compile(sql, stmt)? {
+            CompiledStatement::Trace | CompiledStatement::Query => Ok(None),
+            compiled => self.run_without_result(compiled, sql, stmt).map(Some),
+        }
     }
 
     /// Go `PrepareTxnCtx` and `ResetContextOfStmt`: once per statement,
@@ -7565,28 +7595,47 @@ impl ClusterServerSession {
         self.rebuild_catalog_if_stale();
     }
 
-    /// Go's `runStmt` for the statements that answer no result set: routed
-    /// stored-state changes, SET, and writes. `None` for a query.
-    fn run_without_result(
-        &mut self,
-        sql: &str,
-        stmt: &Stmt,
-    ) -> Result<Option<WriteOutcome>, SqlQueryError> {
-        // Go `PlanBuilder.Build` starts with `checkSEMStmt` for every
-        // statement, so a routed one is refused before its own privileges.
+    /// Go `executor.Compiler.Compile` as this node runs it: the plan kind
+    /// that decides which executor runs the statement, as Go's
+    /// `executorBuilder.build` switches on the plan's type. Starts with
+    /// `checkSEMStmt`, as Go's `PlanBuilder.Build` does for every statement.
+    fn compile(&mut self, sql: &str, stmt: &Stmt) -> Result<CompiledStatement, SqlQueryError> {
         self.store
             .session
             .check_sem_stmt(sql, stmt)
             .map_err(map_error)?;
-        // Routed before anything else: what happens to a stored-state change
-        // must not depend on which answer shape it would otherwise have taken.
+        // A stored-state change compiles to its lowered statement whatever
+        // answer shape it would otherwise have.
         let route = self.schema_route(stmt)?;
-        if let Some(outcome) = self.run_routed_statement(route, sql, stmt)? {
-            return Ok(Some(outcome));
+        if !matches!(route, StatementRoute::Ordinary) {
+            return Ok(CompiledStatement::StoredState(route));
         }
         if matches!(stmt, Stmt::Session(node) if matches!(node.as_ref(), tidb_ast::SessionStmt::Set(_) | tidb_ast::SessionStmt::SetPassword(_)))
         {
-            let outcome = self.observe_routed_write(sql, stmt, |node| {
+            return Ok(CompiledStatement::Set);
+        }
+        if self.store.session.statement_kind_parsed(stmt) == StmtKind::Write {
+            return Ok(CompiledStatement::Write);
+        }
+        if matches!(stmt, Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::Trace(_)))
+        {
+            return Ok(CompiledStatement::Trace);
+        }
+        Ok(CompiledStatement::Query)
+    }
+
+    /// Go's `runStmt` for a compiled statement that answers no result set.
+    fn run_without_result(
+        &mut self,
+        compiled: CompiledStatement,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        match compiled {
+            CompiledStatement::StoredState(route) => Ok(self
+                .run_routed_statement(route, sql, stmt)?
+                .expect("a stored-state route answers an outcome")),
+            CompiledStatement::Set => self.observe_routed_write(sql, stmt, |node| {
                 node.store.session.apply_set_stmt(stmt).map_err(map_error)?;
                 // SET autocommit=1 may commit the open transaction without
                 // entering the snapshot/executor path.
@@ -7595,19 +7644,20 @@ impl ClusterServerSession {
                     affected_rows: 0,
                     last_insert_id: 0,
                 })
-            })?;
-            return Ok(Some(outcome));
+            }),
+            // Go `session.ExecuteStmt`: compile and `runStmt`, the autocommit
+            // commit included.
+            CompiledStatement::Write => {
+                let _execute_stmt =
+                    tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
+                self.observe_routed_write(sql, stmt, |node| {
+                    node.execute_ordinary_write_parsed(sql, stmt)
+                })
+            }
+            CompiledStatement::Trace | CompiledStatement::Query => {
+                unreachable!("a result-set plan is opened, not run for an outcome")
+            }
         }
-        if self.store.session.statement_kind_parsed(stmt) != StmtKind::Write {
-            return Ok(None);
-        }
-        // Go `session.ExecuteStmt`: compile and `runStmt`, the autocommit
-        // commit included.
-        let _execute_stmt = tidb_util::tracing::begin_thread_region_scope("session.ExecuteStmt");
-        self.observe_routed_write(sql, stmt, |node| {
-            node.execute_ordinary_write_parsed(sql, stmt)
-        })
-        .map(Some)
     }
 
     pub(crate) fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
