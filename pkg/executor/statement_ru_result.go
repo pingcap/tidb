@@ -272,12 +272,15 @@ type statementRUScanEvidence struct {
 }
 
 // classifyStatementRUScanEvidence converts a value copy of one Reader's scan
-// evidence into one raw-unit contribution. Zero-valued fields have no presence
-// bit, so a tuple that cannot satisfy the scan-byte formula is unavailable unless it is
-// provably contradictory. No RuntimeStatsColl or ScanDetail pointer survives.
-func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes int64) statementRUScanEvidence {
-	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
+// evidence into one raw-unit contribution. Prefer backend-reported total bytes;
+// zero has no presence bit, so fall back to the legacy processed-byte ratio.
+// No RuntimeStatsColl or ScanDetail pointer survives.
+func classifyStatementRUScanEvidence(totalKeys, processedKeys, processedBytes, totalBytes int64) statementRUScanEvidence {
+	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 || totalBytes < 0 {
 		return statementRUScanEvidence{state: statementRUScanEvidenceInvalid}
+	}
+	if totalBytes > 0 {
+		return statementRUScanEvidence{state: statementRUScanEvidenceValid, scanBytes: float64(totalBytes)}
 	}
 	if processedKeys == 0 {
 		// A branch with no processed-key evidence contributes zero even when
