@@ -1,0 +1,86 @@
+CREATE DATABASE IF NOT EXISTS proc_ddl_test;
+USE proc_ddl_test;
+DROP TABLE IF EXISTS test_table;
+DROP PROCEDURE IF EXISTS proc_create_table;
+CREATE PROCEDURE proc_create_table(IN table_suffix VARCHAR(20))
+BEGIN
+DROP TABLE IF EXISTS temp_table;
+CREATE TABLE temp_table (
+id INT PRIMARY KEY,
+name VARCHAR(50)
+);
+INSERT INTO temp_table (id, name) VALUES (1, 'test');
+END//
+CALL proc_create_table('suffix1');
+SELECT * FROM temp_table;
+id	name
+1	test
+DROP TABLE temp_table;
+DROP TABLE IF EXISTS truncate_test;
+CREATE TABLE truncate_test (id INT PRIMARY KEY, value INT);
+INSERT INTO truncate_test VALUES (1, 100), (2, 200);
+DROP PROCEDURE IF EXISTS proc_truncate;
+CREATE PROCEDURE proc_truncate()
+BEGIN
+TRUNCATE TABLE truncate_test;
+END//
+SELECT COUNT(*) AS before_truncate FROM truncate_test;
+before_truncate
+2
+CALL proc_truncate();
+SELECT COUNT(*) AS after_truncate FROM truncate_test;
+after_truncate
+0
+DROP TABLE truncate_test;
+DROP FUNCTION IF EXISTS func_create_table;
+CREATE FUNCTION func_create_table()
+RETURNS INT
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+CREATE TABLE func_created_table (id INT);
+RETURN 1;
+END//
+SELECT func_create_table();
+Error 1105 (HY000): DDL statements are not allowed in stored functions
+DROP FUNCTION func_create_table;
+CREATE TABLE drop_me (id INT);
+DROP PROCEDURE IF EXISTS proc_drop_table;
+CREATE PROCEDURE proc_drop_table()
+BEGIN
+DROP TABLE IF EXISTS drop_me;
+END//
+CALL proc_drop_table();
+SELECT * FROM drop_me;
+Error 1146 (42S02): Table 'proc_ddl_test.drop_me' doesn't exist
+DROP TABLE IF EXISTS index_test;
+CREATE TABLE index_test (id INT PRIMARY KEY, name VARCHAR(50));
+DROP PROCEDURE IF EXISTS proc_create_index;
+CREATE PROCEDURE proc_create_index()
+BEGIN
+CREATE INDEX idx_name ON index_test (name);
+END//
+CALL proc_create_index();
+SHOW INDEX FROM index_test WHERE Key_name = 'idx_name';
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+index_test	1	idx_name	1	name	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO	NO
+DROP TABLE index_test;
+DROP TABLE IF EXISTS alter_test;
+CREATE TABLE alter_test (id INT PRIMARY KEY);
+DROP PROCEDURE IF EXISTS proc_alter_table;
+CREATE PROCEDURE proc_alter_table()
+BEGIN
+ALTER TABLE alter_test ADD COLUMN new_col VARCHAR(50);
+END//
+CALL proc_alter_table();
+DESC alter_test;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+new_col	varchar(50)	YES		NULL	
+DROP TABLE alter_test;
+DROP PROCEDURE IF EXISTS proc_create_table;
+DROP PROCEDURE IF EXISTS proc_truncate;
+DROP PROCEDURE IF EXISTS proc_drop_table;
+DROP PROCEDURE IF EXISTS proc_create_index;
+DROP PROCEDURE IF EXISTS proc_alter_table;
+DROP DATABASE proc_ddl_test;

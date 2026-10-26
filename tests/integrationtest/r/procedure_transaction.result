@@ -1,0 +1,202 @@
+CREATE DATABASE IF NOT EXISTS proc_txn_test;
+USE proc_txn_test;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS inventory;
+DROP TABLE IF EXISTS audit_log;
+CREATE TABLE orders (
+id INT PRIMARY KEY,
+status VARCHAR(50) NOT NULL,
+created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE inventory (
+item_id INT PRIMARY KEY,
+stock INT NOT NULL DEFAULT 0
+);
+CREATE TABLE audit_log (
+id INT AUTO_INCREMENT PRIMARY KEY,
+action VARCHAR(100),
+details VARCHAR(255),
+logged_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO inventory (item_id, stock) VALUES (101, 100);
+INSERT INTO inventory (item_id, stock) VALUES (102, 50);
+DROP PROCEDURE IF EXISTS test_basic_commit;
+CREATE PROCEDURE test_basic_commit(IN order_id INT)
+BEGIN
+START TRANSACTION;
+INSERT INTO orders (id, status) VALUES (order_id, 'Processing');
+UPDATE inventory SET stock = stock - 1 WHERE item_id = 101;
+COMMIT;
+END//
+CALL test_basic_commit(1001);
+SELECT id, status FROM orders WHERE id = 1001;
+id	status
+1001	Processing
+SELECT item_id, stock FROM inventory WHERE item_id = 101;
+item_id	stock
+101	99
+DROP PROCEDURE IF EXISTS test_rollback;
+CREATE PROCEDURE test_rollback(IN order_id INT, IN should_rollback INT)
+BEGIN
+START TRANSACTION;
+INSERT INTO orders (id, status) VALUES (order_id, 'Pending');
+UPDATE inventory SET stock = stock - 5 WHERE item_id = 101;
+IF should_rollback = 1 THEN
+ROLLBACK;
+ELSE
+COMMIT;
+END IF;
+END//
+SELECT stock FROM inventory WHERE item_id = 101;
+stock
+99
+CALL test_rollback(1002, 1);
+SELECT COUNT(*) AS order_count FROM orders WHERE id = 1002;
+order_count
+0
+SELECT stock FROM inventory WHERE item_id = 101;
+stock
+99
+CALL test_rollback(1003, 0);
+SELECT id, status FROM orders WHERE id = 1003;
+id	status
+1003	Pending
+SELECT stock FROM inventory WHERE item_id = 101;
+stock
+94
+DROP PROCEDURE IF EXISTS test_savepoint;
+CREATE PROCEDURE test_savepoint(IN order_id INT, IN rollback_to_savepoint INT)
+BEGIN
+START TRANSACTION;
+INSERT INTO orders (id, status) VALUES (order_id, 'Created');
+SAVEPOINT sp_before_inventory;
+UPDATE inventory SET stock = stock - 10 WHERE item_id = 102;
+INSERT INTO audit_log (action, details) VALUES ('inventory_update', 'Reduced stock by 10');
+IF rollback_to_savepoint = 1 THEN
+ROLLBACK TO SAVEPOINT sp_before_inventory;
+END IF;
+COMMIT;
+END//
+SELECT stock FROM inventory WHERE item_id = 102;
+stock
+50
+CALL test_savepoint(2001, 1);
+SELECT id, status FROM orders WHERE id = 2001;
+id	status
+2001	Created
+SELECT stock FROM inventory WHERE item_id = 102;
+stock
+50
+SELECT COUNT(*) AS log_count FROM audit_log WHERE action = 'inventory_update';
+log_count
+0
+CALL test_savepoint(2002, 0);
+SELECT id, status FROM orders WHERE id = 2002;
+id	status
+2002	Created
+SELECT stock FROM inventory WHERE item_id = 102;
+stock
+40
+DROP PROCEDURE IF EXISTS ProcessOrder;
+CREATE PROCEDURE ProcessOrder(IN order_id INT)
+BEGIN
+DECLARE EXIT HANDLER FOR SQLEXCEPTION
+BEGIN
+ROLLBACK;
+INSERT INTO audit_log (action, details) VALUES ('order_failed', CONCAT('Order ', order_id, ' failed'));
+END;
+START TRANSACTION;
+INSERT INTO orders (id, status) VALUES (order_id, 'Pending');
+SAVEPOINT sp_inventory_check;
+UPDATE inventory SET stock = stock - 1 WHERE item_id = 101;
+COMMIT;
+END//
+CALL ProcessOrder(3001);
+SELECT id, status FROM orders WHERE id = 3001;
+id	status
+3001	Pending
+CALL ProcessOrder(3001);
+SELECT COUNT(*) AS order_3001_count FROM orders WHERE id = 3001;
+order_3001_count
+1
+SELECT COUNT(*) AS failure_log_count FROM audit_log WHERE action = 'order_failed';
+failure_log_count
+1
+DROP PROCEDURE IF EXISTS inner_proc;
+DROP PROCEDURE IF EXISTS outer_proc;
+CREATE PROCEDURE inner_proc(IN item INT)
+BEGIN
+UPDATE inventory SET stock = stock - 1 WHERE item_id = item;
+END//
+CREATE PROCEDURE outer_proc(IN order_id INT, IN item INT)
+BEGIN
+START TRANSACTION;
+INSERT INTO orders (id, status) VALUES (order_id, 'Nested');
+CALL inner_proc(item);
+COMMIT;
+END//
+SELECT stock FROM inventory WHERE item_id = 102;
+stock
+40
+CALL outer_proc(4001, 102);
+SELECT id, status FROM orders WHERE id = 4001;
+id	status
+4001	Nested
+SELECT stock FROM inventory WHERE item_id = 102;
+stock
+39
+DROP PROCEDURE IF EXISTS test_multiple_savepoints;
+CREATE PROCEDURE test_multiple_savepoints(IN base_id INT)
+BEGIN
+START TRANSACTION;
+INSERT INTO orders (id, status) VALUES (base_id, 'Step1');
+SAVEPOINT sp1;
+INSERT INTO orders (id, status) VALUES (base_id + 1, 'Step2');
+SAVEPOINT sp2;
+INSERT INTO orders (id, status) VALUES (base_id + 2, 'Step3');
+ROLLBACK TO SAVEPOINT sp2;
+INSERT INTO orders (id, status) VALUES (base_id + 3, 'Step4');
+COMMIT;
+END//
+CALL test_multiple_savepoints(5000);
+SELECT id, status FROM orders WHERE id BETWEEN 5000 AND 5003 ORDER BY id;
+id	status
+5000	Step1
+5001	Step2
+5003	Step4
+DROP PROCEDURE IF EXISTS test_txn_out_param;
+CREATE PROCEDURE test_txn_out_param(IN order_id INT, OUT result VARCHAR(50))
+BEGIN
+DECLARE EXIT HANDLER FOR SQLEXCEPTION
+BEGIN
+ROLLBACK;
+SET result = 'FAILED';
+END;
+START TRANSACTION;
+INSERT INTO orders (id, status) VALUES (order_id, 'OutParam');
+COMMIT;
+SET result = 'SUCCESS';
+END//
+CALL test_txn_out_param(6001, @res);
+SELECT @res AS result;
+result
+SUCCESS
+SELECT id, status FROM orders WHERE id = 6001;
+id	status
+6001	OutParam
+CALL test_txn_out_param(6001, @res2);
+SELECT @res2 AS result;
+result
+FAILED
+DROP PROCEDURE IF EXISTS test_basic_commit;
+DROP PROCEDURE IF EXISTS test_rollback;
+DROP PROCEDURE IF EXISTS test_savepoint;
+DROP PROCEDURE IF EXISTS ProcessOrder;
+DROP PROCEDURE IF EXISTS inner_proc;
+DROP PROCEDURE IF EXISTS outer_proc;
+DROP PROCEDURE IF EXISTS test_multiple_savepoints;
+DROP PROCEDURE IF EXISTS test_txn_out_param;
+DROP TABLE audit_log;
+DROP TABLE inventory;
+DROP TABLE orders;
+DROP DATABASE proc_txn_test;

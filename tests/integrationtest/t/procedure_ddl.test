@@ -1,0 +1,167 @@
+# Test DDL statements in stored procedures vs stored functions
+# DDL is allowed in stored procedures but NOT in stored functions (MySQL compatible)
+
+CREATE DATABASE IF NOT EXISTS proc_ddl_test;
+USE proc_ddl_test;
+
+# ============================================================
+# Test 1: DDL in stored procedures - should work
+# ============================================================
+
+DROP TABLE IF EXISTS test_table;
+DROP PROCEDURE IF EXISTS proc_create_table;
+
+DELIMITER //
+
+CREATE PROCEDURE proc_create_table(IN table_suffix VARCHAR(20))
+BEGIN
+    DROP TABLE IF EXISTS temp_table;
+    CREATE TABLE temp_table (
+        id INT PRIMARY KEY,
+        name VARCHAR(50)
+    );
+    INSERT INTO temp_table (id, name) VALUES (1, 'test');
+END//
+
+DELIMITER ;
+
+CALL proc_create_table('suffix1');
+
+# Verify table was created and data inserted
+SELECT * FROM temp_table;
+
+DROP TABLE temp_table;
+
+# ============================================================
+# Test 2: DDL with TRUNCATE in stored procedure
+# ============================================================
+
+DROP TABLE IF EXISTS truncate_test;
+CREATE TABLE truncate_test (id INT PRIMARY KEY, value INT);
+INSERT INTO truncate_test VALUES (1, 100), (2, 200);
+
+DROP PROCEDURE IF EXISTS proc_truncate;
+
+DELIMITER //
+
+CREATE PROCEDURE proc_truncate()
+BEGIN
+    TRUNCATE TABLE truncate_test;
+END//
+
+DELIMITER ;
+
+SELECT COUNT(*) AS before_truncate FROM truncate_test;
+CALL proc_truncate();
+SELECT COUNT(*) AS after_truncate FROM truncate_test;
+
+DROP TABLE truncate_test;
+
+# ============================================================
+# Test 3: DDL in stored function - should FAIL
+# ============================================================
+
+DROP FUNCTION IF EXISTS func_create_table;
+
+DELIMITER //
+
+CREATE FUNCTION func_create_table()
+RETURNS INT
+DETERMINISTIC
+MODIFIES SQL DATA
+BEGIN
+    CREATE TABLE func_created_table (id INT);
+    RETURN 1;
+END//
+
+DELIMITER ;
+
+# This should fail with "DDL statements are not allowed in stored functions"
+--error 1105
+SELECT func_create_table();
+
+DROP FUNCTION func_create_table;
+
+# ============================================================
+# Test 4: DROP TABLE in stored procedure
+# ============================================================
+
+CREATE TABLE drop_me (id INT);
+
+DROP PROCEDURE IF EXISTS proc_drop_table;
+
+DELIMITER //
+
+CREATE PROCEDURE proc_drop_table()
+BEGIN
+    DROP TABLE IF EXISTS drop_me;
+END//
+
+DELIMITER ;
+
+CALL proc_drop_table();
+
+# Verify table was dropped (this should error because table doesn't exist)
+--error 1146
+SELECT * FROM drop_me;
+
+# ============================================================
+# Test 5: CREATE INDEX in stored procedure
+# ============================================================
+
+DROP TABLE IF EXISTS index_test;
+CREATE TABLE index_test (id INT PRIMARY KEY, name VARCHAR(50));
+
+DROP PROCEDURE IF EXISTS proc_create_index;
+
+DELIMITER //
+
+CREATE PROCEDURE proc_create_index()
+BEGIN
+    CREATE INDEX idx_name ON index_test (name);
+END//
+
+DELIMITER ;
+
+CALL proc_create_index();
+
+# Verify index was created
+SHOW INDEX FROM index_test WHERE Key_name = 'idx_name';
+
+DROP TABLE index_test;
+
+# ============================================================
+# Test 6: ALTER TABLE in stored procedure
+# ============================================================
+
+DROP TABLE IF EXISTS alter_test;
+CREATE TABLE alter_test (id INT PRIMARY KEY);
+
+DROP PROCEDURE IF EXISTS proc_alter_table;
+
+DELIMITER //
+
+CREATE PROCEDURE proc_alter_table()
+BEGIN
+    ALTER TABLE alter_test ADD COLUMN new_col VARCHAR(50);
+END//
+
+DELIMITER ;
+
+CALL proc_alter_table();
+
+# Verify column was added
+DESC alter_test;
+
+DROP TABLE alter_test;
+
+# ============================================================
+# Cleanup
+# ============================================================
+
+DROP PROCEDURE IF EXISTS proc_create_table;
+DROP PROCEDURE IF EXISTS proc_truncate;
+DROP PROCEDURE IF EXISTS proc_drop_table;
+DROP PROCEDURE IF EXISTS proc_create_index;
+DROP PROCEDURE IF EXISTS proc_alter_table;
+DROP DATABASE proc_ddl_test;

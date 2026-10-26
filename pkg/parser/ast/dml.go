@@ -3229,6 +3229,7 @@ const (
 	ShowImportJobs
 	ShowImportGroups
 	ShowCreateProcedure
+	ShowCreateFunction
 	ShowBinlogStatus
 	ShowReplicaStatus
 	ShowDistributions
@@ -3261,7 +3262,9 @@ type ShowStmt struct {
 	DBName string
 	Table  *TableName // Used for showing columns.
 	// Procedure's naming method is consistent with the table name
-	Procedure         *TableName
+	Procedure *TableName
+	// FuncName is used for SHOW CREATE FUNCTION
+	FuncName          *TableName
 	Partition         CIStr       // Used for showing partition.
 	Column            *ColumnName // Used for `desc table column`.
 	IndexName         CIStr
@@ -3342,6 +3345,11 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CREATE PROCEDURE ")
 		if err := n.Procedure.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.Procedure")
+		}
+	case ShowCreateFunction:
+		ctx.WriteKeyWord("CREATE FUNCTION ")
+		if err := n.FuncName.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore ShowStmt.FuncName")
 		}
 	case ShowCreateView:
 		ctx.WriteKeyWord("CREATE VIEW ")
@@ -3853,26 +3861,50 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
+	// Variables holds variable names for SELECT ... INTO var1, var2 (legacy, for backward compatibility)
+	Variables []string
+	// VariableList holds variable references that can be either local variables or user variables (@var)
+	VariableList []*ColumnNameOrUserVar
 }
 
 // Restore implements Node interface.
 func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
-	if n.Tp != SelectIntoOutfile {
-		// only support SELECT/TABLE/VALUES ... INTO OUTFILE statement now
-		return errors.New("Unsupported SelectionInto type")
-	}
-
-	ctx.WriteKeyWord("INTO OUTFILE ")
-	ctx.WriteString(n.FileName)
-	if n.FieldsInfo != nil {
-		if err := n.FieldsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+	switch n.Tp {
+	case SelectIntoOutfile:
+		ctx.WriteKeyWord("INTO OUTFILE ")
+		ctx.WriteString(n.FileName)
+		if n.FieldsInfo != nil {
+			if err := n.FieldsInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+			}
 		}
-	}
-	if n.LinesInfo != nil {
-		if err := n.LinesInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+		if n.LinesInfo != nil {
+			if err := n.LinesInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+			}
 		}
+	case SelectIntoVars:
+		ctx.WriteKeyWord("INTO ")
+		// Prefer VariableList (new style) over Variables (legacy)
+		if len(n.VariableList) > 0 {
+			for i, v := range n.VariableList {
+				if i > 0 {
+					ctx.WritePlain(", ")
+				}
+				if err := v.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore SelectInto.VariableList")
+				}
+			}
+		} else {
+			for i, v := range n.Variables {
+				if i > 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteName(v)
+			}
+		}
+	default:
+		return errors.New("Unsupported SelectInto type")
 	}
 	return nil
 }
