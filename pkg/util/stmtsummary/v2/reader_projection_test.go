@@ -183,7 +183,7 @@ func TestHistoryProjectionReader(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "tidb-statements.log")
 	config.UpdateGlobal(func(conf *config.Config) { conf.Instance.StmtSummaryFilename = filename })
 	lines := []string{
-		`{"begin":1672128520,"end":1672128580,"digest":"d","stmt_type":"Select","exec_count":2,"auth_users":{"alice":{}},"sample_sql":"` + strings.Repeat("s", 32768) + `","sample_plan":"` + strings.Repeat("p", 32768) + `"}`,
+		`{"begin":1672128520,"end":1672128580,"digest":"d","stmt_type":"Select","exec_count":2,"auth_users":{"alice":{}},"sample_sql":"` + strings.Repeat("s", 32768) + `","sample_plan":"` + plancodec.PlanDiscardedEncoded + `","sample_binary_plan":"` + strings.Repeat("p", 32768) + `"}`,
 		`{"begin":1672128520,"end":1672128580,"digest":"d","exec_count":3,"auth_users":{"bob":{}}}`,
 		`{"begin":1672128520,"end":1672128580,"digest":"d","exec_count":4,"auth_users":{"alice":{}},"evicted":true}`,
 		`{"begin":1672128520,"end":1672128580,"digest":"d","exec_count":5,"auth_users":{"alice":{}},"sample_sql":123}`,
@@ -193,14 +193,19 @@ func TestHistoryProjectionReader(t *testing.T) {
 	}
 	require.NoError(t, os.WriteFile(filename, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
 	for _, projected := range []bool{false, true} {
-		reader, err := NewHistoryReader(context.Background(), projectionColumns(DigestStr, StmtTypeStr, ExecCountStr), "", time.UTC,
+		columns := projectionColumns(DigestStr, StmtTypeStr, ExecCountStr)
+		if !projected {
+			// Selecting all text fields establishes the full-decoder baseline
+			// before NewHistoryReader starts its background goroutines.
+			columns = append(columns, projectionColumns(DigestTextStr, BindingDigestTextStr, QuerySampleTextStr,
+				PrevSampleTextStr, PlanStr, BinaryPlan, PlanHint, PlanCacheUnqualifiedLastReasonStr)...)
+		}
+		reader, err := NewHistoryReader(context.Background(), columns, "", time.UTC,
 			&auth.UserIdentity{Username: "alice"}, false, set.NewStringSet("d", "a\ufffdb"), []*StmtTimeRange{{Begin: 1672128520, End: 1672128580}}, 2)
 		require.NoError(t, err)
-		if !projected {
-			reader.projection = nil
-		}
+		t.Cleanup(func() { require.NoError(t, reader.Close()) })
+		require.Equal(t, projected, reader.projection != nil, "decoder mode must be fixed before reader goroutines start")
 		rows := readAllRows(t, reader)
-		require.NoError(t, reader.Close())
 		require.Len(t, rows, 3, "projected=%v: privilege, digest, eviction and invalid-record checks", projected)
 		counts := make(map[string][]int64)
 		for _, row := range rows {
