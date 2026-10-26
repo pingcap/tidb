@@ -190,9 +190,10 @@ impl Session {
     /// Filtered by the `PROCESS` privilege the same way Go's
     /// `setDataForProcessList` / `fetchShowProcessList` both filter: a
     /// session without it sees only its own connections.
-    pub(crate) fn process_list_output(&self, full: bool) -> StmtOutput {
+    /// Go `ShowExec.fetchShowProcessList`: one row per connection the
+    /// session may see (`FULL` keeps the statement text whole).
+    pub(crate) fn process_list_rows(&self, full: bool) -> Vec<Vec<Datum>> {
         let rows = self.visible_process_rows(full);
-        let text = || FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
         let nullable_text = |value: String| {
             if value.is_empty() {
                 Datum::Null
@@ -200,27 +201,7 @@ impl Session {
                 Datum::Bytes(value.into_bytes())
             }
         };
-        StmtOutput::Rows {
-            columns: vec![
-                (
-                    "Id".to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                ),
-                ("User".to_owned(), text()),
-                ("Host".to_owned(), text()),
-                ("db".to_owned(), text()),
-                ("Command".to_owned(), text()),
-                (
-                    "Time".to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::Long),
-                ),
-                ("State".to_owned(), text()),
-                (
-                    "Info".to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::String),
-                ),
-            ],
-            rows: rows
+        rows
                 .into_iter()
                 .map(|row| {
                     vec![
@@ -248,8 +229,7 @@ impl Session {
                         },
                     ]
                 })
-                .collect(),
-        }
+            .collect()
     }
 
     /// The `User` column: Go reports the bare user name, while this session

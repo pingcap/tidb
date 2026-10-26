@@ -1164,6 +1164,13 @@ impl Session {
                 vec![tidb_executor::show_stats::histograms_in_flight_row(count)]
             }
             T::AnalyzeStatus => self.analyze_status_rows()?,
+            // Go `fetchShowBind` (LIKE is a case-sensitive selection on
+            // `Original_sql`: Go gives BINDINGS no extractor).
+            T::Bindings => self.show_bindings_rows(contents.global_scope)?,
+            T::BindingCacheStatus => self.binding_cache_status_rows()?,
+            // Go `ShowExec.fetchShowProcessList`: one row per live connection
+            // of this server, read from the session manager.
+            T::ProcessList => self.process_list_rows(contents.full),
             T::StatsTopN => self.stats_topn_rows()?,
             T::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
@@ -1587,16 +1594,6 @@ impl Session {
             }
             tidb_ast::AdminStmt::DropBinding(drop) => Ok(Some(self.drop_binding_stmt(drop)?)),
             tidb_ast::AdminStmt::SetBinding(set) => Ok(Some(self.set_binding_stmt(set)?)),
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Bindings => {
-                let output = self.show_bindings_stmt(show)?;
-                // Measured on real TiDB: `LIKE` filters on `Original_sql`
-                // CASE-SENSITIVELY (`like '%KB%'` over a lowercase binding
-                // answers nothing), so the literal is NOT folded the way
-                // `SHOW DATABASES LIKE` folds -- `has_extractor: false`.
-                let (like_pattern, where_clause) = self.show_like_or_where(show, false)?;
-                self.filter_show_output(output, like_pattern, where_clause)
-                    .map(Some)
-            }
             // ANALYZE, LOAD STATS and DROP STATS write the statistics storage
             // and the domain's cache: the session's node runs them
             // (`StatementRoute::Analyze` / `LoadStats` / `DropStats`).
@@ -1979,22 +1976,15 @@ impl Session {
             tidb_ast::AdminStmt::Show(show)
                 if matches!(
                     show.tp,
-                    tidb_ast::ShowStmtType::BindingCacheStatus
-                        | tidb_ast::ShowStmtType::Imports
+                    tidb_ast::ShowStmtType::Imports
                         | tidb_ast::ShowStmtType::Config
                         | tidb_ast::ShowStmtType::ReplicaStatus
                         | tidb_ast::ShowStmtType::SessionStates
-                        | tidb_ast::ShowStmtType::ProcessList
                         | tidb_ast::ShowStmtType::Affinity
                 ) =>
             {
                 if show.tp == tidb_ast::ShowStmtType::SessionStates {
                     return self.show_session_states().map(Some);
-                }
-                // Go `ShowExec.fetchShowBindingCacheStatus`; see
-                // `crate::binding_arm`.
-                if show.tp == tidb_ast::ShowStmtType::BindingCacheStatus {
-                    return Ok(Some(self.binding_cache_status_stmt()?));
                 }
                 // Go `ShowExec.fetchShowReplicaStatus` refuses outright:
                 // `This version of TiDB doesn't yet support 'SHOW {REPLICA |
@@ -2027,15 +2017,7 @@ impl Session {
                 if show.tp == tidb_ast::ShowStmtType::Imports {
                     return Ok(Some(crate::show_admin::show_imports_output()));
                 }
-                if show.tp != tidb_ast::ShowStmtType::ProcessList {
-                    return Ok(None);
-                }
-                if show.pattern.is_some() || show.r#where.is_some() || !show.db_name.is_empty() {
-                    return Err(DriverError::unsupported(
-                        "SHOW PROCESSLIST filters are not supported yet",
-                    ));
-                }
-                Ok(Some(self.process_list_output(show.full)))
+                Ok(None)
             }
             // Go `SimpleExec.executeKillStmt`.
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
@@ -2330,6 +2312,9 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::StatsBuckets
             | T::StatsHistograms
             | T::StatsLocked
+            | T::Bindings
+            | T::BindingCacheStatus
+            | T::ProcessList
     )
 }
 

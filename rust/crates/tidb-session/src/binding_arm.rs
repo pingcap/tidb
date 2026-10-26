@@ -609,7 +609,7 @@ impl Session {
     /// construction; on real TiDB they differ only while the cache lags a
     /// peer's write. Captured: a fresh store answers
     /// `0|0|0 Bytes|64 MB`, one binding `1|1|156 Bytes|64 MB`.
-    pub(crate) fn binding_cache_status_stmt(&mut self) -> Result<StmtOutput, DriverError> {
+    pub(crate) fn binding_cache_status_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         use crate::binding::STATUS_USING;
         let loaded = self.load_global_bindings()?;
         let all = loaded.all_sorted();
@@ -630,48 +630,35 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(64 << 20);
-        let long = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let text = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let count = i64::try_from(live).unwrap_or(i64::MAX);
-        Ok(StmtOutput::Rows {
-            columns: vec![
-                ("bindings_in_cache".to_owned(), long()),
-                ("bindings_in_table".to_owned(), long()),
-                ("memory_usage".to_owned(), text()),
-                ("memory_quota".to_owned(), text()),
-            ],
-            rows: vec![vec![
-                Datum::Int(count),
-                Datum::Int(count),
-                Datum::new_string(tidb_util::memory::format_bytes(usage)),
-                Datum::new_string(tidb_util::memory::format_bytes(quota)),
-            ]],
-        })
+        Ok(vec![vec![
+            Datum::Int(count),
+            Datum::Int(count),
+            Datum::new_string(tidb_util::memory::format_bytes(usage)),
+            Datum::new_string(tidb_util::memory::format_bytes(quota)),
+        ]])
     }
 
-    pub(crate) fn show_bindings_stmt(
+    /// Go `ShowExec.fetchShowBind`: the GLOBAL or SESSION bindings, one row
+    /// each, their times as the `TIMESTAMP(6)` values `mysql.bind_info` keeps.
+    pub(crate) fn show_bindings_rows(
         &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let text = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let columns = [
-            "Original_sql",
-            "Bind_sql",
-            "Default_db",
-            "Status",
-            "Create_time",
-            "Update_time",
-            "Charset",
-            "Collation",
-            "Source",
-            "Sql_digest",
-            "Plan_digest",
-        ]
-        .into_iter()
-        .map(|name| (name.to_owned(), text()))
-        .collect();
+        global_scope: bool,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let time = |text: &str| {
+            tidb_datatype::parse_time(
+                text,
+                tidb_datatype::TimeType::DateTime,
+                6,
+                false,
+                true,
+                false,
+                &tidb_datatype::SessionTimeZone::utc(),
+            )
+            .map_or(Datum::Null, |parsed| Datum::Time(parsed.time))
+        };
         let global;
-        let listed = if show.global_scope {
+        let listed = if global_scope {
             global = self.load_global_bindings()?;
             global.all_sorted()
         } else {
@@ -685,8 +672,8 @@ impl Session {
                     Datum::Bytes(binding.bind_sql.clone().into_bytes()),
                     Datum::Bytes(binding.db.clone().into_bytes()),
                     Datum::Bytes(binding.status.as_bytes().to_vec()),
-                    Datum::Bytes(binding.create_time.clone().into_bytes()),
-                    Datum::Bytes(binding.update_time.clone().into_bytes()),
+                    time(&binding.create_time),
+                    time(&binding.update_time),
                     Datum::Bytes(binding.charset.clone().into_bytes()),
                     Datum::Bytes(binding.collation.clone().into_bytes()),
                     Datum::Bytes(binding.source.as_bytes().to_vec()),
@@ -697,7 +684,7 @@ impl Session {
                 ]
             })
             .collect();
-        Ok(StmtOutput::Rows { columns, rows })
+        Ok(rows)
     }
 
     /// Go `planner.optimize`'s binding step: replaces the statement's hints
