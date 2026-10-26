@@ -2008,6 +2008,22 @@ pub struct SessionVars {
     /// `@@last_plan_from_cache` is.
     /// (Go `SessionVars.PrevFoundInBinding`.)
     pub prev_found_in_binding: bool,
+    /// Go `SessionVars.ResourceGroupName`: the connection's selected resource
+    /// group. A statement-level `RESOURCE_GROUP` hint may override this value
+    /// for one statement, but never mutates it.
+    /// (Go `SessionVars.ResourceGroupName`.)
+    pub resource_group: String,
+    /// Go `SessionVars.InRestrictedSQL`.
+    pub restricted_sql: bool,
+    /// Whether this connection completed a TLS handshake (or an equivalent
+    /// trusted gateway assertion). Go keeps the same fact in
+    /// `SessionVars.TLSConnectionState`; `SET GLOBAL
+    /// require_secure_transport=ON` needs it to avoid locking every current
+    /// plaintext administrator out of the server.
+    /// (Go `SessionVars.TLSConnectionState is set`.)
+    pub secure_transport: bool,
+    /// Go `SessionVars.preparedStmtID`.
+    pub prepared_statement_id: u32,
 }
 
 /// Go `GetSessionOrGlobalSystemVar`'s lazy population of `s.systems` for a
@@ -2075,6 +2091,10 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
 impl Default for SessionVars {
     fn default() -> Self {
         Self {
+            resource_group: "default".to_owned(),
+            restricted_sql: false,
+            secure_transport: false,
+            prepared_statement_id: 0,
             in_multi_stmts: false,
             sys_warning_count: 0,
             sys_error_count: 0,

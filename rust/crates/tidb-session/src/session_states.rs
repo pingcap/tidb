@@ -91,8 +91,8 @@ impl Session {
 
     /// Allocates in the namespace shared by SQL PREPARE and COM_STMT_PREPARE.
     pub fn allocate_prepared_statement_id(&mut self) -> u32 {
-        self.prepared_statement_id = self.prepared_statement_id.wrapping_add(1);
-        self.prepared_statement_id
+        self.vars.prepared_statement_id = self.vars.prepared_statement_id.wrapping_add(1);
+        self.vars.prepared_statement_id
     }
 
     /// Installs the protocol owner's current portable state and admission result.
@@ -179,14 +179,14 @@ impl Session {
         let mut state = json!({
             "user-var-values": user_vars, "user-var-types": user_types,
             "sys-vars": system_vars, "prepared-stmts": prepared,
-            "prepared-stmt-id": self.prepared_statement_id,
+            "prepared-stmt-id": self.vars.prepared_statement_id,
             "status": if self.is_autocommit() { 2u32 } else { 0 },
             "current-db": self.vars.current_db, "txn-info": *self.last_txn_info.borrow(),
             "found-rows": self.vars.last_found_rows, "in-plan-cache": self.vars.prev_found_in_plan_cache,
             "in-binding": self.vars.prev_found_in_binding,
             "seq-values": *self.sequence_last_values.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
             "affected-rows": self.vars.prev_row_count, "last-insert-id": self.vars.last_insert_id,
-            "warnings": warnings, "rs-group": self.resource_group,
+            "warnings": warnings, "rs-group": self.vars.resource_group,
         });
         let (ddl_query, ddl_seq) = self.last_ddl_info.borrow().clone();
         if ddl_seq != 0 {
@@ -237,14 +237,14 @@ impl Session {
         let prepared: BTreeMap<u32, PreparedStmtInfo> =
             serde_json::from_value(state.get("prepared-stmts").cloned().unwrap_or(json!({})))
                 .map_err(invalid_state)?;
-        let old_id = self.prepared_statement_id;
+        let old_id = self.vars.prepared_statement_id;
         let old_db = self.vars.current_db.clone();
         let prepare_result = (|| {
             for (id, statement) in prepared {
                 if statement.name.is_empty() {
                     continue;
                 }
-                self.prepared_statement_id = id.wrapping_sub(1);
+                self.vars.prepared_statement_id = id.wrapping_sub(1);
                 self.vars.current_db = statement.database;
                 self.prepare_statement(
                     &statement.name,
@@ -253,7 +253,7 @@ impl Session {
             }
             Ok::<_, DriverError>(())
         })();
-        self.prepared_statement_id = old_id;
+        self.vars.prepared_statement_id = old_id;
         self.vars.current_db = old_db;
         prepare_result?;
         if let Some(bindings) = state
@@ -364,7 +364,7 @@ impl Session {
                 || self.has_dynamic_privilege("RESOURCE_GROUP_ADMIN", false)
                 || self.has_dynamic_privilege("RESOURCE_GROUP_USER", false)
             {
-                self.resource_group = group.to_owned();
+                self.vars.resource_group = group.to_owned();
             }
         }
         if let Some(vars) = state.get("user-var-values").and_then(Value::as_object) {
@@ -386,7 +386,7 @@ impl Session {
         self.vars.restore_autocommit_status(
             state.get("status").and_then(Value::as_u64).unwrap_or(0) as u32,
         );
-        self.prepared_statement_id = state
+        self.vars.prepared_statement_id = state
             .get("prepared-stmt-id")
             .and_then(Value::as_u64)
             .unwrap_or(0) as u32;

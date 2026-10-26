@@ -591,10 +591,6 @@ pub struct Session {
     global_temporary_data: std::collections::HashMap<i64, tidb_executor::TemporaryTableTxnData>,
     /// The session's system and user variables.
     vars: SessionVars,
-    /// Go `SessionVars.ResourceGroupName`: the connection's selected resource
-    /// group. A statement-level `RESOURCE_GROUP` hint may override this value
-    /// for one statement, but never mutates it.
-    resource_group: String,
     /// Go `StmtCtx.StmtHints`: the canonical statement-hint parse result for
     /// the statement currently executing. It is reset at every statement
     /// boundary and replaced after `hint.ParseStmtHints`.
@@ -744,7 +740,6 @@ pub struct Session {
     snapshot_schema: Option<(u64, Catalog)>,
     /// Statement-only SnapshotTS override; the ordinary transaction stays intact.
     statement_snapshot: Option<(u64, txn::HistoricalRead)>,
-    restricted_sql: bool,
     /// Go `GetRestrictedSQLExecutor`: internal sessions of the node, absent
     /// on the in-process tier; see [`restricted_sql`].
     restricted_sql_executor: restricted_sql::RestrictedSql,
@@ -878,12 +873,6 @@ pub struct Session {
     /// account/role storage, while authorization readers treat the session
     /// as unrestricted.
     privilege_bypassed: bool,
-    /// Whether this connection completed a TLS handshake (or an equivalent
-    /// trusted gateway assertion). Go keeps the same fact in
-    /// `SessionVars.TLSConnectionState`; `SET GLOBAL
-    /// require_secure_transport=ON` needs it to avoid locking every current
-    /// plaintext administrator out of the server.
-    secure_transport: bool,
     /// Negotiated TLS `(cipher, version)` names for `Ssl_cipher` /
     /// `Ssl_version`; `None` on a plaintext connection.
     tls_status: Option<(String, String)>,
@@ -895,7 +884,6 @@ pub struct Session {
     /// prepared statements this session holds. Per-session and not shared: a
     /// peer over the same catalog holds its own.
     prepared_statements: prepared_statements::PreparedStore,
-    prepared_statement_id: u32,
     protocol_session_states: session_states::ProtocolSessionStates,
     /// Go PlanCacheParams, shared by contexts belonging to the current execution.
     prepared_params: Option<Arc<[Datum]>>,
@@ -1005,7 +993,6 @@ impl Session {
             global_temporary_data: std::collections::HashMap::new(),
             vars: SessionVars::new(),
             global_config_syncer: None,
-            resource_group: "default".to_owned(),
             stmt_hints: tidb_hint::StmtHints::default(),
             active_resource_group: "default".to_owned(),
             warnings: Vec::new(),
@@ -1056,7 +1043,6 @@ impl Session {
             snapshot_schema_provider: None,
             snapshot_schema: None,
             statement_snapshot: None,
-            restricted_sql: false,
             restricted_sql_executor: None,
             column_stats_usage: None,
             analyze_status: None,
@@ -1095,11 +1081,9 @@ impl Session {
             has_process_priv: false,
             privileges: None,
             privilege_bypassed: false,
-            secure_transport: false,
             tls_status: None,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),
-            prepared_statement_id: 0,
             protocol_session_states: Default::default(),
             prepared_params: None,
             session_bindings: binding::SessionBindings::default(),

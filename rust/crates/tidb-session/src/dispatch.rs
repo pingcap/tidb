@@ -1005,7 +1005,7 @@ impl Session {
         let result = (|| {
             self.set_statement_arbitration_key(sql);
             let cache_hit = execution.cache_hit();
-            self.active_resource_group.clone_from(&self.resource_group);
+            self.active_resource_group.clone_from(&self.vars.resource_group);
             self.publish_statement_resource_group();
             self.begin_cached_prepared_query_boundary();
             // Go Optimize applies StmtHints.SetVars for cached plans too. The
@@ -1137,7 +1137,7 @@ impl Session {
         let table_names = execution.plan().table_names().to_vec();
         let parameters = execution.parameters();
         self.set_statement_arbitration_key(prepared.sql());
-        self.active_resource_group.clone_from(&self.resource_group);
+        self.active_resource_group.clone_from(&self.vars.resource_group);
         self.publish_statement_resource_group();
         self.begin_cached_prepared_query_boundary();
         for (level, code, message) in execution.take_planning_warnings() {
@@ -2792,7 +2792,7 @@ pub(crate) fn memory_usage_table_rows() -> Vec<Vec<tidb_datatype::Datum>> {
 impl Session {
     /// Shared snapshot write admission for ordinary and routed DDL execution.
     pub fn validate_snapshot_statement(&self, stmt: &Stmt) -> Result<(), DriverError> {
-        if !self.restricted_sql
+        if !self.vars.restricted_sql
             && (self.historical_read_ts().is_some()
                 || self.vars.txn_read_ts() != 0
                 || self.external_timestamp_read_enabled())
@@ -2839,7 +2839,7 @@ impl Session {
     }
 
     pub(crate) fn external_timestamp_read_enabled(&self) -> bool {
-        !self.restricted_sql
+        !self.vars.restricted_sql
             && self
                 .vars
                 .get_system("tidb_enable_external_ts_read")

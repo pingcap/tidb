@@ -1806,7 +1806,7 @@ impl Session {
                 .with_pessimistic_check_in_prewrite(
                     !self.pessimistic_constraint_check_in_place()
                         && self.in_transaction()
-                        && !self.restricted_sql
+                        && !self.vars.restricted_sql
                         && self.vars.connection_id.is_some_and(|id| id > 0),
                 )
                 // Go `optimizeDupKeyCheckForNormalInsert` + `getPessimisticLazyCheckMode`

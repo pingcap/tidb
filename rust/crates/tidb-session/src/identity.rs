@@ -897,7 +897,7 @@ impl Session {
                         })
                         .filter(|group| !group.is_empty());
                     if let Some(group) = group {
-                        self.resource_group = group;
+                        self.vars.resource_group = group;
                     }
                 }
             }
@@ -918,13 +918,13 @@ impl Session {
     /// Go stores the full TLS state on `SessionVars`; this tier needs only
     /// its presence bit for the transport-sensitive GLOBAL sysvar validator.
     pub fn set_secure_transport(&mut self, secure: bool) {
-        self.secure_transport = secure;
+        self.vars.secure_transport = secure;
     }
 
     /// Whether the front end established TLS for this connection.
     #[must_use]
     pub(crate) const fn has_secure_transport(&self) -> bool {
-        self.secure_transport
+        self.vars.secure_transport
     }
 
     /// Records the negotiated TLS `(cipher, version)` names, which

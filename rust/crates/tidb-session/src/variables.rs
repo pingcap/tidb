@@ -424,7 +424,7 @@ impl Session {
                     ));
                 }
                 // Go `executeSetResourceGroupName`: a named group must exist.
-                self.resource_group = if resource_group.name.is_empty() {
+                self.vars.resource_group = if resource_group.name.is_empty() {
                     "default".to_owned()
                 } else {
                     if self
@@ -448,7 +448,7 @@ impl Session {
     /// modify this value.
     #[must_use]
     pub fn current_resource_group(&self) -> &str {
-        &self.resource_group
+        &self.vars.resource_group
     }
 
     /// Go `StmtCtx.ResourceGroupName` for the statement currently executing.
@@ -466,7 +466,7 @@ impl Session {
         if stmt_hints.has_resource_group && self.resource_group_hint_rejection().is_none() {
             Cow::Owned(stmt_hints.resource_group)
         } else {
-            Cow::Borrowed(&self.resource_group)
+            Cow::Borrowed(&self.vars.resource_group)
         }
     }
 
@@ -503,7 +503,7 @@ impl Session {
     }
 
     fn resolve_statement_resource_group(&mut self, stmt: &Stmt) {
-        self.active_resource_group.clone_from(&self.resource_group);
+        self.active_resource_group.clone_from(&self.vars.resource_group);
         let Some(hints) = statement_hints(stmt) else {
             return;
         };
@@ -538,7 +538,7 @@ impl Session {
         let hinted = stmt_hints.resource_group.go_to_lower();
         // Go `ExecuteStmt`: a hinted group that does not exist falls back
         // to the session's own group (Go only logs it).
-        let exists = hinted == self.resource_group
+        let exists = hinted == self.vars.resource_group
             || self
                 .lock_catalog()
                 .is_ok_and(|catalog| catalog.resource_group(&hinted).is_some());

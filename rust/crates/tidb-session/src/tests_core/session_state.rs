@@ -1259,10 +1259,10 @@ fn session_migration_preserves_prepare_database_and_cleans_up_after_restore_erro
         source.run("EXECUTE saved").unwrap(),
         target.run("EXECUTE saved").unwrap()
     );
-    let before_id = target.prepared_statement_id;
+    let before_id = target.vars.prepared_statement_id;
     assert!(target.decode_session_states(r#"{"prepared-stmts":{"91":{"name":"bad","text":"SELECT missing_column","db":"migration_prepare"}}}"#).is_err());
     assert_eq!(target.current_database(), "test");
-    assert_eq!(target.prepared_statement_id, before_id);
+    assert_eq!(target.vars.prepared_statement_id, before_id);
 }
 
 #[test]

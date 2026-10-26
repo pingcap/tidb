@@ -233,7 +233,7 @@ impl Session {
     /// `RUV2PendingSessionParserTotal`, which the statement it parsed (or,
     /// for a parse before its statement starts, the next one) takes over.
     pub(crate) fn record_ruv2_session_parse(&mut self, sql: &str) {
-        if self.restricted_sql {
+        if self.vars.restricted_sql {
             return;
         }
         match self.statement_observation.as_ref().filter(|o| o.sql == sql) {
@@ -881,7 +881,7 @@ impl Session {
         let action = decide_summary_stmt(&SummaryGate {
             // Go `sessVars.InRestrictedSQL`: an internal session's statements
             // are internal. EXPLAIN EXPLORE has no runtime consumer here yet.
-            in_restricted_sql: self.restricted_sql,
+            in_restricted_sql: self.vars.restricted_sql,
             user_name: user.clone(),
             in_explain_explore: false,
             summary_enabled: tidb_stmtsummary::v2::stmtsummary::enabled(),
@@ -1300,7 +1300,7 @@ impl Session {
                 rewrite_time: durations.rewrite_phase_info.duration_rewrite,
                 optimize_time: durations.duration_optimizer.total,
                 wait_ts: durations.duration_wait_ts,
-                is_internal: self.restricted_sql,
+                is_internal: self.vars.restricted_sql,
                 digest: observation.digest.to_string(),
                 num_cop_tasks: cop_tasks.as_ref().map(|details| details.num_cop_tasks),
                 mem_max,
@@ -1496,7 +1496,7 @@ impl Session {
             duration_wait_ts: durations.duration_wait_ts,
             ruv2_weights: crate::slow_log::ruv2_weights(),
             current_db: self.vars.current_db.clone(),
-            in_restricted_sql: self.restricted_sql,
+            in_restricted_sql: self.vars.restricted_sql,
             current_db_changed: self.vars.current_db_changed,
             ..crate::slow_log::SlowLogSessionVars::default()
         };
@@ -1535,7 +1535,7 @@ impl Session {
             table_ids,
             index_names: items.index_names,
             digest: items.digest,
-            internal: self.restricted_sql,
+            internal: self.vars.restricted_sql,
         });
     }
 
@@ -1626,7 +1626,7 @@ impl Session {
 
     /// Go `logGeneralQuery`: one `GENERAL_LOG` entry per user statement.
     fn log_general_query(&self, observation: &StatementObservation, schema_version: i64) {
-        if !self.instance_switch_on(tidb_vardef::tidb_vars::TIDB_GENERAL_LOG) || self.restricted_sql
+        if !self.instance_switch_on(tidb_vardef::tidb_vars::TIDB_GENERAL_LOG) || self.vars.restricted_sql
         {
             return;
         }

@@ -537,7 +537,7 @@ impl Session {
 
     /// Domain's internal sessions must ignore the external timestamp read switch.
     pub fn set_restricted_sql(&mut self, restricted: bool) {
-        self.restricted_sql = restricted;
+        self.vars.restricted_sql = restricted;
     }
 
     /// Effective historical timestamp of the active statement or stale transaction.
