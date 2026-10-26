@@ -704,9 +704,9 @@ func calculateStatementRUPlanChildFirst(
 		// Before statement-level charges, IndexMerge subtree RU is:
 		// sum(child subtree RU) plus the weighted sum of partial and table
 		// scan bytes.
-		// Each request estimates scanBytes = ProcessedKeysSize / ProcessedKeys *
-		// TotalKeys when those counters are usable; missing/unavailable evidence
-		// contributes zero. Child RU covers pushed operators such as Selection.
+		// Each request uses TotalKeysSize, falling back to ProcessedKeysSize /
+		// ProcessedKeys * TotalKeys when total bytes are unavailable. Missing
+		// evidence contributes zero. Child RU covers pushed operators such as Selection.
 		// TiDB handle union/intersection has no separate charge in this model.
 		// Network and frontend RU are added once at the statement root.
 		if !operator.IsRoot || origin.TablePlan == nil {
@@ -1316,11 +1316,9 @@ func collectStatementRUReaderScanBytes(
 	calculator *statementRUCalculator,
 	requestRoots []base.Plan,
 ) statementRUOperatorState {
-	// GetCopScanDetail currently exposes totals merged across responses. Applying
-	// the processed-byte ratio after that merge can estimate above or below the
-	// sum of response-local physical sizes even when every field is present. A
-	// later producer change will consume response-level total-key-size evidence;
-	// until then the whole forest remains calibration-Incomplete.
+	// Backend total bytes are additive across responses. When unavailable, the
+	// legacy ratio is still applied to merged counters and remains an estimate.
+	// Response coverage is not proven, so calibration remains Incomplete.
 	if len(operator.ChildrenIdx) != len(requestRoots) {
 		return statementRUOperatorUnsupported
 	}
@@ -1345,6 +1343,7 @@ func collectStatementRUReaderScanBytes(
 			detail.TotalKeys,
 			detail.ProcessedKeys,
 			detail.ProcessedKeysSize,
+			detail.TotalKeysSize,
 		)
 		switch scanEvidence.state {
 		case statementRUScanEvidenceUnavailable:
@@ -1389,7 +1388,7 @@ func collectStatementRUPointLookupEvidence(
 	if !aggregate.PayloadComplete() {
 		if aggregate.PayloadBytes != 0 ||
 			aggregate.ScanDetail.TotalKeys != 0 || aggregate.ScanDetail.ProcessedKeys != 0 ||
-			aggregate.ScanDetail.ProcessedKeysSize != 0 {
+			aggregate.ScanDetail.ProcessedKeysSize != 0 || aggregate.ScanDetail.TotalKeysSize != 0 {
 			return statementRUOperatorInvalid
 		}
 		return statementRUOperatorComplete
@@ -1402,6 +1401,7 @@ func collectStatementRUPointLookupEvidence(
 		aggregate.ScanDetail.TotalKeys,
 		aggregate.ScanDetail.ProcessedKeys,
 		aggregate.ScanDetail.ProcessedKeysSize,
+		aggregate.ScanDetail.TotalKeysSize,
 	)
 	switch scanEvidence.state {
 	case statementRUScanEvidenceValid:
@@ -1440,7 +1440,7 @@ func mergeStatementRUPointResponseStats(
 	stats clientutil.PointResponseStats,
 ) bool {
 	if !stats.IsValid() || stats.ScanDetail.TotalKeys < 0 ||
-		stats.ScanDetail.ProcessedKeys < 0 || stats.ScanDetail.ProcessedKeysSize < 0 {
+		stats.ScanDetail.ProcessedKeys < 0 || stats.ScanDetail.ProcessedKeysSize < 0 || stats.ScanDetail.TotalKeysSize < 0 {
 		return false
 	}
 	aggregate.Merge(stats)
