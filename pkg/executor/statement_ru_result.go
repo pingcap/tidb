@@ -354,11 +354,11 @@ func reportStatementRUV2ConsumptionSafely(stmt *ExecStmt, result statementRUEngi
 	if stmt == nil || stmt.Ctx == nil || (result.TiDB <= 0 && result.TiKV <= 0 && result.TiFlash <= 0) {
 		return
 	}
-	dctx := stmt.Ctx.GetDistSQLCtx()
-	if dctx == nil || dctx.RUConsumptionReporter == nil || len(dctx.ResourceGroupName) == 0 {
+	reporter, resourceGroupName := stmt.Ctx.GetRUConsumptionReporter()
+	if reporter == nil || len(resourceGroupName) == 0 {
 		return
 	}
-	dctx.RUConsumptionReporter.ReportRUV2Consumption(dctx.ResourceGroupName, result.TiKV, result.TiDB, result.TiFlash)
+	reporter.ReportRUV2Consumption(resourceGroupName, result.TiKV, result.TiDB, result.TiFlash)
 }
 
 // publishStatementRUMetricsSafely publishes result metrics using cached counters.
