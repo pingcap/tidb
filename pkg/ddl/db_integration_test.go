@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -393,6 +394,345 @@ func TestTableDDLWithTimeType(t *testing.T) {
 	tk.MustGetErrCode("alter table t change column a aa timestamp(7)", errno.ErrTooBigPrecision)
 	tk.MustExec("alter table t change column a aa datetime(0)")
 	tk.MustExec("drop table t")
+}
+
+func TestGeometryColumnNotSupported(t *testing.T) {
+	// With the gate off, as in a production build, geometry columns are rejected.
+	defer func(enabled bool) { types.GeometryEnabled = enabled }(types.GeometryEnabled)
+	types.GeometryEnabled = false
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, tp := range []string{"geometry", "point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection", "geomcollection"} {
+		tk.MustGetErrCode(fmt.Sprintf("create table t (a int, g %s)", tp), errno.ErrNotSupportedYet)
+	}
+	tk.MustGetErrMsg("create table t (g point not null srid 4326)", "[ddl:1235]This version of TiDB doesn't yet support 'geometry columns'")
+	tk.MustGetErrCode("create table t (g point srid 3857)", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("create table t (g geometry as (null) stored srid 0)", errno.ErrNotSupportedYet)
+	for _, def := range []string{"1", "'abc'", "x'00'", "(1)"} {
+		tk.MustGetErrCode("create table t (g point default "+def+")", errno.ErrNotSupportedYet)
+	}
+	tk.MustGetErrMsg("create table t (a int srid 4326)", "[ddl:1221]Incorrect usage of SRID and non-geometry column")
+	tk.MustGetErrCode("create table t (a varchar(10) not null srid 0)", errno.ErrWrongUsage)
+	tk.MustGetErrMsg("create table t (g point not null srid 4326, spatial key sk (g))", "[ddl:8200]SPATIAL index is not supported")
+
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustGetErrCode("alter table t add column g point", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column g point not null", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column g geometry srid 4326", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column g geometry srid 3857", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column c int srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t modify column a point", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t change column a g geomcollection srid 0", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t modify column a int srid 4326", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t change column a c bigint srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t add column c int, modify column b int srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrMsg("alter table t add spatial index sk (a)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("create spatial index sk on t (a)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t")
+}
+
+func TestGeometryColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// SHOW CREATE TABLE prints the SRID attribute after NOT NULL and before DEFAULT, as
+	// MySQL does, without MySQL's version comment. The last SRID wins.
+	tk.MustExec("create table t (" +
+		"c1 geometry, c2 point not null srid 4326, c3 linestring srid 0, c4 polygon comment 'p', " +
+		"c5 multipoint, c6 multilinestring, c7 multipolygon, c8 geometrycollection, c9 geomcollection srid 0x10E6, " +
+		"c10 geometry srid 4326 srid 0, c11 point srid 0 not null srid 4326, c12 point srid 0 default null comment 'c')")
+	createTable := "CREATE TABLE `t` (\n" +
+		"  `c1` geometry DEFAULT NULL,\n" +
+		"  `c2` point NOT NULL SRID 4326,\n" +
+		"  `c3` linestring SRID 0 DEFAULT NULL,\n" +
+		"  `c4` polygon DEFAULT NULL COMMENT 'p',\n" +
+		"  `c5` multipoint DEFAULT NULL,\n" +
+		"  `c6` multilinestring DEFAULT NULL,\n" +
+		"  `c7` multipolygon DEFAULT NULL,\n" +
+		"  `c8` geomcollection DEFAULT NULL,\n" +
+		"  `c9` geomcollection SRID 4326 DEFAULT NULL,\n" +
+		"  `c10` geometry SRID 0 DEFAULT NULL,\n" +
+		"  `c11` point NOT NULL SRID 4326,\n" +
+		"  `c12` point SRID 0 DEFAULT NULL COMMENT 'c'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t").Check(testkit.Rows("t " + createTable))
+	tk.MustExec("create table t2 like t")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 " + strings.Replace(createTable, "`t`", "`t2`", 1)))
+
+	// DESC, SHOW FULL COLUMNS and information_schema.COLUMNS name the subtype, show no
+	// charset, collation or character length, and give the SRID as SRS_ID.
+	tk.MustQuery("desc t").Check(testkit.Rows(
+		"c1 geometry YES  <nil> ",
+		"c2 point NO  <nil> ",
+		"c3 linestring YES  <nil> ",
+		"c4 polygon YES  <nil> ",
+		"c5 multipoint YES  <nil> ",
+		"c6 multilinestring YES  <nil> ",
+		"c7 multipolygon YES  <nil> ",
+		"c8 geomcollection YES  <nil> ",
+		"c9 geomcollection YES  <nil> ",
+		"c10 geometry YES  <nil> ",
+		"c11 point NO  <nil> ",
+		"c12 point YES  <nil> ",
+	))
+	tk.MustQuery("show full columns from t where field in ('c2', 'c4', 'c8')").Check(testkit.Rows(
+		"c2 point <nil> NO  <nil>  select,insert,update,references ",
+		"c4 polygon <nil> YES  <nil>  select,insert,update,references p",
+		"c8 geomcollection <nil> YES  <nil>  select,insert,update,references ",
+	))
+	tk.MustQuery("select column_name, data_type, column_type, character_maximum_length, character_octet_length, " +
+		"character_set_name, collation_name, srs_id from information_schema.columns " +
+		"where table_schema = 'test' and table_name = 't' order by ordinal_position").Check(testkit.Rows(
+		"c1 geometry geometry <nil> <nil> <nil> <nil> <nil>",
+		"c2 point point <nil> <nil> <nil> <nil> 4326",
+		"c3 linestring linestring <nil> <nil> <nil> <nil> 0",
+		"c4 polygon polygon <nil> <nil> <nil> <nil> <nil>",
+		"c5 multipoint multipoint <nil> <nil> <nil> <nil> <nil>",
+		"c6 multilinestring multilinestring <nil> <nil> <nil> <nil> <nil>",
+		"c7 multipolygon multipolygon <nil> <nil> <nil> <nil> <nil>",
+		"c8 geomcollection geomcollection <nil> <nil> <nil> <nil> <nil>",
+		"c9 geomcollection geomcollection <nil> <nil> <nil> <nil> 4326",
+		"c10 geometry geometry <nil> <nil> <nil> <nil> 0",
+		"c11 point point <nil> <nil> <nil> <nil> 4326",
+		"c12 point point <nil> <nil> <nil> <nil> 0",
+	))
+
+	// Unsupported SRIDs and SRID on a non-geometry column are rejected. Only the last SRID
+	// is checked; SRID on a non-geometry column is reported first, as in MySQL.
+	tk.MustGetErrMsg("create table t3 (g point srid 3857)", "[types:3548]There's no spatial reference system with SRID 3857.")
+	err := tk.ExecToErr("create table t3 (g point srid 3857)")
+	require.Equal(t, "SR001", terror.ToSQLError(errors.Cause(err).(*terror.Error)).State)
+	tk.MustGetErrCode("create table t3 (g point srid 4294967295)", errno.ErrSRSNotFound)
+	tk.MustGetErrCode("create table t3 (g point srid 4326 srid 1)", errno.ErrSRSNotFound)
+	tk.MustGetErrCode("create table t3 (g point srid 1, a int srid 4326)", errno.ErrWrongUsage)
+	tk.MustGetErrCode("create table t3 (a int srid 0)", errno.ErrWrongUsage)
+	tk.MustExec("create table t3 (g point srid 1 srid 4326)")
+	tk.MustQuery("show create table t3").CheckContain("`g` point SRID 4326 DEFAULT NULL")
+
+	// ALTER TABLE ... ADD COLUMN. A NOT NULL geometry column without a default can't be
+	// added, since existing rows would have no value for it; it can be added as NULL and
+	// then modified to NOT NULL.
+	tk.MustGetErrMsg("alter table t3 add column g2 polygon not null srid 0",
+		"[ddl:8200]unsupported add column 'g2' constraint NOT NULL without a default value on a geometry column when altering 'test.t3'")
+	tk.MustGetErrCode("alter table t3 add column g2 polygon srid 0, add column g4 point not null", errno.ErrUnsupportedDDLOperation)
+	tk.MustExec("alter table t3 add column g2 polygon srid 0, add column g3 geomcollection")
+	tk.MustExec("alter table t3 modify column g2 polygon not null srid 0")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `g` point SRID 4326 DEFAULT NULL,\n" +
+		"  `g2` polygon NOT NULL SRID 0,\n" +
+		"  `g3` geomcollection DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustGetErrCode("alter table t3 add column g4 point srid 3857", errno.ErrSRSNotFound)
+	tk.MustGetErrCode("alter table t3 add column g4 point srid 1 srid 4326, add column g5 point srid 4326 srid 1", errno.ErrSRSNotFound)
+	tk.MustGetErrCode("alter table t3 add column a int srid 0", errno.ErrWrongUsage)
+
+	// Result set metadata gives geometry columns 0 decimals, as MySQL does.
+	for _, tbl := range []string{"t", "t3"} {
+		for _, col := range external.GetTableByName(t, tk, "test", tbl).Meta().Columns {
+			require.Equal(t, 0, col.GetDecimal(), tbl+"."+col.Name.O)
+		}
+	}
+
+	// Generated geometry columns are not supported yet. A generated column of another type
+	// may read a geometry column.
+	for _, ddl := range []string{
+		"create table t4 (g point as (null) virtual)",
+		"create table t4 (g geometry as (null) stored not null srid 0)",
+		"alter table t3 add column h point as (g) virtual",
+		"alter table t3 add column h point as (g) virtual not null",
+	} {
+		tk.MustGetErrMsg(ddl, "[ddl:3106]'Geometry type' is not supported for generated columns.")
+	}
+	tk.MustExec("alter table t3 add column h int as (g is null) virtual")
+
+	tk.MustGetErrCode("create table pt (a int, g point) partition by key (g) partitions 2", errno.ErrFieldTypeNotAllowedAsPartitionField)
+	// EXCHANGE PARTITION needs the same subtype and SRID attribute on both sides.
+	tk.MustExec("create table pt (a int, g point srid 4326) partition by hash (a) partitions 2")
+	for _, def := range []string{"g geometry srid 4326", "g point", "g point srid 0"} {
+		tk.MustExec("create table nt (a int, " + def + ")")
+		tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", errno.ErrTablesDifferentMetadata)
+		tk.MustExec("drop table nt")
+	}
+	tk.MustExec("create table nt (a int, g point srid 4326)")
+	tk.MustExec("alter table pt exchange partition p0 with table nt")
+}
+
+func TestGeometryColumnDefault(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// A literal default is rejected, as for BLOB and JSON; DEFAULT NULL is accepted.
+	tk.MustGetErrMsg("create table t (g point default 'x')", "[ddl:1101]BLOB/TEXT/JSON column 'g' can't have a default value")
+	tk.MustGetErrCode("create table t (g point default x'00')", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table t (g geometry default 0)", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("create table t (g point srid 1 default 'x')", errno.ErrBlobCantHaveDefault)
+	// Unlike for BLOB, an empty string is rejected in non-strict SQL mode too, as in MySQL.
+	tk.MustExec("set @@sql_mode = ''")
+	tk.MustGetErrCode("create table t (g point default '')", errno.ErrBlobCantHaveDefault)
+	tk.MustExec("set @@sql_mode = default")
+
+	tk.MustExec("create table t (g point default null, h geometry not null)")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `g` point DEFAULT NULL,\n" +
+		"  `h` geometry NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustGetErrCode("alter table t alter column g set default 'x'", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("alter table t add column i point default 'x'", errno.ErrBlobCantHaveDefault)
+	tk.MustGetErrCode("alter table t modify column g point default 'x'", errno.ErrBlobCantHaveDefault)
+	tk.MustExec("alter table t alter column g set default null")
+	tk.MustExec("alter table t alter column g drop default")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `g` point,\n" +
+		"  `h` geometry NOT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
+
+func TestGeometryColumnIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// No index may have a geometry member: MySQL makes any index on a geometry column a
+	// spatial index.
+	for _, def := range []string{
+		"key (g)", "key k (i, g)", "unique key (g)", "primary key (g)", "key (g(10))",
+	} {
+		tk.MustGetErrMsg("create table t (i int, g point not null srid 4326, "+def+")", "[ddl:8200]SPATIAL index is not supported")
+	}
+	tk.MustGetErrMsg("create table t (g point not null primary key)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("create table t (g point unique)", "[ddl:8200]SPATIAL index is not supported")
+	// An expression index returning a geometry gets 3760, as in MySQL.
+	tk.MustGetErrMsg("create table t (g point not null, key ((coalesce(g))))", "[ddl:3760]Spatial expression index is not supported")
+
+	tk.MustExec("create table t (i int, g point not null srid 4326)")
+	tk.MustGetErrMsg("alter table t add index (g)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("alter table t add unique (i, g)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("alter table t add primary key (g)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("create index k on t (i, g)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("create spatial index sk on t (g)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("alter table t add spatial index sk (g)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrCode("alter table t add index ((ifnull(g, g)))", errno.ErrSpatialFunctionalIndex)
+}
+
+func TestGeometryColumnModify(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (i int, g point not null srid 4326 comment 'c', h geometry)")
+	// MODIFY and CHANGE COLUMN may change the name, the comment, the position, nullability
+	// and the default, which leave the stored values alone.
+	tk.MustExec("alter table t modify column g point null srid 4326 comment 'c'")
+	tk.MustExec("alter table t modify column g point not null srid 4326 comment 'c'")
+	tk.MustExec("alter table t change column g g2 point not null srid 4326 comment 'renamed'")
+	tk.MustExec("alter table t modify column g2 point not null srid 4326 first")
+	tk.MustExec("alter table t modify column h geometry not null comment 'h' after i")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `g2` point NOT NULL SRID 4326,\n" +
+		"  `i` int(11) DEFAULT NULL,\n" +
+		"  `h` geometry NOT NULL COMMENT 'h'\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("alter table t modify column h geometry null default (rand()) comment 'h'")
+	tk.MustQuery("show create table t").CheckContain("`h` geometry DEFAULT (rand()) COMMENT 'h'")
+	tk.MustExec("alter table t modify column h geometry default null comment 'h'")
+	tk.MustQuery("show create table t").CheckContain("`h` geometry DEFAULT NULL COMMENT 'h'")
+	tk.MustExec("alter table t modify column h geometry not null comment 'h'")
+	// The type, the subtype and the SRID attribute must stay, even where the change would
+	// keep every stored value valid.
+	for _, ddl := range []string{
+		"alter table t modify column g2 point not null",              // drops the SRID attribute
+		"alter table t modify column g2 point not null srid 0",       // changes it
+		"alter table t modify column h geometry not null srid 0",     // adds one
+		"alter table t modify column g2 geometry not null srid 4326", // widens the subtype
+		"alter table t modify column h point not null",               // narrows it
+		"alter table t change column h h2 multipoint not null",       // renames and changes it
+	} {
+		tk.MustGetErrMsg(ddl, "[ddl:8200]Unsupported modify column: a geometry column can only change its name, comment, position, nullability and default")
+	}
+	tk.MustGetErrMsg("alter table t change column h h geometry as (g2) stored", "[ddl:3106]'Geometry type' is not supported for generated columns.")
+	for _, ddl := range []string{
+		"alter table t modify column h longblob",
+		"alter table t modify column i point",
+		"alter table t change column i i2 geometry srid 0",
+	} {
+		tk.MustGetErrMsg(ddl, "[ddl:8200]Unsupported modify column: can't convert a column to or from a geometry type")
+	}
+	tk.MustGetErrCode("alter table t modify column g2 point not null srid 3857", errno.ErrSRSNotFound)
+	tk.MustGetErrCode("alter table t modify column i int srid 0", errno.ErrWrongUsage)
+
+	// RENAME COLUMN keeps the column as it is.
+	tk.MustExec("alter table t rename column g2 to g3")
+	tk.MustQuery("show create table t").CheckContain("`g3` point NOT NULL SRID 4326,")
+}
+
+func TestGeometryGeneratedColumnCastAsJSON(t *testing.T) {
+	// No DDL checker: its schema tracker fails on any expression index.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// CAST(<geometry> AS JSON) computes what ST_AsGeoJSON does, so, as no geometry function
+	// is, it is not allowed in a generated column, STORED or VIRTUAL, or in an expression
+	// index. The argument is any expression typed GEOMETRY. MySQL 9.7.2 accepts all of them.
+	for _, ddl := range []string{
+		"create table t (g geometry, j json as (cast(g as json)) virtual)",
+		"create table t (g point not null srid 4326, j json as (cast(g as json)) stored not null)",
+		"create table t (g geometry, j json as (convert(t.g, json)) stored)",
+		"create table t (g geometry, j json as (cast(test.t.g as json)) virtual)",
+		"create table t (g geometry, j json as (cast(coalesce(g, g) as json)) virtual)",
+		"create table t (g geometry, j int as (json_length(cast(if(g is null, null, g) as json))) stored)",
+		"create table t (g geometry, j varchar(200) as (cast(cast(g as json) as char(200))) virtual, key (j))",
+	} {
+		tk.MustGetErrMsg(ddl, "[ddl:3102]Expression of generated column 'j' contains a disallowed function.")
+	}
+	tk.MustGetErrMsg("create table t (g geometry, key k ((cast(cast(g as json) as char(100)))))",
+		"[ddl:3758]Expression of expression index 'k' contains a disallowed function")
+
+	// ALTER TABLE ... ADD COLUMN and ADD INDEX. A STORED column gets 3102 before the 3106
+	// for adding one through ALTER TABLE, as a disallowed function does.
+	tk.MustExec("create table t (i int, g geometry, j json)")
+	tk.MustGetErrMsg("alter table t add column k json as (cast(g as json)) virtual",
+		"[ddl:3102]Expression of generated column 'k' contains a disallowed function.")
+	tk.MustGetErrMsg("alter table t add column k json as (cast(g as json)) stored",
+		"[ddl:3102]Expression of generated column 'k' contains a disallowed function.")
+	tk.MustGetErrMsg("alter table t add column k varchar(200) as (cast(cast(ifnull(g, g) as json) as char(200))) virtual",
+		"[ddl:3102]Expression of generated column 'k' contains a disallowed function.")
+	tk.MustGetErrMsg("alter table t add index k ((cast(cast(g as json) as char(100))))",
+		"[ddl:3758]Expression of expression index 'k' contains a disallowed function")
+	tk.MustGetErrMsg("create index k on t ((json_length(cast(g as json))))",
+		"[ddl:3758]Expression of expression index 'k' contains a disallowed function")
+
+	// MODIFY and CHANGE COLUMN, of a VIRTUAL, a STORED and an indexed VIRTUAL column. 3102
+	// comes before the 3106 for changing a STORED or an indexed column.
+	tk.MustExec("create table t2 (i int, g geometry, v json as (cast(i as json)) virtual, " +
+		"s json as (cast(i as json)) stored, x varchar(200) as (cast(i as char(200))) virtual, key (x))")
+	for _, c := range []struct{ ddl, col string }{
+		{"alter table t2 modify column v json as (cast(g as json)) virtual", "v"},
+		{"alter table t2 change column v v2 json as (cast(g as json)) virtual", "v2"},
+		{"alter table t2 modify column s json as (cast(g as json)) stored", "s"},
+		{"alter table t2 change column s s2 json as (cast(g as json)) stored", "s2"},
+		{"alter table t2 modify column x varchar(200) as (cast(cast(g as json) as char(200))) virtual", "x"},
+	} {
+		tk.MustGetErrMsg(c.ddl, "[ddl:3102]Expression of generated column '"+c.col+"' contains a disallowed function.")
+	}
+
+	// A cast to JSON of anything else stays allowed, also of a value computed from a
+	// geometry column.
+	tk.MustExec("create table t3 (g geometry, j json, s varchar(10), k json as (cast(j as json)) virtual, " +
+		"l json as (cast(s as json)) stored, m json as (cast(g is null as json)) virtual)")
+	tk.MustExec("create table t4 (j json, k json as (cast(j as json)) virtual, key ((cast(cast(j as json) as char(10)))))")
+	tk.MustExec("alter table t add column k json as (cast(j as json)) virtual")
+	tk.MustExec("alter table t add index ((cast(cast(j as json) as char(10))))")
+	tk.MustExec("alter table t2 modify column v json as (cast(i + 1 as json)) virtual")
+	tk.MustExec("alter table t2 change column v v2 json as (cast(g is null as json)) virtual")
 }
 
 func TestUpdateMultipleTable(t *testing.T) {

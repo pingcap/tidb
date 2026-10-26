@@ -912,6 +912,7 @@ const (
 	ErrInvalidJSONPathArrayCell                              = 3165
 	ErrInvalidEncryptionOption                               = 3184
 	ErrRoleNotGranted                                        = 3530
+	ErrSRSNotFound                                           = 3548
 	ErrLockAcquireFailAndNoWaitSet                           = 3572
 	ErrWindowNoSuchWindow                                    = 3579
 	ErrWindowCircularityInWindowGraph                        = 3580

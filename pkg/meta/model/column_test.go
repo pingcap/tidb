@@ -104,3 +104,32 @@ func TestDefaultValue(t *testing.T) {
 	require.Equal(t, mysql.NotNullFlag, extraPhysTblIDCol.GetFlag())
 	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.GetType())
 }
+
+func TestColumnInfoSRID(t *testing.T) {
+	for _, tc := range []struct {
+		hasSRID bool
+		srid    uint32
+		json    string
+	}{
+		{false, 0, ""},
+		{true, 0, `"has_srid":true`},
+		{true, 4326, `"has_srid":true,"srid":4326`},
+	} {
+		col := &ColumnInfo{ID: 1, FieldType: *types.NewFieldType(mysql.TypeGeometry), HasSRID: tc.hasSRID, SRID: tc.srid}
+		clone := col.Clone()
+		require.Equal(t, tc.hasSRID, clone.HasSRID)
+		require.Equal(t, tc.srid, clone.SRID)
+
+		bytes, err := json.Marshal(col)
+		require.NoError(t, err)
+		if tc.json == "" {
+			require.NotContains(t, string(bytes), "srid")
+		} else {
+			require.Contains(t, string(bytes), tc.json)
+		}
+		var newCol ColumnInfo
+		require.NoError(t, json.Unmarshal(bytes, &newCol))
+		require.Equal(t, tc.hasSRID, newCol.HasSRID)
+		require.Equal(t, tc.srid, newCol.SRID)
+	}
+}

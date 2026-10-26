@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	ast "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,6 +92,13 @@ func TestTypeToStr(t *testing.T) {
 	testTypeToStr(t, mysql.TypeBit, "binary", "bit")
 	testTypeToStr(t, mysql.TypeEnum, "binary", "enum")
 	testTypeToStr(t, mysql.TypeSet, "binary", "set")
+	testTypeToStr(t, mysql.TypeGeometry, "binary", "geometry")
+
+	require.Equal(t, "geometry", TypeToStrWithSubtype(mysql.TypeGeometry, "binary", ast.GeomGeometry))
+	require.Equal(t, "point", TypeToStrWithSubtype(mysql.TypeGeometry, "binary", ast.GeomPoint))
+	require.Equal(t, "geomcollection", TypeToStrWithSubtype(mysql.TypeGeometry, "binary", ast.GeomGeometryCollection))
+	require.Equal(t, "varbinary", TypeToStrWithSubtype(mysql.TypeVarchar, "binary", ast.GeomGeometry))
+	require.Equal(t, "text", TypeToStrWithSubtype(mysql.TypeBlob, "utf8", ast.GeomGeometry))
 }
 
 func TestEOFAsNil(t *testing.T) {
