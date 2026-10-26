@@ -465,7 +465,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
 		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
 	)
-	flags.String(flagDumpService, "", "Export using an external dump service at unix:///absolute/path.sock. Uses local TiDB session semantics: sql_mode='', time_zone='+00:00', character_set_connection='utf8mb4', character_set_results='utf8mb4'")
+	flags.String(flagDumpService, "", "Export using an external dump service at unix:///absolute/path.sock. Renders schema SQL using TiDB default session settings with time_zone='+00:00', character_set_connection='utf8mb4', character_set_results='utf8mb4'")
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags

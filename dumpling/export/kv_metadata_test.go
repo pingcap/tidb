@@ -38,7 +38,7 @@ import (
 func TestKVMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@sql_mode = '', @@time_zone = '+00:00'")
+	tk.MustExec("set @@sql_mode = default, @@time_zone = '+00:00'")
 	tk.MustExec("create placement policy metadata_policy followers=2")
 	tk.MustExec("create database metadata charset utf8mb4 collate utf8mb4_bin placement policy=metadata_policy")
 	tk.MustExec("create table metadata.shared (id bigint primary key auto_increment) auto_id_cache=1000 auto_increment=201 placement policy=metadata_policy")
@@ -49,8 +49,22 @@ func TestKVMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
 			partition p0 values less than (10) placement policy metadata_policy,
 			partition p1 values less than (maxvalue))`)
 
+	tk.MustExec("create database metadata_reference")
+	tk.MustExec("create table metadata_reference.parent (id bigint primary key)")
+	// Create defaults in another time zone, then compare the UTC SHOW output.
+	tk.MustExec("set @@time_zone = '+08:00'")
+	tk.MustExec(`create table metadata.referencing (
+		id bigint primary key,
+		local_id bigint,
+		remote_id bigint,
+		created timestamp(6) default '2026-01-02 03:04:05.123456',
+		updated timestamp(3) default current_timestamp(3) on update current_timestamp(3),
+		constraint local_fk foreign key (local_id) references metadata.shared (id),
+		constraint remote_fk foreign key (remote_id) references metadata_reference.parent (id))`)
+	tk.MustExec("set @@time_zone = '+00:00'")
+
 	wantTables := make(map[string]string)
-	for _, name := range []string{"shared", "separate", "random", "partitioned"} {
+	for _, name := range []string{"shared", "separate", "random", "partitioned", "referencing"} {
 		wantTables[name] = tk.MustQuery("show create table metadata." + name).Rows()[0][1].(string)
 	}
 	wantPolicy := tk.MustQuery("show create placement policy metadata_policy").Rows()[0][1].(string)
@@ -87,7 +101,7 @@ func TestKVMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
 		for _, listed := range tables {
 			table, err := reader.GetTable(databaseID, listed.ID)
 			require.NoError(t, err)
-			createSQL, err := kvCreateTableSQL(reader, databaseID, table)
+			createSQL, err := kvCreateTableSQL(reader, database, table)
 			require.NoError(t, err)
 			want := wantTables[table.Name.O]
 			if table.SepAutoInc() {

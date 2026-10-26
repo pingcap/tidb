@@ -68,9 +68,9 @@
 //
 // # Session semantics
 //
-// For row decoding and schema SQL rendering, Dumpling uses a local TiDB session
-// context with an empty sql_mode, time_zone='+00:00', and
-// character_set_connection='utf8mb4'. Text serialization uses
+// Schema SQL rendering uses TiDB default session settings and SHOW conversion
+// semantics, with time_zone='+00:00' and character_set_connection='utf8mb4'.
+// Row decoding also uses UTC and utf8mb4. Text serialization uses
 // character_set_results='utf8mb4' semantics; binary columns retain their bytes.
 // These settings are independent of the source cluster's session and global
 // variables, and --params is rejected in service mode.

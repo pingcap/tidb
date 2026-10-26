@@ -403,19 +403,19 @@ func (d *Dumper) loadKVTables(reader tidbmeta.Reader) ([]kvDatabaseTables, error
 
 func kvCreateDatabaseSQL(database *model.DBInfo) (string, error) {
 	var output bytes.Buffer
-	if err := executor.ConstructResultOfShowCreateDatabase(mock.NewContextDeprecated(), database, true, &output); err != nil {
+	if err := executor.ConstructResultOfShowCreateDatabase(newKVContext(), database, true, &output); err != nil {
 		return "", errors.Annotatef(err, "build schema for kv database %q", database.Name.O)
 	}
 	return output.String(), nil
 }
 
-func kvCreateTableSQL(reader tidbmeta.Reader, databaseID int64, table *model.TableInfo) (string, error) {
-	allocators, err := kvMetadataAllocators(reader, databaseID, table)
+func kvCreateTableSQL(reader tidbmeta.Reader, database *model.DBInfo, table *model.TableInfo) (string, error) {
+	allocators, err := kvMetadataAllocators(reader, database.ID, table)
 	if err != nil {
 		return "", errors.Annotatef(err, "read auto ID bases for kv table %q", table.Name.O)
 	}
 	var output bytes.Buffer
-	if err := executor.ConstructResultOfShowCreateTable(mock.NewContextDeprecated(), table, allocators, &output); err != nil {
+	if err := executor.ConstructResultOfShowCreateTable(newKVContext(), database.Name, table, allocators, &output); err != nil {
 		return "", errors.Annotatef(err, "build schema for kv table %q", table.Name.O)
 	}
 	return output.String(), nil
@@ -497,7 +497,7 @@ func (d *Dumper) dumpKVTasks(
 			var createSQL string
 			if !d.conf.NoSchemas {
 				var err error
-				createSQL, err = kvCreateTableSQL(reader, database.ID, table)
+				createSQL, err = kvCreateTableSQL(reader, database, table)
 				if err != nil {
 					return err
 				}
