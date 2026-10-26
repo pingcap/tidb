@@ -888,7 +888,7 @@ pub enum ShowProfileType {
 }
 
 impl ShowProfileType {
-    fn restore_name(self) -> &'static str {
+    pub(crate) fn restore_name(self) -> &'static str {
         match self {
             Self::Cpu => "CPU",
             Self::Memory => "MEMORY",

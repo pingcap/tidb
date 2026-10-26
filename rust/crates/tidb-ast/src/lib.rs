@@ -84,6 +84,8 @@ mod session;
 mod set;
 #[path = "stmt/show.rs"]
 mod show;
+#[path = "stmt/show_stmt.rs"]
+mod show_stmt;
 #[path = "stmt/traffic.rs"]
 mod traffic;
 #[path = "stmt/transaction.rs"]
@@ -171,6 +173,7 @@ pub use set::{
     CharsetSetKind, SetItem, SetResourceGroupStmt, SetSessionStatesStmt, SetStmt, SetVariableValue,
     SystemVariableAssignment, SystemVariableScope,
 };
+pub use show_stmt::{ShowStmt, ShowStmtType};
 pub use show::{
     ShowCharsetFilter, ShowCharsetStmt, ShowCollationFilter, ShowCollationStmt, ShowColumnsFilter,
     ShowColumnsStmt, ShowCreateKind, ShowDatabasesFilter, ShowDatabasesStmt,

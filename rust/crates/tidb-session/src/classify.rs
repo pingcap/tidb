@@ -252,7 +252,8 @@ fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
         AdminStmt::CleanupTableLock(_) => false,
         // `buildShow`, `buildExplain`, `buildExplainFor`, `buildTrace`,
         // `buildPlanReplayer` and `buildSplitRegion` all set a schema.
-        AdminStmt::ShowGrants(_)
+        AdminStmt::Show(_)
+        | AdminStmt::ShowGrants(_)
         | AdminStmt::ShowMasterStatus
         | AdminStmt::ShowPrivileges
         | AdminStmt::ShowBuiltins

@@ -202,6 +202,9 @@ pub enum AdminStmt {
     /// Go stores this target as an account identity rather than a table name,
     /// so it stays separate from the other `SHOW CREATE` object kinds.
     ShowCreateUser(UserSpec),
+    /// Go `ast.ShowStmt`: every SHOW kind the parser has moved onto Go's
+    /// one-node shape.
+    Show(Box<crate::ShowStmt>),
     /// `SHOW [SESSION | GLOBAL] VARIABLES [LIKE <expr> | WHERE <expr>]`.
     ShowVariables(Box<ShowVariablesStmt>),
     /// `SHOW [GLOBAL | SESSION] STATUS [LIKE <expr> | WHERE <expr>]`.
@@ -375,6 +378,7 @@ impl AdminStmt {
             Self::GrantRole(grant) => grant.restore_into(out),
             Self::Revoke(revoke) => revoke.restore_into(out),
             Self::RevokeRole(revoke) => revoke.restore_into(out),
+            Self::Show(show) => show.restore_into(out),
             Self::ShowGrants(show) => show.restore_into(out),
             Self::Flush(flush) => flush.restore_into(out),
             Self::FlushPlanCache(scope) => scope.restore_into(out),
@@ -548,6 +552,11 @@ impl crate::Visitable for AdminStmt {
             return visitor.leave(self);
         }
         match self {
+            Self::Show(field_0) => {
+                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
+                    return false;
+                }
+            }
             Self::Grant(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
