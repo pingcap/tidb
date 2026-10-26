@@ -99,10 +99,8 @@ type lookupTableTask struct {
 	// Without this map, the original index order might be lost.
 	// The handles fetched from index is originally ordered by index, but we need handles to be ordered by itself
 	// to do table request.
+	// Values are []int: one position for normal lookup, all positions for ADMIN CHECK.
 	indexOrder *kv.HandleMap
-	// duplicatedIndexOrder map likes indexOrder. But it's used when checkIndexValue isn't nil and
-	// the same handle of index has multiple values.
-	duplicatedIndexOrder *kv.HandleMap
 
 	// partitionTable indicates whether this task belongs to a partition table and which partition table it is.
 	partitionTable table.PhysicalTable
@@ -2018,34 +2016,40 @@ func (*indexWorker) buildCompletedTask(taskID int, rows []chunk.Row) *lookupTabl
 
 func (w *indexWorker) buildTableTask(taskID int, handles []kv.Handle, retChk *chunk.Chunk) *lookupTableTask {
 	var indexOrder *kv.HandleMap
-	var duplicatedIndexOrder *kv.HandleMap
 	if w.keepOrder {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			indexOrder.Set(h, i)
+			indexOrder.Set(h, []int{i})
 		}
 	}
 
 	if w.checkIndexValue != nil {
 		// Save the index order.
 		indexOrder = kv.NewHandleMap()
-		duplicatedIndexOrder = kv.NewHandleMap()
 		for i, h := range handles {
-			if _, ok := indexOrder.Get(h); ok {
-				duplicatedIndexOrder.Set(h, i)
-			} else {
-				indexOrder.Set(h, i)
-			}
+			v, _ := indexOrder.Get(h)
+			offsets, _ := v.([]int)
+			indexOrder.Set(h, append(offsets, i))
+		}
+		// The Region range splitter requires non-overlapping ranges, so deduplicate
+		// handles produced by multi-valued index entries before table lookup.
+		// Deduplicate after building the map above: its offsets must refer to
+		// the original rows in retChk, not positions in the deduplicated handles.
+		if len(handles) > indexOrder.Len() {
+			handles = make([]kv.Handle, 0, indexOrder.Len())
+			indexOrder.Range(func(h kv.Handle, _ any) bool {
+				handles = append(handles, h)
+				return true
+			})
 		}
 	}
 
 	task := &lookupTableTask{
-		id:                   taskID,
-		handles:              handles,
-		indexOrder:           indexOrder,
-		duplicatedIndexOrder: duplicatedIndexOrder,
-		idxRows:              retChk,
+		id:         taskID,
+		handles:    handles,
+		indexOrder: indexOrder,
+		idxRows:    retChk,
 	}
 
 	task.doneCh = make(chan error, 1)
@@ -2313,7 +2317,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 		if chk.NumRows() == 0 {
 			task.indexOrder.Range(func(h kv.Handle, val any) bool {
-				idxRow := task.idxRows.GetRow(val.(int))
+				idxRow := task.idxRows.GetRow(val.([]int)[0])
 				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false
 			})
@@ -2329,43 +2333,42 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 			if err != nil {
 				return err
 			}
-			v, ok := task.indexOrder.Get(handle)
-			if !ok {
-				v, _ = task.duplicatedIndexOrder.Get(handle)
-			}
-			offset, _ := v.(int)
+			v, _ := task.indexOrder.Get(handle)
+			offsets := v.([]int)
 			task.indexOrder.Delete(handle)
-			idxRow := task.idxRows.GetRow(offset)
 			vals = vals[:0]
 			for i, col := range w.idxTblCols {
 				vals = append(vals, row.GetDatum(i, &col.FieldType))
 			}
 			tablecodec.TruncateIndexValues(tblInfo, w.idxLookup.index, vals)
 			tc := w.idxLookup.ectx.GetEvalCtx().TypeCtx()
-			for i := range vals {
-				col := w.idxTblCols[i]
-				idxVal := idxRow.GetDatum(i, w.idxColTps[i])
-				tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
-				cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
-				if err != nil {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxVal,
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
-				}
-				if cmpRes != 0 {
-					return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
-						handle,
-						col.Name.O,
-						idxRow.GetDatum(i, w.idxColTps[i]),
-						vals[i],
-						err,
-						&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
-					)
+			for _, offset := range offsets {
+				idxRow := task.idxRows.GetRow(offset)
+				for i := range vals {
+					col := w.idxTblCols[i]
+					idxVal := idxRow.GetDatum(i, w.idxColTps[i])
+					tablecodec.TruncateIndexValue(&idxVal, w.idxLookup.index.Columns[i], col.ColumnInfo)
+					cmpRes, err := tables.CompareIndexAndVal(tc, vals[i], idxVal, collators[i], col.FieldType.IsArray() && vals[i].Kind() == types.KindMysqlJSON)
+					if err != nil {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxVal,
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
+					if cmpRes != 0 {
+						return ir().ReportAdminCheckInconsistentWithColInfo(ctx,
+							handle,
+							col.Name.O,
+							idxRow.GetDatum(i, w.idxColTps[i]),
+							vals[i],
+							err,
+							&consistency.RecordData{Handle: handle, Values: getDatumRow(&idxRow, w.idxColTps)},
+						)
+					}
 				}
 			}
 		}
@@ -2411,9 +2414,6 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if task.indexOrder != nil {
 			memUsage += task.indexOrder.MemUsage()
 		}
-		if task.duplicatedIndexOrder != nil {
-			memUsage += task.duplicatedIndexOrder.MemUsage()
-		}
 		memUsage += task.idxRows.MemoryUsage()
 		task.memUsage = memUsage
 		task.memTracker.Consume(memUsage)
@@ -2457,7 +2457,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				return err
 			}
 			rowIdx, _ := task.indexOrder.Get(handle)
-			task.rowIdx = append(task.rowIdx, rowIdx.(int))
+			task.rowIdx = append(task.rowIdx, rowIdx.([]int)[0])
 		}
 		{
 			memUsage := int64(cap(task.rowIdx) * int(size.SizeOfInt))

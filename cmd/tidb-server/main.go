@@ -110,6 +110,7 @@ const (
 	nmConfig           = "config"
 	nmConfigCheck      = "config-check"
 	nmConfigStrict     = "config-strict"
+	nmDiagnosticMode   = "diagnostic-mode"
 	nmStore            = "store"
 	nmStorePath        = "path"
 	nmHost             = "host"
@@ -169,10 +170,11 @@ const (
 )
 
 var (
-	version      *bool
-	configPath   *string
-	configCheck  *bool
-	configStrict *bool
+	version        *bool
+	configPath     *string
+	configCheck    *bool
+	configStrict   *bool
+	diagnosticMode *bool
 
 	// Base
 	store            *string
@@ -245,6 +247,7 @@ func initFlagSet() *flag.FlagSet {
 	configPath = fset.String(nmConfig, "", "config file path")
 	configCheck = flagBoolean(fset, nmConfigCheck, false, "check config file validity and exit")
 	configStrict = flagBoolean(fset, nmConfigStrict, false, "enforce config file validity")
+	diagnosticMode = flagBoolean(fset, nmDiagnosticMode, false, "enable process-wide diagnostic mode")
 
 	// Base
 	store = fset.String(nmStore, string(config.StoreTypeUniStore), fmt.Sprintf("registered store name, %v", config.StoreTypeList()))
@@ -415,6 +418,7 @@ func main() {
 		}
 	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
+	terror.MustNil(diagnosticmode.Initialize(*diagnosticMode))
 	if kerneltype.IsNextGen() {
 		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
 	}
@@ -1320,14 +1324,11 @@ func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	}
 }
 
-// The amount of time we wait for the ongoing txt to finished.
-// We should better provider a dynamic way to set this value.
-var gracefulCloseConnectionsTimeout = 15 * time.Second
-
 func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	dom.StopAutoAnalyze()
 
-	drainClientWait := gracefulCloseConnectionsTimeout
+	// The amount of time we wait for the ongoing statements and transactions to finish.
+	drainClientWait := time.Duration(config.GetGlobalConfig().GracefulCloseConnectionsTimeout) * time.Second
 	if deploymode.IsStarter() && svr.GetForceShutdown() {
 		drainClientWait = 0
 	}

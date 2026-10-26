@@ -15,6 +15,7 @@
 package execdetails
 
 import (
+	"math"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -811,6 +812,39 @@ func TestRootRuntimeStats(t *testing.T) {
 		zeroRows := coll.GetRootRowsSnapshot(99)
 		require.True(t, zeroRows.Observed())
 		require.Zero(t, zeroRows.Rows)
+	})
+
+	t.Run("joined rows across workers and opens", func(t *testing.T) {
+		coll := NewRuntimeStatsColl(nil)
+		_, found := coll.GetRootJoinedRows(1)
+		require.False(t, found)
+		first := &JoinedRowsRuntimeStats{}
+		coll.RegisterStats(1, first)
+		rows, found := coll.GetRootJoinedRows(1)
+		require.True(t, found)
+		require.Zero(t, rows)
+		second := &JoinedRowsRuntimeStats{}
+		second.AddRows(3)
+		cloned := second.Clone().(*JoinedRowsRuntimeStats)
+		second.AddRows(2)
+		require.Equal(t, int64(3), cloned.Rows)
+		coll.RegisterStats(1, second)
+		coll.RegisterStats(1, cloned)
+		coll.RegisterStats(1, &JoinedRowsRuntimeStats{})
+		rows, found = coll.GetRootJoinedRows(1)
+		require.True(t, found)
+		require.Equal(t, int64(8), rows)
+		require.Empty(t, first.String())
+		require.NotEqual(t, first.Tp(), (&HashStateRuntimeStats{}).Tp())
+
+		overflow := &JoinedRowsRuntimeStats{Rows: math.MaxInt64}
+		overflow.AddRows(1)
+		overflow.AddRows(1)
+		require.Equal(t, int64(-1), overflow.Rows)
+		coll.RegisterStats(1, overflow)
+		coll.RegisterStats(1, &JoinedRowsRuntimeStats{Rows: 1})
+		rows, _ = coll.GetRootJoinedRows(1)
+		require.Equal(t, int64(-1), rows)
 	})
 
 	t.Run("accumulated hash construction", func(t *testing.T) {

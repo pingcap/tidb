@@ -2937,6 +2937,9 @@ func (do *Domain) serverIDKeeper() {
 // StartTTLJobManager creates and starts the ttl job manager when this domain
 // should run it; otherwise it returns without storing a manager instance.
 func (do *Domain) StartTTLJobManager() {
+	failpoint.Inject("skipStartTTLJobManager", func() {
+		failpoint.Return()
+	})
 	role, configured := do.ttlExternalWorkloadRole()
 	if !do.shouldStartTTLJobManager() {
 		fields := make([]zap.Field, 0, 1)

@@ -98,7 +98,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20260508054701-306e305bcf41
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260820070758-623e58e60fa9
+	github.com/pingcap/kvproto v0.0.0-20261014124429-4141ecadac8f
 	github.com/pingcap/log v1.1.1-0.20261007233122-0034994d1a22
 	github.com/pingcap/metering_sdk v0.0.0-20260814062708-9e3b68cd9adf
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -121,7 +121,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.142
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20260928031501-8edb23f6c7ee
+	github.com/tikv/client-go/v2 v2.0.8-0.20261023145611-a0d0bf6b591f
 	github.com/tikv/pd/client v0.0.0-20260805103528-afa43111d149
 	github.com/timakin/bodyclose v0.0.0-20241222091800-1db5c5ca4d67
 	github.com/twmb/murmur3 v1.1.6
@@ -353,7 +353,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
