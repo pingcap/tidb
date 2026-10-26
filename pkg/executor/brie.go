@@ -299,15 +299,29 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
+<<<<<<< HEAD
 		if err := storage.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
+=======
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
+>>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 			b.err = errors.Annotate(err, "invalid destination URL")
 			return nil
 		}
 	case "gs", "gcs":
+<<<<<<< HEAD
 		if err := storage.ExtractQueryParameters(storageURL, &cfg.GCS); err != nil {
 			b.err = errors.Annotate(err, "invalid destination URL")
 			return nil
 		}
+=======
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.GCS); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
+
+	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
+	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
+>>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 	case "hdfs":
 		if sem.IsEnabled() {
 			// Storage is not permitted to be hdfs when SEM is enabled.

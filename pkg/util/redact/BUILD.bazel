@@ -23,6 +23,7 @@ go_test(
     embed = [":redact"],
     flaky = True,
     deps = [
+<<<<<<< HEAD
         "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
@@ -33,5 +34,9 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
+=======
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_stretchr_testify//require",
+>>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
     ],
 )

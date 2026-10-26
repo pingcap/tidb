@@ -966,10 +966,25 @@ func formatStorageURLForLog(rawURL string) string {
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
 	switch f.Name {
+<<<<<<< HEAD
 	case flagStorage, FlagStreamFullBackupStorage, flagCheckpointStorage,
 		"s3.endpoint", "gcs.endpoint", "azblob.endpoint", "upstream-storage", "downstream-storage":
 		return zap.String(f.Name, formatStorageURLForLog(f.Value.String()))
 	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "azblob.account-key", "azblob.sas-token":
+=======
+	case flagStorage, FlagStreamFullBackupStorage, FlagPiTRAddIndexSQLStorage, flagCheckpointStorage,
+		"upstream-storage", "downstream-storage":
+		hiddenQuery, err := url.Parse(f.Value.String())
+		if err != nil {
+			return zap.String(f.Name, "<invalid URI>")
+		}
+		// Hide query parameters and fragments, which may contain unescaped secrets.
+		hiddenQuery.RawQuery = ""
+		hiddenQuery.Fragment = ""
+		hiddenQuery.RawFragment = ""
+		return zap.Stringer(f.Name, hiddenQuery)
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key", "s3.sse-kms-context":
+>>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 		return zap.String(f.Name, "<redacted>")
 	case flagMasterKeyConfig:
 		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.

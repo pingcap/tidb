@@ -171,7 +171,13 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
+<<<<<<< HEAD
         "@com_github_pingcap_log//:log",
+=======
+        "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@com_github_pingcap_log//:log",
+        "@com_github_spf13_cobra//:cobra",
+>>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
         "@com_github_spf13_pflag//:pflag",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
@@ -181,7 +187,10 @@ go_test(
         "@com_github_tikv_pd_client//opt",
         "@org_golang_google_grpc//keepalive",
         "@org_uber_go_zap//:zap",
+<<<<<<< HEAD
         "@org_uber_go_zap//zapcore",
+=======
+>>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
         "@org_uber_go_zap//zaptest/observer",
     ],
 )

@@ -99,8 +99,14 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
+<<<<<<< HEAD
 	github.com/pingcap/kvproto v0.0.0-20261026071505-70b5775c3362
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
+=======
+	github.com/pingcap/kvproto v0.0.0-20261016101550-f8ad079c8e98
+	github.com/pingcap/log v1.1.1-0.20261007233122-0034994d1a22
+	github.com/pingcap/metering_sdk v0.0.0-20260814062708-9e3b68cd9adf
+>>>>>>> cb395494e61 (br: support S3 SSE-KMS encryption context (#71983))
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20260605083900-f9f651ef5fbc
