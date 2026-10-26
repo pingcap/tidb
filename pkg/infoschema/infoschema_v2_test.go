@@ -431,7 +431,7 @@ func testDropSchemaStreamsTableIDs(t *testing.T) {
 
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
-	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
+	err := builder.InitWithDBInfos(nil, nil, nil, 1)
 	require.NoError(t, err)
 
 	dbInfo := internal.MockDBInfo(t, r.Store(), "testDB")
