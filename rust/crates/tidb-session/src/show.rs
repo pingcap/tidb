@@ -1144,6 +1144,39 @@ impl Session {
             | T::CreatePlacementPolicy
             | T::CreateResourceGroup => self.show_create_rows(contents)?,
             T::Grants => self.show_grants_rows(contents.user.as_ref(), &contents.roles)?,
+            // Pinned Go `ShowExec.fetchAll` keeps the grammar entry but
+            // rejects execution because extended statistics was removed.
+            T::StatsExtended => {
+                return Err(DriverError::unsupported(
+                    "Extended statistics feature has been removed",
+                ))
+            }
+            // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
+            T::StatsMeta => {
+                self.require_show_stats_privilege("stats_meta")?;
+                self.stats_meta_rows(leaf.extractor.as_ref())?
+            }
+            T::StatsHealthy => self.stats_healthy_rows(leaf.extractor.as_ref())?,
+            T::ColumnStatsUsage => self.column_stats_usage_rows()?,
+            T::HistogramsInFlight => {
+                let count =
+                    self.with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items()))?;
+                vec![tidb_executor::show_stats::histograms_in_flight_row(count)]
+            }
+            T::AnalyzeStatus => self.analyze_status_rows()?,
+            T::StatsTopN => self.stats_topn_rows()?,
+            T::StatsBuckets => {
+                self.require_show_stats_privilege("stats_buckets")?;
+                self.stats_buckets_rows()?
+            }
+            T::StatsHistograms => {
+                self.require_show_stats_privilege("stats_histograms")?;
+                self.stats_histograms_rows()?
+            }
+            T::StatsLocked => {
+                self.require_show_stats_privilege("stats_table_locked")?;
+                self.stats_locked_rows()?
+            }
             T::CreateUser => {
                 let spec = contents
                     .user
@@ -1908,19 +1941,6 @@ impl Session {
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsTopN => self.stats_topn_stmt(show).map(Some),
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsBuckets => {
-                self.require_show_stats_privilege("stats_buckets")?;
-                self.stats_buckets_stmt(show).map(Some)
-            }
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsHistograms => {
-                self.require_show_stats_privilege("stats_histograms")?;
-                self.stats_histograms_stmt(show).map(Some)
-            }
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsLocked => {
-                self.require_show_stats_privilege("stats_table_locked")?;
-                self.stats_locked_stmt(show).map(Some)
-            }
             // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
             // `fetchShowMasterStatus` live in `crate::show_admin`: they
             // answer without touching a user table, and keeping them here
@@ -1959,13 +1979,7 @@ impl Session {
             tidb_ast::AdminStmt::Show(show)
                 if matches!(
                     show.tp,
-                    tidb_ast::ShowStmtType::StatsExtended
-                        | tidb_ast::ShowStmtType::StatsMeta
-                        | tidb_ast::ShowStmtType::StatsHealthy
-                        | tidb_ast::ShowStmtType::HistogramsInFlight
-                        | tidb_ast::ShowStmtType::ColumnStatsUsage
-                        | tidb_ast::ShowStmtType::BindingCacheStatus
-                        | tidb_ast::ShowStmtType::AnalyzeStatus
+                    tidb_ast::ShowStmtType::BindingCacheStatus
                         | tidb_ast::ShowStmtType::Imports
                         | tidb_ast::ShowStmtType::Config
                         | tidb_ast::ShowStmtType::ReplicaStatus
@@ -1976,13 +1990,6 @@ impl Session {
             {
                 if show.tp == tidb_ast::ShowStmtType::SessionStates {
                     return self.show_session_states().map(Some);
-                }
-                // Pinned Go `ShowExec.fetchAll` keeps the grammar entry but
-                // rejects execution because extended statistics was removed.
-                if show.tp == tidb_ast::ShowStmtType::StatsExtended {
-                    return Err(DriverError::unsupported(
-                        "Extended statistics feature has been removed",
-                    ));
                 }
                 // Go `ShowExec.fetchShowBindingCacheStatus`; see
                 // `crate::binding_arm`.
@@ -2019,35 +2026,6 @@ impl Session {
                 }
                 if show.tp == tidb_ast::ShowStmtType::Imports {
                     return Ok(Some(crate::show_admin::show_imports_output()));
-                }
-                // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
-                if show.tp == tidb_ast::ShowStmtType::StatsMeta {
-                    self.require_show_stats_privilege("stats_meta")?;
-                    return self.stats_meta_stmt(show).map(Some);
-                }
-                if show.tp == tidb_ast::ShowStmtType::StatsHealthy {
-                    return self.stats_healthy_stmt(show).map(Some);
-                }
-                if show.tp == tidb_ast::ShowStmtType::ColumnStatsUsage {
-                    return self.column_stats_usage_stmt(show).map(Some);
-                }
-                if show.tp == tidb_ast::ShowStmtType::HistogramsInFlight {
-                    let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
-                    let count = self
-                        .with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items()))?;
-                    let output = StmtOutput::Rows {
-                        columns: vec![(
-                            "HistogramsInFlight".into(),
-                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                        )],
-                        rows: vec![tidb_executor::show_stats::histograms_in_flight_row(count)],
-                    };
-                    return self
-                        .filter_show_output(output, like_pattern, where_clause)
-                        .map(Some);
-                }
-                if show.tp == tidb_ast::ShowStmtType::AnalyzeStatus {
-                    return self.analyze_status_stmt(show).map(Some);
                 }
                 if show.tp != tidb_ast::ShowStmtType::ProcessList {
                     return Ok(None);
@@ -2342,6 +2320,16 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::CreateResourceGroup
             | T::Grants
             | T::CreateUser
+            | T::StatsExtended
+            | T::StatsMeta
+            | T::StatsHealthy
+            | T::ColumnStatsUsage
+            | T::HistogramsInFlight
+            | T::AnalyzeStatus
+            | T::StatsTopN
+            | T::StatsBuckets
+            | T::StatsHistograms
+            | T::StatsLocked
     )
 }
 
@@ -2353,11 +2341,6 @@ fn base_extractor(
         Some(tidb_planner::logical::ShowPredicateExtractor::Base(extractor)) => Some(extractor),
         _ => None,
     }
-}
-
-/// Go's `ShowStmt.DBName`, where the empty string means "not given".
-fn show_db_name(show: &tidb_ast::ShowStmt) -> Option<&str> {
-    (!show.db_name.is_empty()).then_some(show.db_name.as_str())
 }
 
 fn show_filter(show: &tidb_ast::ShowStmt) -> Option<ShowFilter<'_>> {

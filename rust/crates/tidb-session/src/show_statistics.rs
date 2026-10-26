@@ -22,11 +22,7 @@ impl Session {
     /// Pinned Go `ShowExec.fetchShowColumnStatsUsage`: load the persisted map
     /// once, then walk every schema, table, logical/global table ID, physical
     /// partition ID, and column in infoschema order.
-    pub(super) fn column_stats_usage_stmt(
-        &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+    pub(super) fn column_stats_usage_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let usage = match self.column_stats_usage.clone() {
             Some(provider) => provider
                 .load_column_stats_usage(&self.session_time_zone(), &self.active_resource_group)
@@ -88,56 +84,7 @@ impl Session {
             }
             Ok(rows)
         })?;
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Db_name".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Column_name".to_owned(), varchar()),
-                ("Last_used_at".to_owned(), datetime()),
-                ("Last_analyzed_at".to_owned(), datetime()),
-            ],
-            rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
-    }
-
-    /// Pinned Go `fetchShowAnalyzeStatus` and
-    /// `dataForAnalyzeStatusHelper`: read the thirty newest persisted jobs,
-    /// apply table visibility, project UTC timestamps into the session zone,
-    /// and calculate progress only for running non-global-merge jobs.
-    pub(super) fn analyze_status_stmt(
-        &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
-        let result_rows = self.analyze_status_rows()?;
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
-        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Table_schema".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Job_info".to_owned(), varchar()),
-                ("Processed_rows".to_owned(), longlong()),
-                ("Start_time".to_owned(), datetime()),
-                ("End_time".to_owned(), datetime()),
-                ("State".to_owned(), varchar()),
-                ("Fail_reason".to_owned(), varchar()),
-                ("Instance".to_owned(), varchar()),
-                ("Process_ID".to_owned(), longlong()),
-                ("Remaining_seconds".to_owned(), varchar()),
-                ("Progress".to_owned(), double()),
-                ("Estimated_total_rows".to_owned(), longlong()),
-            ],
-            rows: result_rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
+        Ok(rows)
     }
 
     /// Go `dataForAnalyzeStatusHelper`, which both `SHOW ANALYZE STATUS` and
@@ -172,11 +119,10 @@ impl Session {
     /// it carries no histograms -- Go shows an un-analyzed table too, with a
     /// NULL `Last_analyze_time`, which is the branch
     /// `appendTableForStatsMeta` makes on `IsAnalyzed()`.
-    pub(super) fn stats_meta_stmt(
+    pub(super) fn stats_meta_rows(
         &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+        extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
         // Go renders through `oracle.GetTimeFromTS`, which builds the
         // `time.Time` in the process's LOCAL zone -- not the session zone --
         // so both servers on one host render identical strings.
@@ -240,33 +186,16 @@ impl Session {
             }
             Ok(rows)
         })?;
-        // Go `buildShowSchema`, planbuilder.go:6031.
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
-        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Db_name".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Update_time".to_owned(), datetime()),
-                ("Modify_count".to_owned(), longlong()),
-                ("Row_count".to_owned(), longlong()),
-                ("Last_analyze_time".to_owned(), datetime()),
-            ],
-            rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
+        Ok(rows
+            .into_iter()
+            .filter(|row| stats_row_admitted(extractor, row))
+            .collect())
     }
 
     /// Go `ShowExec.fetchShowStatsLocked`: enumerate every physical table in
     /// the current prune mode, intersect it with the persisted lock rows, and
     /// emit in ascending physical-ID order.
-    pub(super) fn stats_locked_stmt(
-        &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+    pub(super) fn stats_locked_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -320,26 +249,15 @@ impl Session {
                 })
                 .collect()
         };
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Db_name".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Status".to_owned(), varchar()),
-            ],
-            rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
+        Ok(rows)
     }
 
     /// Go `ShowExec.fetchShowStatsHealthy`: one health percentage for every
     /// non-pseudo physical statistics object visible under this prune mode.
-    pub(super) fn stats_healthy_stmt(
+    pub(super) fn stats_healthy_rows(
         &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+        extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -396,28 +314,16 @@ impl Session {
             }
             Ok(rows)
         })?;
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Db_name".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Healthy".to_owned(), longlong()),
-            ],
-            rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
+        Ok(rows
+            .into_iter()
+            .filter(|row| stats_row_admitted(extractor, row))
+            .collect())
     }
 
     /// Go `ShowExec.fetchShowStatsHistogram`: expose every initialized
     /// resident column and index statistics object through the ordinary
     /// statistics cache traversal.
-    pub(super) fn stats_histograms_stmt(
-        &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+    pub(super) fn stats_histograms_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -532,41 +438,12 @@ impl Session {
             }
             Ok(rows)
         })?;
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let double = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double);
-        let tiny = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
-        let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Db_name".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Column_name".to_owned(), varchar()),
-                ("Is_index".to_owned(), tiny()),
-                ("Update_time".to_owned(), datetime()),
-                ("Distinct_count".to_owned(), longlong()),
-                ("Null_count".to_owned(), longlong()),
-                ("Avg_col_size".to_owned(), double()),
-                ("Correlation".to_owned(), double()),
-                ("Load_status".to_owned(), varchar()),
-                ("Total_mem_usage".to_owned(), longlong()),
-                ("Hist_mem_usage".to_owned(), longlong()),
-                ("Topn_mem_usage".to_owned(), longlong()),
-                ("Cms_mem_usage".to_owned(), longlong()),
-            ],
-            rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
+        Ok(rows)
     }
 
     /// Go `ShowExec.fetchShowStatsTopN`: render every resident TopN value
     /// through the session-aware statistics value decoder.
-    pub(super) fn stats_topn_stmt(
-        &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+    pub(super) fn stats_topn_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -691,31 +568,12 @@ impl Session {
             }
             Ok(rows)
         })?;
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let tiny = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Db_name".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Column_name".to_owned(), varchar()),
-                ("Is_index".to_owned(), tiny()),
-                ("Value".to_owned(), varchar()),
-                ("Count".to_owned(), longlong()),
-            ],
-            rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
+        Ok(rows)
     }
 
     /// Go `ShowExec.fetchShowStatsBuckets`: expose the resident cumulative
     /// histogram buckets in stable column/index ID order.
-    pub(super) fn stats_buckets_stmt(
-        &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+    pub(super) fn stats_buckets_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -837,26 +695,7 @@ impl Session {
             }
             Ok(rows)
         })?;
-        let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let longlong = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let tiny = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Tiny);
-        let output = StmtOutput::Rows {
-            columns: vec![
-                ("Db_name".to_owned(), varchar()),
-                ("Table_name".to_owned(), varchar()),
-                ("Partition_name".to_owned(), varchar()),
-                ("Column_name".to_owned(), varchar()),
-                ("Is_index".to_owned(), tiny()),
-                ("Bucket_id".to_owned(), longlong()),
-                ("Count".to_owned(), longlong()),
-                ("Repeats".to_owned(), longlong()),
-                ("Lower_Bound".to_owned(), varchar()),
-                ("Upper_Bound".to_owned(), varchar()),
-                ("Ndv".to_owned(), longlong()),
-            ],
-            rows,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
+        Ok(rows)
     }
 }
 
@@ -996,4 +835,27 @@ pub(crate) fn analyze_status_rows_of(
         ]);
     }
     Ok(result_rows)
+}
+
+/// Go `fetchShowStatsMeta` / `fetchShowStatsHealthy`'s filters on one row:
+/// `buildShow`'s `ShowBaseExtractor` on the lowercased database name, or the
+/// `db_name` / `table_name` sets `PredicatePushDown` gave STATS_META.
+fn stats_row_admitted(
+    extractor: Option<&tidb_planner::logical::ShowPredicateExtractor>,
+    row: &[Datum],
+) -> bool {
+    let lower = |index: usize| {
+        tidb_util::stringutil::go_to_lower(&datum_text(&row[index]).unwrap_or_default())
+    };
+    match extractor {
+        None => true,
+        Some(tidb_planner::logical::ShowPredicateExtractor::Base(base)) => {
+            let database = lower(0);
+            tidb_executor::show::extractor_admits(Some(base), &database, &database)
+        }
+        Some(tidb_planner::logical::ShowPredicateExtractor::StatsMeta(filters)) => {
+            (filters.db.is_empty() || filters.db.contains(&lower(0)))
+                && (filters.table.is_empty() || filters.table.contains(&lower(1)))
+        }
+    }
 }
