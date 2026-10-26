@@ -1066,6 +1066,9 @@ impl Session {
             // answer nothing; `fetchShowOpenTables` answers the empty set;
             // `fetchShowPlugins` lists an empty `plugin.GetAll()`; the BRIE
             // listings read a queue this server never fills.
+            // Go `fetchShowImportJobs` / `fetchShowImportGroups` read the
+            // dist-task framework, which runs no IMPORT job here.
+            T::ImportJobs | T::ImportGroups => Vec::new(),
             T::ProcedureStatus
             | T::FunctionStatus
             | T::Triggers
@@ -1786,63 +1789,6 @@ impl Session {
                 })?;
                 Ok(Some(StmtOutput::Rows { columns, rows }))
             }
-            // go `fetchShowImportJobs` over the dist-task framework: this
-            // tier runs no IMPORT jobs, so the answer is the empty set (the
-            // oracle's own answer on the battery's table).
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::ImportJobs => {
-                use tidb_datatype::{FieldType, FieldTypeCode};
-                // Go `importIntoSchemaNames` / `ImportIntoSchemaFTypes`.
-                let string = || FieldType::new(FieldTypeCode::String);
-                let long = || FieldType::new(FieldTypeCode::LongLong);
-                let timestamp = || FieldType::new(FieldTypeCode::Timestamp);
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        ("Job_ID".to_owned(), long()),
-                        ("Group_Key".to_owned(), string()),
-                        ("Data_Source".to_owned(), string()),
-                        ("Target_Table".to_owned(), string()),
-                        ("Table_ID".to_owned(), long()),
-                        ("Phase".to_owned(), string()),
-                        ("Status".to_owned(), string()),
-                        ("Source_File_Size".to_owned(), string()),
-                        ("Imported_Rows".to_owned(), long()),
-                        ("Result_Message".to_owned(), string()),
-                        ("Create_Time".to_owned(), timestamp()),
-                        ("Start_Time".to_owned(), timestamp()),
-                        ("End_Time".to_owned(), timestamp()),
-                        ("Created_By".to_owned(), string()),
-                        ("Last_Update_Time".to_owned(), timestamp()),
-                        ("Cur_Step".to_owned(), string()),
-                        ("Cur_Step_Processed_Size".to_owned(), string()),
-                        ("Cur_Step_Total_Size".to_owned(), string()),
-                        ("Cur_Step_Progress_Pct".to_owned(), string()),
-                        ("Cur_Step_Speed".to_owned(), string()),
-                        ("Cur_Step_ETA".to_owned(), string()),
-                    ],
-                    rows: Vec::new(),
-                }))
-            }
-            // Go `buildShowSchema` for `ShowImportGroups`: the jobs are
-            // grouped by key; this tier runs no IMPORT jobs.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::ImportGroups => {
-                use tidb_datatype::{FieldType, FieldTypeCode};
-                let long = || FieldType::new(FieldTypeCode::LongLong);
-                let timestamp = || FieldType::new(FieldTypeCode::Timestamp);
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
-                        ("Group_Key".to_owned(), FieldType::new(FieldTypeCode::String)),
-                        ("Total_Jobs".to_owned(), long()),
-                        ("Pending".to_owned(), long()),
-                        ("Running".to_owned(), long()),
-                        ("Completed".to_owned(), long()),
-                        ("Failed".to_owned(), long()),
-                        ("Cancelled".to_owned(), long()),
-                        ("First_Job_Create_Time".to_owned(), timestamp()),
-                        ("Last_Job_Update_Time".to_owned(), timestamp()),
-                    ],
-                    rows: Vec::new(),
-                }))
-            }
             // Go `TraceExec`: runs the statement, then reports the spans.
             tidb_ast::AdminStmt::Trace(trace) => {
                 crate::trace::check_options(trace)
@@ -2208,6 +2154,8 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::PlacementForPartition
             | T::Regions
             | T::Distributions
+            | T::ImportJobs
+            | T::ImportGroups
     )
 }
 
