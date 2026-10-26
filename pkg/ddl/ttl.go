@@ -91,54 +91,6 @@ func onTTLInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err error) 
 	return ver, nil
 }
 
-<<<<<<< HEAD
-=======
-func (dc *ddlCtx) externalWorkloadManager() (extworkload.Manager, bool) {
-	if dc == nil {
-		return nil, false
-	}
-	manager := dc.extWorkload
-	return manager, extworkload.IsEnabled(manager)
-}
-
-func cancelJobOnExternalTTLWorkloadError(job *model.Job, err error) error {
-	job.State = model.JobStateCancelled
-	return errors.Trace(err)
-}
-
-// tblInfo must be non-nil.
-func (dc *ddlCtx) registerTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
-	if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
-		return nil
-	}
-	return dc.registerTTLTableIDToExternalWorkload(ctx, tblInfo.ID)
-}
-
-func (dc *ddlCtx) registerTTLTableIDToExternalWorkload(ctx context.Context, tableID int64) error {
-	manager, ok := dc.externalWorkloadManager()
-	if !ok {
-		return nil
-	}
-	return manager.RegisterTTLTableInfo(ctx, tableID, vardef.EnableTTLJob.Load())
-}
-
-// tblInfo must be non-nil.
-func (dc *ddlCtx) syncTTLTableToExternalWorkload(ctx context.Context, tblInfo *model.TableInfo) error {
-	if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable {
-		return dc.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID)
-	}
-	return dc.registerTTLTableToExternalWorkload(ctx, tblInfo)
-}
-
-func (dc *ddlCtx) deleteTTLTableFromExternalWorkload(ctx context.Context, tableID int64) error {
-	manager, ok := dc.externalWorkloadManager()
-	if !ok {
-		return nil
-	}
-	return manager.DeleteTTLTableInfo(ctx, tableID)
-}
-
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
 // checkTTLInfoValid checks the TTL settings for a table.
 // The argument `isForForeignKeyCheck` is used to check the table should not be referenced by foreign key.
 // If `isForForeignKeyCheck` is `nil`, it will skip the foreign key check.

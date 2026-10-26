@@ -68,42 +68,6 @@ func TestEventString(t *testing.T) {
 		"Index ID: 9, Index Name: Index1, Index ID: 10, Index Name: Index2)"
 	require.Equal(t, expected, result)
 }
-<<<<<<< HEAD
-=======
-
-func TestMVAlterEventConstructors(t *testing.T) {
-	mvTbl := &model.TableInfo{
-		ID:   101,
-		Name: ast.NewCIStr("mv"),
-	}
-	oldMVTbl := mvTbl.Clone()
-	mlogTbl := &model.TableInfo{
-		ID:   102,
-		Name: ast.NewCIStr("$mlog$t"),
-	}
-	oldMLogTbl := mlogTbl.Clone()
-
-	alterMVRefresh := NewAlterMaterializedViewRefreshEvent(mvTbl, oldMVTbl)
-	require.Equal(t, model.ActionAlterMaterializedViewRefresh, alterMVRefresh.GetType())
-	require.Same(t, mvTbl, alterMVRefresh.GetAlterMaterializedViewRefreshInfo())
-	require.Same(t, oldMVTbl, alterMVRefresh.inner.OldTableInfo)
-
-	alterMVAttrs := NewAlterMaterializedViewAttributesEvent(mvTbl, oldMVTbl)
-	require.Equal(t, model.ActionAlterMaterializedViewAttributes, alterMVAttrs.GetType())
-	require.Same(t, mvTbl, alterMVAttrs.GetAlterMaterializedViewAttributesInfo())
-	require.Same(t, oldMVTbl, alterMVAttrs.inner.OldTableInfo)
-
-	alterMLogPurge := NewAlterMaterializedViewLogPurgeEvent(mlogTbl, oldMLogTbl)
-	require.Equal(t, model.ActionAlterMaterializedViewLogPurge, alterMLogPurge.GetType())
-	require.Same(t, mlogTbl, alterMLogPurge.GetAlterMaterializedViewLogPurgeInfo())
-	require.Same(t, oldMLogTbl, alterMLogPurge.inner.OldTableInfo)
-
-	cutover := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl)
-	require.Equal(t, model.ActionMViewRefreshOutOfPlaceCutover, cutover.GetType())
-	newTableInfo, oldTableInfo := cutover.GetMViewRefreshOutOfPlaceCutoverInfo()
-	require.Same(t, mvTbl, newTableInfo)
-	require.Same(t, oldMVTbl, oldTableInfo)
-}
 
 func TestDropSchemaEventMiniTableInfo(t *testing.T) {
 	table := &model.TableInfo{
@@ -136,4 +100,3 @@ func TestDropSchemaEventMiniTableInfo(t *testing.T) {
 	require.Equal(t, ast.NewCIStr("test"), miniDBInfo.Name)
 	require.Equal(t, []*MiniTableInfoForSchemaEvent{miniTable}, miniDBInfo.Tables)
 }
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))

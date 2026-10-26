@@ -30,17 +30,6 @@ import (
 	"go.uber.org/zap"
 )
 
-<<<<<<< HEAD
-=======
-const dropSchemaTTLRestoreRegistrationsLogKey = "drop_schema_ttl_restore_registrations_failed"
-
-type dropSchemaTTLTableInfo struct {
-	id      int64
-	name    string
-	enabled bool
-}
-
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
 	args, err := model.GetCreateSchemaArgs(job)
@@ -187,55 +176,23 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
-<<<<<<< HEAD
-=======
-		var (
-			ttlTables []dropSchemaTTLTableInfo
-			ruleIDs   []string
-		)
-		codec := jobCtx.store.GetCodec()
+		dbInfo.State = model.StateWriteOnly
+		err = metaMut.UpdateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		var ruleIDs []string
 		err = metaMut.IterTables(job.SchemaID, func(tblInfo *model.TableInfo) error {
 			if err := jobCtx.stepCtx.Err(); err != nil {
 				return err
 			}
-			if tblInfo.TTLInfo != nil {
-				ttlTables = append(ttlTables, dropSchemaTTLTableInfo{
-					id:      tblInfo.ID,
-					name:    tblInfo.Name.O,
-					enabled: tblInfo.TTLInfo.Enable,
-				})
-			}
-			rules := append(getPartitionRuleIDs(codec, job.SchemaName, tblInfo), label.NewRuleID(codec, job.SchemaName, tblInfo.Name.L, ""))
+			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 			ruleIDs = append(ruleIDs, rules...)
 			return nil
 		})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if jobCtx.oldDDLCtx != nil {
-			if err := w.dropSchemaTTLTablesFromExternalWorkload(jobCtx.ctx, job, job.SchemaName, ttlTables); err != nil {
-				return ver, err
-			}
-		}
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
-		dbInfo.State = model.StateWriteOnly
-		err = metaMut.UpdateDatabase(dbInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-<<<<<<< HEAD
-		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		var ruleIDs []string
-		for _, tblInfo := range tables {
-			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
-			ruleIDs = append(ruleIDs, rules...)
-		}
-=======
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
 		err = infosync.UpdateLabelRules(context.TODO(), patch)
 		if err != nil {
@@ -253,8 +210,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		dbInfo.State = model.StateNone
 		var (
 			miniTables         []*notifier.MiniTableInfoForSchemaEvent
-			mviewIDs           []int64
-			mlogIDs            []int64
 			allDroppedTableIDs []int64
 			affinityErr        error
 		)
@@ -268,12 +223,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			miniTables = append(miniTables, notifier.NewMiniTableInfoForSchemaEvent(tblInfo))
 			if tblInfo.Affinity != nil && affinityErr == nil {
 				affinityErr = collectTableAffinityGroupIDs(codec, tblInfo, affinityGroupIDs)
-			}
-			if tblInfo.MaterializedView != nil {
-				mviewIDs = append(mviewIDs, tblInfo.ID)
-			}
-			if tblInfo.MaterializedViewLog != nil {
-				mlogIDs = append(mlogIDs, tblInfo.ID)
 			}
 			allDroppedTableIDs = appendPhysicalTableIDs(allDroppedTableIDs, tblInfo)
 			return nil
@@ -301,26 +250,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			break
 		}
 
-<<<<<<< HEAD
-=======
-		// Refresh and purge records drive MView and MLog maintenance, so their
-		// cleanup must roll back DROP DATABASE on failure. Refresh alerts are
-		// advisory state, so retaining stale alerts is preferable to blocking DDL.
-		if err = w.deleteCreateMaterializedViewRefreshInfos(jobCtx, mviewIDs); err != nil {
-			return ver, errors.Trace(err)
-		}
-		if err = w.deleteCreateMaterializedViewRefreshAlerts(jobCtx, mviewIDs); err != nil {
-			logutil.DDLLogger().Warn(
-				"drop schema: failed to delete materialized view refresh alerts",
-				zap.String("schemaName", job.SchemaName),
-				zap.Error(err),
-			)
-		}
-		if err = w.deleteMaterializedViewLogPurgeInfos(jobCtx, mlogIDs); err != nil {
-			return ver, errors.Trace(err)
-		}
-
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
 		// Split tables into multiple jobs to avoid too big records in the notifier.
 		const tooManyTablesThreshold = 100000
 		tablesPerJob := 100
@@ -457,39 +386,6 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 	return ver, errors.Trace(err)
 }
 
-<<<<<<< HEAD
-=======
-func (w *worker) dropSchemaTTLTablesFromExternalWorkload(
-	ctx context.Context,
-	job *model.Job,
-	schemaName string,
-	tables []dropSchemaTTLTableInfo,
-) error {
-	tablesNeedingCompensation := make([]dropSchemaTTLTableInfo, 0, len(tables))
-	for _, tblInfo := range tables {
-		if err := w.deleteTTLTableFromExternalWorkload(ctx, tblInfo.id); err != nil {
-			for i := len(tablesNeedingCompensation) - 1; i >= 0; i-- {
-				restoreTblInfo := tablesNeedingCompensation[i]
-				if compensateErr := w.registerTTLTableIDToExternalWorkload(ctx, restoreTblInfo.id); compensateErr != nil {
-					logutil.DDLLogger().Warn("drop schema TTL external workload compensation failed",
-						zap.String("keyword", dropSchemaTTLRestoreRegistrationsLogKey),
-						zap.String("dbName", schemaName),
-						zap.Int64("tableID", restoreTblInfo.id),
-						zap.String("tableName", restoreTblInfo.name),
-						zap.Error(compensateErr),
-						zap.NamedError("deleteTTLTableErr", err))
-				}
-			}
-			return cancelJobOnExternalTTLWorkloadError(job, err)
-		}
-		if tblInfo.enabled {
-			tablesNeedingCompensation = append(tablesNeedingCompensation, tblInfo)
-		}
-	}
-	return nil
-}
-
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
 func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*model.DBInfo, error) {
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {

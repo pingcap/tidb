@@ -38,11 +38,7 @@ go_test(
     ],
     embed = [":notifier"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 12,
-=======
-    shard_count = 14,
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
+    shard_count = 13,
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/ddl/session",
