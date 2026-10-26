@@ -52,6 +52,8 @@ http_archive(
 http_archive(
     name = "bazel_gazelle",
     sha256 = "49d9eba309b0b695824ff417d734242824ad9ab5edb56063b9d3400df1a61a56",
+    # Restricted builders must preseed this checksum-verified archive or allow
+    # the official release URL.
     urls = [
         "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.51.3/bazel-gazelle-v0.51.3.tar.gz",
     ],
@@ -107,6 +109,8 @@ go_download_sdk(
     version = "1.25.12",
 )
 
+# Also fetches rules_license 1.0.0; restricted builders must preseed its
+# checksum-verified archive or allow its mirror.bazel.build or GitHub release URL.
 gazelle_dependencies(go_sdk = "go_sdk")
 
 go_register_toolchains(
