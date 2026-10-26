@@ -149,7 +149,14 @@ func AddRUV2Results(tikvRU, tidbRU, tiflashRU, totalRU float64, sqlType string) 
 	}
 	RUV2Total.Add(totalRU)
 	counter.Add(totalRU)
-	RUV2ByEngineTiKV.Add(tikvRU)
-	ruv2TiDB.Add(tidbRU)
-	ruv2TiFlash.Add(tiflashRU)
+	// Engine series are initialized eagerly; adding zero only adds contention.
+	if tikvRU != 0 {
+		RUV2ByEngineTiKV.Add(tikvRU)
+	}
+	if tidbRU != 0 {
+		ruv2TiDB.Add(tidbRU)
+	}
+	if tiflashRU != 0 {
+		ruv2TiFlash.Add(tiflashRU)
+	}
 }
