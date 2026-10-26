@@ -1151,7 +1151,13 @@ fn show_table_status() {
         row_text(session.run("SHOW TABLE STATUS LIKE CONCAT('u', '')"))[0][0],
         "u"
     );
-    assert!(row_text(session.run("SHOW TABLE STATUS LIKE NULL")).is_empty());
+    // Go: the NULL literal is an empty exact field, which filters nothing
+    // (local gorun: `show table status like null` lists the table).
+    let names = |rows: Vec<Vec<String>>| rows.into_iter().map(|row| row[0].clone()).collect::<Vec<_>>();
+    assert_eq!(
+        names(row_text(session.run("SHOW TABLE STATUS LIKE NULL"))),
+        names(row_text(session.run("SHOW TABLE STATUS")))
+    );
     assert!(row_text(session.run("SHOW TABLE STATUS LIKE CONCAT('T', '')")).is_empty());
 
     // A table with an auto column reports its next value there.

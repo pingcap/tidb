@@ -989,6 +989,28 @@ impl Session {
             }
             T::Privileges => crate::show_admin::show_privileges_rows(),
             T::Status => self.show_status_rows(contents.global_scope)?,
+            // Go `fetchShowTableStatus`: the 1044 gate SHOW TABLES applies,
+            // the unknown schema, then its restricted SQL over
+            // `information_schema.tables` for the schema, ordered by table
+            // name (so every size and count is the TABLES reader's), each
+            // table the extractor admits by its lowercased name.
+            T::TableStatus => {
+                let database = contents.db_name.clone();
+                self.require_visible_database(&database)?;
+                let zone = self.session_time_zone();
+                let visibility = self.schema_visibility();
+                let catalog = self.table_storage_statistics_catalog(true)?;
+                if catalog.table_names(&database).is_none() {
+                    return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(database)));
+                }
+                crate::infoschema::show_table_status_rows(&catalog, &visibility, &zone, &database)
+                    .into_iter()
+                    .filter(|row| {
+                        let name = go_to_lower(datum_text(&row[0]).unwrap_or_default());
+                        tidb_executor::show::extractor_admits(extractor, &name, &name)
+                    })
+                    .collect()
+            }
             T::Warnings | T::Errors => {
                 self.warning_rows(contents.count_warnings_or_errors, contents.tp == T::Errors)
             }
@@ -1700,63 +1722,6 @@ impl Session {
             }
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
-            // Go `fetchShowTableStatus`: its restricted SQL over
-            // `information_schema.tables` for the schema, ordered by table
-            // name, so every size and count is the TABLES reader's.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::TableStatus => {
-                let database = match show_db_name(show) {
-                    Some(database) => database.to_owned(),
-                    None => self.require_current_database()?.into(),
-                };
-                // Go `fetchShowTableStatus` (`executor/show.go` around line
-                // 639) applies the same pre-lookup 1044 gate `SHOW TABLES`
-                // does.
-                self.require_visible_database(&database)?;
-                let (like_pattern, where_clause) = match show_filter(show) {
-                    None => (None, None),
-                    Some(ShowFilter::Like(expr)) => {
-                        let value = datum_text(&self.eval_value(expr)?);
-                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-                    }
-                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
-                };
-                let zone = self.session_time_zone();
-                let visibility = self.schema_visibility();
-                let catalog = self.table_storage_statistics_catalog(true)?;
-                if catalog.table_names(&database).is_none() {
-                    return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-                        database.clone(),
-                    )));
-                }
-                let rows = crate::infoschema::show_table_status_rows(
-                    &catalog,
-                    &visibility,
-                    &zone,
-                    &database,
-                );
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let number =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                let columns = crate::show_admin::SHOW_TABLE_STATUS_COLUMNS
-                    .iter()
-                    .map(|(name, numeric)| {
-                        // Go declares the three timestamps DATETIME.
-                        let field_type = if matches!(*name, "Create_time" | "Update_time" | "Check_time")
-                        {
-                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime)
-                        } else if *numeric {
-                            number()
-                        } else {
-                            text()
-                        };
-                        ((*name).to_owned(), field_type)
-                    })
-                    .collect();
-                let output = StmtOutput::Rows { columns, rows };
-                self.filter_show_output(output, like_pattern, where_clause)
-                    .map(Some)
-            }
             // Go `fetchShowIndex`: one row per index COLUMN, ordered
             // with the clustered primary key first, then the table's own
             // indexes in definition order.
@@ -2489,6 +2454,7 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::Warnings
             | T::Errors
             | T::Status
+            | T::TableStatus
     )
 }
 

@@ -24,12 +24,12 @@ use tidb_variable::sysvar;
 use crate::sessionctx::{sys_var_hidden_for_sem, SessionContext};
 
 /// The `ShowBaseExtractor` of a planned SHOW, as Go's fetchers read it.
-type Extractor<'a> = Option<&'a tidb_planner::show_predicate_extractor::ShowBaseExtractor>;
+pub type Extractor<'a> = Option<&'a tidb_planner::show_predicate_extractor::ShowBaseExtractor>;
 
 /// Go's `fieldFilter` / `fieldPatternsLike` test, `field_name` against the
 /// exact field and `pattern_name` against the wildcard: each fetcher passes
 /// the spelling Go's own comparison uses.
-fn extractor_admits(extractor: Extractor<'_>, field_name: &str, pattern_name: &str) -> bool {
+pub fn extractor_admits(extractor: Extractor<'_>, field_name: &str, pattern_name: &str) -> bool {
     let Some(extractor) = extractor else {
         return true;
     };

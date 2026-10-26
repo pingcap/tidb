@@ -192,29 +192,6 @@ pub(crate) fn show_privileges_rows() -> Vec<Vec<Datum>> {
     rows
 }
 
-/// The `SHOW TABLE STATUS` header, with the columns Go reports as numbers
-/// marked.
-pub(crate) const SHOW_TABLE_STATUS_COLUMNS: &[(&str, bool)] = &[
-    ("Name", false),
-    ("Engine", false),
-    ("Version", true),
-    ("Row_format", false),
-    ("Rows", true),
-    ("Avg_row_length", true),
-    ("Data_length", true),
-    ("Max_data_length", true),
-    ("Index_length", true),
-    ("Data_free", true),
-    ("Auto_increment", true),
-    ("Create_time", false),
-    ("Update_time", false),
-    ("Check_time", false),
-    ("Collation", false),
-    ("Checksum", false),
-    ("Create_options", false),
-    ("Comment", false),
-];
-
 /// The domain's slow-query memory `ADMIN SHOW SLOW` reads -- Go
 /// `Domain.slowQuery` (`topn_slow_query.go`), sized by
 /// `in-mem-slow-query-topn-num` / `in-mem-slow-query-recent-num` with a
