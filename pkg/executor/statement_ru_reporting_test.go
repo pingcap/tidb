@@ -63,7 +63,8 @@ func TestStatementRUReportingModes(t *testing.T) {
 			installStatementRUOwner(fixture.stmt)
 			fixture.owner = fixture.stmt.statementRUOwner
 			sc.SetFlatPlan(flat)
-			require.Equal(t, mode == config.RUReportModeFull, fixture.owner.calculationSetup.fullReport)
+			require.Equal(t, mode == config.RUReportModeFull, fixture.owner.calculationFullReport)
+			require.Equal(t, mode == config.RUReportModeFull, fixture.owner.fullReportAtInstall())
 			// Changing the global mode cannot split the installed owner's lifecycle.
 			config.UpdateGlobal(func(c *config.Config) {
 				if mode == config.RUReportModeFull {
@@ -73,7 +74,7 @@ func TestStatementRUReportingModes(t *testing.T) {
 				}
 			})
 			finalized, ok := calculateStatementRU(flat, sc.RuntimeStatsColl, fixture.stmt.Ctx.GetSessionVars().RUV2Metrics,
-				statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
+				statementRUWriteSnapshot{}, fixture.owner.calculationSetup(), true)
 			require.True(t, ok)
 			require.Equal(t, statementRUEngineResult{TiDB: 1 + float64(len(statementRUSimpleSelectSQLForTest)), TiKV: 31}, finalized.engineRU)
 			if mode == config.RUReportModeFull {
@@ -102,8 +103,10 @@ func TestStatementRUReportingModes(t *testing.T) {
 			observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) { observed++ })
 			fixture.stmt.recordStatementRURootEOF()
 			fixture.stmt.RecordStatementRUFinalOutcome(true)
-			fixture.stmt.finishStatementRU(nil)
-			fixture.stmt.finishStatementRU(nil)
+			require.Equal(t, finalized.result.TotalRU, fixture.stmt.finishStatementRU(nil))
+			require.Zero(t, fixture.owner.calculationSetup())
+			require.Equal(t, mode == config.RUReportModeFull, fixture.owner.fullReportAtInstall())
+			require.Zero(t, fixture.stmt.finishStatementRU(nil))
 			require.InDelta(t, finalized.engineRU.TiDB, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tidb"))-tidbBefore, 1e-9)
 			require.InDelta(t, finalized.engineRU.TiKV, testutil.ToFloat64(metrics.RUV2ByEngine.WithLabelValues("tikv"))-tikvBefore, 1e-9)
 			require.InDelta(t, finalized.result.TotalRU, testutil.ToFloat64(metrics.RUV2Total)-totalBefore, 1e-9)
@@ -233,7 +236,7 @@ func TestStatementRUReportingFailures(t *testing.T) {
 		} {
 			t.Run(tc.name+map[bool]string{false: "/result", true: "/full"}[full], func(t *testing.T) {
 				fixture := newStatementRUSimpleSelectFixture(t)
-				fixture.owner.calculationSetup.fullReport = full
+				setStatementRUFullReportForTest(fixture.owner, full)
 				if tc.prepare != nil {
 					tc.prepare(fixture)
 				}
