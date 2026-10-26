@@ -111,7 +111,7 @@ func TestClusterTableSlowQueryInMemoryOriginalQuery(t *testing.T) {
 	// session created by the cluster table's coprocessor request.
 	tk.EventuallyMustQueryAndCheck(
 		"select query, in_memory_original_query from information_schema.slow_query where query = 'select ?;'",
-		nil, testkit.Rows("select ?; select 7123456789;"), 3*time.Second, 20*time.Millisecond,
+		nil, testkit.Rows("select ?; select 7123456789"), 3*time.Second, 20*time.Millisecond,
 	)
 
 	for _, mode := range []string{vardef.On, vardef.Off, vardef.Marker, vardef.On} {
@@ -125,7 +125,7 @@ func TestClusterTableSlowQueryInMemoryOriginalQuery(t *testing.T) {
 			if mode == vardef.Off {
 				vars.EnableRedactLog = vardef.On
 			}
-			unredacted := "select 7123456789;"
+			unredacted := "select 7123456789"
 			if mode == vardef.Off {
 				unredacted = ""
 			}

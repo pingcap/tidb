@@ -220,6 +220,12 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildDDL(v)
 	case *plannercore.PurgeMaterializedViewLog:
 		return b.buildPurgeMaterializedViewLog(v)
+	case *plannercore.RefreshMaterializedView:
+		return b.buildRefreshMaterializedView(v)
+	case *plannercore.DryRunRefreshMaterializedView:
+		return b.buildDryRunRefreshMaterializedView(v)
+	case *plannercore.ProfileRefreshMaterializedView:
+		return b.buildProfileRefreshMaterializedView(v)
 	case *plannercore.MViewDeltaMerge:
 		return b.buildMViewDeltaMerge(v)
 	case *plannercore.MViewCompleteDeltaApply:
@@ -1289,6 +1295,14 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		children   []exec.Executor
 	)
 	if v.SelectPlan != nil {
+		if b.sctx.GetSessionVars().InMViewMaintenance {
+			// MV builds persist the read timestamp as the refresh watermark, even
+			// when the SELECT becomes a TableDual and never opens a data reader.
+			if _, err := sessiontxn.GetTxnManager(b.sctx).GetStmtReadTS(); err != nil {
+				b.err = err
+				return nil
+			}
+		}
 		selectExec = b.build(v.SelectPlan)
 		if b.err != nil {
 			return nil

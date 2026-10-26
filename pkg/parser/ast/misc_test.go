@@ -220,6 +220,8 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"INDEX_LOOKUP_PUSHDOWN(t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1`@`sel_1` `c1`)"},
 		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` `c1`)"},
 		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 partition(p0) c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
+		{"TIFLASH_LM_FILTER(t1, c1, c2)", "TIFLASH_LM_FILTER(`t1`, `c1`, `c2`)"},
+		{"TIFLASH_LM_FILTER(@sel_1 t1, c1)", "TIFLASH_LM_FILTER(@`sel_1` `t1`, `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},

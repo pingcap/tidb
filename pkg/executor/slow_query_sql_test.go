@@ -189,9 +189,9 @@ func TestSlowQueryInMemoryOriginalQuery(t *testing.T) {
 	// reader and would hide the target row once newer statements are logged.
 	tk.EventuallyMustQueryAndCheck(
 		"select query, in_memory_original_query from information_schema.slow_query "+
-			"where in_memory_original_query = 'select 123456789;'",
+			"where in_memory_original_query = 'select 123456789'",
 		nil,
-		testkit.Rows("select ?; select 123456789;"),
+		testkit.Rows("select ?; select 123456789"),
 		3*time.Second,
 		50*time.Millisecond,
 	)

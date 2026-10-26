@@ -367,6 +367,28 @@ func TestMemArbitratorSession(t *testing.T) {
 	require.Equal(t, memory.InvalidDigestID, buildMemArbitratorDigestID("", "db1"))
 }
 
+func TestAttachStatsCollectorForInternalSession(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se, err := CreateSessionWithDomain(store, dom)
+	require.NoError(t, err)
+	defer se.Close()
+	require.Nil(t, se.statsCollector)
+	restore := se.AttachStatsCollectorForInternalSession()
+	require.NotNil(t, se.statsCollector)
+	statsCollector, idxUsageCollector := se.statsCollector, se.idxUsageCollector
+	restoreNested := se.AttachStatsCollectorForInternalSession()
+	restoreNested()
+	require.Same(t, statsCollector, se.statsCollector)
+	require.Equal(t, idxUsageCollector, se.idxUsageCollector)
+	restore()
+	require.Nil(t, se.statsCollector)
+	require.Nil(t, se.idxUsageCollector)
+	// A session without an attached domain has no collectors to restore.
+	(&session{}).AttachStatsCollectorForInternalSession()()
+}
+
 func TestAdvisoryLockWithoutProcessInfo(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()

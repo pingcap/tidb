@@ -17,7 +17,9 @@ package diagnosticmode_test
 import (
 	"bytes"
 	"fmt"
+	"runtime"
 	"runtime/pprof"
+	"strconv"
 	"testing"
 	"time"
 
@@ -128,8 +130,7 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 	groups := bytes.Split(bytes.TrimSpace(stacks), []byte("\n\n"))
 	var checked int
 	for _, group := range groups {
-		groupHeader, _, ok := bytes.Cut(group, []byte("\n"))
-		require.True(t, ok, "goroutine group has no frames: %s", group)
+		groupHeader, _, hasFrames := bytes.Cut(group, []byte("\n"))
 		var count int
 		var marker string
 		_, err := fmt.Sscanf(string(groupHeader), "%d %s", &count, &marker)
@@ -137,6 +138,12 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		require.Equal(t, "@", marker)
 		require.Positive(t, count)
 		checked += count
+		if !hasFrames {
+			// debug=1 suppresses runtime.goexit even when it is the only frame.
+			// Resolve the raw PCs so no other frameless stack escapes the allowlist.
+			require.True(t, isRuntimeGoexitGroup(groupHeader), "goroutine group has no frames: %s", group)
+			continue
+		}
 
 		allowed := false
 		for _, function := range allowedFunctions {
@@ -153,6 +160,27 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 	}
 	require.Equal(t, total, checked, "not all goroutines were checked")
 	t.Logf("Checked %d goroutines in %d aggregated groups against the diagnostic allowlist", checked, len(groups))
+}
+
+func isRuntimeGoexitGroup(header []byte) bool {
+	fields := bytes.Fields(header)
+	if len(fields) <= 2 {
+		return false
+	}
+	for _, field := range fields[2:] {
+		pc, err := strconv.ParseUint(string(field), 0, strconv.IntSize)
+		if err != nil {
+			return false
+		}
+		// Resolve each PC separately so an unknown PC cannot be skipped while
+		// expanding a stack containing known frames.
+		frames := runtime.CallersFrames([]uintptr{uintptr(pc)})
+		frame, more := frames.Next()
+		if frame.Function != "runtime.goexit" || more {
+			return false
+		}
+	}
+	return true
 }
 
 func startTiDBServer(t *testing.T) (*tidbserver.Server, *config.Config) {

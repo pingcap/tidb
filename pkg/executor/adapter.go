@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -1910,6 +1911,8 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 			metrics.AffectedRowsCounterNTDMLReplace.Add(float64(affectedRows))
 		case "PurgeMaterializedViewLog":
 			metrics.AffectedRowsCounterPurgeMLog.Add(float64(affectedRows))
+		case "RefreshMaterializedView":
+			metrics.AffectedRowsCounterRefreshMV.Add(float64(affectedRows))
 		}
 	}
 }
@@ -2132,7 +2135,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool, st
 	if sessVars.EnableRedactLog != errors.RedactLogDisable && a.isSlowQuerySelect() {
 		// Capture the original text before it is redacted into the slow log line.
 		// Only this SQL string is retained in memory.
-		unredactedSQL = a.getUnredactedSlowQuerySQL()
+		unredactedSQL = sessVars.StmtCtx.OriginalSQL
 	}
 
 	SetSlowLogItems(a, txnTS, hasMoreResults, slowItems)
@@ -2547,19 +2550,19 @@ func (a *ExecStmt) isSlowQuerySelect() bool {
 	return ok && sel.Kind == ast.SelectStmtKindSelect
 }
 
-func (a *ExecStmt) getUnredactedSlowQuerySQL() string {
-	sessVars := a.Ctx.GetSessionVars()
-	var sql string
-	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		sql = sensitiveStmt.SecureText()
-	} else {
-		sql = sessVars.StmtCtx.OriginalSQL + sessVars.PlanCacheParams.String()
+func restoreStmtTextForSlowLogWhenEmptySQL(stmt ast.StmtNode) string {
+	implementStmt, ok := stmt.(*ast.RefreshMaterializedViewImplementStmt)
+	if !ok || implementStmt.RefreshStmt == nil {
+		return ""
 	}
-	sql = FormatSQL(sql).String()
-	if len(sql) == 0 || sql[len(sql)-1] != ';' {
-		sql += ";"
+	var sb strings.Builder
+	sb.WriteString("IMPLEMENT FOR ")
+	if err := implementStmt.RefreshStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)); err != nil {
+		logutil.BgLogger().Debug("restore refresh materialized view stmt for slow log failed", zap.Error(err))
+		return ""
 	}
-	return sql
+	sb.WriteString(" USING TIMESTAMP")
+	return sb.String()
 }
 
 // getLazyText is equivalent to `a.GetTextToLog(false)`. Note that the s.Params is a shallow copy of
