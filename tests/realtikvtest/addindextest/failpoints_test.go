@@ -17,12 +17,17 @@ package addindextest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 )
 
 func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
+	}
+	if kerneltype.IsNextGen() {
+		t.Skip("local-sort backfill failpoints are not supported on NextGen")
 	}
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
@@ -34,8 +39,12 @@ func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
 }
 
 func TestFailpointsCreateUniqueIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
+	}
+	if kerneltype.IsNextGen() {
+		t.Skip("local-sort backfill failpoints are not supported on NextGen")
 	}
 	var colIDs = [][]int{
 		{1, 6, 7, 8, 11, 13, 15, 16, 18, 19, 22, 26},
@@ -50,6 +59,10 @@ func TestFailpointsCreatePrimaryKeyFailpoints(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
+	if kerneltype.IsNextGen() {
+		t.Skip("local-sort backfill failpoints are not supported on NextGen")
+	}
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitTest(t)
 	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
@@ -58,13 +71,21 @@ func TestFailpointsCreateGenColIndex(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
+	if kerneltype.IsNextGen() {
+		t.Skip("local-sort backfill failpoints are not supported on NextGen")
+	}
+	enableFastAddIndexFailpoints(t)
 	ctx := testutils.InitTestFailpoint(t)
 	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestFailpointsCreateMultiColsIndex(t *testing.T) {
+	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
+	}
+	if kerneltype.IsNextGen() {
+		t.Skip("local-sort backfill failpoints are not supported on NextGen")
 	}
 	var coliIDs = [][]int{
 		{1, 4, 7},

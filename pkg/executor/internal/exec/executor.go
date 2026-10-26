@@ -278,10 +278,9 @@ func newExecutorKillerHandler(handler signalHandler) executorKillerHandler {
 // BaseExecutorV2 is a simplified version of `BaseExecutor`, which doesn't contain a full session context
 type BaseExecutorV2 struct {
 	_ constructor.Constructor `ctor:"NewBaseExecutorV2,BuildNewBaseExecutorV2"`
-
-	executorMeta
 	executorKillerHandler
 	executorStats
+	executorMeta
 	executorChunkAllocator
 }
 
@@ -462,6 +461,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	if err != nil {
 		return err
 	}
+
 	// recheck whether the session/query is killed during the Next()
 	return e.HandleSQLKillerSignal()
 }

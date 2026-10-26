@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -92,7 +92,7 @@ type LocalWriterConfig struct {
 // EngineConfig defines configuration used for open engine
 type EngineConfig struct {
 	// TableInfo is the corresponding tidb table info
-	TableInfo *checkpoints.TidbTableInfo
+	TableInfo *importdef.TableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
 	// local backend external engine specified configuration

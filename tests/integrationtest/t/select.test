@@ -1,4 +1,3 @@
-set tidb_cost_model_version=1;
 set @@sql_mode='STRICT_TRANS_TABLES';
 set @@tidb_enable_outer_join_reorder=true;
 DROP TABLE IF EXISTS t;
@@ -321,3 +320,8 @@ SELECT * FROM t1 STRAIGHT_JOIN t2 USING(i);
 
 --error 1054
 SELECT * FROM t1 STRAIGHT_JOIN t3 USING(id);
+
+# This query is used by MySQL Client to probe for support for $$ delimited function bodies in stored procedures
+# We handle this specially by suppressing excessive logging, but we don't change the result.
+--error 1054
+select $$;

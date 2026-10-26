@@ -1,0 +1,262 @@
+Subject: [PATCH] backport Go 1.27 export-data V5 support
+
+The V5 reader and format definitions are copied unchanged from the released
+upstream golang.org/x/tools v0.50.0 (go.dev/issue/81188). Keep v0.47.0's Go 1.25
+minimum instead of upgrading to v0.50.0, which requires Go 1.26. This Bazel-only
+backport can be removed when the module/toolchain upgrade permits that release.
+
+Source: https://go.googlesource.com/tools/+/refs/tags/v0.50.0/internal/gcimporter/ureader.go
+Source: https://go.googlesource.com/tools/+/refs/tags/v0.50.0/internal/pkgbits/version.go
+
+Include upstream V0-V5 format tests and a real-compiler regression checking
+interleaved ordinary/generic method order. The latter skips pre-Go 1.27.
+
+CI: Check Bazel Prepare explicitly runs the external pkgbits_test target for
+format coverage; TiDB's //... pattern alone does not include external tests.
+The gcimporter tests still require the manual compiler-specific checks below.
+Whenever x/tools or this patch changes, reapply it to a pristine, writable
+checkout of the selected x/tools module and run both commands from that module
+root. Replace <go1.25.14> and <go1.27.3> with those exact SDK directories;
+GOTOOLCHAIN=local prevents an implicit compiler upgrade. Keep the command logs
+and actual compiler versions as manual importer compatibility evidence, separate
+from the automated pkgbits format test.
+
+    GOTOOLCHAIN=local <go1.25.14>/bin/go test ./internal/pkgbits ./internal/gcimporter \
+        -run '^(TestRoundTrip|TestVersions|TestImportTestdata)$' -count=1 -v
+    GOTOOLCHAIN=local <go1.27.3>/bin/go test ./internal/pkgbits ./internal/gcimporter \
+        -run '^(TestGo127MethodOrder|TestRoundTrip|TestVersions)$' -count=1 -v
+
+diff --git a/internal/pkgbits/version.go b/internal/pkgbits/version.go
+--- a/internal/pkgbits/version.go
++++ b/internal/pkgbits/version.go
+@@ -36,6 +36,10 @@
+ 
+ 	// V4: encodes generic methods as standalone function objects
+ 	V4
++
++	// V5: encodes the index of methods to preserve relative order
++	// of nongeneric and generic methods (go.dev/issue/81188).
++	V5
+ 
+ 	numVersions = iota
+ )
+@@ -76,6 +80,10 @@
+ 	// Generic methods may appear as standalone function objects.
+ 	GenericMethods
+ 
++	// Method index is encoded to preserve relative order of
++	// nongeneric and generic methods.
++	PreserveMethodOrder
++
+ 	numFields = iota
+ )
+ 
+@@ -85,6 +93,7 @@
+ 	AliasTypeParamNames: V2,
+ 	CompactCompLiterals: V3,
+ 	GenericMethods:      V4,
++	PreserveMethodOrder: V5,
+ }
+ 
+ // removed is the version a field was removed in or 0 for fields
+diff --git a/internal/pkgbits/pkgbits_test.go b/internal/pkgbits/pkgbits_test.go
+--- a/internal/pkgbits/pkgbits_test.go
++++ b/internal/pkgbits/pkgbits_test.go
+@@ -16,6 +16,9 @@
+ 		pkgbits.V0,
+ 		pkgbits.V1,
+ 		pkgbits.V2,
++		pkgbits.V3,
++		pkgbits.V4,
++		pkgbits.V5,
+ 	} {
+ 		pw := pkgbits.NewPkgEncoder(version, -1)
+ 		w := pw.NewEncoder(pkgbits.RelocMeta, pkgbits.SyncPublic)
+@@ -37,6 +40,10 @@
+ // Type checker to enforce that know V* have the constant values they must have.
+ var _ [0]bool = [pkgbits.V0]bool{}
+ var _ [1]bool = [pkgbits.V1]bool{}
++var _ [2]bool = [pkgbits.V2]bool{}
++var _ [3]bool = [pkgbits.V3]bool{}
++var _ [4]bool = [pkgbits.V4]bool{}
++var _ [5]bool = [pkgbits.V5]bool{}
+ 
+ func TestVersions(t *testing.T) {
+ 	type vfpair struct {
+@@ -55,6 +62,9 @@
+ 		{pkgbits.V0, pkgbits.DerivedInfoNeeded},
+ 		{pkgbits.V1, pkgbits.DerivedInfoNeeded},
+ 		{pkgbits.V2, pkgbits.AliasTypeParamNames},
++		{pkgbits.V3, pkgbits.CompactCompLiterals},
++		{pkgbits.V4, pkgbits.GenericMethods},
++		{pkgbits.V5, pkgbits.PreserveMethodOrder},
+ 	} {
+ 		if !c.v.Has(c.f) {
+ 			t.Errorf("Expected version %v to have field %v", c.v, c.f)
+@@ -69,6 +79,18 @@
+ 		{pkgbits.V2, pkgbits.DerivedInfoNeeded},
+ 		{pkgbits.V0, pkgbits.AliasTypeParamNames},
+ 		{pkgbits.V1, pkgbits.AliasTypeParamNames},
++		{pkgbits.V0, pkgbits.CompactCompLiterals},
++		{pkgbits.V1, pkgbits.CompactCompLiterals},
++		{pkgbits.V2, pkgbits.CompactCompLiterals},
++		{pkgbits.V0, pkgbits.GenericMethods},
++		{pkgbits.V1, pkgbits.GenericMethods},
++		{pkgbits.V2, pkgbits.GenericMethods},
++		{pkgbits.V3, pkgbits.GenericMethods},
++		{pkgbits.V0, pkgbits.PreserveMethodOrder},
++		{pkgbits.V1, pkgbits.PreserveMethodOrder},
++		{pkgbits.V2, pkgbits.PreserveMethodOrder},
++		{pkgbits.V3, pkgbits.PreserveMethodOrder},
++		{pkgbits.V4, pkgbits.PreserveMethodOrder},
+ 	} {
+ 		if c.v.Has(c.f) {
+ 			t.Errorf("Expected version %v to not have field %v", c.v, c.f)
+diff --git a/internal/gcimporter/ureader.go b/internal/gcimporter/ureader.go
+--- a/internal/gcimporter/ureader.go
++++ b/internal/gcimporter/ureader.go
+@@ -629,11 +629,26 @@
+ 				})
+ 			}
+ 
+-			for i, n := 0, r.Len(); i < n; i++ {
+-				named.AddMethod(r.method())
+-			}
+-
+ 			if r.Version().Has(pkgbits.GenericMethods) {
++				// V4 (go1.27.0) emitted all non-generic methods
++				// before all generic ones, discarding source
++				// order: a bug (go.dev/issue/81188).
++				// V5 (go1.27.x) fixes it by emitting an explicit
++				// index along with each method.
++				type indexedMethod struct {
++					index int // (or -1 in V4)
++					fn    *types.Func
++				}
++
++				var methods []indexedMethod
++
++				// ordinary methods
++				for range r.Len() {
++					idx, m := r.method()
++					methods = append(methods, indexedMethod{idx, m})
++				}
++
++				// generic methods
+ 				for range r.Len() {
+ 					// Careful: objIdx is used to read in package-scoped declarations, which
+ 					// methods are not. Instead, decode it here. This makes it easier to
+@@ -648,11 +663,31 @@
+ 					pkg, name := r.selector()
+ 					rtparams := r.typeParamNames(true)
+ 					recv := r.param()
++					methodIdx := -1
++					if r.Version().Has(pkgbits.PreserveMethodOrder) {
++						methodIdx = r.Len()
++					}
+ 					tparams := r.typeParamNames(false)
+ 					sig := r.signature(recv, rtparams, tparams)
+ 
+ 					pr.retireReader(r)
+-					named.AddMethod(types.NewFunc(pos, pkg, name, sig))
++					methods = append(methods, indexedMethod{methodIdx, types.NewFunc(pos, pkg, name, sig)})
++				}
++
++				if r.Version().Has(pkgbits.PreserveMethodOrder) {
++					sort.Slice(methods, func(i, j int) bool {
++						return methods[i].index < methods[j].index
++					})
++				}
++
++				for _, m := range methods {
++					named.AddMethod(m.fn)
++				}
++
++			} else {
++				for range r.Len() {
++					_, m := r.method()
++					named.AddMethod(m)
+ 				}
+ 			}
+ 
+@@ -766,8 +801,12 @@
+ 	return tparams
+ }
+ 
+-func (r *reader) method() *types.Func {
++func (r *reader) method() (int, *types.Func) {
+ 	r.Sync(pkgbits.SyncMethod)
++	idx := -1
++	if r.Version().Has(pkgbits.PreserveMethodOrder) {
++		idx = r.Len()
++	}
+ 	pos := r.pos()
+ 	pkg, name := r.selector()
+ 
+@@ -775,7 +814,7 @@
+ 	sig := r.signature(r.param(), rparams, nil)
+ 
+ 	_ = r.pos() // TODO(mdempsky): Remove; this is a hacker for linker.go.
+-	return types.NewFunc(pos, pkg, name, sig)
++	return idx, types.NewFunc(pos, pkg, name, sig)
+ }
+ 
+ func (r *reader) qualifiedIdent() (*types.Package, string) { return r.ident(pkgbits.SyncSym) }
+diff --git a/internal/gcimporter/gcimporter_test.go b/internal/gcimporter/gcimporter_test.go
+--- a/internal/gcimporter/gcimporter_test.go
++++ b/internal/gcimporter/gcimporter_test.go
+@@ -1081,3 +1081,54 @@
+ 	compilePkg(t, srcdir, "a.go", testoutdir, nil, apkg(testoutdir))
+ 	compile(t, testoutdir, bpath, testoutdir, map[string]string{apkg(testoutdir): filepath.Join(testoutdir, "a.o")})
+ }
++
++// TestGo127MethodOrder checks real V5 export data, including the relative order
++// of ordinary and generic methods. Older compilers cannot compile this fixture.
++func TestGo127MethodOrder(t *testing.T) {
++	testenv.NeedsGo1Point(t, 27)
++	testenv.NeedsGoCommand1Point(t, 27)
++	needsCompiler(t, "gc")
++	skipWindows(t)
++
++	const src = `package fixture
++
++type T struct{}
++
++func (T) Zebra() {}
++func (T) Alpha[P any](p P) P { return p }
++func (T) Middle() {}
++func (T) Beta[P any](p P) P { return p }
++`
++	const pkgPath = "example.com/v5fixture"
++	tmp := t.TempDir()
++	if err := os.WriteFile(filepath.Join(tmp, "fixture.go"), []byte(src), 0600); err != nil {
++		t.Fatal(err)
++	}
++	compilePkg(t, tmp, "fixture.go", tmp, nil, pkgPath)
++	pkg := importPkg(t, "./fixture", tmp)
++	got := lookupObj(t, pkg.Scope(), "T").Type().(*types.Named)
++
++	fset := token.NewFileSet()
++	file, err := goparser.ParseFile(fset, "fixture.go", src, 0)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var conf types.Config
++	checked, err := conf.Check(pkgPath, fset, []*ast.File{file}, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := lookupObj(t, checked.Scope(), "T").Type().(*types.Named)
++	if got.NumMethods() != want.NumMethods() || got.NumMethods() != 4 {
++		t.Fatalf("method count: got %d, want %d (4)", got.NumMethods(), want.NumMethods())
++	}
++	for i := range got.NumMethods() {
++		gm, wm := got.Method(i), want.Method(i)
++		gs, ws := gm.Type().(*types.Signature), wm.Type().(*types.Signature)
++		if gm.Name() != wm.Name() || gs.TypeParams().Len() != ws.TypeParams().Len() {
++			t.Errorf("method %d: got %s (%d type params), want %s (%d type params)",
++				i, gm.Name(), gs.TypeParams().Len(), wm.Name(), ws.TypeParams().Len())
++		}
++		t.Logf("method %d: %s, type params=%d", i, gm.Name(), gs.TypeParams().Len())
++	}
++}

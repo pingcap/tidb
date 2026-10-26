@@ -16,6 +16,7 @@ package session_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,4 +116,68 @@ func TestPessimisticTxn(t *testing.T) {
 	require.False(t, ok)
 	pool.Put(sessCtx)
 	pool.Put(sessCtx2)
+}
+
+func TestSessionPoolDestroyResourcePool(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	resourcePool := pools.NewResourcePool(func() (pools.Resource, error) {
+		newTk := testkit.NewTestKit(t, store)
+		return newTk.Session(), nil
+	}, 1, 1, 0)
+	pool := session.NewSessionPool(resourcePool)
+
+	sessCtx, err := pool.Get()
+	require.NoError(t, err)
+
+	pool.Destroy(sessCtx)
+
+	newRes, err := resourcePool.TryGet()
+	require.NoError(t, err)
+	require.NotNil(t, newRes)
+
+	// Destroy on *pools.ResourcePool should Close the session and Put(nil),
+	// so the pool creates a new session next time.
+	require.NotEqual(t, sessCtx.(pools.Resource), newRes)
+
+	newRes.Close()
+	resourcePool.Put(nil)
+}
+
+type mockDestroyablePool struct {
+	factory func() (pools.Resource, error)
+
+	putCnt     int64
+	destroyCnt int64
+}
+
+func (p *mockDestroyablePool) Get() (pools.Resource, error) {
+	return p.factory()
+}
+
+func (p *mockDestroyablePool) Put(r pools.Resource) {
+	atomic.AddInt64(&p.putCnt, 1)
+	r.Close()
+}
+
+func (p *mockDestroyablePool) Destroy(r pools.Resource) {
+	atomic.AddInt64(&p.destroyCnt, 1)
+	r.Close()
+}
+
+func (p *mockDestroyablePool) Close() {}
+
+func TestSessionPoolDestroyDestroyableSessionPool(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	mp := &mockDestroyablePool{factory: func() (pools.Resource, error) {
+		newTk := testkit.NewTestKit(t, store)
+		return newTk.Session(), nil
+	}}
+	pool := session.NewSessionPool(mp)
+
+	sessCtx, err := pool.Get()
+	require.NoError(t, err)
+	pool.Destroy(sessCtx)
+
+	require.Equal(t, int64(0), atomic.LoadInt64(&mp.putCnt))
+	require.Equal(t, int64(1), atomic.LoadInt64(&mp.destroyCnt))
 }

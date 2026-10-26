@@ -249,6 +249,10 @@ func (v *RawWriteCFValue) UpdateShortValue(value []byte) {
 	v.shortValue = value
 }
 
+func (v *RawWriteCFValue) MarkPhysicalImportTxnSource() {
+	v.txnSource |= kv.LightningPhysicalImportTxnSource
+}
+
 func (v *RawWriteCFValue) GetStartTs() uint64 {
 	return v.startTs
 }

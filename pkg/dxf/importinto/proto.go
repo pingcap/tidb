@@ -24,8 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -52,13 +53,27 @@ type TaskMeta struct {
 	// we use a map from engine ID to chunks since we need support split_file for CSV,
 	// so need to split them into engines before passing to scheduler.
 	ChunkMap map[int32][]importer.Chunk
+	// PreparedMetaExternalPath points to external chunk metadata prepared by
+	// framework OnPrepare for nextgen global-sort path.
+	PreparedMetaExternalPath string `json:"prepared_meta_external_path,omitempty"`
+}
+
+// PreparedMeta stores metadata generated in prepare stage.
+type PreparedMeta struct {
+	globalsort.BaseExternalMeta
+	ChunkMap map[int32][]importer.Chunk `json:"chunk_map,omitempty" external:"true"`
+}
+
+// Marshal marshals the prepared chunk map meta to JSON.
+func (m *PreparedMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // ImportStepMeta is the meta of import step.
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
-	external.BaseExternalMeta
+	globalsort.BaseExternalMeta
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
 	Chunks   []importer.Chunk   `external:"true"`
@@ -68,9 +83,9 @@ type ImportStepMeta struct {
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
 
-	SortedDataMeta *external.SortedKVMeta `external:"true"`
+	SortedDataMeta *globalsort.SortedKVMeta `external:"true"`
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedKVMeta `external:"true"`
+	SortedIndexMetas map[int64]*globalsort.SortedKVMeta `external:"true"`
 	// it's the sum of all conflict KVs in all SortedKVMeta, we keep it here to
 	// avoid get the external meta when no conflict KVs.
 	//
@@ -85,11 +100,11 @@ func (m *ImportStepMeta) Marshal() ([]byte, error) {
 
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
-	external.BaseExternalMeta
+	globalsort.BaseExternalMeta
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
 	KVGroup                 string   `json:"kv-group"`
 	DataFiles               []string `json:"data-files" external:"true"`
-	external.SortedKVMeta   `external:"true"`
+	globalsort.SortedKVMeta `external:"true"`
 	RecordedConflictKVCount uint64 `json:"recorded-conflict-kv-count,omitempty"`
 }
 
@@ -101,9 +116,9 @@ func (m *MergeSortStepMeta) Marshal() ([]byte, error) {
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
-	external.BaseExternalMeta
+	globalsort.BaseExternalMeta
 	KVGroup                 string `json:"kv-group"`
-	external.SortedKVMeta   `json:"sorted-kv-meta" external:"true"`
+	globalsort.SortedKVMeta `json:"sorted-kv-meta" external:"true"`
 	RecordedConflictKVCount uint64   `json:"recorded-conflict-kv-count,omitempty"`
 	DataFiles               []string `json:"data-files" external:"true"`
 	StatFiles               []string `json:"stat-files" external:"true"`
@@ -123,11 +138,11 @@ type KVGroupConflictInfos struct {
 }
 
 func (gci *KVGroupConflictInfos) addDataConflictInfo(other *engineapi.ConflictInfo) {
-	gci.addConflictInfo(external.DataKVGroup, other)
+	gci.addConflictInfo(globalsort.DataKVGroup, other)
 }
 
 func (gci *KVGroupConflictInfos) addIndexConflictInfo(indexID int64, other *engineapi.ConflictInfo) {
-	kvGroup := external.IndexID2KVGroup(indexID)
+	kvGroup := globalsort.IndexID2KVGroup(indexID)
 	gci.addConflictInfo(kvGroup, other)
 }
 
@@ -148,16 +163,19 @@ func (gci *KVGroupConflictInfos) addConflictInfo(kvGroup string, other *engineap
 
 // CollectConflictsStepMeta is the meta of collect conflicts step.
 type CollectConflictsStepMeta struct {
-	external.BaseExternalMeta
+	globalsort.BaseExternalMeta
 	Infos                   KVGroupConflictInfos `json:"infos" external:"true"`
 	RecordedDataKVConflicts int64                `json:"recorded-data-kv-conflicts,omitempty"`
 	// Checksum is the checksum of all conflicts rows.
 	Checksum *Checksum `json:"checksum,omitempty"`
 	// ConflictedRowCount is the count of all conflicted rows.
 	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
-	// ConflictedRowFilenames is the filenames of all conflicted rows.
+	// ConflictedRowFilenames is the filenames of recorded conflicted rows.
 	// Note: this file is for user to resolve conflicts manually.
 	ConflictedRowFilenames []string `json:"conflicted-row-filenames,omitempty"`
+	// ConflictedRowRecordingCapped is true if conflict-row file recording stops
+	// due to maxTotalConflictRowFileSize.
+	ConflictedRowRecordingCapped bool `json:"conflicted-row-recording-capped,omitempty"`
 	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
 	// if true, we will skip checksum.
 	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
@@ -170,7 +188,7 @@ func (m *CollectConflictsStepMeta) Marshal() ([]byte, error) {
 
 // ConflictResolutionStepMeta is the meta of conflict resolution step.
 type ConflictResolutionStepMeta struct {
-	external.BaseExternalMeta
+	globalsort.BaseExternalMeta
 	Infos KVGroupConflictInfos `json:"infos" external:"true"`
 }
 
@@ -204,9 +222,9 @@ type SharedVars struct {
 	mu       sync.Mutex
 	Checksum *verification.KVGroupChecksum
 
-	SortedDataMeta *external.SortedKVMeta
+	SortedDataMeta *globalsort.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas        map[int64]*external.SortedKVMeta
+	SortedIndexMetas        map[int64]*globalsort.SortedKVMeta
 	RecordedConflictKVCount uint64
 	ShareMu                 sync.Mutex
 	globalSortStore         storeapi.Storage
@@ -214,20 +232,20 @@ type SharedVars struct {
 	indexKVFileCount        *atomic.Int64
 }
 
-func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
+func (sv *SharedVars) mergeDataSummary(summary *simplesst.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.SortedDataMeta.MergeSummary(summary)
 	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
 }
 
-func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterSummary) {
+func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *simplesst.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
 	meta, ok := sv.SortedIndexMetas[indexID]
 	if !ok {
-		meta = external.NewSortedKVMeta(summary)
+		meta = globalsort.NewSortedKVMeta(summary)
 		sv.SortedIndexMetas[indexID] = meta
 		return
 	}

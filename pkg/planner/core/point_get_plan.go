@@ -321,6 +321,13 @@ func newBatchPointGetPlan(
 			for index, inner := range x.Values {
 				// permutations is used to match column and value.
 				permIndex := permutations[index]
+				// Record the column type for every position, not just the ones
+				// that are parameter markers in this (the first) row. A later
+				// row may hold a marker where this row holds a literal, and the
+				// plan-cache range rebuild needs a non-nil type for that column.
+				if initTypes {
+					indexTypes[permIndex] = &colInfos[index].FieldType
+				}
 				switch innerX := inner.(type) {
 				case *driver.ValueExpr:
 					dval := getPointGetValue(stmtCtx, colInfos[index], &innerX.Datum)
@@ -343,9 +350,6 @@ func newBatchPointGetPlan(
 					}
 					values[permIndex] = *dval
 					valuesParams[permIndex] = con
-					if initTypes {
-						indexTypes[permIndex] = &colInfos[index].FieldType
-					}
 				default:
 					return nil
 				}
@@ -425,6 +429,9 @@ func tryWhereIn2BatchPointGet(ctx base.PlanContext, selStmt *ast.SelectStmt, res
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 	// Skip the optimization with partition selection.
 	// TODO: Add test and remove this!
 	if len(tblName.PartitionNames) > 0 {
@@ -535,6 +542,9 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 		return nil
 	}
 	tbl := tnW.TableInfo
+	if err := CheckMViewReadable(ctx.GetSessionVars(), tbl, tblAlias.O); err != nil {
+		return nil
+	}
 
 	var pkColOffset int
 	for i, col := range tbl.Columns {
@@ -1126,22 +1136,22 @@ type subQueryChecker struct {
 	hasSubQuery bool
 }
 
-func (s *subQueryChecker) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+func (s *subQueryChecker) Enter(in ast.Node) (skipChildren bool) {
 	if s.hasSubQuery {
-		return in, true
+		return true
 	}
 
 	if _, ok := in.(*ast.SubqueryExpr); ok {
 		s.hasSubQuery = true
-		return in, true
+		return true
 	}
 
-	return in, false
+	return false
 }
 
-func (s *subQueryChecker) Leave(in ast.Node) (ast.Node, bool) {
+func (s *subQueryChecker) Leave(ast.Node) bool {
 	// Before we enter the sub-query, we should keep visiting its children.
-	return in, !s.hasSubQuery
+	return !s.hasSubQuery
 }
 
 func isExprHasSubQuery(expr ast.Node) bool {
@@ -1151,7 +1161,7 @@ func isExprHasSubQuery(expr ast.Node) bool {
 		checker.hasSubQuery = false
 		subQueryCheckerPool.Put(checker)
 	}()
-	expr.Accept(checker)
+	ast.Walk(expr, checker)
 	return checker.hasSubQuery
 }
 
@@ -1164,6 +1174,19 @@ func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
 	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
 	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
+		return nil
+	}
+
+	tblName, tblAlias := getSingleTableNameAndAlias(updateStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "UPDATE") != nil {
 		return nil
 	}
 
@@ -1277,10 +1300,27 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 			return nil, true
 		}
 		castToTP := col.GetStaticType()
-		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+		if (castToTP.GetType() == mysql.TypeEnum || castToTP.GetType() == mysql.TypeSet) &&
+			assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		// Point-update builds assignment expressions directly in the planner.
+		// Keep the implicit CAST for most target column types so the fast path stays
+		// aligned with normal UPDATE typing, but do not CAST unsigned numeric targets:
+		// CAST(-1 AS UNSIGNED) wraps to MAX_UINT64, while UPDATE assignment conversion
+		// must be decided by executor-side table.CastValue under the current statement
+		// context and sql_mode.
+		//
+		// This applies to more than integer columns. Unsigned decimal/real also uses the
+		// CAST path which treats negative inputs as uint64 (e.g. -1 -> 1844...),
+		// diverging from assignment semantics.
+		isUnsignedNumericTarget := mysql.HasUnsignedFlag(castToTP.GetFlag()) &&
+			(castToTP.EvalType() == types.ETInt ||
+				castToTP.EvalType() == types.ETDecimal ||
+				castToTP.EvalType() == types.ETReal)
+		if !isUnsignedNumericTarget {
+			expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
+		}
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
@@ -1299,6 +1339,20 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 	if delStmt.IsMultiTable {
 		return nil
 	}
+
+	tblName, tblAlias := getSingleTableNameAndAlias(delStmt.TableRefs)
+	if tblName == nil {
+		return nil
+	}
+	// tnW might be nil, in some ut, query is directly 'optimized' without pre-process.
+	tnW := resolveCtx.GetTableName(tblName)
+	if tnW == nil {
+		return nil
+	}
+	if CheckMViewUpdatable(ctx.GetSessionVars(), tnW.TableInfo, tblAlias.O, "DELETE") != nil {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		TableHints: delStmt.TableHints,
 		Fields:     &ast.FieldList{},
@@ -1415,22 +1469,28 @@ func buildHandleCols(dbName string, tbl *model.TableInfo, pointget base.Physical
 }
 
 // TODO: Remove this, by enabling all types of partitioning
-// and update/add tests
-func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *ast.CIStr {
-	pi := tbl.GetPartitionInfo()
+// and update/add tests.
+func getHashOrKeyPartitionColumnName(tbl table.Table) *ast.CIStr {
+	if tbl == nil {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	if tblInfo == nil {
+		return nil
+	}
+	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
 	if pi.Type != ast.PartitionTypeHash && pi.Type != ast.PartitionTypeKey {
 		return nil
 	}
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	table, ok := is.TableByID(context.Background(), tbl.ID)
+	partTable, ok := tbl.(base.PartitionTable)
 	if !ok {
 		return nil
 	}
 	// PartitionExpr don't need columns and names for hash partition.
-	partitionExpr := table.(base.PartitionTable).PartitionExpr()
+	partitionExpr := partTable.PartitionExpr()
 	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {

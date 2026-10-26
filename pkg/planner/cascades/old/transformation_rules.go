@@ -1179,7 +1179,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
-		ruleutil.ResolveExprAndReplace(newExpr, replace)
+		newExpr = ruleutil.ResolveExprAndReplace(newExpr, replace)
 		newProj.Exprs[i] = ruleutil.ReplaceColumnOfExpr(newExpr, child.Exprs, childGroup.Prop.Schema)
 	}
 

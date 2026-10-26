@@ -17,6 +17,7 @@ package proto
 import (
 	"cmp"
 	"fmt"
+	"sync/atomic"
 	"time"
 )
 
@@ -41,6 +42,15 @@ type (
 	TaskState string
 	// TaskType is the type of task.
 	TaskType string
+	// PrepareMode controls whether a task needs prepare-mode scheduling.
+	PrepareMode int
+)
+
+const (
+	// PrepareModeDisabled means prepare mode is disabled, this is the default.
+	PrepareModeDisabled PrepareMode = 0
+	// PrepareModeRequired means task scheduling must enter prepare mode.
+	PrepareModeRequired PrepareMode = 1
 )
 
 func (t TaskType) String() string {
@@ -49,6 +59,17 @@ func (t TaskType) String() string {
 
 func (s TaskState) String() string {
 	return string(s)
+}
+
+func (m PrepareMode) String() string {
+	switch m {
+	case PrepareModeDisabled:
+		return "disabled"
+	case PrepareModeRequired:
+		return "required"
+	default:
+		return fmt.Sprintf("unknown(%d)", m)
+	}
 }
 
 // CanMoveToModifying checks if current state can move to 'modifying' state.
@@ -63,9 +84,89 @@ const (
 	NormalPriority = 512
 )
 
-// MaxConcurrentTask is the max concurrency of task.
-// TODO: remove this limit later.
-var MaxConcurrentTask = 16
+const (
+	// maxConcurrentTaskLowerBound is the minimum allowed DXF task concurrency.
+	maxConcurrentTaskLowerBound = 16
+	// MaxConcurrentTaskUpperBound is the current safety cap for DXF task concurrency.
+	// TODO: remove this cap after the DXF scheduler no longer runs all schedulers on the owner node.
+	MaxConcurrentTaskUpperBound = 1000
+	// DefaultMaxConcurrentTask is the default DXF task concurrency.
+	DefaultMaxConcurrentTask = maxConcurrentTaskLowerBound
+
+	// taskCleanupBatchSizeLowerBound is the minimum allowed DXF task cleanup batch size.
+	taskCleanupBatchSizeLowerBound = 1
+	// TaskCleanupBatchSizeUpperBound is the maximum allowed DXF task cleanup batch size.
+	TaskCleanupBatchSizeUpperBound = 1000
+	// DefaultTaskCleanupBatchSize is the default DXF task cleanup batch size.
+	DefaultTaskCleanupBatchSize = 20
+)
+
+// maxConcurrentTask is an owner-local emergency tuning knob for DXF scheduling.
+// It is intentionally kept in memory only: it is not persisted to TiKV, is reset
+// on restart, and only affects the TiDB node that receives the update. Operators
+// should change it through the DXF owner node when many small tasks are blocked
+// by the default limit. Raising it increases scheduler overhead and memory usage
+// on the owner, so the owner node may need a larger resource spec first.
+var maxConcurrentTask atomic.Int64
+
+// taskCleanupBatchSize is an owner-local tuning knob for DXF task cleanup.
+// It is intentionally kept in memory only: it is not persisted to TiKV, is reset
+// on restart, and only affects the TiDB node that receives the update. Operators
+// should change it through the DXF owner node.
+var taskCleanupBatchSize atomic.Int64
+
+func init() {
+	maxConcurrentTask.Store(DefaultMaxConcurrentTask)
+	taskCleanupBatchSize.Store(DefaultTaskCleanupBatchSize)
+}
+
+// GetMaxConcurrentTask returns the max concurrency of task.
+func GetMaxConcurrentTask() int {
+	return int(maxConcurrentTask.Load())
+}
+
+// SetMaxConcurrentTask updates the max concurrency of task.
+func SetMaxConcurrentTask(value int) error {
+	if value < maxConcurrentTaskLowerBound || value > MaxConcurrentTaskUpperBound {
+		return fmt.Errorf("max_concurrent_task %d is out of range [%d, %d]",
+			value, maxConcurrentTaskLowerBound, MaxConcurrentTaskUpperBound)
+	}
+	maxConcurrentTask.Store(int64(value))
+	return nil
+}
+
+// SetMaxConcurrentTaskForTest updates the max concurrency of task and returns a restore function.
+func SetMaxConcurrentTaskForTest(value int) func() {
+	old := GetMaxConcurrentTask()
+	maxConcurrentTask.Store(int64(value))
+	return func() {
+		maxConcurrentTask.Store(int64(old))
+	}
+}
+
+// GetTaskCleanupBatchSize returns the task cleanup batch size.
+func GetTaskCleanupBatchSize() int {
+	return int(taskCleanupBatchSize.Load())
+}
+
+// SetTaskCleanupBatchSize updates the task cleanup batch size.
+func SetTaskCleanupBatchSize(value int) error {
+	if value < taskCleanupBatchSizeLowerBound || value > TaskCleanupBatchSizeUpperBound {
+		return fmt.Errorf("task_cleanup_batch_size %d is out of range [%d, %d]",
+			value, taskCleanupBatchSizeLowerBound, TaskCleanupBatchSizeUpperBound)
+	}
+	taskCleanupBatchSize.Store(int64(value))
+	return nil
+}
+
+// SetTaskCleanupBatchSizeForTest updates the task cleanup batch size and returns a restore function.
+func SetTaskCleanupBatchSizeForTest(value int) func() {
+	old := GetTaskCleanupBatchSize()
+	taskCleanupBatchSize.Store(int64(value))
+	return func() {
+		taskCleanupBatchSize.Store(int64(old))
+	}
+}
 
 // ExtraParams is the extra params of task.
 // Note: only store params that's not used for filter or sort in this struct.
@@ -74,6 +175,9 @@ type ExtraParams struct {
 	// if enabled, the task will enter 'awaiting-resolution' state when it failed,
 	// then the user can recover the task manually or fail it if it's not recoverable.
 	ManualRecovery bool `json:"manual_recovery,omitempty"`
+	// PauseOnKVDiskFull indicates whether the task should be paused instead of
+	// reverted when TiKV reports disk full.
+	PauseOnKVDiskFull bool `json:"pause_on_kv_disk_full,omitempty"`
 	// MaxRuntimeSlots is the max slots when running subtasks of this task in
 	// TargetSteps steps.
 	// normally it's 0, means we will use the RequiredSlots to run the subtasks.
@@ -91,6 +195,9 @@ type ExtraParams struct {
 	// normally OOM only happens in some specific steps, so we can just limit the
 	// concurrency in those steps to reduce the impact on the overall performance.
 	TargetSteps []Step `json:"target_steps,omitempty"`
+	// PrepareMode controls whether this task requires prepare-mode scheduling.
+	// default is PrepareModeDisabled for backward compatibility.
+	PrepareMode PrepareMode `json:"prepare_mode,omitempty"`
 }
 
 // TaskBase contains the basic information of a task.

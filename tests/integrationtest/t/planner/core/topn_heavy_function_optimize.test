@@ -1,0 +1,37 @@
+# Regression test for "connection running loop panic" caused by nil-pointer deref in
+# planner/core.(*PhysicalTopN).getPushedDownTopN when heavy functions (e.g. vec_cosine_distance)
+# are not the first ByItem.
+
+set session tidb_opt_projection_push_down=1;
+
+drop table if exists recipes;
+create table recipes (
+  id bigint primary key,
+  title varchar(32),
+  categories varchar(32),
+  total_time_minutes int,
+  rating double,
+  favorite tinyint,
+  source varchar(32),
+  image_filename varchar(32),
+  review_count int,
+  embedding_title vector(3),
+  embedding_content vector(3)
+);
+
+insert into recipes values
+  (1, 'r1', 'c1', 10, 4, 0, 's1', 'i1', 10, '[1,0,0]', '[1,0,0]'),
+  (2, 'r2', 'c2', 20, 4, 0, 's2', 'i2', 10, '[0,1,0]', '[0,1,0]'),
+  (3, 'r3', 'c3', 30, 5, 0, 's3', 'i3', 5,  '[0,0,1]', '[1,0,0]');
+explain format='plan_tree' select `id`, `review_count`, `rating`, `embedding_title`, `embedding_content` from `recipes`
+where 1 = 1 and `embedding_title` is not null and `embedding_content` is not null
+order by
+  coalesce((((ifnull(`review_count`, 0) * ifnull(`rating`, 0)) + 0) / (ifnull(`review_count`, 0) + 1)), 0) desc,
+  (1 * (1 - vec_cosine_distance(`embedding_title`, '[1,0,0]'))) + (1 * (1 - vec_cosine_distance(`embedding_content`, '[1,0,0]'))) desc
+limit 2 offset 0;
+select `id`, `review_count`, `rating`, `embedding_title`, `embedding_content` from `recipes`
+where 1 = 1 and `embedding_title` is not null and `embedding_content` is not null
+order by
+  coalesce((((ifnull(`review_count`, 0) * ifnull(`rating`, 0)) + 0) / (ifnull(`review_count`, 0) + 1)), 0) desc,
+  (1 * (1 - vec_cosine_distance(`embedding_title`, '[1,0,0]'))) + (1 * (1 - vec_cosine_distance(`embedding_content`, '[1,0,0]'))) desc
+limit 2 offset 0;

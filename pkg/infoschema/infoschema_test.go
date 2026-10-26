@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -107,7 +108,7 @@ func TestBasic(t *testing.T) {
 
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := infoschema.NewBuilder(re, schemaCacheSize, nil, infoschema.NewData(), schemaCacheSize > 0)
-	err = builder.InitWithDBInfos(dbInfos, nil, nil, 1)
+	err = builder.InitWithDBInfos(dbInfos, nil, nil, nil, 1)
 	require.NoError(t, err)
 
 	txn, err := re.Store().Begin()
@@ -338,7 +339,7 @@ func TestInfoTables(t *testing.T) {
 
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := infoschema.NewBuilder(re, schemaCacheSize, nil, infoschema.NewData(), schemaCacheSize > 0)
-	err := builder.InitWithDBInfos(nil, nil, nil, 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 0)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 
@@ -383,6 +384,64 @@ func TestInfoTables(t *testing.T) {
 	}
 }
 
+func TestStorageClassTransitionsVisibility(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	re := internal.CreateAutoIDRequirement(t)
+	t.Cleanup(func() { require.NoError(t, re.Store().Close()) })
+	ctx := context.Background()
+	tableName := ast.NewCIStr(infoschema.TableStorageClassTransitions)
+
+	for _, useV2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("v2=%t", useV2), func(t *testing.T) {
+			var tableID int64
+			// Rebuilding after a disabled instance must not lose the global table metadata.
+			for step, enabled := range []bool{true, false, true, false} {
+				t.Run(fmt.Sprintf("%d/enabled=%t", step, enabled), func(t *testing.T) {
+					config.UpdateGlobal(func(conf *config.Config) { conf.EnableStorageClass = enabled })
+					builder := infoschema.NewBuilder(re, vardef.SchemaCacheSize.Load(), nil, infoschema.NewData(), useV2)
+					require.NoError(t, builder.InitWithDBInfos(nil, nil, nil, nil, 0))
+					is := builder.Build(math.MaxUint64)
+					isV2, _ := infoschema.IsV2(is)
+					require.Equal(t, useV2, isV2)
+
+					tbl, err := is.TableByName(ctx, metadef.InformationSchemaName, tableName)
+					if enabled {
+						require.NoError(t, err)
+						require.NotNil(t, tbl)
+						tableID = tbl.Meta().ID
+					} else {
+						require.True(t, infoschema.ErrTableNotExists.Equal(err))
+						require.Nil(t, tbl)
+					}
+					require.NotZero(t, tableID)
+					tbl, exists := is.TableByID(ctx, tableID)
+					require.Equal(t, enabled, exists)
+					if !enabled {
+						require.Nil(t, tbl)
+					}
+
+					tables, err := is.SchemaTableInfos(ctx, metadef.InformationSchemaName)
+					require.NoError(t, err)
+					var found bool
+					for _, tbl := range tables {
+						found = found || tbl.Name == tableName
+					}
+					require.Equal(t, enabled, found)
+					simpleTables, err := is.SchemaSimpleTableInfos(ctx, metadef.InformationSchemaName)
+					require.NoError(t, err)
+					found = false
+					for _, tbl := range simpleTables {
+						found = found || tbl.Name == tableName
+					}
+					require.Equal(t, enabled, found)
+					_, err = is.TableByName(ctx, metadef.InformationSchemaName, ast.NewCIStr("TABLES"))
+					require.NoError(t, err)
+				})
+			}
+		})
+	}
+}
+
 func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	re := internal.CreateAutoIDRequirement(t)
 	defer func() {
@@ -400,7 +459,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	data := infoschema.NewData()
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := infoschema.NewBuilder(re, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	err := builder.InitWithDBInfos(dbInfos, nil, nil, 1)
+	err := builder.InitWithDBInfos(dbInfos, nil, nil, nil, 1)
 	require.NoError(t, err)
 	is := builder.Build(math.MaxUint64)
 	require.False(t, is.HasTemporaryTable())
@@ -507,7 +566,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, ok)
 	schemaCacheSize = vardef.SchemaCacheSize.Load()
 	builder = infoschema.NewBuilder(re, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	err = builder.InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.SchemaMetaVersion())
+	err = builder.InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.AllMaskingPolicies(), newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build(math.MaxUint64).HasTemporaryTable())
 
@@ -639,7 +698,7 @@ func TestBuildBundle(t *testing.T) {
 	}
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := infoschema.NewBuilder(dom, schemaCacheSize, nil, infoschema.NewData(), schemaCacheSize > 0)
-	err = builder.InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.SchemaMetaVersion())
+	err = builder.InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.AllMaskingPolicies(), is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build(math.MaxUint64)
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)
@@ -1113,7 +1172,7 @@ func (tc *infoschemaTestContext) createSchema() {
 	// init infoschema
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := infoschema.NewBuilder(tc.re, schemaCacheSize, nil, tc.data, schemaCacheSize > 0)
-	err := builder.InitWithDBInfos([]*model.DBInfo{}, nil, nil, 1)
+	err := builder.InitWithDBInfos([]*model.DBInfo{}, nil, nil, nil, 1)
 	require.NoError(tc.t, err)
 	tc.is = builder.Build(math.MaxUint64)
 }

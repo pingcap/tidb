@@ -15,6 +15,9 @@
 package join
 
 import (
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -39,56 +42,51 @@ func TestSemiJoinOrder(t *testing.T) {
 		tk.MustQuery("select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		tk.MustQuery("select /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		tk.MustQuery("select /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
-		tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
-			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
-			"  ├─TableReader(Build) 9990.00 root  data:Selection",
-			"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
-			"  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-			"  └─TableReader(Probe) 9990.00 root  data:Selection",
-			"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
-			"      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
-		tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
-		tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
-			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
-			"  ├─TableReader(Build) 9990.00 root  data:Selection",
-			"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
-			"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  └─TableReader(Probe) 9990.00 root  data:Selection",
-			"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
-			"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+			"Sort root  test.t1.col0, test.t1.col1",
+			"└─HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+			"  ├─TableReader(Build) root  data:Selection",
+			"  │ └─Selection cop[tikv]  not(isnull(test.t1.col0))",
+			"  │   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+			"  └─TableReader(Probe) root  data:Selection",
+			"    └─Selection cop[tikv]  not(isnull(test.t2.col0))",
+			"      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"))
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+			"Sort root  test.t1.col0, test.t1.col1",
+			"└─HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+			"  ├─TableReader(Build) root  data:Selection",
+			"  │ └─Selection cop[tikv]  not(isnull(test.t2.col0))",
+			"  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"  └─TableReader(Probe) root  data:Selection",
+			"    └─Selection cop[tikv]  not(isnull(test.t1.col0))",
+			"      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 		tk.MustExec("set tidb_hash_join_version=legacy")
 		tk.MustQuery("select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		tk.MustQuery("select /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 		tk.MustQuery("select /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
-		tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
-			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
-			"  ├─TableReader(Build) 9990.00 root  data:Selection",
-			"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
-			"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  └─TableReader(Probe) 9990.00 root  data:Selection",
-			"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
-			"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+			"Sort root  test.t1.col0, test.t1.col1",
+			"└─HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+			"  ├─TableReader(Build) root  data:Selection",
+			"  │ └─Selection cop[tikv]  not(isnull(test.t2.col0))",
+			"  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"  └─TableReader(Probe) root  data:Selection",
+			"    └─Selection cop[tikv]  not(isnull(test.t1.col0))",
+			"      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 		tk.MustQuery("show warnings").Check(testkit.Rows(
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
-			"Warning 1815 Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
-		tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
-			"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-			"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
-			"  ├─TableReader(Build) 9990.00 root  data:Selection",
-			"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
-			"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"  └─TableReader(Probe) 9990.00 root  data:Selection",
-			"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
-			"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+			"Sort root  test.t1.col0, test.t1.col1",
+			"└─HashJoin root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+			"  ├─TableReader(Build) root  data:Selection",
+			"  │ └─Selection cop[tikv]  not(isnull(test.t2.col0))",
+			"  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"  └─TableReader(Probe) root  data:Selection",
+			"    └─Selection cop[tikv]  not(isnull(test.t1.col0))",
+			"      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 		tk.MustQuery("show warnings").Check(testkit.Rows(
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints",
 			"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
@@ -101,43 +99,43 @@ func TestJoinWithNullEQ(t *testing.T) {
 		// https://github.com/pingcap/tidb/issues/57583
 		tk.MustExec("create table t1(id int, v1 int, v2 int, v3 int);")
 		tk.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
-		tk.MustQuery("explain format='brief' select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
-			"HashJoin 6393.60 root  semi join, left side:HashAgg, equal:[nulleq(test.t1.id, test.t1.id)]",
-			"├─HashJoin(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-			"│ ├─TableReader(Build) 9990.00 root  data:Selection",
-			"│ │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-			"│ │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"│ └─TableReader(Probe) 9990.00 root  data:Selection",
-			"│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-			"│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-			"└─HashAgg(Probe) 7992.00 root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
-			"  └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
-			"    ├─TableReader(Build) 9990.00 root  data:Selection",
-			"    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
-			"    │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"    └─TableReader(Probe) 9990.00 root  data:Selection",
-			"      └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
-			"        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'plan_tree' select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
+			"HashJoin root  semi join, left side:HashAgg, equal:[nulleq(test.t1.id, test.t1.id)]",
+			"├─HashJoin(Build) root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+			"│ ├─TableReader(Build) root  data:Selection",
+			"│ │ └─Selection cop[tikv]  not(isnull(test.t2.v2))",
+			"│ │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"│ └─TableReader(Probe) root  data:Selection",
+			"│   └─Selection cop[tikv]  not(isnull(test.t1.v1))",
+			"│     └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+			"└─HashAgg(Probe) root  group by:test.t1.id, funcs:firstrow(test.t1.id)->test.t1.id",
+			"  └─HashJoin root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
+			"    ├─TableReader(Build) root  data:Selection",
+			"    │ └─Selection cop[tikv]  not(isnull(test.t2.v2))",
+			"    │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+			"    └─TableReader(Probe) root  data:Selection",
+			"      └─Selection cop[tikv]  not(isnull(test.t1.v1))",
+			"        └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
 		// https://github.com/pingcap/tidb/issues/60322
 		tk.MustExec("CREATE TABLE tt0(c0 BOOL );")
 		tk.MustExec("CREATE TABLE tt1(c0 CHAR );")
 		tk.MustExec("INSERT INTO tt1 VALUES (NULL);")
 		tk.MustExec("INSERT INTO tt0(c0) VALUES (false);")
-		tk.MustQuery(`explain format='brief' SELECT * FROM tt1
+		tk.MustQuery(`explain format = 'plan_tree' SELECT * FROM tt1
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows(
-			"HashJoin 15625.00 root  inner join, equal:[nulleq(Column#7, test.tt0.c0)]",
-			"├─TableReader(Build) 10000.00 root  data:TableFullScan",
-			"│ └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
-			"└─HashJoin(Probe) 12500.00 root  left outer join, left side:Projection, equal:[eq(Column#11, Column#12)]",
-			"  ├─Projection(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#11",
-			"  │ └─TableReader 10000.00 root  data:TableFullScan",
-			"  │   └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
-			"  └─Projection(Probe) 10000.00 root  0->Column#7, 0->Column#12",
-			"    └─TableReader 10000.00 root  data:TableFullScan",
-			"      └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
+			"HashJoin root  inner join, equal:[nulleq(Column, test.tt0.c0)]",
+			"├─TableReader(Build) root  data:TableFullScan",
+			"│ └─TableFullScan cop[tikv] table:tt0 keep order:false, stats:pseudo",
+			"└─HashJoin(Probe) root  left outer join, left side:Projection, equal:[eq(Column, Column)]",
+			"  ├─Projection(Build) root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column",
+			"  │ └─TableReader root  data:TableFullScan",
+			"  │   └─TableFullScan cop[tikv] table:tt1 keep order:false, stats:pseudo",
+			"  └─Projection(Probe) root  0->Column, 0->Column",
+			"    └─TableReader root  data:TableFullScan",
+			"      └─TableFullScan cop[tikv] table:tt0 keep order:false, stats:pseudo"))
 		tk.MustQuery(`SELECT * FROM tt1
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
@@ -150,16 +148,40 @@ func TestJoinSimplifyCondition(t *testing.T) {
 		tk.MustExec("use test;")
 		tk.MustExec(`CREATE TABLE t1 (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL,KEY idx_a (a));`)
 		tk.MustExec(`CREATE TABLE t2 (a int(11) DEFAULT NULL,b int(11) DEFAULT NULL,c int(11) DEFAULT NULL,KEY idx_a (a));`)
-		tk.MustQuery(`explain format='brief' select * from t1,t2 where t1.a=t2.a and t1.b = 1 or 1=2;`).
+		tk.MustQuery(`explain format = 'plan_tree' select * from t1,t2 where t1.a=t2.a and t1.b = 1 or 1=2;`).
 			Check(testkit.Rows(
-				"IndexHashJoin 12.49 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-				"├─TableReader(Build) 9.99 root  data:Selection",
-				"│ └─Selection 9.99 cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
-				"│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-				"└─IndexLookUp(Probe) 12.49 root  ",
-				"  ├─Selection(Build) 12.49 cop[tikv]  not(isnull(test.t2.a))",
-				"  │ └─IndexRangeScan 12.50 cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-				"  └─TableRowIDScan(Probe) 12.49 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+				"IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+				"├─TableReader(Build) root  data:Selection",
+				"│ └─Selection cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
+				"│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+				"└─IndexLookUp(Probe) root  ",
+				"  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
+				"  │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+				"  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"))
+
+		const largeInListThreshold = 10000
+		const largeInListLength = largeInListThreshold + 1
+		var inListBuilder strings.Builder
+		for i := 1; i <= largeInListLength; i++ {
+			if i > 1 {
+				inListBuilder.WriteByte(',')
+			}
+			inListBuilder.WriteString(strconv.Itoa(i))
+		}
+
+		rows := tk.MustQuery("explain format = 'plan_tree' select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a = t2.a " +
+			"where t2.b = 1 or t2.c in (" + inListBuilder.String() + ")").Rows()
+		require.NotEmpty(t, rows)
+
+		// The join hint should keep this query on IndexJoin family, and the large IN-list
+		// predicate should stay at root instead of cop[tikv] on the probe side.
+		plan := fmt.Sprint(rows)
+		require.True(t,
+			strings.Contains(plan, "IndexJoin") || strings.Contains(plan, "IndexHashJoin") || strings.Contains(plan, "IndexMergeJoin"),
+			"expected index join family plan under INL_HASH_JOIN hint")
+		require.Contains(t, plan, "Selection(Probe) root")
+		require.Contains(t, plan, "or(eq(test.t2.b, 1), in(test.t2.c")
+		require.NotContains(t, plan, "Selection(Probe) cop[tikv]  or(eq(test.t2.b, 1), in(test.t2.c")
 	})
 }
 
@@ -204,17 +226,29 @@ func TestKeepingJoinKeys(t *testing.T) {
 func TestJoinRegression(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
-
 		tk.MustExec(`CREATE TABLE t0(c0 BLOB);`)
 		tk.MustExec(`CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0 GROUP BY NULL;`)
 		tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0;`) // no error
-		tk.MustQuery(`explain format='brief' SELECT /* issue:46556 */ t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0`).Check(
-			testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#7, test.t0.c0)]`,
-				`├─Projection(Build) 0.00 root  <nil>->Column#7`,
-				`│ └─TableDual 0.00 root  rows:0`,
-				`└─TableReader(Probe) 9990.00 root  data:Selection`,
-				`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
-				`    └─TableFullScan 10000.00 cop[tikv] table:t0 keep order:false, stats:pseudo`))
+		tk.MustQuery(`explain format = 'plan_tree' SELECT /* issue:46556 */ t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0`).Check(
+			testkit.Rows(`HashJoin root  inner join, equal:[eq(Column, test.t0.c0)]`,
+				`├─Projection(Build) root  <nil>->Column`,
+				`│ └─TableDual root  rows:0`,
+				`└─TableReader(Probe) root  data:Selection`,
+				`  └─Selection cop[tikv]  not(isnull(test.t0.c0))`,
+				`    └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`))
+
+		tk.MustExec(`drop table if exists issue65325_t0, issue65325_t1`)
+		tk.MustExec(`create table issue65325_t0(c0 bool)`)
+		tk.MustExec(`create table issue65325_t1(c0 double)`)
+		tk.MustQuery(`SELECT /* issue:65325 */ issue65325_t1.c0, issue65325_t1.c0 FROM issue65325_t0 NATURAL JOIN issue65325_t1 ORDER BY CASE DEFAULT(issue65325_t1.c0) WHEN issue65325_t1.c0 THEN 397344251 ELSE issue65325_t0.c0 END`).Check(testkit.Rows())
+
+		tk.MustExec(`drop table if exists issue67731_t1, issue67731_t2`)
+		tk.MustExec(`create table issue67731_t1(a varchar(20))`)
+		tk.MustExec(`create table issue67731_t2(a bigint)`)
+		tk.MustExec(`insert into issue67731_t1 values('9007199254740993')`)
+		tk.MustExec(`insert into issue67731_t2 values(9007199254740992)`)
+		tk.MustQuery(`select /* issue:67731 */ '9007199254740993' = 9007199254740992`).Check(testkit.Rows("1"))
+		tk.MustQuery(`select /* issue:67731 */ issue67731_t1.a, issue67731_t2.a from issue67731_t1 join issue67731_t2 on issue67731_t1.a = issue67731_t2.a`).Check(testkit.Rows("9007199254740993 9007199254740992"))
 
 		tk.MustExec(`create table t1 (a int)`)
 		tk.MustExec(`create table t2 (a int, b int, c int, d int, key ab(a, b), key abcd(a, b, c, d))`)
@@ -257,9 +291,8 @@ CREATE TABLE A (
   PRIMARY KEY (ROW_NO),
   KEY idx2_ETF_FNDTA_SALE_PA (PCSG_BTNO_NO, DT, VCHR_TPCD)
 ) ENGINE = InnoDB CHARSET = utf8mb4 COLLATE utf8mb4_bin AUTO_INCREMENT = 900006;`)
-		tk.MustExec(`set tidb_opt_index_join_build_v2=off`)
 		r := tk.MustQuery(`
-explain format='brief' SELECT /* issue:61669 */ *
+explain format = 'plan_tree' SELECT /* issue:61669 */ *
 FROM A A
 JOIN
     (SELECT CASH_RPLC_AMT,
@@ -322,5 +355,103 @@ JOIN
 			`      └─Selection cop[tikv]  not(isnull(test.t3_issue60076.b))`,
 			`        └─TableFullScan cop[tikv] table:t3_issue60076 keep order:false, stats:pseudo`))
 		tk.MustQuery(`show warnings`).Check(testkit.Rows())
+
+		tk.MustExec(`create table t_int_issue67366 (id int primary key auto_increment, val varchar(100))`)
+		tk.MustExec(`create table t_varchar_issue67366 (id varchar(20) primary key, info text)`)
+		tk.MustQuery(`explain format='plan_tree' select /* issue:67366 */ count(*) from t_int_issue67366 join t_varchar_issue67366 on t_int_issue67366.id = t_varchar_issue67366.id`).CheckContain("cast(test.t_varchar_issue67366.id, bigint(20) BINARY)")
+		tk.MustQuery(`show warnings`).Check(testkit.Rows(
+			`Warning 1105 Implicit type or collation conversion on join keys (test.t_int_issue67366.id = test.t_varchar_issue67366.id) may make indexes unusable`,
+		))
+
+		tk.MustExec(`drop table if exists issue66859_t0, issue66859_t1, issue66859_t2`)
+		tk.MustExec(`create table issue66859_t0(c0 int)`)
+		tk.MustExec(`create table issue66859_t1 like issue66859_t0`)
+		tk.MustExec(`create index i0 on issue66859_t1((5))`)
+		tk.MustExec(`insert into issue66859_t0(c0) values(-1)`)
+		tk.MustQuery(`select /* issue:66859 */ issue66859_t0.c0 as ref0, issue66859_t1.c0 as ref2
+			from issue66859_t0 left join issue66859_t1 on issue66859_t0.c0 = issue66859_t1.c0
+			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
+}
+
+func TestIndexJoinInnerRowCountUsesUsableJoinKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (k1 int not null, k2 int not null)")
+	tk.MustExec(`create table t2 (
+		k1 int not null,
+		id int not null,
+		k2 int not null,
+		pad varchar(100),
+		primary key (k1, id) clustered,
+		key idx_k1_k2 (k1, k2))`)
+	tk.MustExec("insert into t1 values (1, 1), (2, 1)")
+	// For each k1 value, 1000 rows share the same primary-key prefix; only one row matches each k2.
+	for _, k1 := range []int{1, 2} {
+		var sb strings.Builder
+		sb.WriteString("insert into t2 values ")
+		for n := 1; n <= 1000; n++ {
+			if n > 1 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d, %d, %d, repeat('x', 50))", k1, n, n)
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("analyze table t1, t2")
+	// Issue 69974: the clustered PK can only use the k1 join key, so each probe scans ~1000 rows,
+	// while idx_k1_k2 covers both join keys and reads a single row per probe. The PK path used to
+	// be costed with the post-join cardinality (~1 row per probe) and win.
+	query := `select /*+ inl_hash_join(i) */ o.k1, i.pad from t1 o join t2 i on i.k1 = o.k1 and i.k2 = o.k2`
+	tk.MustQuery("explain format='plan_tree' " + query).CheckContain("idx_k1_k2")
+	// Disabling the fix restores the old estimation and the PK range-scan probe.
+	tk.MustExec("set tidb_opt_fix_control = '44855:OFF'")
+	tk.MustQuery("explain format='plan_tree' " + query).CheckNotContain("idx_k1_k2")
+	tk.MustExec("set tidb_opt_fix_control = ''")
+}
+
+func TestIssue70757IndexJoinInnerIndexSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_outer (
+		id int not null,
+		c varchar(36) not null,
+		primary key (id),
+		key idx_c (c))`)
+	tk.MustExec(`create table t_inner (
+		id int not null auto_increment,
+		k int not null,
+		c varchar(36) not null,
+		primary key (id),
+		key idx_k (k),
+		key idx_c (c))`)
+
+	const (
+		rowsPerC = 101
+		cNDV     = 3
+	)
+	outerValues := make([]string, 0, rowsPerC)
+	for id := 1; id <= rowsPerC; id++ {
+		outerValues = append(outerValues, fmt.Sprintf("(%d, 'cust-1')", id))
+	}
+	tk.MustExec("insert into t_outer (id, c) values " + strings.Join(outerValues, ","))
+
+	innerValues := make([]string, 0, rowsPerC*cNDV)
+	for k := 1; k <= rowsPerC*cNDV; k++ {
+		innerValues = append(innerValues, fmt.Sprintf("(%d, 'cust-%d')", k, (k-1)/rowsPerC+1))
+	}
+	tk.MustExec("insert into t_inner (k, c) values " + strings.Join(innerValues, ","))
+	tk.MustExec("analyze table t_outer, t_inner")
+
+	// This is a scaled-down form of issue 70757: idx_k has higher NDV, while idx_c
+	// gets a much smaller CountAfterAccess from the propagated c='cust-1' predicate.
+	// Lower the Fix45132 threshold so the small data set triggers the same comparison.
+	// tk.MustExec("set tidb_opt_fix_control = '45132:2'")
+	query := `select /*+ inl_join(i) */ * from t_outer o join t_inner i on i.k = o.id and i.c = o.c where o.c = 'cust-1'`
+	plan := tk.MustQuery("explain format='plan_tree' " + query)
+	plan.CheckContain("outer key:test.t_outer.id, inner key:test.t_inner.k")
+	plan.CheckContain("table:i, index:idx_k(k)")
+	plan.CheckNotContain("table:i, index:idx_c(c)")
 }

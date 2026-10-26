@@ -42,7 +42,6 @@ explain format = 'plan_tree' select * from (select * from t1 order by a) tmp;
 id	task	access object	operator info
 TableReader	root		data:TableFullScan
 └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-set tidb_cost_model_version=2;
 drop table if exists t, t1, t2, t3;
 create table t(a int, b int, key(a));
 create table t1(a int, b int, key(a));
@@ -79,4 +78,3 @@ select @@last_plan_from_binding;
 0
 show global bindings where original_sql like '%planner__core__physical_plan%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
-set tidb_cost_model_version=DEFAULT;

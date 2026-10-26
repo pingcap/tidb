@@ -40,6 +40,21 @@ expected=$(seq 3 9)
 echo "expected ${expected}, actual ${actual}"
 [ "$actual" = "$expected" ]
 
+echo "Test for --partitions option."
+export DUMPLING_TEST_PORT=4000
+PARTITION_TABLE_NAME="tp"
+run_sql "drop database if exists \`$DB_NAME\`;"
+run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
+run_sql "create table \`$DB_NAME\`.\`$PARTITION_TABLE_NAME\` (a int primary key) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30), partition p3 values less than MAXVALUE);"
+run_sql "insert into \`$DB_NAME\`.\`$PARTITION_TABLE_NAME\` values (1), (2), (11), (21), (22), (31);"
+
+run_dumpling --partitions "p0,p2" -f "$DB_NAME.$PARTITION_TABLE_NAME"
+
+actual=$(grep -hoE "\([0-9]+\)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${PARTITION_TABLE_NAME}.*.sql | tr -d "()" | sort -n)
+expected=$(printf "1\n2\n21\n22")
+echo "expected ${expected}, actual ${actual}"
+[ "$actual" = "$expected" ]
+
 echo "Test for OR WHERE case." # Better dump MySQL here because Dumpling has some special handle for concurrently dump TiDB tables.
 export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists \`$DB_NAME\`;"
@@ -84,6 +99,24 @@ run_dumpling --sql "select * from \`$DB_NAME\`.\`$TABLE_NAME\`" --filetype csv -
 cnt=$(cat ${DUMPLING_OUTPUT_DIR}/${TABLE_NAME}.${DB_NAME}.000000000.csv|wc -l)
 echo "records count is ${cnt}"
 [ "$cnt" = 101 ]
+
+echo "Test for --rows with --output-filename-template without {{.Index}} should report an error."
+set +e
+run_dumpling --rows 10 --output-filename-template "${TABLE_NAME}.${DB_NAME}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
+set -e
+
+actual=$(grep -F -- "--output-filename-template must include a standalone {{.Index}} outside conditional blocks" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
+echo "expected 1 return error when specifying --rows with --output-filename-template without {{.Index}}, actual ${actual}"
+[ "$actual" = 1 ]
+
+echo "Test for --filesize with --output-filename-template without {{.Index}} should report an error."
+set +e
+run_dumpling --filesize 1MiB --output-filename-template "${TABLE_NAME}.${DB_NAME}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
+set -e
+
+actual=$(grep -F -- "--output-filename-template must include a standalone {{.Index}} outside conditional blocks" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
+echo "expected 1 return error when specifying --filesize with --output-filename-template without {{.Index}}, actual ${actual}"
+[ "$actual" = 1 ]
 
 export DUMPLING_TEST_PORT=4000
 echo "Test for --sql option."

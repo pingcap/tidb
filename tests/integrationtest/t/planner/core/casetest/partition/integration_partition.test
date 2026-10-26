@@ -1,7 +1,6 @@
 # TestListPartitionPushDown
 create database list_push_down;
 use list_push_down;
-set tidb_cost_model_version=2;
 drop table if exists tlist;
 create table tlist (a int) partition by list (a) (
     partition p0 values in (0, 1, 2),
@@ -133,7 +132,6 @@ select * from tto_seconds;
 select * from tto_seconds partition(p0);
 
 # TestEstimationForTopNPushToDynamicPartition
-set tidb_cost_model_version=2;
 drop table if exists tlist;
 create table trange (a int, b int, c int, index ia(a), primary key (b) clustered)
     partition by range(b) (

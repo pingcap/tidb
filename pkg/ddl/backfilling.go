@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -36,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -151,6 +152,7 @@ type backfillTaskContext struct {
 	done          bool
 	addedCount    int
 	scanCount     int
+	writtenBytes  int
 	warnings      map[errors.ErrorID]*terror.Error
 	warningsCount map[errors.ErrorID]int64
 	finishTS      uint64
@@ -213,6 +215,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 	}
 
 	batchCnt := rInfo.ReorgMeta.GetBatchSize()
+	metricTableID := backfillMetricsTableID(rInfo, label)
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
@@ -224,10 +227,10 @@ func newBackfillCtx(id int, rInfo *reorgInfo, schemaName string, tbl table.Table
 		table:      tbl,
 		batchCnt:   batchCnt,
 		jobContext: jobCtx,
-		metricCounter: metrics.GetBackfillTotalByLabel(
-			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
-		conflictCounter: metrics.GetBackfillTotalByLabel(
-			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		metricCounter: getBackfillTotalByTableID(
+			metricTableID, label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		conflictCounter: getBackfillTotalByTableID(
+			metricTableID, fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
 }
 
@@ -249,6 +252,17 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 			Total: kv.TxnTotalSizeLimit.Load(),
 		})
 	}
+}
+
+// accountBackfillTxnRU converts the bytes written by one committed reorg
+// backfill transaction into RU and accumulates it with the other per-task
+// statistics on the job's reorg context.
+func accountBackfillTxnRU(rc *reorgCtx, jobID int64, writtenBytes int) {
+	failpoint.InjectCall("accountBackfillTxnRU", jobID, writtenBytes)
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	rc.increaseRU(float64(writtenBytes) * currentDDLRUWeights().TxnKVBytes)
 }
 
 type backfiller interface {
@@ -382,6 +396,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// successfully committed small ranges rather than fetching it in the total result.
 		rc.increaseRowCount(int64(taskCtx.addedCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
+		accountBackfillTxnRU(rc, jobID, taskCtx.writtenBytes)
 
 		if num := result.scanCount - lastLogCount; num >= 90000 {
 			lastLogCount = result.scanCount
@@ -525,6 +540,11 @@ func loadTableRanges(
 			zap.Int64("physicalTableID", pid),
 			zap.String("start key", hex.EncodeToString(startKey)),
 			zap.String("end key", hex.EncodeToString(endKey)))
+		failpoint.Inject("loadTableRangesFromPDErr", func(val failpoint.Value) {
+			if msg, ok := val.(string); ok && msg != "" {
+				failpoint.Return(false, errors.New(msg))
+			}
+		})
 		rs, err := rc.BatchLoadRegionsWithKeyRange(bo, startKey, endKey, limit)
 		if err != nil {
 			return false, errors.Trace(err)
@@ -770,8 +790,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	}
 
 	var (
-		cfg *local.BackendConfig
-		bd  *local.Backend
+		cfg *ingestctrl.BackendConfig
+		bd  *ingestctrl.Backend
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
@@ -793,7 +813,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 	rowCntListener := &localRowCntCollector{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
-		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
+		counter:            getBackfillTotalByTableID(reorgInfo.PhysicalTableID, metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
 	}
 
 	sctx, err := sessPool.Get()
@@ -1155,6 +1175,7 @@ func iterateSnapshotKeys(ctx *ReorgContext, store kv.Storage, priority int, keyP
 	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 
 	it, err := snap.Iter(firstKey, upperBound)
+	failpoint.InjectCall("mockSnapshotIterError", &err)
 	if err != nil {
 		return errors.Trace(err)
 	}

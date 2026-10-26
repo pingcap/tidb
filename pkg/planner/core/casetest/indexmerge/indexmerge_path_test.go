@@ -476,21 +476,6 @@ func testAnalyzeTiFlashIndex(createTableSQL, createIndexSQL string, t *testing.T
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Warning 1105 analyzing columnar index is not supported, skip idx",
 		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
-
-	tk.MustExec("set tidb_analyze_version=1")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing columnar index is not supported, skip idx",
-		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
-	tk.MustExec("analyze table t index idx")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing columnar index is not supported, skip idx"))
-	tk.MustExec("analyze table t index a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
-	tk.MustExec("analyze table t index a, idx, idx2")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing columnar index is not supported, skip idx",
-		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 }
 
 func TestAnalyzeVectorIndex(t *testing.T) {

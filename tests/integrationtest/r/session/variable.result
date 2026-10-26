@@ -20,6 +20,17 @@ show variables like 'collation_server';
 Variable_name	Value
 collation_server	utf8mb4_general_ci
 set @@global.collation_server=default;
+select @@global.tidb_auto_analyze_concurrency;
+@@global.tidb_auto_analyze_concurrency
+3
+set global tidb_auto_analyze_concurrency=8;
+select @@global.tidb_auto_analyze_concurrency;
+@@global.tidb_auto_analyze_concurrency
+8
+set global tidb_auto_analyze_concurrency=default;
+select @@global.tidb_auto_analyze_concurrency;
+@@global.tidb_auto_analyze_concurrency
+3
 set @@global.tidb_memory_usage_alarm_ratio=1;
 select @@global.tidb_memory_usage_alarm_ratio;
 @@global.tidb_memory_usage_alarm_ratio

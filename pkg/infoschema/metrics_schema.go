@@ -132,9 +132,9 @@ func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) st
 		}
 		switch len(values) {
 		case 1:
-			buf.WriteString(fmt.Sprintf("%s=\"%s\"", label, GenLabelConditionValues(values)))
+			fmt.Fprintf(&buf, "%s=\"%s\"", label, GenLabelConditionValues(values))
 		default:
-			buf.WriteString(fmt.Sprintf("%s=~\"%s\"", label, GenLabelConditionValues(values)))
+			fmt.Fprintf(&buf, "%s=~\"%s\"", label, GenLabelConditionValues(values))
 		}
 		index++
 	}

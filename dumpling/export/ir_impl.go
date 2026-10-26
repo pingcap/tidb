@@ -258,8 +258,8 @@ type tableMeta struct {
 	database         string
 	table            string
 	colTypes         []*sql.ColumnType
+	sourceColTypes   []*sql.ColumnType
 	selectedField    string
-	selectedLen      int
 	specCmts         []string
 	showCreateTable  string
 	showCreateView   string
@@ -267,20 +267,74 @@ type tableMeta struct {
 	hasImplicitRowID bool
 }
 
-func (tm *tableMeta) ColumnTypes() []string {
-	colTypes := make([]string, len(tm.colTypes))
-	for i, ct := range tm.colTypes {
-		colTypes[i] = ct.DatabaseTypeName()
+type sourceColumnMeta interface {
+	sourceColumnTypes() []string
+	sourceColumnNames() []string
+}
+
+func tableSourceColumnTypes(meta TableMeta) []string {
+	if sourceMeta, ok := meta.(sourceColumnMeta); ok {
+		return sourceMeta.sourceColumnTypes()
 	}
-	return colTypes
+	return meta.ColumnTypes()
+}
+
+func tableSourceColumnNames(meta TableMeta) []string {
+	if sourceMeta, ok := meta.(sourceColumnMeta); ok {
+		return sourceMeta.sourceColumnNames()
+	}
+	return meta.ColumnNames()
+}
+
+func (tm *tableMeta) ColumnInfos() []*ColumnInfo {
+	columnInfos := make([]*ColumnInfo, 0, len(tm.colTypes))
+	for _, ct := range tm.colTypes {
+		nullable, _ := ct.Nullable()
+		precision, scale, ok := ct.DecimalSize()
+		if !ok {
+			precision, scale = 0, 0
+		}
+		columnInfos = append(columnInfos, &ColumnInfo{
+			Name:             ct.Name(),
+			DatabaseTypeName: ct.DatabaseTypeName(),
+			Nullable:         nullable,
+			Precision:        precision,
+			Scale:            scale,
+		})
+	}
+	return columnInfos
+}
+
+func (tm *tableMeta) ColumnTypes() []string {
+	return columnTypes(tm.colTypes)
 }
 
 func (tm *tableMeta) ColumnNames() []string {
-	colNames := make([]string, len(tm.colTypes))
-	for i, ct := range tm.colTypes {
-		colNames[i] = ct.Name()
+	return columnNames(tm.colTypes)
+}
+
+func (tm *tableMeta) sourceColumnTypes() []string {
+	return columnTypes(tm.sourceColTypes)
+}
+
+func (tm *tableMeta) sourceColumnNames() []string {
+	return columnNames(tm.sourceColTypes)
+}
+
+func columnTypes(colTypes []*sql.ColumnType) []string {
+	types := make([]string, len(colTypes))
+	for i, ct := range colTypes {
+		types[i] = ct.DatabaseTypeName()
 	}
-	return colNames
+	return types
+}
+
+func columnNames(colTypes []*sql.ColumnType) []string {
+	names := make([]string, len(colTypes))
+	for i, ct := range colTypes {
+		names[i] = ct.Name()
+	}
+	return names
 }
 
 func (tm *tableMeta) DatabaseName() string {
@@ -300,7 +354,7 @@ func (tm *tableMeta) SelectedField() string {
 }
 
 func (tm *tableMeta) SelectedLen() int {
-	return tm.selectedLen
+	return len(tm.colTypes)
 }
 
 func (tm *tableMeta) SpecialComments() StringIter {

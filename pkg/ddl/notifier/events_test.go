@@ -68,3 +68,69 @@ func TestEventString(t *testing.T) {
 		"Index ID: 9, Index Name: Index1, Index ID: 10, Index Name: Index2)"
 	require.Equal(t, expected, result)
 }
+
+func TestMVAlterEventConstructors(t *testing.T) {
+	mvTbl := &model.TableInfo{
+		ID:   101,
+		Name: ast.NewCIStr("mv"),
+	}
+	oldMVTbl := mvTbl.Clone()
+	mlogTbl := &model.TableInfo{
+		ID:   102,
+		Name: ast.NewCIStr("$mlog$t"),
+	}
+	oldMLogTbl := mlogTbl.Clone()
+
+	alterMVRefresh := NewAlterMaterializedViewRefreshEvent(mvTbl, oldMVTbl)
+	require.Equal(t, model.ActionAlterMaterializedViewRefresh, alterMVRefresh.GetType())
+	require.Same(t, mvTbl, alterMVRefresh.GetAlterMaterializedViewRefreshInfo())
+	require.Same(t, oldMVTbl, alterMVRefresh.inner.OldTableInfo)
+
+	alterMVAttrs := NewAlterMaterializedViewAttributesEvent(mvTbl, oldMVTbl)
+	require.Equal(t, model.ActionAlterMaterializedViewAttributes, alterMVAttrs.GetType())
+	require.Same(t, mvTbl, alterMVAttrs.GetAlterMaterializedViewAttributesInfo())
+	require.Same(t, oldMVTbl, alterMVAttrs.inner.OldTableInfo)
+
+	alterMLogPurge := NewAlterMaterializedViewLogPurgeEvent(mlogTbl, oldMLogTbl)
+	require.Equal(t, model.ActionAlterMaterializedViewLogPurge, alterMLogPurge.GetType())
+	require.Same(t, mlogTbl, alterMLogPurge.GetAlterMaterializedViewLogPurgeInfo())
+	require.Same(t, oldMLogTbl, alterMLogPurge.inner.OldTableInfo)
+
+	cutover := NewMViewRefreshOutOfPlaceCutoverEvent(mvTbl, oldMVTbl)
+	require.Equal(t, model.ActionMViewRefreshOutOfPlaceCutover, cutover.GetType())
+	newTableInfo, oldTableInfo := cutover.GetMViewRefreshOutOfPlaceCutoverInfo()
+	require.Same(t, mvTbl, newTableInfo)
+	require.Same(t, oldMVTbl, oldTableInfo)
+}
+
+func TestDropSchemaEventMiniTableInfo(t *testing.T) {
+	table := &model.TableInfo{
+		ID:   101,
+		Name: ast.NewCIStr("partitioned"),
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 201, Name: ast.NewCIStr("p0")},
+				{ID: 202, Name: ast.NewCIStr("p1")},
+			},
+		},
+	}
+
+	miniTable := NewMiniTableInfoForSchemaEvent(table)
+	require.Equal(t, &MiniTableInfoForSchemaEvent{
+		ID:   101,
+		Name: ast.NewCIStr("partitioned"),
+		Partitions: []*MiniPartitionInfoForSchemaEvent{
+			{ID: 201, Name: ast.NewCIStr("p0")},
+			{ID: 202, Name: ast.NewCIStr("p1")},
+		},
+	}, miniTable)
+
+	event := NewDropSchemaEvent(
+		&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")},
+		[]*MiniTableInfoForSchemaEvent{miniTable},
+	)
+	miniDBInfo := event.GetDropSchemaInfo()
+	require.Equal(t, int64(1), miniDBInfo.ID)
+	require.Equal(t, ast.NewCIStr("test"), miniDBInfo.Name)
+	require.Equal(t, []*MiniTableInfoForSchemaEvent{miniTable}, miniDBInfo.Tables)
+}

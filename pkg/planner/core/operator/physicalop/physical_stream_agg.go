@@ -58,7 +58,7 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		// empty
 		return enforcedAggs
 	}
-	childProp = admitIndexJoinProp(childProp, prop)
+	childProp = admitIndexJoinPropForAgg(childProp, prop, la)
 	if childProp == nil {
 		// empty
 		return enforcedAggs
@@ -109,16 +109,16 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	}
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
-	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties)*(len(allTaskTypes)-1)+len(allTaskTypes))
+	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Orders)*(len(allTaskTypes)-1)+len(allTaskTypes))
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 		NoCopPushDown: prop.NoCopPushDown,
 	}
-	childProp = admitIndexJoinProp(childProp, prop)
+	childProp = admitIndexJoinPropForAgg(childProp, prop, la)
 	if childProp == nil {
 		return nil
 	}
-	for _, possibleChildProperty := range la.PossibleProperties {
+	for _, possibleChildProperty := range la.PossibleProperties.Orders {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
 		if !prop.IsPrefix(childProp) {
 			continue

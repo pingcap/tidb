@@ -241,7 +241,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.Sysdate, /* ast.StrToDate, */
 
 		// encryption functions.
-		ast.MD5, ast.SHA1, ast.UncompressedLength,
+		ast.MD5, ast.SHA1, ast.SHA2, ast.UncompressedLength,
 
 		ast.Cast,
 
@@ -299,8 +299,8 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 			return true
 		}
 	case
-		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Ilike, ast.Strcmp,
+		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.UnaryMinus, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
+		ast.GE, ast.LE, ast.EQ, ast.NE, ast.NullEQ, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Ilike, ast.Strcmp,
 		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
 		ast.If, ast.Ifnull, ast.Case,
 		ast.Concat, ast.ConcatWS,
@@ -311,7 +311,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Power, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONContainsPath, ast.JSONValid, ast.JSONKeys,
+		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONObject, ast.JSONArray, ast.JSONContainsPath, ast.JSONValid, ast.JSONKeys,
 		ast.Repeat, ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
@@ -452,6 +452,18 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.FTSMatchWord:
 		return true
+	case ast.FTSMysqlMatchAgainst:
+		// The tipb pushdown protocol (see distsql_builtin.go) does not
+		// serialize the FTS modifier; TiFlash defaults to natural-language
+		// mode on the reconstructed signature. Pushing a Boolean-mode or
+		// WITH QUERY EXPANSION call down would therefore silently execute
+		// with the modifier dropped. Mark such calls as not Flash-supported
+		// here as a defense in depth — the planner's modifier guard in
+		// matchAgainstToBuiltin already rejects them at plan time, but
+		// keeping pushdown self-consistent guards against any future code
+		// path that builds an FTSMysqlMatchAgainst around the planner.
+		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
+		return ok && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}

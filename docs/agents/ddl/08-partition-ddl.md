@@ -11,6 +11,11 @@ This doc focuses on TiDB **partition DDL** job types:
 
 Partition DDL is subtle because correctness depends on **multi-version semantics** (different TiDB nodes observe different schema versions), plus **global indexes**, **placement rules**, and (optionally) **TiFlash replicas**.
 
+`ALTER TABLE ... MODIFY/CHANGE COLUMN` on a partition column is **not** part of
+the partition-DDL job family documented here. It still runs through
+`model.ActionModifyColumn`; see `docs/agents/ddl/07-modify-column.md` for the
+partition-column allowlist and compatibility checks.
+
 ## Entry points (start here)
 
 SQL → DDL module:
@@ -165,7 +170,12 @@ Partition DDL often needs PD side effects:
   - `infosync.ConfigureTiFlashPDForPartitions`
   - Replica check loop: `checkPartitionReplica`
 
-These should generally happen **before** the state that starts writing to the new partitions, so a retry/rollback doesn’t leave partial placement state.
+These should generally happen **before** the state that starts writing to the new
+partitions. Reorganize-family rollback records the new physical IDs for
+delete-range cleanup, which removes placement bundles and attempts to remove
+TiFlash rules. ADD PARTITION rollback does not currently enqueue those IDs, so
+its placement and TiFlash rules may remain even after its partition metadata and
+label rules are removed.
 
 ## Practical debugging anchors
 
@@ -192,4 +202,3 @@ Tests (good starting points):
 - `AddingDefinitions` / `DroppingDefinitions` and `Partition.DDLState` are part of multi-version correctness; don’t clear them too early.
 - `doPartitionReorgWork` forces transactional reorg (`ReorgTypeTxn`); don’t assume fast-reorg/ingest behavior.
 - PD side effects (placement/labels/TiFlash) must be ordered so rollback/retry remains safe and idempotent.
-

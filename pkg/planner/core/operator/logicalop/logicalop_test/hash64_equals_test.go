@@ -810,14 +810,18 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
 	require.Nil(t, err)
 	la1 := &logicalop.LogicalAggregation{
-		AggFuncs:           []*aggregation.AggFuncDesc{desc},
-		GroupByItems:       []expression.Expression{col},
-		PossibleProperties: [][]*expression.Column{{col}},
+		AggFuncs:     []*aggregation.AggFuncDesc{desc},
+		GroupByItems: []expression.Expression{col},
+		PossibleProperties: plannerbase.PossiblePropertiesInfo{
+			Orders: [][]*expression.Column{{col}},
+		},
 	}
 	la2 := &logicalop.LogicalAggregation{
-		AggFuncs:           []*aggregation.AggFuncDesc{desc},
-		GroupByItems:       []expression.Expression{col},
-		PossibleProperties: [][]*expression.Column{{col}},
+		AggFuncs:     []*aggregation.AggFuncDesc{desc},
+		GroupByItems: []expression.Expression{col},
+		PossibleProperties: plannerbase.PossiblePropertiesInfo{
+			Orders: [][]*expression.Column{{col}},
+		},
 	}
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
@@ -833,11 +837,22 @@ func TestLogicalAggregationHash64Equals(t *testing.T) {
 	require.False(t, la1.Equals(la2))
 
 	la2.GroupByItems = []expression.Expression{col}
-	la2.PossibleProperties = [][]*expression.Column{{}}
+	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
+		Orders: [][]*expression.Column{{}},
+	}
 	hasher2.Reset()
 	la2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, la1.Equals(la2))
+
+	la2.PossibleProperties = plannerbase.PossiblePropertiesInfo{
+		Orders:     [][]*expression.Column{{col}},
+		HasTiFlash: true,
+	}
+	hasher2.Reset()
+	la2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, la1.Equals(la2))
 }
 
 func MockFunc(sctx expression.EvalContext, lhsArg, rhsArg expression.Expression, lhsRow, rhsRow chunk.Row) (int64, bool, error) {
@@ -943,6 +958,28 @@ func TestFrameBoundHash64Equals(t *testing.T) {
 	fb2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, fb1.Equals(fb2))
+}
+
+func TestFrameBoundClonePreservesNilSlicesForHashEquals(t *testing.T) {
+	original := &logicalop.FrameBound{
+		Type:            ast.Preceding,
+		UnBounded:       true,
+		Num:             1,
+		CmpFuncs:        []expression.CompareFunc{MockFunc},
+		CmpDataType:     1,
+		IsExplicitRange: false,
+	}
+	cloned := original.Clone()
+
+	require.Nil(t, cloned.CalcFuncs)
+	require.Nil(t, cloned.CompareCols)
+
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	original.Hash64(hasher1)
+	cloned.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, original.Equals(cloned))
 }
 
 func TestWindowFrameHash64Equals(t *testing.T) {

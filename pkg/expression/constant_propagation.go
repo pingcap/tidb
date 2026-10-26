@@ -864,6 +864,9 @@ func (s *propOuterJoinConstSolver) deriveConds(outerCol, innerCol *Column, schem
 			visited[k+offset] = true
 			continue
 		}
+		if filterConds && !ExprFromSchema(cond, s.outerSchema) {
+			continue
+		}
 		replaced, _, newExpr := tryToReplaceCond(s.ctx, outerCol, innerCol, cond, true)
 		if replaced {
 			// TODO(hawkingrei): if it is the true expression, we can remvoe it.
@@ -929,6 +932,9 @@ func (s *propOuterJoinConstSolver) propagateColumnEQ() {
 				continue
 			}
 			visited = s.deriveConds(outerCol, innerCol, mergedSchema, lenJoinConds, visited, false)
+			// Deriving new join filters from WHERE predicates is only safe when the
+			// original predicate is fully on the preserved side. Mixed outer/inner
+			// predicates can change outer-join semantics after null extension.
 			visited = s.deriveConds(outerCol, innerCol, mergedSchema, lenJoinConds, visited, true)
 		}
 	}

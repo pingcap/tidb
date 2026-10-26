@@ -80,11 +80,11 @@ func NewCMSketch(d, w int32) *CMSketch {
 
 // topNHelper wraps some variables used when building cmsketch with top n.
 type topNHelper struct {
-	sorted        []dataCnt
-	sampleSize    uint64
-	onlyOnceItems uint64
-	sumTopN       uint64
-	actualNumTop  uint32
+	sorted         []dataCnt
+	sampleSize     uint64
+	singletonItems uint64
+	sumTopN        uint64
+	actualNumTop   uint32
 }
 
 func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
@@ -92,11 +92,11 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	for i := range sample {
 		counter[hack.String(sample[i])]++
 	}
-	sorted, onlyOnceItems := make([]dataCnt, 0, len(counter)), uint64(0)
+	sorted, singletonItems := make([]dataCnt, 0, len(counter)), uint64(0)
 	for key, cnt := range counter {
 		sorted = append(sorted, dataCnt{hack.Slice(string(key)), cnt})
 		if cnt == 1 {
-			onlyOnceItems++
+			singletonItems++
 		}
 	}
 	slices.SortStableFunc(sorted, func(i, j dataCnt) int { return -cmp.Compare(i.cnt, j.cnt) })
@@ -132,7 +132,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		sumTopN += sorted[actualNumTop].cnt
 	}
 
-	return &topNHelper{sorted, uint64(len(sample)), onlyOnceItems, sumTopN, actualNumTop}
+	return &topNHelper{sorted, uint64(len(sample)), singletonItems, sumTopN, actualNumTop}
 }
 
 // NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
@@ -165,7 +165,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 	c.defaultValue = defaultVal
 	for i := range helper.sorted {
 		data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
-		// If the value only occurred once in the sample, we assumes that there is no difference with
+		// If the value is a singleton in the sample, we assumes that there is no difference with
 		// value that does not occurred in the sample.
 		rowCount := defaultVal
 		if cnt > 1 {
@@ -178,11 +178,11 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 
 func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount uint64) uint64 {
 	sampleNDV := uint64(len(helper.sorted))
-	if rowCount <= (helper.sampleSize-helper.onlyOnceItems)*scaleRatio {
+	if rowCount <= (helper.sampleSize-helper.singletonItems)*scaleRatio {
 		return 1
 	}
-	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
-	return estimateRemainingCount / max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
+	estimateRemainingCount := rowCount - (helper.sampleSize-helper.singletonItems)*scaleRatio
+	return estimateRemainingCount / max(1, estimateNDV-sampleNDV+helper.singletonItems)
 }
 
 // MemoryUsage returns the total memory usage of a CMSketch.

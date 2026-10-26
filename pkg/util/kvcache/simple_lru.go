@@ -94,6 +94,15 @@ func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 	return element.Value.(*cacheEntry).value, true
 }
 
+// Peek tries to find the corresponding value without updating its LRU position.
+func (l *SimpleLRUCache) Peek(key Key) (value Value, ok bool) {
+	element, exists := l.elements[string(key.Hash())]
+	if !exists {
+		return nil, false
+	}
+	return element.Value.(*cacheEntry).value, true
+}
+
 // Put puts the (key, value) pair into the LRU Cache.
 func (l *SimpleLRUCache) Put(key Key, value Value) {
 	hash := string(key.Hash())

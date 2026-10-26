@@ -151,16 +151,17 @@
       {
         "Query": "explain format = brief select * from t join tp partition (p0) join t2 where t.a < 10 and t.b = tp.c and t2.a > 10 and t2.a = tp.c",
         "Result": [
-          "HashJoin 1.00 root  inner join, equal:[eq(test.tp.c, test.t2.a)]",
+          "IndexHashJoin 1.00 root  inner join, inner:HashJoin, outer key:test.t2.a, inner key:test.tp.c, equal cond:eq(test.t2.a, test.tp.c)",
           "├─TableReader(Build) 1.00 root  data:TableRangeScan",
           "│ └─TableRangeScan 1.00 cop[tikv] table:t2 range:(10,+inf], keep order:false, stats:partial[a:allEvicted]",
           "└─HashJoin(Probe) 1.00 root  inner join, equal:[eq(test.t.b, test.tp.c)]",
           "  ├─TableReader(Build) 1.00 root  data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  gt(test.t.b, 10), not(isnull(test.t.b))",
           "  │   └─TableRangeScan 1.00 cop[tikv] table:t range:[-inf,10), keep order:false, stats:partial[a:allEvicted]",
-          "  └─TableReader(Probe) 4.00 root partition:p0 data:Selection",
-          "    └─Selection 4.00 cop[tikv]  gt(test.tp.c, 10), not(isnull(test.tp.c))",
-          "      └─TableFullScan 6.00 cop[tikv] table:tp keep order:false"
+          "  └─IndexLookUp(Probe) 1.00 root partition:p0 ",
+          "    ├─Selection(Build) 1.00 cop[tikv]  gt(test.tp.c, 10), not(isnull(test.tp.c))",
+          "    │ └─IndexRangeScan 1.50 cop[tikv] table:tp, index:ic(c) range: decided by [eq(test.tp.c, test.t2.a)], keep order:false",
+          "    └─TableRowIDScan(Probe) 1.00 cop[tikv] table:tp keep order:false"
         ]
       }
     ]

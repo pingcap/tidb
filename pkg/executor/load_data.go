@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -358,6 +360,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()
 	}
+	ret.initEmbedTextGeneratedCols()
 	ret.collectRuntimeStatsEnabled()
 	return ret, nil
 }
@@ -376,8 +379,9 @@ type encodeWorker struct {
 
 // commitTask is used for passing data from processStream goroutine to commitWork goroutine.
 type commitTask struct {
-	cnt  uint64
-	rows [][]types.Datum
+	cnt      uint64
+	rowCount uint64
+	rows     [][]types.Datum
 }
 
 // processStream always tries to build a parser from channel and process it. When
@@ -399,7 +403,7 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
-			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
+			if err = importer.HandleSkipNRows(dataParser, w.controller.IgnoreLines); err != nil {
 				return err
 			}
 			err = w.processOneStream(ctx, dataParser, outCh)
@@ -451,8 +455,9 @@ func (w *encodeWorker) processOneStream(
 			}
 			goto TrySendTask
 		case outCh <- commitTask{
-			cnt:  w.curBatchCnt,
-			rows: w.rows,
+			cnt:      w.curBatchCnt,
+			rowCount: w.rowCount,
+			rows:     w.rows,
 		}:
 		}
 		// reset rows buffer, will reallocate buffer but NOT reuse
@@ -581,9 +586,15 @@ func (w *encodeWorker) parserData2TableData(
 		if w.controller.Restrictive {
 			return nil, err
 		}
+		// ErrInvalidAutoRandom should always be returned as a real error,
+		// not treated as a warning, because returning nil row causes panic
+		// when looking up index. See https://github.com/pingcap/tidb/issues/65585
+		if dbterror.ErrInvalidAutoRandom.Equal(err) {
+			return nil, err
+		}
 		w.handleWarning(err)
 		logutil.Logger(ctx).Error("failed to get row", zap.Error(err))
-		// TODO: should not return nil! caller will panic when lookup index
+		// TODO: shall we ignore this row? Returning nil will make the caller panic.
 		return nil, nil
 	}
 
@@ -641,7 +652,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 // commitOneTask insert Data from LoadDataWorker.rows, then commit the modification
 // like a statement.
 func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error {
-	err := w.checkAndInsertOneBatch(ctx, task.rows, task.cnt)
+	err := w.checkAndInsertOneBatch(ctx, task.rows, task.cnt, task.rowCount)
 	if err != nil {
 		logutil.Logger(ctx).Error("commit error CheckAndInsert", zap.Error(err))
 		return err
@@ -652,7 +663,7 @@ func (w *commitWorker) commitOneTask(ctx context.Context, task commitTask) error
 	return nil
 }
 
-func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64) error {
+func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]types.Datum, cnt uint64, endRowCount uint64) error {
 	if w.stats != nil && w.stats.BasicRuntimeStats != nil {
 		// Since this method will not call by executor Next,
 		// so we need record the basic executor runtime stats by ourselves.
@@ -666,23 +677,37 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
+	rows, err = w.fillEmbedTextValuesWithRowCount(ctx, rows[0:cnt], endRowCount)
+	if err != nil {
+		return err
+	}
+
+	// LOAD DATA LOW_PRIORITY should lower both read and write priority of its KV operations
+	// (unique/PK conflict checks + 2PC requests).
+	if w.Ctx().GetSessionVars().StmtCtx.Priority == mysql.LowPriority {
+		txn, err := w.Ctx().Txn(true)
+		if err != nil {
+			return err
+		}
+		txn.SetOption(kv.Priority, kv.PriorityLow)
+	}
 
 	switch w.controller.OnDuplicate {
 	case ast.OnDuplicateKeyHandlingReplace:
-		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, true)
+		return w.batchCheckAndInsert(ctx, rows, w.addRecordLD, true)
 	case ast.OnDuplicateKeyHandlingIgnore:
-		return w.batchCheckAndInsert(ctx, rows[0:cnt], w.addRecordLD, false)
+		return w.batchCheckAndInsert(ctx, rows, w.addRecordLD, false)
 	case ast.OnDuplicateKeyHandlingError:
 		txn, err := w.Ctx().Txn(true)
 		if err != nil {
 			return err
 		}
 		dupKeyCheck := optimizeDupKeyCheckForNormalInsert(w.Ctx().GetSessionVars(), txn)
-		for i, row := range rows[0:cnt] {
+		for i, row := range rows {
 			sizeHintStep := int(w.Ctx().GetSessionVars().ShardAllocateStep)
 			if sizeHintStep > 0 && i%sizeHintStep == 0 {
 				sizeHint := sizeHintStep
-				remain := len(rows[0:cnt]) - i
+				remain := len(rows) - i
 				if sizeHint > remain {
 					sizeHint = remain
 				}
@@ -749,7 +774,8 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 	err = committer.checkAndInsertOneBatch(
 		ctx,
 		encoder.rows,
-		encoder.curBatchCnt)
+		encoder.curBatchCnt,
+		encoder.rowCount)
 	if err != nil {
 		return err
 	}

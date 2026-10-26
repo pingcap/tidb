@@ -67,10 +67,10 @@ func TestDMLVisitorCover(t *testing.T) {
 
 	for _, v := range stmts {
 		ce.reset()
-		v.node.Accept(checkVisitor{})
+		Walk(v.node, checkVisitor{})
 		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
-		v.node.Accept(visitor1{})
+		Walk(v.node, visitor1{})
 	}
 }
 
@@ -526,6 +526,18 @@ func TestImportActions(t *testing.T) {
 		{
 			sourceSQL: "show import job 123",
 			expectSQL: "SHOW IMPORT JOB 123",
+		},
+		{
+			sourceSQL: "show raw import jobs",
+			expectSQL: "SHOW RAW IMPORT JOBS",
+		},
+		{
+			sourceSQL: "show raw import job 123",
+			expectSQL: "SHOW RAW IMPORT JOB 123",
+		},
+		{
+			sourceSQL: "show raw import jobs where group_key = 'g'",
+			expectSQL: "SHOW RAW IMPORT JOBS WHERE `group_key`=_UTF8MB4'g'",
 		},
 		{
 			sourceSQL: "show import jobs where aa > 1",

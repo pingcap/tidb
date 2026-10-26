@@ -486,6 +486,34 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 	return string(resp.Kvs[0].Key), ownerID, op, resp.Header.Revision, resp.Kvs[0].ModRevision, nil
 }
 
+// DeleteOwnerKeyByID scans the election keys under ownerPath and deletes the
+// one whose value (UUID) matches the given id.
+func DeleteOwnerKeyByID(ctx context.Context, etcdCli *clientv3.Client, ownerPath, id string) {
+	childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
+	defer cancel()
+	resp, err := etcdCli.Get(childCtx, ownerPath+"/", clientv3.WithPrefix())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get owner keys for stale cleanup", zap.String("ownerPath", ownerPath), zap.Error(err))
+		return
+	}
+	for _, kv := range resp.Kvs {
+		ownerUUID, _ := splitOwnerValues(kv.Value)
+		if string(ownerUUID) == id {
+			logutil.BgLogger().Info("deleting stale owner key",
+				zap.String("key", string(kv.Key)),
+				zap.String("staleID", id))
+			delCtx, delCancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
+			_, err := etcdCli.Delete(delCtx, string(kv.Key))
+			delCancel()
+			if err != nil {
+				logutil.BgLogger().Warn("failed to delete stale owner key",
+					zap.String("key", string(kv.Key)), zap.Error(err))
+			}
+			return
+		}
+	}
+}
+
 // GetOwnerKeyInfo gets the owner key and current revision.
 func GetOwnerKeyInfo(
 	ctx context.Context,

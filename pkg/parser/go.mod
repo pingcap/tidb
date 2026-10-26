@@ -1,8 +1,9 @@
 module github.com/pingcap/tidb/pkg/parser
 
-go 1.24
+go 1.25.14
 
 require (
+	github.com/coreos/go-semver v0.3.1
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
@@ -10,7 +11,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/text v0.19.0
+	golang.org/x/text v0.39.0
 	modernc.org/mathutil v1.6.0
 	modernc.org/parser v1.1.0
 	modernc.org/sortutil v1.2.0

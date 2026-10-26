@@ -15,8 +15,13 @@
 package model
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	goast "go/ast"
+	"go/parser"
+	"go/token"
+	"strconv"
 	"testing"
 	"time"
 	"unsafe"
@@ -26,6 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 )
+
+//go:embed job.go
+var jobSrc string
 
 func TestJobStartTime(t *testing.T) {
 	job := &Job{
@@ -59,6 +67,7 @@ func TestJobCodec(t *testing.T) {
 		ID:         1,
 		TableID:    2,
 		SchemaID:   1,
+		RU:         12.5,
 		BinlogInfo: &HistoryInfo{},
 		ReorgMeta: &DDLReorgMeta{
 			Location: &TimeZoneLocation{Name: tzName, Offset: tzOffset},
@@ -67,6 +76,7 @@ func TestJobCodec(t *testing.T) {
 	job.FillArgs(&RenameTableArgs{OldSchemaID: 2, NewTableName: ast.NewCIStr("table1")})
 	job.BinlogInfo.AddDBInfo(123, &DBInfo{ID: 1, Name: ast.NewCIStr("test_history_db")})
 	job.BinlogInfo.AddTableInfo(123, &TableInfo{ID: 1, Name: ast.NewCIStr("test_history_tbl")})
+	job.SetResumeReason(JobResumeReasonKVDiskFull)
 
 	require.Equal(t, false, job.IsCancelled())
 	b, err := job.Encode(false)
@@ -74,11 +84,13 @@ func TestJobCodec(t *testing.T) {
 	newJob := &Job{}
 	err = newJob.Decode(b)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Equal(t, job.BinlogInfo, newJob.BinlogInfo)
 	require.NoError(t, err)
 	require.Greater(t, len(newJob.String()), 0)
 	require.Equal(t, newJob.ReorgMeta.Location.Name, tzName)
 	require.Equal(t, newJob.ReorgMeta.Location.Offset, tzOffset)
+	require.True(t, newJob.HasResumeReason(JobResumeReasonKVDiskFull))
 
 	job.BinlogInfo.Clean()
 	b1, err := job.Encode(true)
@@ -86,6 +98,7 @@ func TestJobCodec(t *testing.T) {
 	newJob = &Job{}
 	err = newJob.Decode(b1)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Equal(t, &HistoryInfo{}, newJob.BinlogInfo)
 	require.NoError(t, err)
 	require.Greater(t, len(newJob.String()), 0)
@@ -95,7 +108,14 @@ func TestJobCodec(t *testing.T) {
 	newJob = &Job{}
 	err = newJob.Decode(b2)
 	require.NoError(t, err)
+	require.Equal(t, job.RU, newJob.RU)
 	require.Greater(t, len(newJob.String()), 0)
+	legacyJob := &Job{}
+	require.NoError(t, legacyJob.Decode([]byte(`{"id":1}`)))
+	require.Zero(t, legacyJob.RU)
+	zeroRUJobBytes, err := legacyJob.Encode(true)
+	require.NoError(t, err)
+	require.NotContains(t, string(zeroRUJobBytes), `"ru"`)
 
 	job.State = JobStateDone
 	require.True(t, job.IsDone())
@@ -105,6 +125,26 @@ func TestJobCodec(t *testing.T) {
 	require.False(t, job.IsRollbackDone())
 	job.SetRowCount(3)
 	require.Equal(t, int64(3), job.GetRowCount())
+}
+
+func TestDDLReorgMetaUseNewCollate(t *testing.T) {
+	meta := &DDLReorgMeta{}
+	require.True(t, meta.GetUseNewCollateOrDefault(true))
+	require.False(t, meta.GetUseNewCollateOrDefault(false))
+
+	meta.setUseNewCollate(false)
+	require.False(t, meta.GetUseNewCollateOrDefault(true))
+
+	data, err := json.Marshal(meta)
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"use_new_collate":false`)
+
+	var decoded DDLReorgMeta
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.False(t, decoded.GetUseNewCollateOrDefault(true))
+
+	decoded.setUseNewCollate(true)
+	require.True(t, decoded.GetUseNewCollateOrDefault(false))
 }
 
 func TestLocation(t *testing.T) {
@@ -144,7 +184,9 @@ func TestJobClone(t *testing.T) {
 		SchemaName:      "test",
 		TableName:       "t",
 		State:           JobStateDone,
+		RU:              12.5,
 		MultiSchemaInfo: nil,
+		ResumeReason:    &JobResumeReason{Type: JobResumeReasonKVDiskFull},
 	}
 	clone := job.Clone()
 	require.Equal(t, job.ID, clone.ID)
@@ -154,7 +196,24 @@ func TestJobClone(t *testing.T) {
 	require.Equal(t, job.SchemaName, clone.SchemaName)
 	require.Equal(t, job.TableName, clone.TableName)
 	require.Equal(t, job.State, clone.State)
+	require.Equal(t, job.RU, clone.RU)
 	require.Equal(t, job.MultiSchemaInfo, clone.MultiSchemaInfo)
+	require.Equal(t, job.ResumeReason, clone.ResumeReason)
+}
+
+func TestSubJobToProxyJobWithResumeReason(t *testing.T) {
+	parentJob := &Job{
+		ID:           100,
+		RU:           12.5,
+		ResumeReason: &JobResumeReason{Type: JobResumeReasonKVDiskFull},
+	}
+	subJob := &SubJob{
+		Type:  ActionAddIndex,
+		State: JobStateQueueing,
+	}
+	proxyJob := subJob.ToProxyJob(parentJob, 0)
+	require.True(t, proxyJob.HasResumeReason(JobResumeReasonKVDiskFull))
+	require.Equal(t, parentJob.RU, proxyJob.RU)
 }
 
 func TestJobSize(t *testing.T) {
@@ -162,8 +221,8 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 400, int(unsafe.Sizeof(Job{})), msg)
-	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
+	require.Equal(t, 424, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 168, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
@@ -193,6 +252,7 @@ func TestMayNeedReorg(t *testing.T) {
 		ActionAlterTablePartitioning,
 		ActionAddIndex,
 		ActionAddPrimaryKey,
+		ActionCreateMaterializedView,
 	}
 	generalJobTypes := []ActionType{
 		ActionCreateTable,
@@ -217,6 +277,15 @@ func TestMayNeedReorg(t *testing.T) {
 		job.Type = jobType
 		require.False(t, job.MayNeedReorg())
 	}
+}
+
+func TestCreateMaterializedViewRollbackable(t *testing.T) {
+	job := &Job{Type: ActionCreateMaterializedView, SchemaState: StateNone}
+	require.True(t, job.IsRollbackable())
+	job.SchemaState = StateWriteReorganization
+	require.True(t, job.IsRollbackable())
+	job.SchemaState = StatePublic
+	require.False(t, job.IsRollbackable())
 }
 
 func TestInFinalState(t *testing.T) {
@@ -246,6 +315,46 @@ func TestSchemaState(t *testing.T) {
 	}
 }
 
+func TestActionTypeReserved(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "job.go", jobSrc, 0)
+	require.NoError(t, err)
+
+	const reservedStart = int64(200)
+	const reservedEnd = int64(256)
+
+	for _, decl := range f.Decls {
+		genDecl, ok := decl.(*goast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			continue
+		}
+
+		var prevType goast.Expr
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*goast.ValueSpec)
+			require.True(t, ok)
+
+			if valueSpec.Type != nil {
+				prevType = valueSpec.Type
+			}
+			if !isIdentName(prevType, "ActionType") {
+				continue
+			}
+
+			require.Greaterf(t, len(valueSpec.Values), 0, "unexpected ActionType spec without value: %v", valueSpec.Names)
+
+			for i, name := range valueSpec.Names {
+				expr := valueSpec.Values[min(i, len(valueSpec.Values)-1)]
+				value, ok := int64Value(expr)
+				require.Truef(t, ok, "unexpected ActionType value for %s: %T", name.Name, expr)
+				require.Falsef(t, value >= reservedStart && value < reservedEnd,
+					"action %s must not be in reserved range [%d, %d), but got %d",
+					name.Name, reservedStart, reservedEnd, value)
+			}
+		}
+	}
+}
+
 func TestString(t *testing.T) {
 	acts := []struct {
 		act    ActionType
@@ -262,7 +371,11 @@ func TestString(t *testing.T) {
 		{ActionCreateSchema, "create schema"},
 		{ActionDropSchema, "drop schema"},
 		{ActionCreateTable, "create table"},
+		{ActionCreateMaterializedViewShadow, "create materialized view shadow table"},
+		{ActionDropMaterializedViewShadow, "drop materialized view shadow table"},
 		{ActionDropTable, "drop table"},
+		{ActionDropMaterializedView, "drop materialized view"},
+		{ActionDropMaterializedViewLog, "drop materialized view log"},
 		{ActionAddIndex, "add index"},
 		{ActionDropIndex, "drop index"},
 		{ActionAddColumn, "add column"},
@@ -279,6 +392,46 @@ func TestString(t *testing.T) {
 	for _, v := range acts {
 		str := v.act.String()
 		require.Equal(t, v.result, str)
+	}
+}
+
+func isIdentName(expr goast.Expr, name string) bool {
+	ident, ok := expr.(*goast.Ident)
+	return ok && ident.Name == name
+}
+
+func int64Value(expr goast.Expr) (int64, bool) {
+	switch v := expr.(type) {
+	case *goast.BasicLit:
+		if v.Kind != token.INT {
+			return 0, false
+		}
+		val, err := strconv.ParseInt(v.Value, 0, 64)
+		if err != nil {
+			return 0, false
+		}
+		return val, true
+	case *goast.UnaryExpr:
+		if v.Op != token.ADD && v.Op != token.SUB {
+			return 0, false
+		}
+		val, ok := int64Value(v.X)
+		if !ok {
+			return 0, false
+		}
+		if v.Op == token.SUB {
+			val = -val
+		}
+		return val, true
+	case *goast.ParenExpr:
+		return int64Value(v.X)
+	case *goast.CallExpr:
+		if len(v.Args) != 1 {
+			return 0, false
+		}
+		return int64Value(v.Args[0])
+	default:
+		return 0, false
 	}
 }
 
@@ -360,4 +513,32 @@ func TestJobCheckInvolvingSchemaInfo(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("normalize scheduler names", func(t *testing.T) {
+		job := &Job{
+			SchemaName: "TestDB",
+			TableName:  "T1",
+			InvolvingSchemaInfo: []InvolvingSchemaInfo{
+				{Database: "TestDB", Table: "T1"},
+				{Database: "AnotherDB", Table: InvolvingAll},
+				{Database: InvolvingAll, Table: InvolvingAll},
+				{Database: InvolvingNone, Table: InvolvingNone},
+				{Policy: "PolicyName"},
+				{ResourceGroup: "ResourceGroupName"},
+			},
+		}
+
+		job.NormalizeInvolvingSchemaInfo()
+
+		require.Equal(t, "testdb", job.SchemaName)
+		require.Equal(t, "t1", job.TableName)
+		require.Equal(t, []InvolvingSchemaInfo{
+			{Database: "testdb", Table: "t1"},
+			{Database: "anotherdb", Table: InvolvingAll},
+			{Database: InvolvingAll, Table: InvolvingAll},
+			{Database: InvolvingNone, Table: InvolvingNone},
+			{Policy: "policyname"},
+			{ResourceGroup: "resourcegroupname"},
+		}, job.InvolvingSchemaInfo)
+	})
 }

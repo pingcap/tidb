@@ -122,6 +122,26 @@ func (h *PlanCacheTracker) EnablePlanCache() {
 	h.useCache = true
 }
 
+// Save captures the mutable planning-time state of the tracker.
+func (h *PlanCacheTracker) Save() (useCache bool, cacheType PlanCacheType, planCacheUnqualified string, forcePlanCache bool, alwaysWarnSkipCache bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.useCache, h.cacheType, h.planCacheUnqualified, h.forcePlanCache, h.alwaysWarnSkipCache
+}
+
+// Restore restores the mutable planning-time state of the tracker.
+func (h *PlanCacheTracker) Restore(useCache bool, cacheType PlanCacheType, planCacheUnqualified string, forcePlanCache bool, alwaysWarnSkipCache bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.useCache = useCache
+	h.cacheType = cacheType
+	h.planCacheUnqualified = planCacheUnqualified
+	h.forcePlanCache = forcePlanCache
+	h.alwaysWarnSkipCache = alwaysWarnSkipCache
+}
+
 // UseCache returns whether to use plan cache.
 func (h *PlanCacheTracker) UseCache() bool {
 	h.mu.Lock()

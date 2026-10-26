@@ -85,3 +85,15 @@ func TestCopyAs(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveAnalyzeVersionOnTableKeepsRequestedVersion(t *testing.T) {
+	tbl := &Table{
+		HistColl: HistColl{
+			StatsVer: Version1,
+		},
+		LastAnalyzeVersion: 1,
+	}
+
+	versionMatches := AnalyzeVersionMatchesForTableStats(tbl, Version2)
+	require.False(t, versionMatches)
+}

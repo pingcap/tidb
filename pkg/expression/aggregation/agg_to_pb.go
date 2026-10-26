@@ -39,8 +39,14 @@ func (desc *baseFuncDesc) GetTiPBExpr(tryWindowDesc bool) (tp tipb.ExprType) {
 		tp = tipb.ExprType_Max
 	case ast.AggFuncMin:
 		tp = tipb.ExprType_Min
+	case ast.AggFuncMaxCount:
+		tp = tipb.ExprType_MaxCount
+	case ast.AggFuncMinCount:
+		tp = tipb.ExprType_MinCount
 	case ast.AggFuncSum:
 		tp = tipb.ExprType_Sum
+	case ast.AggFuncSumInt:
+		tp = tipb.ExprType_SumInt
 	case ast.AggFuncAvg:
 		tp = tipb.ExprType_Avg
 	case ast.AggFuncBitOr:
@@ -187,8 +193,14 @@ func PBExprToAggFuncDesc(ctx expression.BuildContext, aggFunc *tipb.Expr, fieldT
 		name = ast.AggFuncMax
 	case tipb.ExprType_Min:
 		name = ast.AggFuncMin
+	case tipb.ExprType_MaxCount:
+		name = ast.AggFuncMaxCount
+	case tipb.ExprType_MinCount:
+		name = ast.AggFuncMinCount
 	case tipb.ExprType_Sum:
 		name = ast.AggFuncSum
+	case tipb.ExprType_SumInt:
+		name = ast.AggFuncSumInt
 	case tipb.ExprType_Avg:
 		name = ast.AggFuncAvg
 	case tipb.ExprType_Agg_BitOr:

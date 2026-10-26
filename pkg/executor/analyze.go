@@ -24,6 +24,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -46,8 +48,11 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
@@ -85,6 +90,211 @@ const (
 	idxTask
 )
 
+// runningUnderGoTest reports whether the current process is a Go test binary
+// (`go test`, including `make bench-daily`) rather than a real tidb-server
+// produced by `go build` of cmd/tidb-server. Test binaries register in-process
+// TiDB domains without binding a TiDB RPC listener, so a FLUSH STATS_DELTA
+// CLUSTER broadcast would hit a mock ":10080" and burn the TiKV RPC backoff
+// budget before analyze starts. testing.Testing() is set by the linker only
+// for binaries built via `go test`, so the gate is a no-op in production.
+func runningUnderGoTest() bool {
+	return testing.Testing()
+}
+
+// flushStatsDeltaForAnalyze flushes pending stats deltas for the tables whose column-analyze
+// tasks will capture base count / modify_count from mysql.stats_meta. Without this, a stale
+// pre-analyze delta can be applied later and double count rows or modifications.
+func flushStatsDeltaForAnalyze(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) error {
+	flushObjects := collectStatsDeltaFlushObjectsForAnalyze(plan)
+	if len(flushObjects) == 0 {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	// HACK: test binaries have no real RPC peer to broadcast to; dump locally instead.
+	if runningUnderGoTest() {
+		flushedLocally, err := flushAnalyzeStatsDeltaForTest(ctx, sctx, plan)
+		if err != nil {
+			return err
+		}
+		if flushedLocally {
+			return nil
+		}
+	}
+
+	stmt := &ast.FlushStmt{
+		Tp:           ast.FlushStatsDelta,
+		IsCluster:    true,
+		FlushObjects: flushObjects,
+	}
+	sql, err := restoreFlushStatsDeltaSQL(stmt)
+	if err != nil {
+		return err
+	}
+	return tryBroadcast(ctx, sctx, sql)
+}
+
+// tryBroadcast runs FLUSH STATS_DELTA ... CLUSTER to flush every TiDB's pending
+// deltas before analyze. During a rolling upgrade a peer on an older release
+// cannot decode the BroadcastQuery executor and rejects it with "this exec type
+// <n> doesn't support yet"; the pre-flush is best-effort, so we warn and let
+// analyze proceed rather than fail it. Other errors propagate.
+func tryBroadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
+	err := broadcast(ctx, sctx, sql)
+	if err == nil {
+		return nil
+	}
+	if !isUnsupportedBroadcastQueryErr(err) {
+		return err
+	}
+	statslogutil.StatsLogger().Warn(
+		"FLUSH STATS_DELTA CLUSTER broadcast rejected by a peer TiDB during analyze; "+
+			"proceeding without the cluster-wide pre-analyze flush",
+		zap.Error(err),
+	)
+	return nil
+}
+
+// isUnsupportedBroadcastQueryErr reports whether err is a peer rejecting the
+// BroadcastQuery coprocessor executor with "this exec type <n> doesn't support
+// yet". An older TiDB that predates BroadcastQuery support returns this during a
+// rolling upgrade. The broadcast only ever sends a BroadcastQuery executor, so
+// that phrase coming back unambiguously means an unsupported peer.
+func isUnsupportedBroadcastQueryErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "exec type") && strings.Contains(msg, "doesn't support yet")
+}
+
+// collectStatsDeltaFlushObjectsForAnalyze returns the database-qualified table
+// objects whose stats deltas must be flushed before building column analyze
+// tasks. Column analyze captures base count / modify_count from mysql.stats_meta,
+// so each target table is included once even if it has multiple column tasks.
+func collectStatsDeltaFlushObjectsForAnalyze(plan *core.Analyze) []*ast.StatsObject {
+	flushObjects := make([]*ast.StatsObject, 0, len(plan.ColTasks))
+	type statsObjectKey struct {
+		dbName    string
+		tableName string
+	}
+	seenObjects := make(map[statsObjectKey]struct{}, len(plan.ColTasks))
+	appendFlushObject := func(task core.AnalyzeColumnsTask) {
+		dbName, tableName := task.DBName, task.TableName
+		if dbName == "" || tableName == "" {
+			intest.Assert(false, "analyze column task must have database-qualified table name")
+			return
+		}
+		key := statsObjectKey{dbName: dbName, tableName: tableName}
+		if _, ok := seenObjects[key]; ok {
+			return
+		}
+		seenObjects[key] = struct{}{}
+		flushObjects = append(flushObjects, &ast.StatsObject{
+			StatsObjectScope: ast.StatsObjectScopeTable,
+			DBName:           ast.NewCIStr(dbName),
+			TableName:        ast.NewCIStr(tableName),
+		})
+	}
+	for _, task := range plan.ColTasks {
+		appendFlushObject(task)
+	}
+	return flushObjects
+}
+
+func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context, plan *core.Analyze) (bool, error) {
+	canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(ctx)
+	if err != nil {
+		return false, err
+	}
+	// If every registered TiDB server has a reachable RPC endpoint, use the normal
+	// broadcast path so RPC-backed tests still exercise the production behavior.
+	if canBroadcast {
+		return false, nil
+	}
+	targetIDs := collectAnalyzeStatsDeltaTargetIDsForTest(plan)
+	if len(targetIDs) == 0 {
+		return false, nil
+	}
+	return true, domain.GetDomain(sctx).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+}
+
+func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
+	servers, err := infosync.GetAllServerInfo(ctx)
+	if err != nil {
+		return false, err
+	}
+	rpcAddrs := make([]string, 0, len(servers))
+	for _, server := range servers {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if server.IsDisableRPC() {
+			continue
+		}
+		// In-process test domains can register server info without starting a
+		// TiDB RPC listener. In that case AdvertiseAddress stays empty, so a
+		// normal broadcast would target ":10080" and wait for RPC backoff.
+		if server.IP == "" {
+			rpcAddrs = append(rpcAddrs, "")
+			continue
+		}
+		rpcAddrs = append(rpcAddrs, net.JoinHostPort(server.IP, strconv.Itoa(int(server.StatusPort))))
+	}
+	return canBroadcastToTiDBRPCForTest(ctx, rpcAddrs), nil
+}
+
+func canBroadcastToTiDBRPCForTest(ctx context.Context, rpcAddrs []string) bool {
+	if len(rpcAddrs) == 0 {
+		return false
+	}
+	for _, addr := range rpcAddrs {
+		if !isTiDBRPCReachableForTest(ctx, addr) {
+			return false
+		}
+	}
+	return true
+}
+
+func isTiDBRPCReachableForTest(ctx context.Context, addr string) bool {
+	if addr == "" {
+		return false
+	}
+	dialer := net.Dialer{Timeout: 50 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+func collectAnalyzeStatsDeltaTargetIDsForTest(plan *core.Analyze) []int64 {
+	targetIDs := make([]int64, 0, len(plan.ColTasks))
+	seenTargetIDs := make(map[int64]struct{}, len(plan.ColTasks))
+	appendTargetID := func(id int64) {
+		if _, ok := seenTargetIDs[id]; ok {
+			return
+		}
+		seenTargetIDs[id] = struct{}{}
+		targetIDs = append(targetIDs, id)
+	}
+	for _, task := range plan.ColTasks {
+		if task.TblInfo == nil {
+			intest.Assert(false, "analyze column task must have table info")
+			continue
+		}
+		appendTargetID(task.TblInfo.ID)
+		if partitionInfo := task.TblInfo.GetPartitionInfo(); partitionInfo != nil {
+			for _, def := range partitionInfo.Definitions {
+				appendTargetID(def.ID)
+			}
+		}
+	}
+	return targetIDs
+}
+
 // Next implements the Executor Next interface.
 // It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
@@ -101,6 +311,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
+	ctx, stop := e.buildAnalyzeKillCtx(ctx)
+	defer stop()
 
 	// Filter the locked tables.
 	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
@@ -108,6 +320,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
+	warnUnusedNDVRate(sessionVars, tasks)
 
 	if len(tasks) == 0 {
 		return nil
@@ -128,11 +341,23 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 	buildStatsConcurrency = min(len(tasks), buildStatsConcurrency)
 
+	// Resolve once on the main goroutine before workers fan out;
+	// SessionVars.systems is not safe for concurrent lookup.
+	samplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.Ctx())
+	if err != nil {
+		return err
+	}
+	for _, task := range tasks {
+		if task.colExec != nil {
+			task.colExec.samplingStatsConcurrency = samplingStatsConcurrency
+		}
+	}
+
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	for range buildStatsConcurrency {
-		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
+		e.wg.Run(func() { e.analyzeWorker(ctx, taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
@@ -143,7 +368,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return e.handleResultsError(buildStatsConcurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
 	for _, task := range tasks {
-		prepareV2AnalyzeJobInfo(task.colExec)
+		prepareAnalyzeColumnsJobInfo(task.colExec)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
@@ -152,10 +377,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
 	})
+	sentTasks := 0
 TASKLOOP:
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
+			sentTasks++
 		case <-e.errExitCh:
 			break TASKLOOP
 		case <-gctx.Done():
@@ -173,6 +400,19 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		err = normalizeCtxErrWithCause(ctx, err)
+	} else if ctx.Err() != nil {
+		// Preserve the original cancellation cause before follow-up work (for example stats cache update)
+		// can degrade it into a plain context error.
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
+	if err != nil {
+		for task := range taskCh {
+			finishJobWithLog(statsHandle, task.job, err)
+		}
+		for i := sentTasks; i < len(tasks); i++ {
+			finishJobWithLog(statsHandle, tasks[i].job, err)
+		}
 		return err
 	}
 
@@ -203,7 +443,7 @@ TASKLOOP:
 	}
 
 	// Update analyze options to mysql.analyze_options for auto analyze.
-	err = e.saveV2AnalyzeOpts()
+	err = e.saveAnalyzeOptions()
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
@@ -328,6 +568,37 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 	}
 }
 
+// warnUnusedNDVRate warns when the tables and partitions to analyze ask for an
+// NDVRATE below 1, in the statement or in saved options, but none samples rows
+// because none has more than tidb_analyze_sampled_ndv_threshold rows.
+func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask) {
+	// Zero turns sampled NDV off, so skip the warning.
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	if threshold == 0 {
+		return
+	}
+	requested, used := false, false
+	for _, task := range tasks {
+		// Multi-valued and special global index tasks never sample.
+		if task.taskType != colTask {
+			continue
+		}
+		// The builder sends NdvRate only above the threshold. Reuse its decision so
+		// a statement that samples any table or partition gets no false warning.
+		if task.colExec.analyzePB.ColReq.NdvRate != nil {
+			used = true
+		}
+		if rate := math.Float64frombits(task.colExec.opts[ast.AnalyzeOptNDVRate]); rate > 0 && rate < 1 {
+			requested = true
+		}
+	}
+	if requested && !used {
+		sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+			"NDVRATE is not used because no table or partition has more rows than %s(%d)",
+			vardef.TiDBAnalyzeSampledNDVThreshold, threshold))
+	}
+}
+
 func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	switch task.taskType {
 	case colTask:
@@ -339,39 +610,71 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	panic("unreachable")
 }
 
-func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
+// writeSavedAnalyzeOption appends one analyze option to the VALUES list of the
+// REPLACE INTO mysql.analyze_options statement. An option that is not set is
+// written as the DEFAULT keyword rather than a hardcoded value, so the column
+// default in the table definition is the source of truth for how "unset" is
+// persisted and this writer cannot drift from it across releases.
+// The reader keeps its own sentinels: getSavedAnalyzeOpts treats sample_num,
+// sample_rate, buckets and ndv_rate as unset when not positive, and topn when
+// negative.
+// Those must stay consistent with the column defaults; changing a default here
+// without changing the reader would turn "unset" into a pinned value.
+func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOptionType]uint64, optType ast.AnalyzeOptionType) {
+	val, ok := rawOpts[optType]
+	if !ok {
+		sql.WriteString("DEFAULT")
+		return
+	}
+	if optType == ast.AnalyzeOptSampleRate || optType == ast.AnalyzeOptNDVRate {
+		sqlescape.MustFormatSQL(sql, "%?", math.Float64frombits(val))
+		return
+	}
+	sqlescape.MustFormatSQL(sql, "%?", val)
+}
+
+func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
 	}
 	// only to save table options if dynamic prune mode
 	dynamicPrune := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	resetOpts := make(map[ast.AnalyzeOptionType]struct{})
+	partitionIDs := make([]int64, 0)
 	for id, opts := range e.OptionsMap {
+		if dynamicPrune && opts.IsPartition {
+			partitionIDs = append(partitionIDs, id)
+			continue
+		}
+		for optType := range opts.ResetOpts {
+			resetOpts[optType] = struct{}{}
+		}
 		if !opts.IsPartition || !dynamicPrune {
 			toSaveMap[id] = opts
 		}
 	}
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids,ndv_rate) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
-		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
-		sampleRate := float64(0)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
-			sampleRate = math.Float64frombits(val)
-		}
-		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
-		topn := int64(-1)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
-			topn = int64(val)
-		}
 		colChoice := opts.ColChoice.String()
 		colIDs := make([]string, 0, len(opts.ColumnList))
 		for _, colInfo := range opts.ColumnList {
 			colIDs = append(colIDs, strconv.FormatInt(colInfo.ID, 10))
 		}
 		colIDStrs := strings.Join(colIDs, ",")
-		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, "(%?,", opts.PhyTableID)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumSamples)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptSampleRate)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumBuckets)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumTopN)
+		sqlescape.MustFormatSQL(sql, ",%?,%?,", colChoice, colIDStrs)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNDVRate)
+		sql.WriteString(")")
 		if idx < len(toSaveMap)-1 {
 			sqlescape.MustFormatSQL(sql, ",")
 		}
@@ -383,7 +686,56 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 	if err != nil {
 		return err
 	}
+	if dynamicPrune && len(resetOpts) > 0 && len(partitionIDs) > 0 {
+		if err := resetAnalyzeOptionsForPartitions(ctx, exec, resetOpts, partitionIDs); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// resetAnalyzeOptionsForPartitions clears only the options explicitly reset by
+// a whole-table ANALYZE in dynamic prune mode. Dynamic mode normally saves only
+// the table row, but old partition rows must not retain overrides that would
+// become effective again after switching back to static pruning.
+func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, resetOpts map[ast.AnalyzeOptionType]struct{}, partitionIDs []int64) error {
+	columns := []struct {
+		optType ast.AnalyzeOptionType
+		name    string
+	}{
+		{ast.AnalyzeOptNumSamples, "sample_num"},
+		{ast.AnalyzeOptSampleRate, "sample_rate"},
+		{ast.AnalyzeOptNumBuckets, "buckets"},
+		{ast.AnalyzeOptNumTopN, "topn"},
+		{ast.AnalyzeOptNDVRate, "ndv_rate"},
+	}
+	sql := new(strings.Builder)
+	sql.WriteString("UPDATE mysql.analyze_options SET ")
+	updated := 0
+	for _, column := range columns {
+		if _, ok := resetOpts[column.optType]; !ok {
+			continue
+		}
+		if updated > 0 {
+			sql.WriteString(",")
+		}
+		sql.WriteString(column.name)
+		sql.WriteString("=DEFAULT")
+		updated++
+	}
+	if updated == 0 {
+		return nil
+	}
+	sql.WriteString(" WHERE table_id IN (")
+	for i, partitionID := range partitionIDs {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(sql, "%?", partitionID)
+	}
+	sql.WriteString(")")
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	return err
 }
 
 func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
@@ -450,7 +802,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for range saveStatsConcurrency {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
-		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		// Deliberately not the analyze source: the heavy TiKV scan is already done,
+		// so there is no point in throttling the save-stats writes as background work.
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 		wg.Run(func() {
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})
@@ -504,7 +858,76 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	return err
 }
 
-func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
+// buildAnalyzeKillCtx creates the statement-scoped ANALYZE context.
+// Callers should pass this ctx through every analyze DistSQL path so parent
+// cancellation and SQLKiller share the same cancel cause.
+func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(parent)
+	killer := &e.Ctx().GetSessionVars().SQLKiller
+	killCh := killer.GetKillEventChan()
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-killCh:
+			status := killer.GetKillSignal()
+			// resetKillEvent may close killCh when the statement is reset even though no real
+			// kill signal was recorded, so ignore that synthetic wake-up here.
+			if status == sqlkiller.UnspecifiedKillSignal {
+				return
+			}
+			err := killer.HandleSignal()
+			if err == nil {
+				err = exeerrors.ErrQueryInterrupted
+			}
+			cancel(err)
+		}
+	}()
+	return ctx, func() {
+		cancel(context.Canceled)
+	}
+}
+
+// analyzeWorkerExitErr is checked after a task is dequeued but before starting a new
+// analyze request. It lets the worker stop immediately when the statement was already
+// canceled or another worker has aborted the whole analyze workflow.
+func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return normalizeCtxErrWithCause(ctx, ctxErr)
+	}
+	select {
+	case <-ctx.Done():
+		return normalizeCtxErrWithCause(ctx, ctx.Err())
+	case <-errExitCh:
+		return exeerrors.ErrQueryInterrupted
+	default:
+		return nil
+	}
+}
+
+// trySendAnalyzeResult may drop and destroy result when the statement is already
+// aborting, so callers should not reuse result after calling it.
+func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+	select {
+	case resultsCh <- result:
+		return
+	case <-ctx.Done():
+	case <-e.errExitCh:
+	}
+	// Keep the cancel cause consistent with the other analyze paths when a dropped
+	// result only carries a generic context error from lower layers.
+	err := normalizeCtxErrWithCause(ctx, result.Err)
+	if err == nil {
+		err = normalizeCtxErrWithCause(ctx, ctx.Err())
+	}
+	if err == nil {
+		err = exeerrors.ErrQueryInterrupted
+	}
+	finishJobWithLog(statsHandle, result.Job, err)
+	result.DestroyAndPutToPool()
+}
+
+// ctx must be from AnalyzeExec.buildAnalyzeKillCtx
+func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	defer func() {
@@ -527,23 +950,21 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		var ok bool
 		task, ok = <-taskCh
 		if !ok {
-			break
+			return
+		}
+		if err := analyzeWorkerExitErr(ctx, e.errExitCh); err != nil {
+			finishJobWithLog(statsHandle, task.job, err)
+			return
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		statsHandle.StartAnalyzeJob(task.job)
 		switch task.taskType {
 		case colTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeColumnsPushDownEntry(e.gp, task.colExec):
-			}
+			result := task.colExec.analyzeColumnsPushDown(ctx, e.gp)
+			e.trySendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		case idxTask:
-			select {
-			case <-e.errExitCh:
-				return
-			case resultsCh <- analyzeIndexPushdown(task.idxExec):
-			}
+			result := analyzeIndexPushdown(ctx, task.idxExec)
+			e.trySendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		}
 	}
 }
@@ -557,6 +978,7 @@ type analyzeTask struct {
 
 type baseAnalyzeExec struct {
 	ctx         sessionctx.Context
+	planID      int
 	tableID     statistics.AnalyzeTableID
 	concurrency int
 	analyzePB   *tipb.AnalyzeReq

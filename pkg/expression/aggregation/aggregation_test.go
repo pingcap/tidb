@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -166,6 +167,51 @@ func TestSum(t *testing.T) {
 	result = distinctSumFunc.GetResult(evalCtx)
 	needed = types.NewDecFromStringForTest("5050")
 	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
+}
+
+func TestCheckAggPushDownSumInt(t *testing.T) {
+	ctx := mock.NewContext()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	desc, err := NewAggFuncDesc(ctx, ast.AggFuncSumInt, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
+}
+
+func TestCheckAggPushDownMaxMinCount(t *testing.T) {
+	ctx := mock.NewContext()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	for _, funcName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
+		desc, err := NewAggFuncDesc(ctx, funcName, []expression.Expression{col}, false)
+		require.NoError(t, err)
+
+		desc.Mode = CompleteMode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
+
+		desc.Mode = Partial1Mode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		desc.Mode = FinalMode
+		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		desc.Mode = DedupMode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+
+		countCol := &expression.Column{
+			Index:   1,
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		desc.Args = []expression.Expression{countCol, col}
+		desc.Mode = FinalMode
+		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
+	}
 }
 
 func TestBitAnd(t *testing.T) {
@@ -602,6 +648,92 @@ func TestMaxMin(t *testing.T) {
 	require.Equal(t, int64(1), result.GetInt64())
 	partialResult := minFunc.GetPartialResult(minEvalCtx)
 	require.Equal(t, int64(1), partialResult[0].GetInt64())
+}
+
+func TestMaxMinCount(t *testing.T) {
+	s := createAggFuncSuite()
+	col := &expression.Column{
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	ctx := mock.NewContext()
+	maxDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMaxCount, []expression.Expression{col}, false)
+	require.NoError(t, err)
+	minDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMinCount, []expression.Expression{col}, false)
+	require.NoError(t, err)
+
+	maxFunc := maxDesc.GetAggFunc(ctx)
+	minFunc := minDesc.GetAggFunc(ctx)
+	maxEvalCtx := maxFunc.CreateContext(s.ctx)
+	minEvalCtx := minFunc.CreateContext(s.ctx)
+
+	maxResult := maxFunc.GetResult(maxEvalCtx)
+	minResult := minFunc.GetResult(minEvalCtx)
+	require.Equal(t, int64(0), maxResult.GetInt64())
+	require.Equal(t, int64(0), minResult.GetInt64())
+
+	rows := []chunk.Row{
+		chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(nil)).ToRow(),
+	}
+
+	for _, row := range rows {
+		err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
+		err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
+	}
+
+	maxResult = maxFunc.GetResult(maxEvalCtx)
+	minResult = minFunc.GetResult(minEvalCtx)
+	require.Equal(t, int64(2), maxResult.GetInt64())
+	require.Equal(t, int64(2), minResult.GetInt64())
+
+	maxPartial := maxFunc.GetPartialResult(maxEvalCtx)
+	minPartial := minFunc.GetPartialResult(minEvalCtx)
+	require.Len(t, maxPartial, 2)
+	require.Len(t, minPartial, 2)
+	require.Equal(t, int64(2), maxPartial[0].GetInt64())
+	require.Equal(t, int64(3), maxPartial[1].GetInt64())
+	require.Equal(t, int64(2), minPartial[0].GetInt64())
+	require.Equal(t, int64(1), minPartial[1].GetInt64())
+
+	finalCountCol := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	finalValueCol := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	maxFinalDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMaxCount, []expression.Expression{finalCountCol, finalValueCol}, false)
+	require.NoError(t, err)
+	maxFinalDesc.Mode = FinalMode
+	minFinalDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMinCount, []expression.Expression{finalCountCol, finalValueCol}, false)
+	require.NoError(t, err)
+	minFinalDesc.Mode = FinalMode
+
+	maxFinalFunc := maxFinalDesc.GetAggFunc(ctx)
+	minFinalFunc := minFinalDesc.GetAggFunc(ctx)
+	maxFinalCtx := maxFinalFunc.CreateContext(s.ctx)
+	minFinalCtx := minFinalFunc.CreateContext(s.ctx)
+
+	finalRows := []chunk.Row{
+		chunk.MutRowFromDatums(types.MakeDatums(2, 3)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(1, 3)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(4, 2)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(3, 1)).ToRow(),
+		chunk.MutRowFromDatums(types.MakeDatums(2, 1)).ToRow(),
+	}
+	for _, row := range finalRows {
+		err = maxFinalFunc.Update(maxFinalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
+		err = minFinalFunc.Update(minFinalCtx, s.ctx.GetSessionVars().StmtCtx, row)
+		require.NoError(t, err)
+	}
+	maxFinalResult := maxFinalFunc.GetResult(maxFinalCtx)
+	minFinalResult := minFinalFunc.GetResult(minFinalCtx)
+	require.Equal(t, int64(3), maxFinalResult.GetInt64())
+	require.Equal(t, int64(5), minFinalResult.GetInt64())
 }
 
 func TestAggFuncDesc(t *testing.T) {

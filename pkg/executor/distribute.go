@@ -18,19 +18,22 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/tikv/pd/client/errs"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	pdhttp "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
 )
 
 var schedulerName = "balance-range-scheduler"
@@ -74,21 +77,53 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if err != nil {
 		return err
 	}
+	var jobID float64 = -1
+	for i := range 3 {
+		found, id := e.getSchedulerJob(ctx)
+		if found {
+			jobID = id
+			break
+		}
+		if i < 2 {
+			timer := time.NewTimer(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+				timer.Stop()
+			}
+		}
+	}
+	if jobID != -1 {
+		chk.AppendUint64(0, uint64(jobID))
+	}
+	return nil
+}
+
+// getSchedulerJob retrieves the job ID of the scheduler for the current table.
+// if returns -1 means the scheduler job is not found.
+func (e *DistributeTableExec) getSchedulerJob(ctx context.Context) (bool, float64) {
+	// this request maybe sent to the scheduler microservice but this service maybe not watch the config update.
+	// So it can't get the latest config immediately. We need to retry a few times to get the job id.
 	config, err := infosync.GetSchedulerConfig(ctx, schedulerName)
+	if err != nil {
+		logutil.Logger(ctx).Info("get scheduler config failed", zap.Error(err))
+		return false, -1
+	}
 	configs, ok := config.([]any)
 	if !ok {
-		return errs.ErrClientProtoUnmarshal.FastGenByArgs(config)
+		logutil.Logger(ctx).Info("get empty scheduler config")
+		return false, -1
 	}
 	jobs := make([]map[string]any, 0, len(configs))
 	for _, cfg := range configs {
 		job, ok := cfg.(map[string]any)
 		if !ok {
-			return errs.ErrClientProtoUnmarshal.FastGenByArgs(cfg)
+			logutil.Logger(ctx).Info("get invalid scheduler config", zap.Any("config", cfg))
+			return false, -1
 		}
 		jobs = append(jobs, job)
-	}
-	if err != nil {
-		return err
 	}
 	alias := e.getAlias()
 	jobID := float64(-1)
@@ -102,10 +137,7 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 			}
 		}
 	}
-	if jobID != -1 {
-		chk.AppendUint64(0, uint64(jobID))
-	}
-	return nil
+	return jobID > -1, jobID
 }
 
 func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
@@ -141,7 +173,42 @@ func (e *DistributeTableExec) getAlias() string {
 		partitionStr += ")"
 	}
 	dbName := getSchemaName(e.is, e.tableInfo.DBID)
-	return strings.Join([]string{dbName, e.tableInfo.Name.String(), partitionStr}, ".")
+	alias := strings.Join([]string{dbName, e.tableInfo.Name.String(), partitionStr}, ".")
+	if keyspaceID, ok := distributionKeyspaceID(e.Ctx().GetStore()); ok {
+		alias = strconv.FormatUint(uint64(keyspaceID), 10) + ":" + alias
+	}
+	return alias
+}
+
+// distributionKeyspaceID returns the keyspace ID of the store, or false if the
+// store isn't bound to a keyspace.
+// All keyspaces share the same PD balance-range scheduler, and PD rejects a new
+// job whose alias equals an uncompleted one, so in keyspace mode the job alias is
+// prefixed with the keyspace ID ({keyspace_id}:{db_name}.{table_name}.{partition_name})
+// to keep jobs of different keyspaces apart. The prefix is joined by ':' rather
+// than '.' so that the alias still has three '.'-separated parts, which older TiDB
+// versions require when they parse the jobs in SHOW DISTRIBUTION JOBS.
+func distributionKeyspaceID(store kv.Storage) (uint32, bool) {
+	if store.GetKeyspace() == "" {
+		return 0, false
+	}
+	return uint32(store.GetCodec().GetKeyspaceID()), true
+}
+
+// trimDistributionAliasKeyspace strips the keyspace ID prefix from the job alias
+// and reports whether the job belongs to the given keyspace. An alias without a
+// numeric "{keyspace_id}:" prefix was written by an older TiDB or outside keyspace
+// mode, so it's returned as is and treated as visible for compatibility.
+func trimDistributionAliasKeyspace(alias string, keyspaceID uint32) (string, bool) {
+	idStr, rest, found := strings.Cut(alias, ":")
+	if !found {
+		return alias, true
+	}
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		return alias, true
+	}
+	return rest, uint32(id) == keyspaceID
 }
 
 func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
@@ -165,15 +232,15 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 	}
 	slices.Sort(physicalIDs)
 
+	storeCodec := e.Ctx().GetStore().GetCodec()
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
 	for i, pid := range physicalIDs {
+		endKey := storeCodec.EncodeRegionKey(tablecodec.GenTablePrefix(pid + 1))
 		if i == 0 || physicalIDs[i] != physicalIDs[i-1]+1 {
-			startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-			endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
-			r := pdhttp.NewKeyRange(startKey, endKey)
-			ranges = append(ranges, r)
+			startKey := storeCodec.EncodeRegionKey(tablecodec.GenTablePrefix(pid))
+			ranges = append(ranges, pdhttp.NewKeyRange(startKey, endKey))
 		} else {
-			ranges[len(ranges)-1].EndKey = codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+			ranges[len(ranges)-1].EndKey = endKey
 		}
 	}
 	return ranges, nil

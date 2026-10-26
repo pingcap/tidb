@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/store/driver/txn"
+	drivertxn "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -449,16 +449,17 @@ func (p *baseTxnContextProvider) GetSnapshotWithStmtForUpdateTS() (kv.Snapshot, 
 // getSnapshotByTS get snapshot from store according to the snapshotTS and set the transaction related
 // options before return
 func (p *baseTxnContextProvider) getSnapshotByTS(snapshotTS uint64) (kv.Snapshot, error) {
-	txn, err := p.sctx.Txn(false)
+	kvTxn, err := p.sctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
 
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	sessVars := p.sctx.GetSessionVars()
+	txnCtx := sessVars.TxnCtx
 
 	var snapshot kv.Snapshot
-	if txn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
-		snapshot = txn.GetSnapshot()
+	if kvTxn.Valid() && txnCtx.StartTS == txnCtx.GetForUpdateTS() && txnCtx.StartTS == snapshotTS {
+		snapshot = kvTxn.GetSnapshot()
 	} else {
 		snapshot = internal.GetSnapshotWithTS(
 			p.sctx,
@@ -773,6 +774,6 @@ func (m temporaryTableKVFilter) IsUnnecessaryKeyValue(
 	}
 
 	// This is the default filter for all tables.
-	defaultFilter := txn.TiDBKVFilter{}
+	defaultFilter := drivertxn.TiDBKVFilter{}
 	return defaultFilter.IsUnnecessaryKeyValue(key, value, flags)
 }

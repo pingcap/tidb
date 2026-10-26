@@ -57,6 +57,11 @@ func (l *LocalStorage) Base() string {
 	return l.base
 }
 
+// Features implements FeatureProvider.
+func (*LocalStorage) Features() storeapi.Features {
+	return storeapi.FeatureSupportsStartAfter
+}
+
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
@@ -161,6 +166,9 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
 					zap.String("path", path), zap.String("base", l.base), logutil.ShortError(err))
 			}
+			if opt.StartAfter != "" && filepath.ToSlash(path) <= filepath.ToSlash(opt.StartAfter) {
+				return nil
+			}
 			// NOTE: This may cause a tombstone of the dir emit to the caller when
 			// call `Walk` in a non-exist dir.
 			return fn(path, TombstoneSize)
@@ -177,6 +185,16 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 			if path != base && opt.SkipSubDir {
 				return filepath.SkipDir
 			}
+			if path != base {
+				relativeDir, relErr := filepath.Rel(l.base, path)
+				if relErr != nil {
+					log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+						zap.String("path", path), zap.String("base", l.base), logutil.ShortError(relErr))
+				}
+				if shouldSkipLocalSubtree(relativeDir, opt.StartAfter) {
+					return filepath.SkipDir
+				}
+			}
 			return nil
 		}
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
@@ -188,6 +206,9 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 
 		// Convert to relative path from l.base for consistency with cloud storage
 		path, _ = filepath.Rel(l.base, path)
+		if opt.StartAfter != "" && filepath.ToSlash(path) <= filepath.ToSlash(opt.StartAfter) {
+			return nil
+		}
 
 		size := f.Size()
 		// if not a regular file, we need to use os.stat to get the real file size
@@ -204,6 +225,19 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *storeapi.WalkOption, fn f
 		}
 		return fn(path, size)
 	})
+}
+
+func shouldSkipLocalSubtree(dir, startAfter string) bool {
+	if startAfter == "" {
+		return false
+	}
+	dir = filepath.ToSlash(dir)
+	startAfter = filepath.ToSlash(startAfter)
+	prefix := dir + "/"
+	if strings.HasPrefix(startAfter, prefix) {
+		return false
+	}
+	return prefix <= startAfter
 }
 
 // URI returns the base path as an URI with a file:/// prefix.
@@ -276,7 +310,7 @@ func (f *localFile) GetFileSize() (int64, error) {
 }
 
 // Create implements Storage interface.
-func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
+func (l *LocalStorage) Create(_ context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	filename := filepath.Join(l.base, name)
 	dir := filepath.Dir(filename)
 	err := os.MkdirAll(dir, 0750)
@@ -287,7 +321,12 @@ func (l *LocalStorage) Create(_ context.Context, name string, _ *storeapi.Writer
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	// Size the write buffer from PartSize when set, matching the object-store
+	// backends, so per-row streaming does not cost one syscall per write.
 	buf := bufio.NewWriter(file)
+	if option != nil && option.PartSize > 0 {
+		buf = bufio.NewWriterSize(file, int(option.PartSize))
+	}
 	return newFlushStorageWriter(buf, buf, file, nil), nil
 }
 

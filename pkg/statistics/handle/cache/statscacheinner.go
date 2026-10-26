@@ -190,3 +190,8 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, ski
 func (sc *StatsCache) TriggerEvict() {
 	sc.c.TriggerEvict()
 }
+
+// WaitForAsyncUpdates blocks until buffered asynchronous cache writes are visible to later Get calls.
+func (sc *StatsCache) WaitForAsyncUpdates() {
+	sc.c.WaitForAsyncUpdates()
+}

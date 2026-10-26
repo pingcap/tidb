@@ -377,6 +377,7 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
+	tk.MustExec("create table t_json_guard(id int, j json)")
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 
 	p := parser.New()
@@ -443,6 +444,9 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a in (select a from test.t where a > t1.a)",
 		// correlated sub-query & partitioned
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",
+
+		// JSON column filter guard still applies when the filter wraps the column in JSON_EXTRACT.
+		"select * from test.t_json_guard where json_extract(j, '$.a') is not null",
 	}
 
 	supportedDML := []string{
@@ -479,6 +483,29 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		require.True(t, ok)
 	}
+
+	t.Run("CoalesceWithoutSchema", func(t *testing.T) {
+		vars := sctx.GetSessionVars()
+		previous := vars.EnableNonPreparedPlanCacheForDML
+		vars.EnableNonPreparedPlanCacheForDML = true
+		defer func() { vars.EnableNonPreparedPlanCacheForDML = previous }()
+		for _, sql := range []string{
+			"update test.t set a=coalesce(1,a)",
+			"update test.t set a=coalesce(1,b)",
+		} {
+			stmt, err := p.ParseOneStmt(sql, charset, collation)
+			require.NoError(t, err)
+			require.NotPanics(t, func() {
+				ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, nil)
+				require.False(t, ok)
+				require.Equal(t, "query has un-cacheable functions", reason)
+			}, sql)
+			// Missing metadata must not disable the supported path when the
+			// same checker is reused with a valid schema.
+			ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
+			require.True(t, ok)
+		}
+	})
 
 	// issue:46760
 	tk.MustExec(`drop table if exists t`)

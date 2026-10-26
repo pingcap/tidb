@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "taskkey",
+    srcs = ["task_key.go"],
+    importpath = "github.com/pingcap/tidb/pkg/dxf/importinto/taskkey",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/dxf/framework/proto",
+        "//pkg/keyspace",
+    ],
+)

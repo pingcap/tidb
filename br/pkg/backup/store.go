@@ -334,7 +334,7 @@ func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetr
 				// reset the state
 				sendAll = false
 				clear(newJoinStoresMap)
-				logutil.CL(ctx).Info("check store changes every 30s")
+				logutil.CL(ctx).Debug("check store changes", zap.Duration("interval", tickInterval))
 				err := watcher.Step(ctx)
 				if err != nil {
 					logutil.CL(ctx).Warn("failed to watch store changes, ignore it", zap.Error(err))

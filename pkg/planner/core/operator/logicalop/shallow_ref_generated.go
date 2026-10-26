@@ -19,6 +19,7 @@ package logicalop
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
@@ -121,15 +122,17 @@ func (op *LogicalAggregation) GroupByItemsShallowRef() []expression.Expression {
 }
 
 // PossiblePropertiesShallowRef implements the copy-on-write usage.
-func (op *LogicalAggregation) PossiblePropertiesShallowRef() [][]*expression.Column {
-	PossiblePropertiesCP := make([][]*expression.Column, 0, len(op.PossibleProperties))
-	for _, one := range op.PossibleProperties {
+func (op *LogicalAggregation) PossiblePropertiesShallowRef() base.PossiblePropertiesInfo {
+	PossiblePropertiesCP := op.PossibleProperties
+	OrdersCP := make([][]*expression.Column, 0, len(PossiblePropertiesCP.Orders))
+	for _, one := range PossiblePropertiesCP.Orders {
 		oneCP := make([]*expression.Column, 0, len(one))
 		for _, onee := range one {
 			oneCP = append(oneCP, onee)
 		}
-		PossiblePropertiesCP = append(PossiblePropertiesCP, one)
+		OrdersCP = append(OrdersCP, oneCP)
 	}
+	PossiblePropertiesCP.Orders = OrdersCP
 	op.PossibleProperties = PossiblePropertiesCP
 	return op.PossibleProperties
 }

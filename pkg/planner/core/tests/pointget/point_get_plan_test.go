@@ -43,22 +43,22 @@ func TestPointGetPlanCache(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update root  N/A",
+		"└─Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
-		"Delete N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' delete from t where a = 1").Check(testkit.Rows(
+		"Delete root  N/A",
+		"└─Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
-		"TableDual 0.00 root  rows:0",
+	tk.MustQuery("explain format = 'plan_tree' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual root  rows:0",
 	))
 	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
 	tk.MustExec("set @p0 = -1")
@@ -164,22 +164,22 @@ func TestPointGetPlanCacheForNextGen(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1, lock",
+	tk.MustQuery("explain format = 'plan_tree' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update root  N/A",
+		"└─Point_Get root table:t handle:1, lock",
 	))
-	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
-		"Delete N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1, lock",
+	tk.MustQuery("explain format = 'plan_tree' delete from t where a = 1").Check(testkit.Rows(
+		"Delete root  N/A",
+		"└─Point_Get root table:t handle:1, lock",
 	))
-	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
-		"TableDual 0.00 root  rows:0",
+	tk.MustQuery("explain format = 'plan_tree' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual root  rows:0",
 	))
 	tk.MustExec(`prepare stmt0 from "select a from t where a = ?"`)
 	tk.MustExec("set @p0 = -1")
@@ -294,7 +294,7 @@ func TestPointGetId(t *testing.T) {
 		require.NoError(t, err)
 		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
-		// Test explain format = 'brief' result is useless, plan id will be reset when running `explain`.
+		// Test explain format = 'plan_tree' result is useless, plan id will be reset when running `explain`.
 		require.Equal(t, 1, p.ID())
 	}
 }
@@ -363,44 +363,44 @@ func TestIssue52592(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update root  N/A",
+		"└─Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
-		"Delete N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' delete from t where a = 1").Check(testkit.Rows(
+		"Delete root  N/A",
+		"└─Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
-		"TableDual 0.00 root  rows:0",
+	tk.MustQuery("explain format = 'plan_tree' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual root  rows:0",
 	))
 	tk.MustExec(`set @@tidb_opt_fix_control = "52592:ON"`)
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"TableReader 1.00 root  data:TableRangeScan",
-		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1").Check(testkit.Rows(
+		"TableReader root  data:TableRangeScan",
+		"└─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
 	))
-	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
-		"TableReader 1.00 root  data:TableRangeScan",
-		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where 1 = a").Check(testkit.Rows(
+		"TableReader root  data:TableRangeScan",
+		"└─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
 	))
-	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update N/A root  N/A",
-		"└─TableReader 1.00 root  data:TableRangeScan",
-		"  └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'plan_tree' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update root  N/A",
+		"└─TableReader root  data:TableRangeScan",
+		"  └─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
 	))
-	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
-		"Delete N/A root  N/A",
-		"└─TableReader 1.00 root  data:TableRangeScan",
-		"  └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'plan_tree' delete from t where a = 1").Check(testkit.Rows(
+		"Delete root  N/A",
+		"└─TableReader root  data:TableRangeScan",
+		"  └─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
 	))
-	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
-		"TableDual 0.00 root  rows:0",
+	tk.MustQuery("explain format = 'plan_tree' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual root  rows:0",
 	))
 }
 
@@ -415,46 +415,46 @@ func TestIssue52592ForNextGen(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, key idx_bc(b,c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3)")
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
-		"Point_Get 1.00 root table:t handle:1",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where 1 = a").Check(testkit.Rows(
+		"Point_Get root table:t handle:1",
 	))
-	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1, lock",
+	tk.MustQuery("explain format = 'plan_tree' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update root  N/A",
+		"└─Point_Get root table:t handle:1, lock",
 	))
-	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
-		"Delete N/A root  N/A",
-		"└─Point_Get 1.00 root table:t handle:1, lock",
+	tk.MustQuery("explain format = 'plan_tree' delete from t where a = 1").Check(testkit.Rows(
+		"Delete root  N/A",
+		"└─Point_Get root table:t handle:1, lock",
 	))
-	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
-		"TableDual 0.00 root  rows:0",
+	tk.MustQuery("explain format = 'plan_tree' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual root  rows:0",
 	))
 	tk.MustExec(`set @@tidb_opt_fix_control = "52592:ON"`)
-	tk.MustQuery("explain format = 'brief' select * from t where a = 1").Check(testkit.Rows(
-		"TableReader 1.00 root  data:TableRangeScan",
-		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where a = 1").Check(testkit.Rows(
+		"TableReader root  data:TableRangeScan",
+		"└─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
 	))
-	tk.MustQuery("explain format = 'brief' select * from t where 1 = a").Check(testkit.Rows(
-		"TableReader 1.00 root  data:TableRangeScan",
-		"└─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
+	tk.MustQuery("explain format = 'plan_tree' select * from t where 1 = a").Check(testkit.Rows(
+		"TableReader root  data:TableRangeScan",
+		"└─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo",
 	))
-	tk.MustQuery("explain format = 'brief' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
-		"Update N/A root  N/A",
-		`└─SelectLock 1.00 root  for update 0`,
-		`  └─TableReader 1.00 root  data:TableRangeScan`,
-		`    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
+	tk.MustQuery("explain format = 'plan_tree' update t set b=b+1, c=c+1 where a = 1").Check(testkit.Rows(
+		"Update root  N/A",
+		`└─SelectLock root  for update 0`,
+		`  └─TableReader root  data:TableRangeScan`,
+		`    └─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
 	))
-	tk.MustQuery("explain format = 'brief' delete from t where a = 1").Check(testkit.Rows(
-		"Delete N/A root  N/A",
-		`└─SelectLock 1.00 root  for update 0`,
-		`  └─TableReader 1.00 root  data:TableRangeScan`,
-		`    └─TableRangeScan 1.00 cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
+	tk.MustQuery("explain format = 'plan_tree' delete from t where a = 1").Check(testkit.Rows(
+		"Delete root  N/A",
+		`└─SelectLock root  for update 0`,
+		`  └─TableReader root  data:TableRangeScan`,
+		`    └─TableRangeScan cop[tikv] table:t range:[1,1], keep order:false, stats:pseudo`,
 	))
-	tk.MustQuery("explain format = 'brief' select a from t where a = -1").Check(testkit.Rows(
-		"TableDual 0.00 root  rows:0",
+	tk.MustQuery("explain format = 'plan_tree' select a from t where a = -1").Check(testkit.Rows(
+		"TableDual root  rows:0",
 	))
 }
 

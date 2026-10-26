@@ -16,17 +16,20 @@ package helper_test
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -92,13 +95,248 @@ func TestHotRegion(t *testing.T) {
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	store := createMockStore(t)
-
-	h := helper.NewHelper(store)
+	// Use a nil-store helper so GetTablesInfoWithKeyRange uses V1 codec, matching the
+	// hardcoded V1 region keys in getMockTiKVRegionsInfo. Keyspace-aware (V2) behavior
+	// is covered by TestGetRegionsTableInfoWithKeyspace.
+	h := &helper.Helper{}
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
 	tableInfos := h.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(schemas), nil)
 	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
+}
+
+// TestGetRegionsTableInfoWithKeyspace verifies that ParseRegionsTableInfos correctly
+// matches region-to-table mappings when both region keys and table key ranges include
+// a keyspace prefix (API V2 / keyspace-aware mode).
+func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
+	keyspaceID := uint32(1)
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID},
+		Name:     "test_keyspace",
+	})
+	require.NoError(t, err)
+
+	schemas := getMockRegionsTableInfoSchema()
+	db := schemas[0]
+	// Build table info key ranges using the V2 codec (with keyspace prefix).
+	tables := make([]helper.TableInfoWithKeyRange, 0, 6)
+	for _, table := range db.Deprecated.Tables {
+		tables = append(tables, helper.NewTableWithKeyRange(db, table, codecV2))
+		for _, index := range table.Indices {
+			tables = append(tables, helper.NewIndexWithKeyRange(db, table, index, codecV2))
+		}
+	}
+	// Sort tables by start key to match the production contract expected by ParseRegionsTableInfos.
+	slices.SortFunc(tables, func(i, j helper.TableInfoWithKeyRange) int {
+		return cmp.Compare(i.StartKey, j.StartKey)
+	})
+
+	// Construct mock region info using the keyspace-encoded key ranges.
+	// Region 1: ends before all tables (should be empty).
+	tbl41 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV2)
+	tbl41Idx1 := helper.NewIndexWithKeyRange(db, db.Deprecated.Tables[0], db.Deprecated.Tables[0].Indices[0], codecV2)
+	// Region 2: spans table 41's index 1 range and record range.
+	tbl63 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[1], codecV2)
+	// Region 3: spans table 63 record range.
+	tbl66 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[2], codecV2)
+	// Region 4: spans table 66 record range.
+	regions := []*pd.RegionInfo{
+		{ID: 1, StartKey: "", EndKey: tbl41Idx1.StartKey},
+		{ID: 2, StartKey: tbl41Idx1.StartKey, EndKey: tbl41.EndKey},
+		{ID: 3, StartKey: tbl63.StartKey, EndKey: tbl63.EndKey},
+		{ID: 4, StartKey: tbl66.StartKey, EndKey: tbl66.EndKey},
+	}
+
+	h := &helper.Helper{}
+	tableInfos := h.ParseRegionsTableInfos(regions, tables)
+
+	// Region 1 is before all tables — should be empty.
+	require.Empty(t, tableInfos[1])
+	// Region 2 spans table 41's index and record range.
+	require.Len(t, tableInfos[2], 2) // index 1 + record
+	require.Equal(t, int64(41), tableInfos[2][0].Table.ID)
+	// Region 3 spans table 63.
+	require.NotEmpty(t, tableInfos[3])
+	require.Equal(t, int64(63), tableInfos[3][0].Table.ID)
+	// Region 4 spans table 66.
+	require.NotEmpty(t, tableInfos[4])
+	require.Equal(t, int64(66), tableInfos[4][0].Table.ID)
+
+	// Verify that V2 keys differ from V1 keys (keyspace prefix is present).
+	codecV1 := tikv.NewCodecV1(tikv.ModeTxn)
+	tbl41V1 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV1)
+	require.NotEqual(t, tbl41.StartKey, tbl41V1.StartKey, "V2 keys should differ from V1 due to keyspace prefix")
+
+	// Verify the public path: GetRegionsTableInfo (wrapping GetTablesInfoWithKeyRange)
+	// must produce the same mapping when backed by a V2-codec store. A regression that
+	// reverts GetTablesInfoWithKeyRange to V1 encoding would produce a mismatched result.
+	regionsInfoForAPI := &pd.RegionsInfo{
+		Count:   int64(len(regions)),
+		Regions: make([]pd.RegionInfo, len(regions)),
+	}
+	for i, r := range regions {
+		regionsInfoForAPI.Regions[i] = *r
+	}
+	hV2 := &helper.Helper{Store: &codecOnlyStorage{codec: codecV2}}
+	tableInfosViaAPI := hV2.GetRegionsTableInfo(regionsInfoForAPI, infoschema.DBInfoAsInfoSchema(schemas), nil)
+	require.Equal(t, tableInfos, tableInfosViaAPI)
+}
+
+// TestGetPDRegionStatsKeyspaceEncoding verifies that GetPDRegionStats encodes the table
+// key range with the store's codec before querying PD. Without this the request would
+// carry a V1 key range and return stats for the wrong set of regions in keyspace-aware
+// clusters.
+func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
+	keyspaceID := uint32(1)
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID}, Name: "test_keyspace"}
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+
+	type capturedKeys struct{ start, end []byte }
+	captured := make(chan capturedKeys, 1)
+	router := mux.NewRouter()
+	router.HandleFunc(pd.StatsRegion, func(w http.ResponseWriter, r *http.Request) {
+		captured <- capturedKeys{
+			start: []byte(r.URL.Query().Get("start_key")),
+			end:   []byte(r.URL.Query().Get("end_key")),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"count":0,"empty_region":0,"region_count":0}`))
+	})
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+	server := httptest.NewServer(serverMux)
+
+	pdAddr := server.URL[len("http://"):]
+	pdAddrs := []string{"invalid_pd_address", pdAddr}
+	store, err := mockstore.NewMockStore(
+		mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("pd-stats-test", pdAddrs)),
+		mockstore.WithPDAddr(pdAddrs),
+	)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		server.Close()
+		view.Stop()
+		require.NoError(t, store.Close())
+	})
+
+	h := &helper.Helper{Store: store.(helper.Storage)}
+	_, err = h.GetPDRegionStats(context.Background(), 41, false)
+	require.NoError(t, err)
+
+	keys := <-captured
+	// The key range sent to PD must match what codecV2.EncodeRegionRange produces for
+	// table 41 with noIndexStats=false (uses EncodeTablePrefix, not GenTableRecordPrefix).
+	tableStart := tablecodec.EncodeTablePrefix(41)
+	tableEnd := tableStart.PrefixNext()
+	expectedStart, expectedEnd := codecV2.EncodeRegionRange(tableStart, tableEnd)
+	require.Equal(t, expectedStart, keys.start, "GetPDRegionStats must encode start key with the store's codec")
+	require.Equal(t, expectedEnd, keys.end, "GetPDRegionStats must encode end key with the store's codec")
+}
+
+func TestCollectStorageClassStatusWithCtx(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		body  string
+		ready uint64
+		total uint64
+	}{
+		{name: "counters only", body: `{"ready":7,"total":9}`, ready: 7, total: 9},
+		{name: "all ready", body: `{"ready":1,"total":1}`, ready: 1, total: 1},
+		{name: "zero counters", body: `{"ready":0,"total":0}`},
+		{name: "zero ready", body: `{"ready":0,"total":1}`, total: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath string
+			var gotQuery string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath = r.URL.Path
+				gotQuery = r.URL.RawQuery
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			t.Cleanup(server.Close)
+
+			status, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(42), 123, "STANDARD")
+			require.NoError(t, err)
+			require.Equal(t, helper.StorageClassStatusResp{Ready: tc.ready, Total: tc.total}, status)
+			require.Equal(t, "/kvengine/storage_class_status", gotPath)
+			require.Equal(t, "keyspace_id=42&table_id=123&target=STANDARD", gotQuery)
+		})
+	}
+}
+
+func TestCollectStorageClassStatusWithCtxRejectsBadResponse(t *testing.T) {
+	t.Run("http status", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.ErrorContains(t, err, "status 503")
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.Error(t, err)
+	})
+
+	for _, body := range []string{
+		`{}`,
+		`null`,
+		`{"ready":0}`,
+		`{"total":0}`,
+		`{"ready":null,"total":0}`,
+		`{"ready":0,"total":null}`,
+	} {
+		t.Run("missing required field "+body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+			require.ErrorContains(t, err, "must contain ready and total")
+		})
+	}
+
+	for _, body := range []string{
+		`{"ready":-1,"total":1}`,
+		`{"ready":0,"total":-1}`,
+		`{"ready":"1","total":1}`,
+		`{"ready":0,"total":"1"}`,
+		`{"ready":0.5,"total":1}`,
+		`{"ready":0,"total":1.5}`,
+	} {
+		t.Run("invalid counter "+body, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			t.Cleanup(server.Close)
+			_, err := helper.CollectStorageClassStatusWithCtx(
+				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+			require.Error(t, err)
+		})
+	}
+
+	t.Run("ready greater than total", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ready":2,"total":1}`))
+		}))
+		t.Cleanup(server.Close)
+		_, err := helper.CollectStorageClassStatusWithCtx(
+			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
+		require.ErrorContains(t, err, "ready 2 greater than total 1")
+	})
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
@@ -136,12 +374,26 @@ func TestTiKVStoresStat(t *testing.T) {
 	require.Equal(t, expected, string(data))
 }
 
+// codecOnlyStorage is a minimal helper.Storage stub whose only working method is
+// GetCodec. All other methods panic if called. It is only safe to use with code
+// paths that exclusively call GetCodec, such as GetTablesInfoWithKeyRange.
+type codecOnlyStorage struct {
+	helper.Storage
+	codec tikv.Codec
+}
+
+func (s *codecOnlyStorage) GetCodec() tikv.Codec { return s.codec }
+
 type mockStore struct {
 	helper.Storage
 	pdAddrs []string
 }
 
 func (s *mockStore) EtcdAddrs() ([]string, error) {
+	return s.pdAddrs, nil
+}
+
+func (s *mockStore) GetPDAddrs() ([]string, error) {
 	return s.pdAddrs, nil
 }
 
@@ -493,6 +745,105 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	for i := 1000; i < 3000; i++ {
 		_, ok := regionReplica2[int64(i)]
 		require.True(t, ok)
+	}
+}
+
+func TestCollectColumnarStatusCancelsPendingRequest(t *testing.T) {
+	// requestStarted is closed when the mock handler first sees the HTTP request.
+	// requestCanceled is closed after the handler observes request-context cancellation.
+	requestStarted := make(chan struct{})
+	requestCanceled := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-r.Context().Done()
+		close(requestCanceled)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := helper.CollectColumnarStatusWithCtx(ctx, strings.TrimPrefix(server.URL, "http://"), 7, 9, nil)
+		errCh <- err
+	}()
+
+	// Wait until the request has entered the handler before canceling.
+	// Otherwise cancel may race ahead of dial/accept and the handler never runs.
+	select {
+	case <-requestStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected columnar status request to start")
+	}
+
+	// Trigger the cancellation of the request.
+	cancel()
+
+	// Must return an error due to context cancellation.
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected columnar status request to return after cancel")
+	}
+
+	select {
+	case <-requestCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("expected pending columnar status request to be canceled")
+	}
+}
+
+func TestCollectColumnarStatusFTSIndexReady(t *testing.T) {
+	testCases := []struct {
+		name             string
+		response         string
+		ftsIndexReady    uint
+		hasFtsIndexReady bool
+	}{
+		{
+			name:             "present",
+			response:         `{"ready":3,"vector-index-ready":2,"fts-index-ready":1,"total":4}`,
+			ftsIndexReady:    1,
+			hasFtsIndexReady: true,
+		},
+		{
+			name:             "present zero",
+			response:         `{"ready":3,"vector-index-ready":2,"fts-index-ready":0,"total":4}`,
+			ftsIndexReady:    0,
+			hasFtsIndexReady: true,
+		},
+		{
+			name:             "missing on older TiKV",
+			response:         `{"ready":3,"vector-index-ready":2,"total":4}`,
+			ftsIndexReady:    0,
+			hasFtsIndexReady: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/kvengine/columnar_status", r.URL.Path)
+				require.Equal(t, "7", r.URL.Query().Get("keyspace_id"))
+				require.Equal(t, "9", r.URL.Query().Get("table_id"))
+				require.Equal(t, "11", r.URL.Query().Get("index_id"))
+				_, err := w.Write([]byte(testCase.response))
+				require.NoError(t, err)
+			}))
+			defer server.Close()
+
+			indexID := int64(11)
+			status, err := helper.CollectColumnarStatusWithCtx(context.Background(), strings.TrimPrefix(server.URL, "http://"), 7, 9, &indexID)
+			require.NoError(t, err)
+			require.Equal(t, uint(3), status.Ready)
+			require.Equal(t, uint(2), status.VectorIndexReady)
+			require.Equal(t, testCase.ftsIndexReady, status.FtsIndexReady)
+			require.Equal(t, testCase.hasFtsIndexReady, status.HasFtsIndexReady)
+			require.Equal(t, uint(4), status.Total)
+		})
 	}
 }
 

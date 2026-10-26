@@ -34,10 +34,18 @@ const (
 	FeatureIDResourceGroup = "resource_group"
 	// FeatureIDGlobalIndex is the `Global Index` feature.
 	FeatureIDGlobalIndex = "global_index"
-	// FeatureIDPresplit is the pre-split feature.
-	FeatureIDPresplit = "pre_split"
+	// FeatureIDPreSplit is the pre-split feature.
+	FeatureIDPreSplit = "pre_split"
+	// FeatureIDPresplit is kept for compatibility.
+	//
+	// Deprecated: use FeatureIDPreSplit instead.
+	FeatureIDPresplit = FeatureIDPreSplit
+	// FeatureIDAutoPreSplit is the automatic index pre-split feature.
+	FeatureIDAutoPreSplit = "auto_presplit"
 	// FeatureIDAffinity is the `Affinity` feature.
 	FeatureIDAffinity = "affinity"
+	// FeatureIDSplitRegion is the `region split` feature.
+	FeatureIDSplitRegion = "region_split"
 )
 
 var featureIDs = map[string]struct{}{
@@ -49,8 +57,10 @@ var featureIDs = map[string]struct{}{
 	FeatureIDPlacement:      {},
 	FeatureIDTTL:            {},
 	FeatureIDGlobalIndex:    {},
-	FeatureIDPresplit:       {},
+	FeatureIDPreSplit:       {},
+	FeatureIDAutoPreSplit:   {},
 	FeatureIDAffinity:       {},
+	FeatureIDSplitRegion:    {},
 }
 
 // CanParseFeature is used to check if a feature can be parsed.

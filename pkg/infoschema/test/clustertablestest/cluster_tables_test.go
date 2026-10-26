@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -289,6 +290,55 @@ func TestSelectClusterTable(t *testing.T) {
 	instanceAddr, err := infoschema.GetInstanceAddr(tk.Session())
 	require.NoError(t, err)
 	tk.MustQuery("select instance from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.Rows(instanceAddr))
+}
+
+func TestClusterSlowQuerySessionConnectAttrs(t *testing.T) {
+	// setup suite
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	f, err := os.CreateTemp("", "tidb-cluster-slow-*.log")
+	require.NoError(t, err)
+	_, err = f.WriteString(`# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+select * from t;
+`)
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	defer func() { require.NoError(t, os.Remove(f.Name())) }()
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = f.Name()
+	})
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("use information_schema")
+	tk.MustExec("set time_zone = '+08:00';")
+
+	rows := tk.MustQuery("select Session_connect_attrs from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").Rows()
+	require.Len(t, rows, 1)
+	attrsStr := rows[0][0].(string)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, attrsStr)
+
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$._client_name') from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"Go-MySQL-Driver"`))
+	tk.MustQuery("select JSON_EXTRACT(Session_connect_attrs, '$.app_name') from information_schema.cluster_slow_query " +
+		"where query = 'select * from t;'").
+		Check(testkit.Rows(`"test_app"`))
 }
 
 func TestSelectClusterTablePrivilege(t *testing.T) {
@@ -1029,7 +1079,7 @@ func TestQuickBinding(t *testing.T) {
 		{`select /*+ use_index_merge(t2, k_a, k_bc) */ * from t2 where a<? or b<1 and c<1`, "use_index_merge(@`sel_1` `t2` `k_a`, `k_bc`)", nil},
 
 		{`select /*+ leading(t3,t4,t2,t1) */ * from t1 join t2 join t3 join t4 where t1.a = t2.a and t2.b = t3.b and t3.a = t4.a and t2.c = ?`,
-			"inl_hash_join(`test`.`t1`), leading(`test`.`t3`, `test`.`t4`, `test`.`t2`, `test`.`t1`), hash_join_build(`test`.`t2`), hash_join_build(`test`.`t3`), use_index(@`sel_1` `test`.`t3` ), use_index(@`sel_1` `test`.`t4` ), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`)",
+			"inl_hash_join(`test`.`t1`), leading(`test`.`t3`, `test`.`t4`, `test`.`t2`, `test`.`t1`), hash_join_build(`test`.`t3`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` ), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` `k_a`), no_order_index(@`sel_1` `test`.`t1` `k_a`)",
 			nil,
 		},
 
@@ -1044,12 +1094,12 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select /*+ leading(t2,t1) */ * from t1 join t2 where t1.a = t2.a and t2.b in (select a from t3 where t3.b = 1) and t1.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`t3`@`sel_2`), inl_hash_join(`test`.`t2`), use_index(@`sel_1` `test`.`t2` `k_a`), no_order_index(@`sel_1` `test`.`t2` `k_a`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), agg_to_cop(@`sel_2`)",
+			"leading(`test`.`t2`, `test`.`t1`, `test`.`t3`@`sel_2`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), agg_to_cop(@`sel_2`)",
 			nil,
 		},
 
 		{`update /*+ leading(t2,t1,t4@sel_2) */ t1 join t2 set t1.a = 1 where t1.a = t2.a and t2.b in (select a from t3 where t3.b = 1) and t1.b in (select b from t4 where t4.b = 1) and t1.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`), inl_hash_join(`test`.`t2`), use_index(@`upd_1` `test`.`t2` `k_a`), no_order_index(@`upd_1` `test`.`t2` `k_a`), use_index(@`upd_1` `test`.`t1` `k_bc`), order_index(@`upd_1` `test`.`t1` `k_bc`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t4` `k_bc`), order_index(@`sel_2` `test`.`t4` `k_bc`), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`), agg_to_cop(@`sel_1`)",
+			"leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`), hash_join_build(`test`.`t2`), use_index(@`upd_1` `test`.`t2` `k_bc`), no_order_index(@`upd_1` `test`.`t2` `k_bc`), use_index(@`upd_1` `test`.`t1` `k_bc`), no_order_index(@`upd_1` `test`.`t1` `k_bc`), stream_agg(@`sel_2`), use_index(@`sel_2` `test`.`t4` `k_bc`), order_index(@`sel_2` `test`.`t4` `k_bc`), agg_to_cop(@`sel_2`), hash_agg(@`sel_1`), use_index(@`sel_1` `test`.`t3` `k_bc`), no_order_index(@`sel_1` `test`.`t3` `k_bc`), agg_to_cop(@`sel_1`)",
 			nil,
 		},
 
@@ -1059,7 +1109,7 @@ func TestQuickBinding(t *testing.T) {
 		},
 
 		{`select /*+ leading(t2,t1) */ * from t1 join t2 join (select * from t3) n join t4 where t1.a = t2.a and t2.b = n.b and n.a = t4.a and n.c = ?`,
-			"leading(`test`.`t2`, `test`.`t1`, `test`.`n`, `test`.`t4`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
+			"leading(`test`.`t2`, `test`.`t1`, `test`.`n`, `test`.`t4`), hash_join_build(`test`.`t2`), use_index(@`sel_1` `test`.`t2` `k_bc`), no_order_index(@`sel_1` `test`.`t2` `k_bc`), use_index(@`sel_1` `test`.`t1` ), no_order_index(@`sel_1` `test`.`t1` `primary`), use_index(@`sel_2` `test`.`t3` `k_bc`), no_order_index(@`sel_2` `test`.`t3` `k_bc`), use_index(@`sel_1` `test`.`t4` `k_a`), no_order_index(@`sel_1` `test`.`t4` `k_a`)",
 			nil,
 		},
 

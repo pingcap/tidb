@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 // Pool is used to new Session.
@@ -85,6 +86,40 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 	ctx.GetSessionVars().ClearDiskFullOpt()
 	sg.resPool.Put(ctx.(pools.Resource))
 	infosync.DeleteInternalSession(ctx)
+}
+
+// Destroy discards the sessionCtx and returns the pool slot.
+// It is used when the session should not be reused.
+func (sg *Pool) Destroy(ctx sessionctx.Context) {
+	intest.AssertNotNil(ctx)
+	intest.AssertFunc(func() bool {
+		txn, _ := ctx.Txn(false)
+		return txn == nil || !txn.Valid()
+	})
+	ctx.RollbackTxn(context.Background())
+	ctx.GetSessionVars().ClearDiskFullOpt()
+	infosync.DeleteInternalSession(ctx)
+
+	// Destroy behavior depends on the underlying pool implementation.
+	switch p := sg.resPool.(type) {
+	case util.DestroyableSessionPool:
+		p.Destroy(ctx.(pools.Resource))
+		return
+	case *pools.ResourcePool:
+		// *pools.ResourcePool requires a Put for every Get. Put(nil) returns the slot
+		// and causes a new resource to be created next time.
+		ctx.(pools.Resource).Close()
+		p.Put(nil)
+		return
+	default:
+		// Fallback: avoid putting a closed resource back.
+		// The underlying pool implementation may return the same resource later.
+		logutil.DDLLogger().Warn("session pool doesn't support Destroy, fall back to Put",
+			zap.String("poolType", fmt.Sprintf("%T", sg.resPool)),
+		)
+		sg.resPool.Put(ctx.(pools.Resource))
+		intest.Assert(false, "unsupported session pool type for Destroy: %T", sg.resPool)
+	}
 }
 
 // Close clean up the Pool.

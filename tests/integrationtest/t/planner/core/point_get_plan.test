@@ -1,5 +1,4 @@
 # TestGetExtraColumn
-set tidb_cost_model_version=2;
 drop table if exists t;
 CREATE TABLE t (
 	  a int(11) DEFAULT NULL,
@@ -16,7 +15,6 @@ explain format='plan_tree' select *, date_format(b, "") from t where a =1 for up
 create table t1 (pk int, a int, b int, primary key(pk), unique key(a));
 -- error 1054
 explain format='plan_tree' select t1.*, _tidb_rowid from t1 where a = 1;
-set tidb_cost_model_version=DEFAULT;
 
 
 # TestPointGetForUpdateWithSubquery

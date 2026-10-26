@@ -816,10 +816,8 @@ type memIndexMergeReader struct {
 	memReaders       []memReader
 	isIntersection   bool
 
-	// partition mode
-	partitionMode     bool                  // if it is accessing a partition table
-	partitionTables   []table.PhysicalTable // partition tables to access
-	partitionKVRanges [][][]kv.KeyRange     // kv ranges for these partition tables
+	partitionMode         bool // if it is accessing a partition table
+	partialWorkerKVRanges [][]*kvRangesWithPhysicalTblID
 
 	keepOrder bool
 	compareExec
@@ -873,9 +871,8 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 		memReaders:       memReaders,
 		isIntersection:   indexMergeReader.isIntersection,
 
-		partitionMode:     indexMergeReader.partitionTableMode,
-		partitionTables:   indexMergeReader.prunedPartitions,
-		partitionKVRanges: indexMergeReader.partitionKeyRanges,
+		partitionMode:         indexMergeReader.partitionTableMode,
+		partialWorkerKVRanges: indexMergeReader.partialWorkerKVRanges,
 
 		keepOrder:   us.keepOrder,
 		compareExec: us.compareExec,
@@ -1048,19 +1045,12 @@ func (m *memIndexMergeReader) getHandles() (handles []kv.Handle, err error) {
 	hMap := kv.NewHandleMap()
 	// loop each memReaders and fill handle map
 	for i, reader := range m.memReaders {
-		// [partitionNum][rangeNum]
-		var readerKvRanges [][]kv.KeyRange
-		if m.partitionMode {
-			readerKvRanges = m.partitionKVRanges[i]
-		} else {
-			readerKvRanges = [][]kv.KeyRange{m.indexMergeReader.keyRanges[i]}
-		}
-		for j, kr := range readerKvRanges {
+		for _, pkr := range m.partialWorkerKVRanges[i] {
 			switch r := reader.(type) {
 			case *memTableReader:
-				r.kvRanges = kr
+				r.kvRanges = pkr.KeyRanges
 			case *memIndexReader:
-				r.kvRanges = kr
+				r.kvRanges = pkr.KeyRanges
 			default:
 				return nil, errors.New("memReader have to be memTableReader or memIndexReader")
 			}
@@ -1071,8 +1061,7 @@ func (m *memIndexMergeReader) getHandles() (handles []kv.Handle, err error) {
 			// Filter same row.
 			for _, handle := range handles {
 				if _, ok := handle.(kv.PartitionHandle); !ok && m.partitionMode {
-					pid := m.partitionTables[j].GetPhysicalID()
-					handle = kv.NewPartitionHandle(pid, handle)
+					handle = kv.NewPartitionHandle(pkr.PhysicalTableID, handle)
 				}
 				if v, ok := hMap.Get(handle); !ok {
 					cnt := 1

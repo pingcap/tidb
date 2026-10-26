@@ -756,6 +756,7 @@ prepare stmt2 from "select sum(b) from t group by ?, ?";
 execute stmt2 using @v1, @v2;
 sum(b)
 10
+set sql_mode=default;
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists ta, tb;
 CREATE TABLE ta(k varchar(32) NOT NULL DEFAULT ' ');

@@ -794,7 +794,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 	if stmtNode == nil {
 		return nil, errors.Errorf("generate foreign key cascade ast failed, %v", fkc.tp)
 	}
-	sctx := fkc.b.ctx
+	sctx := fkc.b.sctx
 	nodeW := resolve.NewNodeW(stmtNode)
 	err := plannercore.Preprocess(ctx, sctx, nodeW)
 	if err != nil {

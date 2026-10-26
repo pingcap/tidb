@@ -28,12 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -52,6 +54,8 @@ const (
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	// DDLOwnerKey is the ddl owner path that is saved to etcd.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
@@ -59,11 +63,39 @@ const (
 	DDLAllSchemaVersionsByJob = "/tidb/ddl/all_schema_by_job_versions"
 	// DDLGlobalSchemaVersion is the path on etcd that is used to store the latest schema versions.
 	DDLGlobalSchemaVersion = "/tidb/ddl/global_schema_version"
+	// AddingDDLJobNotifyKey is the key in etcd to notify DDL scheduler that
+	// there is a new DDL job.
+	AddingDDLJobNotifyKey = "/tidb/ddl/add_ddl_job_general"
 	// ServerGlobalState is the path on etcd that is used to store the server global state.
 	ServerGlobalState = "/tidb/server/global_state"
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL = 90
 )
+
+// HasSysDB returns whether a job involves a system-related database.
+func HasSysDB(job *model.Job) bool {
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if metadef.IsSystemRelatedDB(info.Database) {
+			return true
+		}
+	}
+	return false
+}
+
+// PauseRunningJob changes a runnable job to the pausing state.
+func PauseRunningJob(job *model.Job, byWho model.AdminCommandOperator) error {
+	if job.IsPausing() || job.IsPaused() {
+		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(job.ID)
+	}
+	if !job.IsPausable() {
+		errMsg := fmt.Sprintf("state [%s] or schema state [%s]", job.State.String(), job.SchemaState.String())
+		return dbterror.ErrCannotPauseDDLJob.GenWithStackByArgs(job.ID, errMsg)
+	}
+
+	job.State = model.JobStatePausing
+	job.AdminOperator = byWho
+	return nil
+}
 
 // DelRangeTask is for run delete-range command in gc_worker.
 type DelRangeTask struct {

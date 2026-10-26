@@ -164,6 +164,28 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	require.True(t, re.MatchString(indexMergeLine))
 }
 
+func TestMVIndexMergePlanTree(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge=1")
+	tk.MustExec("drop table if exists t_mv_idx_only")
+	tk.MustExec("create table t_mv_idx_only (a int, b int, j json, index idx((cast(j as signed array)), a))")
+
+	tk.MustQuery("explain format='plan_tree' select /*+ use_index_merge(t_mv_idx_only, idx) */ a from t_mv_idx_only where 1 member of (j)").Check(testkit.Rows(
+		"Projection root  test.t_mv_idx_only.a",
+		"└─IndexMerge root  type: union",
+		"  └─IndexRangeScan(Build) cop[tikv] table:t_mv_idx_only, index:idx(cast(`j` as signed array), a) range:[1,1], keep order:false, stats:pseudo",
+	))
+
+	tk.MustQuery("explain format='plan_tree' select /*+ use_index_merge(t_mv_idx_only, idx) */ b from t_mv_idx_only where 1 member of (j)").Check(testkit.Rows(
+		"Projection root  test.t_mv_idx_only.b",
+		"└─IndexMerge root  type: union",
+		"  ├─IndexRangeScan(Build) cop[tikv] table:t_mv_idx_only, index:idx(cast(`j` as signed array), a) range:[1,1], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) cop[tikv] table:t_mv_idx_only keep order:false, stats:pseudo",
+	))
+}
+
 func TestIndexMergeReaderMemTracker(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -881,4 +903,30 @@ func TestIssues46005(t *testing.T) {
 	}
 
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
+}
+
+func TestIssues70910(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	for rowID := 0; rowID < 3000; rowID += 500 {
+		vals := make([]string, 0, 500)
+		for i := rowID; i < rowID+500; i++ {
+			vals = append(vals, fmt.Sprintf("(1, 1, %d)", i))
+		}
+		tk.MustExec("insert into t(a,b,c) values " + strings.Join(vals, ","))
+	}
+
+	query := "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2000"
+	tk.MustHavePlan(query, "IndexMerge")
+	tk.MustNotHavePlan(query, "TopN")
+	// Issue #70910: the pushed-down limit must not be truncated to 1024 rows by
+	// the index merge union worker heap. The full 2000 rows must be returned.
+	rows := tk.MustQuery(query).Rows()
+	require.Equal(t, 2000, len(rows))
+	for i, row := range rows {
+		require.Equal(t, fmt.Sprintf("%d", i), fmt.Sprintf("%v", row[2]))
+	}
 }

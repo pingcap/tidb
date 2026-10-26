@@ -33,6 +33,7 @@ import (
 type PhysicalLock struct {
 	BasePhysicalPlan
 
+	// Lock shares the read-only AST lock metadata forwarded from LogicalLock.
 	Lock *ast.SelectLockInfo `plan-cache-clone:"shallow"`
 
 	TblID2Handle       map[int64][]util.HandleCols

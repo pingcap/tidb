@@ -136,10 +136,12 @@ func (gp *genedPlan) PlanText() string {
 type state struct {
 	leading2   [2]*tableName // leading-2 table names
 	indexHints []*indexHint  // optional index hints per table
-	varNames   []string      // relevant variables and their values to generate a certain plan
-	varValues  []any
-	fixIDs     []uint64 // relevant fixes and their values to generate a certain plan
-	fixValues  []string
+	// noDecorrelateQB stores the query block name for NO_DECORRELATE() hint.
+	noDecorrelateQB ast.CIStr
+	varNames        []string // relevant variables and their values to generate a certain plan
+	varValues       []any
+	fixIDs          []uint64 // relevant fixes and their values to generate a certain plan
+	fixValues       []string
 }
 
 // Encode encodes the state into a string.
@@ -163,6 +165,13 @@ func (s *state) Encode() string {
 		}
 		sb.WriteString(indexHint.String())
 	}
+	if s.noDecorrelateQB.L != "" {
+		if sb.Len() > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("no_decorrelate@")
+		sb.WriteString(s.noDecorrelateQB.L)
+	}
 	for _, v := range s.varValues {
 		if sb.Len() > 0 {
 			sb.WriteString(",")
@@ -185,12 +194,13 @@ func (s *state) Encode() string {
 
 func newStateWithLeading2(old *state, leading2 [2]*tableName) *state {
 	newState := &state{
-		leading2:   leading2,
-		indexHints: append([]*indexHint(nil), old.indexHints...),
-		varNames:   old.varNames,
-		varValues:  old.varValues,
-		fixIDs:     old.fixIDs,
-		fixValues:  old.fixValues,
+		leading2:        leading2,
+		noDecorrelateQB: old.noDecorrelateQB,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
 	}
 	return newState
 }
@@ -201,23 +211,37 @@ func newStateWithIndexHint(old *state, tableIdx int, hint *indexHint) *state {
 		newHints[tableIdx] = hint
 	}
 	return &state{
-		leading2:   old.leading2,
-		indexHints: newHints,
-		varNames:   old.varNames,
-		varValues:  old.varValues,
-		fixIDs:     old.fixIDs,
-		fixValues:  old.fixValues,
+		leading2:        old.leading2,
+		indexHints:      newHints,
+		noDecorrelateQB: old.noDecorrelateQB,
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
+	}
+}
+
+func newStateWithNoDecorrelateQB(old *state, qbName ast.CIStr) *state {
+	return &state{
+		leading2:        old.leading2,
+		noDecorrelateQB: qbName,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
 	}
 }
 
 func newStateWithNewVar(old *state, varName string, varVal any) *state {
 	newState := &state{
-		leading2:   old.leading2,
-		indexHints: append([]*indexHint(nil), old.indexHints...),
-		varNames:   old.varNames,
-		varValues:  make([]any, len(old.varValues)),
-		fixIDs:     old.fixIDs,
-		fixValues:  old.fixValues,
+		leading2:        old.leading2,
+		noDecorrelateQB: old.noDecorrelateQB,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
+		varNames:        old.varNames,
+		varValues:       make([]any, len(old.varValues)),
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
 	}
 	copy(newState.varValues, old.varValues)
 	for i := range newState.varNames {
@@ -231,12 +255,13 @@ func newStateWithNewVar(old *state, varName string, varVal any) *state {
 
 func newStateWithNewFix(old *state, fixID uint64, fixVal string) *state {
 	newState := &state{
-		leading2:   old.leading2,
-		indexHints: append([]*indexHint(nil), old.indexHints...),
-		varNames:   old.varNames,
-		varValues:  old.varValues,
-		fixIDs:     old.fixIDs,
-		fixValues:  make([]string, len(old.fixValues)),
+		leading2:        old.leading2,
+		noDecorrelateQB: old.noDecorrelateQB,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       make([]string, len(old.fixValues)),
 	}
 	copy(newState.fixValues, old.fixValues)
 	for i := range newState.fixIDs {
@@ -271,11 +296,12 @@ func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, 
 		}
 	}
 	indexHintOptions := extractSelectIndexHints(sctx, defaultSchema, stmt)
-	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2, indexHintOptions)
+	possibleNoDecorrelateQBs := extractNoDecorrelateQBs(stmt)
+	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2, indexHintOptions, possibleNoDecorrelateQBs)
 }
 
 func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
-	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName, indexHintOptions [][]*indexHint) (plans []*genedPlan, err error) {
+	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName, indexHintOptions [][]*indexHint, possibleNoDecorrelateQBs []ast.CIStr) (plans []*genedPlan, err error) {
 	// init BFS structures
 	visitedStates := make(map[string]struct{})  // map[encodedState]struct{}, all visited states
 	visitedPlans := make(map[string]*genedPlan) // map[planDigest]plan, all visited plans
@@ -300,6 +326,13 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 		visitedPlans[plan.planDigest] = plan
 
 		// in each step, adjust one variable or fix or join-order
+		for _, qbName := range possibleNoDecorrelateQBs {
+			newState := newStateWithNoDecorrelateQB(currState, qbName)
+			if _, ok := visitedStates[newState.Encode()]; !ok {
+				visitedStates[newState.Encode()] = struct{}{}
+				stateList.PushBack(newState)
+			}
+		}
 		for _, leading2 := range possibleLeading2 {
 			newState := newStateWithLeading2(currState, leading2)
 			if _, ok := visitedStates[newState.Encode()]; !ok {
@@ -406,6 +439,8 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 			sctx.GetSessionVars().EnableSemiJoinRewrite = state.varValues[i].(bool)
 		case vardef.TiDBOptSelectivityFactor:
 			sctx.GetSessionVars().SelectivityFactor = state.varValues[i].(float64)
+		case vardef.TiDBOptEnableAlternativeLogicalPlans:
+			sctx.GetSessionVars().EnableAlternativeLogicalPlans = state.varValues[i].(bool)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
@@ -416,7 +451,7 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 		if i > 0 {
 			fixControlStrBuilder.WriteString(",")
 		}
-		fixControlStrBuilder.WriteString(fmt.Sprintf("%v:%v", fixID, state.fixValues[i]))
+		fmt.Fprintf(&fixControlStrBuilder, "%v:%v", fixID, state.fixValues[i])
 	}
 	fixControlMap, _, err := fixcontrol.ParseToMap(fixControlStrBuilder.String())
 	if err != nil {
@@ -470,6 +505,13 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 				sel.TableHints = append(sel.TableHints, hintNode)
 			}
 		}
+		if state.noDecorrelateQB.L != "" {
+			noDecorrelateHint := &ast.TableOptimizerHint{
+				HintName: ast.NewCIStr(hint.HintNoDecorrelate),
+				QBName:   state.noDecorrelateQB,
+			}
+			sel.TableHints = append(sel.TableHints, noDecorrelateHint)
+		}
 	}
 
 	planDigest, planHints, planText, err := GenBriefPlanWithSCtx(sctx, stmt)
@@ -507,7 +549,7 @@ func adjustVar(varName string, varVal any) (newVarVal any, err error) {
 		}
 		// increase 0.1 each step
 		return v + 0.1, nil
-	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey, vardef.TiDBOptEnableSemiJoinRewrite: // flip the switch
+	case vardef.TiDBOptPreferRangeScan, vardef.TiDBOptEnableNoDecorrelateInSelect, vardef.TiDBOptAlwaysKeepJoinKey, vardef.TiDBOptEnableSemiJoinRewrite, vardef.TiDBOptEnableAlternativeLogicalPlans: // flip the switch
 		return !varVal.(bool), nil
 	}
 	return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
@@ -600,6 +642,8 @@ func getStartState(vars []string, fixes []uint64, indexHintCount int) (*state, e
 			s.varValues = append(s.varValues, vardef.DefOptSelectivityFactor)
 		case vardef.TiDBOptCartesianJoinOrderThreshold:
 			s.varValues = append(s.varValues, vardef.DefOptCartesianJoinOrderThreshold)
+		case vardef.TiDBOptEnableAlternativeLogicalPlans:
+			s.varValues = append(s.varValues, vardef.DefOptEnableAlternativeLogicalPlans)
 		default:
 			return nil, fmt.Errorf("unsupported variable %s in plan generation", varName)
 		}
@@ -625,8 +669,69 @@ type tableNameExtractor struct {
 	tableNames    map[string]*tableName
 }
 
-// Enter implements ast.Visitor interface.
-func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+type selectOffsetAssigner struct {
+	offset int
+}
+
+func (a *selectOffsetAssigner) Enter(in ast.Node) (skipChildren bool) {
+	if sel, ok := in.(*ast.SelectStmt); ok {
+		a.offset++
+		sel.QueryBlockOffset = a.offset
+	}
+	return false
+}
+
+func (*selectOffsetAssigner) Leave(ast.Node) (ok bool) {
+	return true
+}
+
+type subqueryOffsetExtractor struct {
+	offsets map[int]struct{}
+}
+
+func (e *subqueryOffsetExtractor) Enter(in ast.Node) (skipChildren bool) {
+	if subq, ok := in.(*ast.SubqueryExpr); ok {
+		collectSubqueryOffsets(subq.Query, e.offsets)
+	}
+	return false
+}
+
+func (*subqueryOffsetExtractor) Leave(ast.Node) bool {
+	return true
+}
+
+func collectSubqueryOffsets(node ast.ResultSetNode, offsets map[int]struct{}) {
+	if node == nil {
+		return
+	}
+	switch n := node.(type) {
+	case *ast.SelectStmt:
+		if n.QueryBlockOffset > 0 {
+			offsets[n.QueryBlockOffset] = struct{}{}
+		}
+	case *ast.SetOprStmt:
+		collectSubqueryOffsetsFromSelectList(n.SelectList, offsets)
+	}
+}
+
+func collectSubqueryOffsetsFromSelectList(list *ast.SetOprSelectList, offsets map[int]struct{}) {
+	if list == nil {
+		return
+	}
+	for _, sel := range list.Selects {
+		switch n := sel.(type) {
+		case *ast.SelectStmt:
+			if n.QueryBlockOffset > 0 {
+				offsets[n.QueryBlockOffset] = struct{}{}
+			}
+		case *ast.SetOprStmt:
+			collectSubqueryOffsetsFromSelectList(n.SelectList, offsets)
+		}
+	}
+}
+
+// Enter implements ast.InPlaceVisitor interface.
+func (e *tableNameExtractor) Enter(in ast.Node) (skipChildren bool) {
 	if name, ok := in.(*ast.TableName); ok {
 		t := &tableName{
 			schema: name.Schema.L,
@@ -639,12 +744,12 @@ func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren boo
 			e.tableNames[t.String()] = t
 		}
 	}
-	return in, false
+	return false
 }
 
-// Leave implements ast.Visitor interface.
-func (*tableNameExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
-	return in, true
+// Leave implements ast.InPlaceVisitor interface.
+func (*tableNameExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 // extractSelectTableNames returns the table names in the SELECT statement.
@@ -657,7 +762,7 @@ func extractSelectTableNames(defaultSchema string, node ast.StmtNode) []*tableNa
 		defaultSchema: defaultSchema,
 		tableNames:    make(map[string]*tableName),
 	}
-	selStmt.Accept(extractor)
+	ast.Walk(selStmt, extractor)
 
 	names := make([]*tableName, 0, len(extractor.tableNames))
 	for _, name := range extractor.tableNames {
@@ -669,38 +774,72 @@ func extractSelectTableNames(defaultSchema string, node ast.StmtNode) []*tableNa
 	return names
 }
 
+func extractNoDecorrelateQBs(node ast.StmtNode) []ast.CIStr {
+	selStmt, isSel := node.(*ast.SelectStmt)
+	if !isSel {
+		return nil // only support SELECT statement for now
+	}
+
+	assigner := &selectOffsetAssigner{}
+	ast.Walk(selStmt, assigner)
+
+	extractor := &subqueryOffsetExtractor{offsets: make(map[int]struct{})}
+	ast.Walk(selStmt, extractor)
+
+	if len(extractor.offsets) == 0 {
+		return nil
+	}
+
+	qbNames := make([]ast.CIStr, 0, len(extractor.offsets))
+	topOffset := selStmt.QueryBlockOffset
+	for offset := range extractor.offsets {
+		if offset == topOffset {
+			continue
+		}
+		qbName, err := hint.GenerateQBName(hint.TypeSelect, offset)
+		if err != nil {
+			continue
+		}
+		qbNames = append(qbNames, qbName)
+	}
+	sort.Slice(qbNames, func(i, j int) bool {
+		return qbNames[i].L < qbNames[j].L
+	})
+	return qbNames
+}
+
 type predicateColumnExtractor struct {
 	table         *tableName
 	columns       map[string]struct{}
 	allowAnyTable bool
 }
 
-func (e *predicateColumnExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+func (e *predicateColumnExtractor) Enter(in ast.Node) (skipChildren bool) {
 	switch n := in.(type) {
 	case *ast.SubqueryExpr:
 		// Only consider predicates in the current SELECT, skip inner queries to avoid mixing scopes.
-		return in, true
+		return true
 	case *ast.ColumnNameExpr:
 		if n.Name == nil {
-			return in, false
+			return false
 		}
 		if !e.allowAnyTable {
 			if n.Name.Table.L == "" {
-				return in, false
+				return false
 			}
 			if !matchesColumnTable(e.table, n.Name) {
-				return in, false
+				return false
 			}
 		} else if n.Name.Schema.L != "" && n.Name.Schema.L != e.table.schema {
-			return in, false
+			return false
 		}
 		e.columns[n.Name.Name.L] = struct{}{}
 	}
-	return in, false
+	return false
 }
 
-func (*predicateColumnExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
-	return in, true
+func (*predicateColumnExtractor) Leave(ast.Node) bool {
+	return true
 }
 
 func matchesColumnTable(target *tableName, name *ast.ColumnName) bool {
@@ -767,7 +906,7 @@ func collectJoinPredicates(node ast.ResultSetNode, extractor *predicateColumnExt
 	switch n := node.(type) {
 	case *ast.Join:
 		if n.On != nil && n.On.Expr != nil {
-			n.On.Expr.Accept(extractor)
+			ast.Walk(n.On.Expr, extractor)
 		}
 		collectJoinPredicates(n.Left, extractor)
 		collectJoinPredicates(n.Right, extractor)
@@ -798,7 +937,7 @@ func extractSelectIndexHints(sctx sessionctx.Context, defaultSchema string, node
 			allowAnyTable: allowAnyTable,
 		}
 		if selStmt.Where != nil {
-			selStmt.Where.Accept(extractor)
+			ast.Walk(selStmt.Where, extractor)
 		}
 		if selStmt.From != nil && selStmt.From.TableRefs != nil {
 			collectJoinPredicates(selStmt.From.TableRefs, extractor)

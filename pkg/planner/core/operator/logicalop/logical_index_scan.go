@@ -130,16 +130,24 @@ func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *exp
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiFlash := false
+	if is.Source != nil {
+		hasTiFlash = is.Source.HasTiFlash() && is.SCtx().GetSessionVars().IsMPPAllowed()
+	}
+	is.hasTiFlash = hasTiFlash
 	if len(is.IdxCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{HasTiFlash: is.hasTiFlash}
 	}
 	result := make([][]*expression.Column, 0, is.EqCondCount+1)
 	for i := 0; i <= is.EqCondCount; i++ {
 		result = append(result, make([]*expression.Column, len(is.IdxCols)-i))
 		copy(result[i], is.IdxCols[i:])
 	}
-	return result
+	return &base.PossiblePropertiesInfo{
+		Orders:     result,
+		HasTiFlash: is.hasTiFlash,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
@@ -161,8 +169,6 @@ func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ..
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
 

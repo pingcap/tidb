@@ -18,14 +18,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/profile"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestProfiles(t *testing.T) {
@@ -51,12 +55,28 @@ func TestProfiles(t *testing.T) {
 	defer func() {
 		profile.CPUProfileInterval = oldValue
 	}()
+	require.NoError(t, cpuprofile.StartCPUProfiler())
+	defer cpuprofile.StopCPUProfiler()
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("select * from performance_schema.tidb_profile_cpu")
-	tk.MustExec("select * from performance_schema.tidb_profile_memory")
-	tk.MustExec("select * from performance_schema.tidb_profile_allocs")
-	tk.MustExec("select * from performance_schema.tidb_profile_mutex")
-	tk.MustExec("select * from performance_schema.tidb_profile_block")
-	tk.MustExec("select * from performance_schema.tidb_profile_goroutines")
+	core, recorded := observer.New(zap.InfoLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+		Core:  core,
+		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+	})
+	defer restore()
+
+	profileTables := []string{
+		"tidb_profile_cpu",
+		"tidb_profile_memory",
+		"tidb_profile_allocs",
+		"tidb_profile_mutex",
+		"tidb_profile_block",
+		"tidb_profile_goroutines",
+	}
+	for _, tableName := range profileTables {
+		tk.MustQuery("select * from performance_schema." + tableName)
+		require.Len(t, recorded.FilterMessage("profiling request received").
+			FilterField(zap.String("table", "performance_schema."+tableName)).All(), 1)
+	}
 }

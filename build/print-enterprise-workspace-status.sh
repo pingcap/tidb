@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-TiDB_RELEASE_VERSION=$(git describe --tags --dirty --always)
+TiDB_RELEASE_VERSION=$(./build/compute-tidb-release-version.sh)
 TiDB_BUILD_UTCTIME=$(date -u '+%Y-%m-%d %H:%M:%S')
 TIDB_GIT_HASH=$(git rev-parse HEAD)
 TIDB_GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)

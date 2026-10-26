@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	disttestutil "github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -49,6 +49,9 @@ func init() {
 }
 
 func TestAddIndexIngestMemoryUsage(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("memory usage assertion is tied to the local ingest backend which is not used on NextGen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -58,10 +61,10 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
 
-	oldRunInTest := local.RunInTest
-	local.RunInTest = true
+	oldRunInTest := ingestctrl.RunInTest
+	ingestctrl.RunInTest = true
 	t.Cleanup(func() {
-		local.RunInTest = oldRunInTest
+		ingestctrl.RunInTest = oldRunInTest
 	})
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -81,7 +84,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx1(b);")
 	tk.MustExec("admin check table t;")
 	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
-	require.NoError(t, local.LastAlloc.Load().CheckRefCnt())
+	require.NoError(t, ingestctrl.LastAlloc.Load().CheckRefCnt())
 }
 
 func TestAddIndexIngestLimitOneBackend(t *testing.T) {
@@ -134,7 +137,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	blockOnce := atomic.Bool{}
 	testfailpoint.EnableCall(
 		t,
-		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
+		"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
 		func(ctx context.Context) {
 			if !blockOnce.CompareAndSwap(false, true) {
 				return
@@ -164,6 +167,7 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -195,6 +199,7 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	cases := []string{
 		"alter table t add index idx((cast(a as signed array)));",
 		"alter table t add unique index idx(pk, (cast(a as signed array)));",
@@ -247,6 +252,9 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 }
 
 func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test drives the local ingest importer concurrency which is not used on NextGen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -289,6 +297,7 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 func TestAddIndexIngestEmptyTable(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -311,6 +320,7 @@ func TestAddIndexIngestEmptyTable(t *testing.T) {
 func TestAddIndexIngestRestoredData(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -345,6 +355,7 @@ func TestAddIndexIngestRestoredData(t *testing.T) {
 func TestAddIndexIngestUniqueKey(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -373,6 +384,7 @@ func TestAddIndexIngestUniqueKey(t *testing.T) {
 func TestAddIndexSplitTableRanges(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -505,7 +517,7 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/wrapInBeginRollbackAfterFn", func() {
 		counter--
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/ReadyForImportEngine", func() {
 		assert.Equal(t, counter, 0)
 	})
 	tk.MustExec("alter table t add index idx_test2(b);")
@@ -547,7 +559,7 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "1*return")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/afterSetTSBeforeImportEngine", "1*return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/afterSetTSBeforeImportEngine", "1*return")
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 }
 
@@ -567,10 +579,10 @@ func TestAddIndexTempDirDataRemoved(t *testing.T) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (1), (1);")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/mockErrInMergeSSTs", "1*return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockErrInMergeSSTs", "1*return(true)")
 	removeOnce := sync.Once{}
 	removed := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/beforeMergeSSTs", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeMergeSSTs", func() {
 		removeOnce.Do(func() {
 			var filesToRemove []string
 			filepath.WalkDir(tempDir, func(path string, d fs.DirEntry, err error) error {
@@ -719,6 +731,40 @@ func TestAddIndexIngestFailures(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=off;`)
 }
 
+func TestAddIndexLocalSortDiskSpace(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=on;`)
+	t.Cleanup(func() {
+		tk.MustExec(`set global tidb_enable_dist_task=off;`)
+	})
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop index idx on t;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed", "1*return"))
+	tk.MustExec("alter table t add index idx2(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed"))
+	tk.MustExec("admin check table t;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient", "return"))
+	err := tk.ExecToErr("alter table t add index idx3(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient"))
+	require.ErrorContains(t, err, "Check ingest environment failed")
+	require.ErrorContains(t, err, "mock insufficient local sort disk space")
+}
+
 func TestAddIndexImportFailed(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("have overlapped ingest sst, skip")
@@ -738,10 +784,10 @@ func TestAddIndexImportFailed(t *testing.T) {
 		tk.MustExec(insertSQL)
 	}
 
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockWritePeerErr", "1*return")
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockWritePeerErr", "1*return")
 	require.NoError(t, err)
 	tk.MustExec("alter table t add index idx(a);")
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/mockWritePeerErr")
+	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockWritePeerErr")
 	require.NoError(t, err)
 	tk.MustExec("admin check table t;")
 }
@@ -768,6 +814,7 @@ func TestAddEmptyMultiValueIndex(t *testing.T) {
 func TestAddUniqueIndexDuplicatedError(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS `b1cce552` ")
 	tk.MustExec("CREATE TABLE `b1cce552` (\n  `f5d9aecb` timestamp DEFAULT '2031-12-22 06:44:52',\n  `d9337060` varchar(186) DEFAULT 'duplicatevalue',\n  `4c74082f` year(4) DEFAULT '1977',\n  `9215adc3` tinytext DEFAULT NULL,\n  `85ad5a07` decimal(5,0) NOT NULL DEFAULT '68649',\n  `8c60260f` varchar(130) NOT NULL DEFAULT 'drfwe301tuehhkmk0jl79mzekuq0byg',\n  `8069da7b` varchar(90) DEFAULT 'ra5rhqzgjal4o47ppr33xqjmumpiiillh7o5ajx7gohmuroan0u',\n  `91e218e1` tinytext DEFAULT NULL,\n  PRIMARY KEY (`8c60260f`,`85ad5a07`) /*T![clustered_index] CLUSTERED */,\n  KEY `d88975e1` (`8069da7b`)\n);")
@@ -803,9 +850,9 @@ func TestFirstLitSlowStart(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ownerResignAfterDispatchLoopCheck"))
 	})
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/slowCreateFS", "return()"))
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/slowCreateFS"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ingestor/ingestctrl/slowCreateFS"))
 	})
 
 	var wg sync.WaitGroup
@@ -824,6 +871,7 @@ func TestFirstLitSlowStart(t *testing.T) {
 func TestConcFastReorg(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -872,17 +920,17 @@ func TestIssue55808(t *testing.T) {
 		tk.MustExec("set global tidb_ddl_error_count_limit = default;")
 	}()
 
-	backup := local.MaxWriteAndIngestRetryTimes
-	local.MaxWriteAndIngestRetryTimes = 1
+	backup := ingestctrl.MaxWriteAndIngestRetryTimes
+	ingestctrl.MaxWriteAndIngestRetryTimes = 1
 	t.Cleanup(func() {
-		local.MaxWriteAndIngestRetryTimes = backup
+		ingestctrl.MaxWriteAndIngestRetryTimes = backup
 	})
 
 	tk.MustExec("create table t (a int primary key, b int);")
 	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/doIngestFailed", "return()")
 	err := tk.ExecToErr("alter table t add index idx(a);")
 	require.ErrorContains(t, err, "injected error")
 }

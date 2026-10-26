@@ -192,9 +192,10 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 			// try to optimize on the situation when not all arguments are const
 			// for most functions, if one of the arguments are NULL, the result can be a constant (NULL or something else)
 			//
-			// NullEQ and ConcatWS are excluded, because they could have different value when the non-constant value is
-			// 1 or NULL. For example, concat_ws(NULL, NULL) gives NULL, but concat_ws(1, NULL) gives ''
-			if !hasNullArg || !ctx.IsInNullRejectCheck() || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS {
+			// NullEQ, ConcatWS and Field are excluded, because they could have different value when the non-constant
+			// value is 1 or NULL. For example, concat_ws(NULL, NULL) gives NULL, but concat_ws(1, NULL) gives '';
+			// FIELD(0, 0.0, NULL) gives 1, but FIELD(1, 0.0, NULL) gives 0.
+			if !hasNullArg || !ctx.IsInNullRejectCheck() || x.FuncName.L == ast.NullEQ || x.FuncName.L == ast.ConcatWS || x.FuncName.L == ast.Field {
 				return expr, isDeferredConst
 			}
 			constArgs := make([]Expression, len(args))

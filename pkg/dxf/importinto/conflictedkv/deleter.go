@@ -21,9 +21,11 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
+	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/table"
@@ -57,6 +59,8 @@ type Deleter struct {
 	store    tidbkv.Storage
 	logger   *zap.Logger
 	snapshot *LazyRefreshedSnapshot
+	// trafficRec records best-effort TiKV traffic for metering.
+	trafficRec TrafficRecorder
 
 	// we delete keys in batch
 	bufferedKeys []tidbkv.Key
@@ -70,26 +74,29 @@ func NewDeleter(
 	store tidbkv.Storage,
 	kvGroup string,
 	encoder *importer.TableKVEncoder,
+	progressCollector execute.Collector,
+	trafficRec TrafficRecorder,
 ) *Deleter {
 	deleter := &Deleter{
-		keysCh:   make(chan []tidbkv.Key),
-		store:    store,
-		logger:   logger,
-		snapshot: NewLazyRefreshedSnapshot(store),
+		keysCh:     make(chan []tidbkv.Key),
+		store:      store,
+		logger:     logger,
+		snapshot:   NewLazyRefreshedSnapshot(store, trafficRec),
+		trafficRec: trafficRec,
 	}
-	base := NewBaseHandler(targetTbl, kvGroup, encoder, deleter, logger)
+	base := NewBaseHandler(targetTbl, kvGroup, store.GetCodec(), encoder, deleter, progressCollector, logger)
 	var h Handler
-	if kvGroup == external.DataKVGroup {
+	if kvGroup == globalsort.DataKVGroup {
 		h = NewDataKVHandler(base)
 	} else {
-		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store), nil)
+		h = NewIndexKVHandler(base, NewLazyRefreshedSnapshot(store, trafficRec), nil)
 	}
 	deleter.handler = h
 	return deleter
 }
 
 // Run starts the deleter.
-func (d *Deleter) Run(ctx context.Context, ch chan *external.KVPair) error {
+func (d *Deleter) Run(ctx context.Context, ch chan *simplesst.KVPair) error {
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	eg.Go(func() error {
@@ -135,20 +142,31 @@ func (d *Deleter) deleteKeysWithRetry(ctx context.Context, keys []tidbkv.Key) er
 	return dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, d.logger, func(ctx context.Context) (bool, error) {
 		err := d.deleteBufferedKeys(ctx, keys)
 		if err != nil {
-			return common.IsRetryableError(err), err
+			// KVs of one row should be handled by a single deleter, but for
+			// defensive programming without hurting readability, we still retry
+			// for errors like WRITE CONFLICT, no harm anyway.
+			return tidbkv.IsTxnRetryableError(err) || common.IsRetryableError(err), err
 		}
 		return true, nil
 	})
 }
 
-func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) error {
+func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) (resErr error) {
+	if d.trafficRec != nil {
+		var writeBytes uint64
+		for _, k := range keys {
+			writeBytes += uint64(len(k))
+		}
+		d.trafficRec.IncClusterWriteBytes(writeBytes)
+	}
+
 	txn, err := d.store.Begin()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		if err == nil {
-			err = txn.Commit(ctx)
+		if resErr == nil {
+			resErr = txn.Commit(ctx)
 		} else {
 			if rollbackErr := txn.Rollback(); rollbackErr != nil {
 				d.logger.Warn("failed to rollback transaction", zap.Error(rollbackErr))
@@ -165,7 +183,7 @@ func (d *Deleter) deleteBufferedKeys(ctx context.Context, keys []tidbkv.Key) err
 }
 
 // HandleEncodedRow implements the EncodedRowHandler interface.
-func (d *Deleter) HandleEncodedRow(ctx context.Context, _ tidbkv.Handle, _ []types.Datum, kvPairs *kv.Pairs) error {
+func (d *Deleter) HandleEncodedRow(ctx context.Context, _ tidbkv.Key, _ []types.Datum, kvPairs *kv.Pairs) error {
 	return d.gatherAndDeleteKeysWithRetry(ctx, kvPairs.Pairs)
 }
 
@@ -191,15 +209,16 @@ func (d *Deleter) gatherAndDeleteKeysWithRetry(ctx context.Context, pairs []comm
 // 'insert SQL' will also generate this mount of data, so we shouldn't meet the
 // 'transaction too large' issue in normal case.
 // as all duplicate KVs are either removed or recorded during importing, and we
-// only delete existing KVs, so there will be no overlap in the KVs to be deleted
-// for any 2 conflict KVs in a single KV group, it's safe to resolve a single KV
-// group in multiple routines, and we can use a relatively stale snapshot to check
-// existence of the KVs to be deleted to avoid the overhead to refresh the TS
-// every time.
+// only delete existing KVs, so:
+//   - for data kv group and normal UK: there will be no overlap in the KVs to be deleted
+//     for any 2 conflict KVs in a single KV group, it's safe to resolve a single KV
+//     group in multiple routines, and we can use a relatively stale snapshot to check
+//     existence of the KVs to be deleted to avoid the overhead to refresh the TS
+//     every time.
+//   - for unique MV index: 2 UK might point to the same row, so the caller dispatches
+//     them to the same deleter to avoid write conflicts. Using a relatively stale
+//     snapshot is ok too.
 func (d *Deleter) gatherKeysToDelete(ctx context.Context, pairs []common.KvPair) (err error) {
-	if err = d.snapshot.refreshAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 	allKeys := make([]tidbkv.Key, 0, len(pairs))
 	for _, p := range pairs {
 		allKeys = append(allKeys, p.Key)
