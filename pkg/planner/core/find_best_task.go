@@ -891,8 +891,9 @@ func isFullIndexMatch(candidate *candidatePath) bool {
 // hasV0NewCollationStringHandle reports whether ds has CommonHandleVersion == 0
 // with new collation enabled and at least one non-binary string column in the
 // handle. In this combination the handle bytes stored in the index are collation
-// sortKey weights, not original values, so collation-aware comparison on those
-// bytes during merge-sort would be incorrect.
+// sortKey weights, not original values, so they cannot be used as scan ranges,
+// and collation-aware comparison on those bytes during merge-sort would be
+// incorrect.
 func hasV0NewCollationStringHandle(ds *logicalop.DataSource) bool {
 	if ds.TableInfo.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
 		return false
@@ -2767,7 +2768,9 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 //	PhysicalIndexScan.IdxCols       []*expression.Column
 //	PhysicalIndexScan.Columns       []*model.ColumnInfo
 func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoubleRead bool) {
-	indexCols := make([]*expression.Column, len(is.IdxCols), len(is.Index.Columns)+1)
+	// IdxCols may exceed the declared index columns when handle columns were appended
+	// (one for an int handle, possibly several for a common handle).
+	indexCols := make([]*expression.Column, len(is.IdxCols), max(len(is.IdxCols), len(is.Index.Columns))+1)
 	copy(indexCols, is.IdxCols)
 
 	for i := len(is.IdxCols); i < len(is.Index.Columns); i++ {
@@ -2784,7 +2787,13 @@ func (is *PhysicalIndexScan) initSchema(idxExprCols []*expression.Column, isDoub
 	}
 	is.NeedCommonHandle = is.Table.IsCommonHandle
 
-	if is.NeedCommonHandle {
+	// fillIndexPath may have appended the full common-handle suffix to IdxCols for
+	// non-unique indexes, in which case indexCols already ends with the handle columns
+	// and appending idxExprCols' handle segment would duplicate them. Otherwise append
+	// the segment verbatim — it must stay complete even when a handle column repeats a
+	// declared index column, because the executor addresses the handle at the offsets
+	// right after the declared index columns (see buildIndexScanOutputOffsets).
+	if is.NeedCommonHandle && len(is.IdxCols) <= len(is.Index.Columns) {
 		for i := len(is.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
 		}
