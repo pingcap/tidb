@@ -29,6 +29,7 @@ go_library(
         "memtable_predicate_extractor.go",
         "optimizer.go",
         "pb_to_plan.go",
+        "pk_filter_bound.go",
         "plan.go",
         "plan_cache.go",
         "plan_cache_instance.go",

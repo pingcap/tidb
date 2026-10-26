@@ -21,11 +21,14 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // GeneratePKFilterOptimizer generates PK range filter conditions from secondary
@@ -42,7 +45,29 @@ type GeneratePKFilterOptimizer struct{}
 
 // Optimize implements the base.LogicalOptRule interface.
 func (*GeneratePKFilterOptimizer) Optimize(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
-	return generatePKFilterWalk(ctx, p)
+	if !pkFilterStmtQualifies(p.SCtx()) {
+		return p, false, nil
+	}
+	return generatePKFilterWalk(ctx, p, false)
+}
+
+// pkFilterStmtQualifies reports whether PK bounds computed by a separate
+// snapshot read are guaranteed to cover every row the statement reads.
+//
+// The MIN/MAX probes are ordinary snapshot reads. DML in a pessimistic
+// transaction reads at for_update_ts, and pessimistic READ-COMMITTED may
+// retry a statement with a newer read timestamp without re-planning it. In
+// both cases rows committed after the probe could fall outside the bounds and
+// be silently missed, so the rule only applies to plain SELECT statements
+// outside pessimistic READ-COMMITTED. Locking reads are excluded during the
+// walk.
+func pkFilterStmtQualifies(sctx base.PlanContext) bool {
+	vars := sctx.GetSessionVars()
+	sc := vars.StmtCtx
+	if !sc.InSelectStmt || sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
+		return false
+	}
+	return !vars.IsPessimisticReadConsistency()
 }
 
 // Name implements the base.LogicalOptRule interface.
@@ -52,10 +77,15 @@ func (*GeneratePKFilterOptimizer) Name() string {
 
 // generatePKFilterWalk walks the plan tree top-down and applies the PK filter
 // optimization to qualifying DataSources.
-func generatePKFilterWalk(ctx context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+func generatePKFilterWalk(ctx context.Context, p base.LogicalPlan, underLock bool) (base.LogicalPlan, bool, error) {
 	planChanged := false
+	if _, ok := p.(*logicalop.LogicalLock); ok {
+		// SELECT ... FOR UPDATE/SHARE reads the latest committed rows, which
+		// a snapshot MIN/MAX probe may not see.
+		underLock = true
+	}
 	for i, child := range p.Children() {
-		newChild, changed, err := generatePKFilterWalk(ctx, child)
+		newChild, changed, err := generatePKFilterWalk(ctx, child, underLock)
 		if err != nil {
 			return nil, false, err
 		}
@@ -66,7 +96,7 @@ func generatePKFilterWalk(ctx context.Context, p base.LogicalPlan) (base.Logical
 	}
 
 	ds, ok := p.(*logicalop.DataSource)
-	if !ok {
+	if !ok || underLock {
 		return p, planChanged, nil
 	}
 
@@ -137,14 +167,26 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		return ds, false, nil
 	}
 
+	// An explicit pk_filter hint always probes. Otherwise use statistics to
+	// skip probes that cannot pay for themselves and bounds that do not
+	// narrow the scan.
+	var gateColl *statistics.HistColl
+	if !hintMode {
+		gateColl = pkFilterGateHistColl(ds)
+	}
+
 	// Generate PK filter conditions and track source indexes.
 	var pkFilterConds []util.PKFilterCondInfo
+	var probes []*pkFilterProbe
 	for _, idxPath := range qualifyingIndexes {
 		eqConds := checkIndexQualifiesForPKFilter(ds, idxPath)
 		if eqConds == nil {
 			continue
 		}
-		conds, err := buildPKFilterConditions(ctx, ds, idxPath, pkCol)
+		if gateColl != nil && estimatePKFilterRows(ds, gateColl, eqConds) < pkFilterMinIndexRows {
+			continue
+		}
+		conds, probe, err := buildPKFilterConditions(ctx, ds, idxPath, pkCol)
 		if err != nil {
 			return nil, false, err
 		}
@@ -152,6 +194,10 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 			// Subquery returned no rows (NULL) — skip this index.
 			continue
 		}
+		if gateColl != nil && estimatePKFilterRows(ds, gateColl, conds) >= pkFilterMaxCoverage*float64(gateColl.RealtimeCount) {
+			continue
+		}
+		probes = append(probes, probe)
 		for _, c := range conds {
 			pkFilterConds = append(pkFilterConds, util.PKFilterCondInfo{
 				Cond:          c,
@@ -174,10 +220,17 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 		ds.Columns = append(ds.Columns, findOrCreateColumnInfo(ds, pkCol))
 	}
 
-	// The PK filter conditions contain eagerly-evaluated constants from
-	// MIN/MAX subqueries. These constants are specific to the current
-	// parameter values and must not be reused via plan cache.
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("PK filter conditions contain eagerly-evaluated MIN/MAX constants")
+	// The bounds are deferred constants that re-run their probes when a cached
+	// plan is reused. Probes are bound to this session, so plans using them
+	// cannot go to the instance plan cache.
+	sc := ds.SCtx().GetSessionVars().StmtCtx
+	if instancePlanCacheEnabled(ctx) {
+		sc.SetSkipPlanCache("PK filter bounds are evaluated by session-bound MIN/MAX probes")
+	} else {
+		for _, probe := range probes {
+			sc.PlanCacheReuseHooks = append(sc.PlanCacheReuseHooks, probe.bindForReuse)
+		}
+	}
 
 	// Store the PK filter conditions separately from PushedDownConds.
 	// They will be injected into table path stats derivation later.
@@ -351,79 +404,80 @@ func findOrCreateColumnInfo(ds *logicalop.DataSource, pkCol *expression.Column) 
 }
 
 // buildPKFilterConditions creates `pk_col >= MIN(pk_col)` and `pk_col <= MAX(pk_col)`
-// conditions by eagerly evaluating MIN/MAX subqueries during optimization.
-// Returns concrete constant conditions (e.g. `pk >= 5 AND pk <= 999995`) that
-// the ranger can use as access conditions. Returns nil if the subquery yields
-// no rows (the equality conditions match nothing in the index).
-func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column) ([]expression.Expression, error) {
+// conditions from MIN/MAX probe sub-plans over the given index. The probes are
+// evaluated now so the ranger and the cost model see concrete bounds, and the
+// bounds stay deferred so a cached plan re-evaluates them for new parameters.
+// Returns nil conditions if no row satisfies the probe conditions.
+func buildPKFilterConditions(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column) ([]expression.Expression, *pkFilterProbe, error) {
 	sctx := ds.SCtx()
 	evalCtx := sctx.GetExprCtx()
 
-	// Evaluate MIN eagerly
-	minConst, err := buildAndEvalMinMax(ctx, ds, idxPath, pkCol, ast.AggFuncMin)
+	minPlan, retType, err := buildMinMaxProbePlan(ctx, ds, idxPath, pkCol, ast.AggFuncMin)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if minConst == nil {
-		return nil, nil // no rows match the equality conditions
-	}
-
-	// Evaluate MAX eagerly
-	maxConst, err := buildAndEvalMinMax(ctx, ds, idxPath, pkCol, ast.AggFuncMax)
+	maxPlan, _, err := buildMinMaxProbePlan(ctx, ds, idxPath, pkCol, ast.AggFuncMax)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if maxConst == nil {
-		return nil, nil
+	probe := &pkFilterProbe{
+		sctx:    sctx,
+		is:      ds.IS,
+		ctx:     ctx,
+		minPlan: minPlan,
+		maxPlan: maxPlan,
+		idxName: idxPath.Index.Name.O,
 	}
-
-	var result []expression.Expression
+	minVal, maxVal, err := probe.bounds()
+	if err != nil {
+		return nil, nil, err
+	}
+	if minVal.IsNull() || maxVal.IsNull() {
+		return nil, nil, nil // no rows match the probe conditions
+	}
 
 	// pk >= MIN(pk) from index
-	geFunc, err := expression.NewFunction(evalCtx, ast.GE, pkCol.GetType(evalCtx.GetEvalCtx()), pkCol.Clone(), minConst)
+	geFunc, err := expression.NewFunction(evalCtx, ast.GE, pkCol.GetType(evalCtx.GetEvalCtx()), pkCol.Clone(),
+		newPKFilterBoundConstant(sctx, probe, false, minVal, retType))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	result = append(result, geFunc)
-
 	// pk <= MAX(pk) from index
-	leFunc, err := expression.NewFunction(evalCtx, ast.LE, pkCol.GetType(evalCtx.GetEvalCtx()), pkCol.Clone(), maxConst)
+	leFunc, err := expression.NewFunction(evalCtx, ast.LE, pkCol.GetType(evalCtx.GetEvalCtx()), pkCol.Clone(),
+		newPKFilterBoundConstant(sctx, probe, true, maxVal, retType))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	result = append(result, leFunc)
-
-	return result, nil
+	return []expression.Expression{geFunc, leFunc}, probe, nil
 }
 
-// buildAndEvalMinMax builds a MIN or MAX sub-plan, optimizes it, evaluates it
-// eagerly, and returns the result as an expression.Constant. Returns nil if the
-// subquery produces no rows (e.g. no data matches the equality conditions).
-func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, aggFuncName string) (*expression.Constant, error) {
+// buildMinMaxProbePlan builds and optimizes a MIN or MAX sub-plan over the
+// given index, returning the physical plan and the aggregate's result type.
+func buildMinMaxProbePlan(ctx context.Context, ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, aggFuncName string) (base.PhysicalPlan, *types.FieldType, error) {
 	sctx := ds.SCtx()
 
-	// Clone the DataSource with all PushedDownConds
+	// Clone the DataSource with the probe conditions
 	// (needed by stats/ranger for access condition computation).
-	clonedDS := cloneDataSourceForPKFilter(ds, idxPath, pkCol)
+	probeConds := pkFilterProbeConds(ds.PushedDownConds)
+	clonedDS := cloneDataSourceForPKFilter(ds, idxPath, pkCol, probeConds)
 
-	// Also create a LogicalSelection carrying ALL the original conditions.
+	// Also create a LogicalSelection carrying the probe conditions.
 	// MaxMinEliminate's checkColCanUseIndex traverses LogicalSelection nodes
 	// to collect conditions — it does NOT look at DataSource.PushedDownConds.
 	// Without a Selection, MaxMinEliminate can't verify the index can provide
 	// ordering after the equality prefix, resulting in IndexFullScan instead
 	// of IndexRangeScan. Including all conditions (not just index eq conditions)
 	// lets the optimizer use the PK prefix and other filters to narrow the scan.
-	allConds := ds.PushedDownConds
 	sel := logicalop.LogicalSelection{
-		Conditions: make([]expression.Expression, len(allConds)),
+		Conditions: make([]expression.Expression, len(probeConds)),
 	}.Init(sctx, ds.QueryBlockOffset())
-	copy(sel.Conditions, allConds)
+	copy(sel.Conditions, probeConds)
 	sel.SetChildren(clonedDS)
 
 	// Build the aggregation function
 	aggFunc, err := aggregation.NewAggFuncDesc(sctx.GetExprCtx(), aggFuncName, []expression.Expression{pkCol.Clone()}, false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Build LogicalAggregation
@@ -442,7 +496,7 @@ func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *
 	// Prune columns on the sub-plan
 	_, err = agg.PruneColumns([]*expression.Column{aggCol})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Optimize the sub-plan to get a physical plan
@@ -468,35 +522,68 @@ func buildAndEvalMinMax(ctx context.Context, ds *logicalop.DataSource, idxPath *
 	sctx.GetSessionVars().AllowGeneratePKFilter = oldPKFilter
 	sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-
-	// Evaluate the sub-plan eagerly to get the concrete MIN/MAX value.
-	// This follows the same pattern as expression_rewriter.go for evaluating
-	// non-correlated scalar subqueries during the optimization phase.
-	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, ds.IS, sctx)
-	if err != nil {
-		return nil, err
-	}
-	if len(row) == 0 || row[0].IsNull() {
-		return nil, nil // no matching rows
-	}
-
-	// Create a constant expression from the result datum
-	result := &expression.Constant{
-		Value:   row[0],
-		RetType: aggFunc.RetTp,
-	}
-	return result, nil
+	return physicalPlan, aggFunc.RetTp, nil
 }
 
-// cloneDataSourceForPKFilter creates a clone of the DataSource with all the
-// original PushedDownConds and a specific index path. It ensures the PK column
-// is present in the schema (it may have been pruned from the original
-// DataSource if the query doesn't reference it). Including all conditions
-// (not just index equality conditions) lets the subquery optimizer use
-// additional filters like PK prefix conditions to narrow the MIN/MAX scan.
-func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column) *logicalop.DataSource {
+// pkFilterProbeConds returns the conditions the MIN/MAX probes may use. Every
+// row the main query returns satisfies all of its conditions, so bounds
+// computed over any subset of them still cover the result. Non-deterministic
+// and correlated conditions are dropped: the former could make the probe see
+// a different set of rows than the scan, and the latter cannot be evaluated
+// outside the outer query.
+func pkFilterProbeConds(conds []expression.Expression) []expression.Expression {
+	result := make([]expression.Expression, 0, len(conds))
+	for _, cond := range conds {
+		if expression.IsMutableEffectsExpr(cond) || len(expression.ExtractCorColumns(cond)) > 0 {
+			continue
+		}
+		result = append(result, cond)
+	}
+	return result
+}
+
+const (
+	// pkFilterMinIndexRows is the estimated number of rows matching a
+	// qualifying index below which the index is not probed when the rule runs
+	// without a hint. For so few rows an IndexLookUp on that index costs about
+	// as much as the two probe reads, so the probes cannot pay for
+	// themselves. It is a heuristic, not a cost-model result.
+	pkFilterMinIndexRows = 1000
+	// pkFilterMaxCoverage is the estimated fraction of the table within the
+	// PK bounds at or above which the bounds are dropped: they hardly narrow
+	// a scan, but still cost filter evaluation and probe re-runs on plan-cache
+	// reuse.
+	pkFilterMaxCoverage = 0.9
+)
+
+// pkFilterGateHistColl returns the statistics used to gate PK filter
+// generation, or nil when the table has no real statistics to gate on.
+func pkFilterGateHistColl(ds *logicalop.DataSource) *statistics.HistColl {
+	if ds.StatisticTable == nil || ds.StatisticTable.Pseudo || ds.StatisticTable.RealtimeCount <= 0 {
+		return nil
+	}
+	return ds.StatisticTable.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.TblCols)
+}
+
+// estimatePKFilterRows estimates how many rows of the table satisfy conds.
+func estimatePKFilterRows(ds *logicalop.DataSource, coll *statistics.HistColl, conds []expression.Expression) float64 {
+	sel, err := cardinality.Selectivity(ds.SCtx(), coll, conds, nil)
+	if err != nil {
+		// Without an estimate, don't let the gate reject anything.
+		return float64(pkFilterMinIndexRows)
+	}
+	return sel * float64(coll.RealtimeCount)
+}
+
+// cloneDataSourceForPKFilter creates a clone of the DataSource with the probe
+// conditions and a specific index path. It ensures the PK column is present
+// in the schema (it may have been pruned from the original DataSource if the
+// query doesn't reference it). Including all probe conditions (not just index
+// equality conditions) lets the subquery optimizer use additional filters
+// like PK prefix conditions to narrow the MIN/MAX scan.
+func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPath, pkCol *expression.Column, probeConds []expression.Expression) *logicalop.DataSource {
 	newDs := *ds
 	newDs.BaseLogicalPlan = logicalop.NewBaseLogicalPlan(ds.SCtx(), ds.TP(), &newDs, ds.QueryBlockOffset())
 	schema := ds.Schema().Clone()
@@ -510,16 +597,16 @@ func cloneDataSourceForPKFilter(ds *logicalop.DataSource, idxPath *util.AccessPa
 	}
 	newDs.SetSchema(schema)
 
-	// Include ALL PushedDownConds from the original DataSource, not just the
-	// index equality conditions. This ensures the subquery benefits from all
-	// available filters (e.g. a1='abc' AND c=5 instead of just c=5), making
-	// the MIN/MAX scan much cheaper when there are additional selective
-	// conditions beyond the qualifying index columns.
-	newConds := make([]expression.Expression, len(ds.PushedDownConds))
-	copy(newConds, ds.PushedDownConds)
+	// Include all probe conditions, not just the index equality conditions.
+	// This ensures the subquery benefits from all available filters (e.g.
+	// a1='abc' AND c=5 instead of just c=5), making the MIN/MAX scan much
+	// cheaper when there are additional selective conditions beyond the
+	// qualifying index columns.
+	newConds := make([]expression.Expression, len(probeConds))
+	copy(newConds, probeConds)
 	newDs.PushedDownConds = newConds
-	newDs.AllConds = make([]expression.Expression, len(ds.PushedDownConds))
-	copy(newDs.AllConds, ds.PushedDownConds)
+	newDs.AllConds = make([]expression.Expression, len(probeConds))
+	copy(newDs.AllConds, probeConds)
 
 	// Keep the table path and the relevant index path
 	newPaths := make([]*util.AccessPath, 0, 2)

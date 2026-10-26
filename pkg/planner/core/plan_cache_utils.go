@@ -528,6 +528,9 @@ type PlanCacheValue struct {
 	OutputColumns    types.NameSlice    // output column names of this plan
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
+	// reuseHooks prepare session-bound parts of Plan, such as PK filter
+	// probes, for a new execution. Only plans in the session cache have them.
+	reuseHooks []func(ctx context.Context)
 
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
@@ -668,6 +671,7 @@ func NewPlanCacheValue(
 		OutputColumns: names,
 		ParamTypes:    userParamTypes,
 		StmtHints:     stmtHints.Clone(),
+		reuseHooks:    sctx.GetSessionVars().StmtCtx.PlanCacheReuseHooks,
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv

@@ -223,12 +223,15 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 
 	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
-		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
+		plan, outputCols, stmtHints, reuseHooks, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
 		if hit && instancePlanCacheEnabled(ctx) {
 			plan, hit = clonePlanForInstancePlanCache(ctx, sctx, stmt, plan)
 		}
 		if hit {
+			for _, hook := range reuseHooks {
+				hook(ctx)
+			}
 			if plan, ok, err := adjustCachedPlan(ctx, sctx, plan, stmtHints, isNonPrepared, skipPrivCheck, binding, is, stmt); err != nil || ok {
 				return plan, outputCols, err
 			}
@@ -274,7 +277,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 }
 
 func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey string,
-	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, hit bool) {
+	paramTypes []*types.FieldType) (plan base.Plan, outputCols types.NameSlice, stmtHints *hint.StmtHints, reuseHooks []func(context.Context), hit bool) {
 	useInstanceCache := instancePlanCacheEnabled(ctx)
 	defer func(begin time.Time) {
 		if hit {
@@ -288,11 +291,11 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		v, hit = sctx.GetSessionPlanCache().Get(cacheKey, paramTypes)
 	}
 	if !hit {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
 	sctx.GetSessionVars().PlanCacheValue = pcv
-	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
+	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, pcv.reuseHooks, true
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
@@ -352,7 +355,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		if instancePlanCacheEnabled(ctx) {
-			if cloned, ok := p.CloneForPlanCache(sctx.GetPlanCtx()); ok {
+			// Plans with reuse hooks hold session-bound state and can't be shared.
+			if cloned, ok := p.CloneForPlanCache(sctx.GetPlanCtx()); ok && len(cached.reuseHooks) == 0 {
 				// Clone this plan before putting it into the cache to avoid read-write DATA RACE. For example,
 				// before this session finishes the execution, the next session has started cloning this plan.
 				// Time:  | ------------------------------------------------------------------------------- |

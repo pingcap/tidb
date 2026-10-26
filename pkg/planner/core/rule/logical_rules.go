@@ -37,8 +37,8 @@ const (
 	FlagDeriveTopNFromWindow
 	FlagPredicateSimplification
 	FlagPushDownTopN
-	FlagGeneratePKFilter
 	FlagSyncWaitStatsLoadPoint
+	FlagGeneratePKFilter
 	FlagJoinReOrder
 	FlagOuterJoinToSemiJoin
 	FlagPruneColumnsAgain

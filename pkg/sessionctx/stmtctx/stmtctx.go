@@ -368,7 +368,11 @@ type StatementContext struct {
 	LockTableIDs      map[int64]struct{} // table IDs need to be locked, empty for lock all tables
 	TblInfo2UnionScan map[*model.TableInfo]bool
 	TaskID            uint64 // unique ID for an execution of a statement
-	TaskMapBakTS      uint64 // counter for
+	// PlanCacheReuseHooks are carried by a plan this statement puts into the
+	// session plan cache. Each is called with the executing statement's
+	// context when that cached plan is reused, before its ranges are rebuilt.
+	PlanCacheReuseHooks []func(ctx context.Context)
+	TaskMapBakTS        uint64 // counter for
 
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access

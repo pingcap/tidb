@@ -102,8 +102,8 @@ var optRuleList = []base.LogicalOptRule{
 	&DeriveTopNFromWindow{},
 	&rule.PredicateSimplification{},
 	&PushDownTopNOptimizer{},
-	&GeneratePKFilterOptimizer{},
 	&rule.SyncWaitStatsLoadPoint{},
+	&GeneratePKFilterOptimizer{},
 	&JoinReOrderSolver{},
 	&rule.OuterJoinToSemiJoin{},
 	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
