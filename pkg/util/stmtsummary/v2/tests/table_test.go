@@ -321,7 +321,11 @@ func TestStmtSummaryRUVersion(t *testing.T) {
 					_, digest := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
 					// Read the finalized total before the assertion query replaces LastQueryInfo.
 					totalRUV2 := tk.Session().GetSessionVars().LastQueryInfo.RUV2Consumption
-					require.Positive(t, totalRUV2)
+					if kerneltype.IsNextGen() {
+						require.Positive(t, totalRUV2)
+					} else {
+						require.Zero(t, totalRUV2)
+					}
 					wantRead, wantWrite := ruDetails.RRU(), ruDetails.WRU()
 					require.GreaterOrEqual(t, wantRead, float64(11))
 					require.GreaterOrEqual(t, wantWrite, float64(7))
