@@ -84,8 +84,8 @@ load("@io_bazel_rules_go//go:deps.bzl", "go_download_sdk", "go_register_toolchai
 load("//:DEPS.bzl", "go_deps")
 
 # gazelle:repository_macro DEPS.bzl%go_deps
-# Declare the selected x/tools before go_rules_dependencies(), whose
-# fallback is v0.30.0. Existing repository declarations take precedence.
+# Declare module dependencies before go_rules_dependencies() so the selected
+# x/tools version takes precedence over rules_go's fallback.
 go_deps()
 
 go_rules_dependencies()
