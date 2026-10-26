@@ -60,7 +60,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 36,
+=======
+    shard_count = 38,
+>>>>>>> d8230e29265 (build: prepare Bazel tooling for Go 1.27 (#72082) (#72406))
     deps = [
         "//pkg/config",
         "//pkg/domain",
