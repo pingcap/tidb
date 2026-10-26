@@ -301,6 +301,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 }
 
 func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, base.LogicalPlan, error) {
+	rewriter.isFilter = !asScalar
 	planCtx := rewriter.planCtx
 	// sourceTable is only used to build simple expression with one table
 	// when planCtx is present, sourceTable should be nil.
@@ -387,6 +388,9 @@ type expressionRewriter struct {
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
 	asScalar bool
+	// isFilter records whether the root expression is consumed as a filter.
+	// Unlike asScalar, it stays unchanged during AST traversal.
+	isFilter bool
 	// allowBuildCastArray indicates whether allow cast(... as ... array).
 	allowBuildCastArray bool
 	// sourceTable is only used to build simple expression without all columns from a single table
@@ -401,6 +405,8 @@ type expressionRewriter struct {
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
 	tryFoldCounter     int
+
+	astNodeStack []ast.Node
 
 	planCtx *exprRewriterPlanCtx
 }
@@ -555,6 +561,7 @@ func (er *expressionRewriter) requirePlanCtx(inNode ast.Node, detail string) (ct
 
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
+	er.astNodeStack = append(er.astNodeStack, inNode)
 	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
 		planCtx, err := er.requirePlanCtx(inNode, "")
 		if err != nil {
@@ -712,6 +719,34 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 		er.asScalar = true
 	}
 	return inNode, false
+}
+
+// canTreatInSubqueryAsExistsForFilter reports whether the IN subquery is in a WHERE/HAVING boolean chain
+// composed only of AND/OR and parentheses, so it can be treated like EXISTS for filter context.
+func (er *expressionRewriter) canTreatInSubqueryAsExistsForFilter(planCtx *exprRewriterPlanCtx) bool {
+	// curClause may still refer to a preceding WHERE when rewriting scalar roots,
+	// such as aggregate arguments, whose parents are absent from astNodeStack.
+	if !er.isFilter || planCtx == nil {
+		return false
+	}
+	if planCtx.curClause != whereClause && planCtx.curClause != havingClause {
+		return false
+	}
+	if len(er.astNodeStack) == 0 {
+		return false
+	}
+	for i := len(er.astNodeStack) - 2; i >= 0; i-- {
+		switch n := er.astNodeStack[i].(type) {
+		case *ast.ParenthesesExpr:
+		case *ast.BinaryOperationExpr:
+			if n.Op != opcode.LogicAnd && n.Op != opcode.LogicOr {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (er *expressionRewriter) buildSemiApplyFromEqualSubq(np base.LogicalPlan, planCtx *exprRewriterPlanCtx, l, r expression.Expression, not, markNoDecorrelate bool) {
@@ -1231,12 +1266,13 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		return v, true
 	}
 	var rexpr expression.Expression
+	markInOperand := v.Not || (asScalar && !er.canTreatInSubqueryAsExistsForFilter(planCtx))
 	if np.Schema().Len() == 1 {
 		rexpr = np.Schema().Columns[0]
 		rCol := rexpr.(*expression.Column)
 		// For AntiSemiJoin/LeftOuterSemiJoin/AntiLeftOuterSemiJoin, we cannot treat `in` expression as
 		// normal column equal condition, so we specially mark the inner operand here.
-		if v.Not || asScalar {
+		if markInOperand {
 			// If both input columns of `in` expression are not null, we can treat the expression
 			// as normal column equal condition instead. Otherwise, mark the left and right side.
 			// eg: for some optimization, the column substitute in right side in projection elimination
@@ -1252,7 +1288,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	} else {
 		args := make([]expression.Expression, 0, np.Schema().Len())
 		for i, col := range np.Schema().Columns {
-			if v.Not || asScalar {
+			if markInOperand {
 				larg := expression.GetFuncArg(lexpr, i)
 				// If both input columns of `in` expression are not null, we can treat the expression
 				// as normal column equal condition instead. Otherwise, mark the left and right side.
@@ -1533,6 +1569,11 @@ func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
 
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
+	defer func() {
+		if len(er.astNodeStack) > 0 {
+			er.astNodeStack = er.astNodeStack[:len(er.astNodeStack)-1]
+		}
+	}()
 	if er.err != nil {
 		return retNode, false
 	}

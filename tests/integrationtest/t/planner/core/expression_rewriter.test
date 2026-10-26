@@ -298,3 +298,15 @@ select count(*)
 from v_or_case_collation_ppd
 where is_reimburse is not null or is_reimburse = 'Y';
 set names default;
+
+# TestInSubqueryJoinKeysInBooleanFilters
+drop table if exists t1, t;
+create table t1(a int default null);
+create table t(a int not null);
+# WHERE/HAVING boolean filters can extract equality join keys from IN subqueries.
+explain format='brief' select * from t1 where t1.a > 1 or t1.a in (select a from t);
+explain format='brief' select * from t1 where t1.a > 1 and t1.a in (select a from t);
+# Scalar IN expressions must preserve NULL semantics.
+explain format='brief' select t1.a in (select a from t) from t1;
+explain format='brief' select * from t1 where (t1.a in (select a from t)) = 1;
+explain format='brief' select t1.a from t1 group by t1.a having t1.a > 1 or t1.a in (select a from t);

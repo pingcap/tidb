@@ -44,6 +44,12 @@ import (
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) *logicalop.LogicalMemTable {
+	memTable, _ := getLogicalMemTableWithRemained(t, dom, se, parser, sql)
+	return memTable
+}
+
+func getLogicalMemTableWithRemained(t *testing.T, dom *domain.Domain, se sessiontypes.Session, parser *parser.Parser, sql string) (*logicalop.LogicalMemTable, []expression.Expression) {
+	se.GetSessionVars().PlanColumnID.Store(0)
 	stmt, err := parser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
@@ -58,12 +64,16 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 
 	// Obtain the leaf plan
 	leafPlan := logicalPlan
+	var remained []expression.Expression
 	for len(leafPlan.Children()) > 0 {
+		if selection, ok := leafPlan.(*logicalop.LogicalSelection); ok {
+			remained = append(remained, selection.Conditions...)
+		}
 		leafPlan = leafPlan.Children()[0]
 	}
 
 	logicalMemTable := leafPlan.(*logicalop.LogicalMemTable)
-	return logicalMemTable
+	return logicalMemTable, remained
 }
 
 func TestClusterConfigTableExtractor(t *testing.T) {
@@ -475,13 +485,13 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			startTime: timestamp(t, "2019-10-10 10:10:10"),
-			patterns:  []string{"^.*a.*$"},
+			patterns:  []string{"^(?s:.*)a(?s:.*)$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message like '%a%' and message regexp '^b'",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{"^.*a.*$", "^b"},
+			patterns:  []string{"^(?s:.*)a(?s:.*)$", "^b"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where message='gc'",
@@ -505,19 +515,54 @@ func TestClusterLogTableExtractor(t *testing.T) {
 			nodeTypes: set.NewStringSet("tidb", "pd"),
 			instances: set.NewStringSet("123.1.1.5:1234", "123.1.1.4:1234"),
 			level:     set.NewStringSet("debug", "info", "error"),
-			patterns:  []string{"^.*coprocessor.*$", ".*txn=123.*"},
+			patterns:  []string{"^(?s:.*)coprocessor(?s:.*)$", ".*txn=123.*"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (message regexp '.*pd.*' or message regexp '.*tidb.*' or message like '%tikv%')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
-			patterns:  []string{".*pd.*|.*tidb.*|^.*tikv.*$"},
+			patterns:  []string{".*pd.*|.*tidb.*|^(?s:.*)tikv(?s:.*)$"},
 		},
 		{
 			sql:       "select * from information_schema.cluster_log where (level = 'debug' or level = 'ERROR')",
 			nodeTypes: set.NewStringSet(),
 			instances: set.NewStringSet(),
 			level:     set.NewStringSet("debug", "error"),
+		},
+		{
+			// ILIKE is case-insensitive while the pattern is matched
+			// case-sensitively by the remote log search, so it is pushed down as a
+			// case-insensitive group -- an "ERROR" line still matches '%error%'.
+			// The predicate stays for a scalar recheck (see the executor test in
+			// TestClusterLogTableIlike), and a pattern is still produced so the
+			// retriever does not reject the scan as a full-log scan.
+			sql:       "select * from information_schema.cluster_log where message ilike '%error%'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^(?s:.*)error(?s:.*)$)"},
+		},
+		{
+			// Same for an ILIKE carrying a non-default ESCAPE ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message ilike '%error#%%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^(?s:.*)error%(?s:.*)$)"},
+		},
+		{
+			// In a DNF the scoped (?i:...) keeps the case-insensitive branch from
+			// leaking case folding onto the case-sensitive one across the '|'.
+			sql:       "select * from information_schema.cluster_log where (message ilike '%pd%' or message like '%tikv%')",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"(?i:^(?s:.*)pd(?s:.*)$)|^(?s:.*)tikv(?s:.*)$"},
+		},
+		{
+			// A case-sensitive LIKE still pushes down, honouring a custom ESCAPE
+			// so the pattern matches the predicate ('#%' is a literal '%').
+			sql:       "select * from information_schema.cluster_log where message like '%a#%b%' escape '#'",
+			nodeTypes: set.NewStringSet(),
+			instances: set.NewStringSet(),
+			patterns:  []string{"^(?s:.*)a%b(?s:.*)$"},
 		},
 	}
 	for _, ca := range cases {
@@ -1574,6 +1619,7 @@ func TestColumns(t *testing.T) {
 		tableSchemaPattern []string
 		tableNamePattern   []string
 		skipRequest        bool
+		remained           string
 	}{
 		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
@@ -1611,27 +1657,50 @@ func TestColumns(t *testing.T) {
 		{
 			sql:              `select * from information_schema.COLUMNS where table_name like 'T%';`,
 			tableNamePattern: []string{"t%"},
+			remained:         "[like(Column#3, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'T%';`,
 			columnNamePattern: []string{"t%"},
+			remained:          "[like(Column#4, T%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'i%';`,
 			columnNamePattern: []string{"i%"},
+			remained:          "[like(Column#4, i%, 92)]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' or column_name like "def%";`,
 			columnNamePattern: []string{},
+			remained:          "[or(like(Column#4, abc%, 92), like(Column#4, def%, 92))]",
 		},
 		{
 			sql:               `select * from information_schema.COLUMNS where column_name like 'abc%' and column_name like "%def";`,
 			columnNamePattern: []string{"abc%", "%def"},
+			remained:          "[like(Column#4, abc%, 92) like(Column#4, %def, 92)]",
+		},
+		{
+			sql:               `select * from information_schema.COLUMNS where column_name ilike 'T%';`,
+			columnNamePattern: []string{"t%"},
+			remained:          "[ilike(Column#4, T%, 92)]",
+		},
+		{
+			sql:      `select * from information_schema.COLUMNS where column_name ilike 'İ[%';`,
+			remained: "[ilike(Column#4, İ[%, 92)]",
+		},
+		{
+			sql:      `select * from information_schema.COLUMNS where column_name like 'İ[%';`,
+			remained: "[like(Column#4, İ[%, 92)]",
 		},
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained == "" {
+			require.Empty(t, remained, ca.sql)
+		} else {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		}
 		require.NotNil(t, logicalMemTable.Extractor)
 
 		columnsTableExtractor := logicalMemTable.Extractor.(*plannercore.InfoSchemaColumnsExtractor)
@@ -1759,6 +1828,7 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		prepared string
 		userVars []any
 		params   []any
+		filter   bool
 		checker  func(extractor base.MemTablePredicateExtractor)
 	}{
 		{
@@ -1798,9 +1868,20 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 			prepared: "select * from information_schema.COLUMNS where table_name like ?",
 			userVars: []any{`"a%"`},
 			params:   []any{"a%"},
+			filter:   true,
 			checker: func(extractor base.MemTablePredicateExtractor) {
 				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
 				require.EqualValues(t, []string{"a%"}, rse.LikePatterns["table_name"])
+			},
+		},
+		{
+			prepared: "select * from information_schema.COLUMNS where table_name ilike ?",
+			userVars: []any{`"É[%"`},
+			params:   []any{"É[%"},
+			filter:   true,
+			checker: func(extractor base.MemTablePredicateExtractor) {
+				rse := extractor.(*plannercore.InfoSchemaColumnsExtractor)
+				require.EqualValues(t, []string{"é[%"}, rse.LikePatterns["table_name"])
 			},
 		},
 		{
@@ -1839,7 +1920,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*plannercore.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 
@@ -1857,7 +1944,13 @@ func TestExtractorInPreparedStmt(t *testing.T) {
 		nodeW := resolve.NewNodeW(execStmt)
 		plan, _, err := planner.OptimizeExecStmt(context.Background(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
-		extractor := plan.(*plannercore.Execute).Plan.(*plannercore.PhysicalMemTable).Extractor
+		inner := plan.(*plannercore.Execute).Plan
+		if ca.filter {
+			selection := inner.(*plannercore.PhysicalSelection)
+			require.Len(t, selection.Conditions, 1)
+			inner = selection.Children()[0]
+		}
+		extractor := inner.(*plannercore.PhysicalMemTable).Extractor
 		ca.checker(extractor)
 	}
 }
@@ -1867,11 +1960,86 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
+	t.Run("like_unicode_case_folding", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database like_unicode_repro")
+		defer tk.MustExec("drop database like_unicode_repro")
+		tk.MustExec("create table like_unicode_repro.`İ[foo]` (id int)")
+
+		tk.MustQuery("select table_name, table_name like 'İ[%' from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro'").Check(testkit.Rows("İ[foo] 1"))
+		tk.MustQuery("select table_name from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro' and table_name like 'İ[%'").Check(testkit.Rows("İ[foo]"))
+		// Selecting engine bypasses the name-only fast path. The general scan
+		// matches original names, so lowercasing İ to i would discard this table.
+		tk.MustQuery("select table_name, engine from information_schema.tables " +
+			"where table_schema = 'like_unicode_repro' and table_name like 'İ[%'").Check(testkit.Rows("İ[foo] InnoDB"))
+	})
+	t.Run("ilike_unicode_case_folding", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database ilike_unicode_repro")
+		defer tk.MustExec("drop database ilike_unicode_repro")
+		tk.MustExec("create table ilike_unicode_repro.`é[foo]` (`é[col]` int, `İ[col]` int, `K[col]` int)")
+
+		cases := []struct {
+			table   string
+			column  string
+			value   string
+			pattern string
+			matches string
+		}{
+			{"tables", "table_name", "é[foo]", "É[%", "0"},
+			{"tables", "table_name", "é[foo]", "é[%", "1"},
+			{"tables", "table_name", "é[foo]", "é[F%", "1"},
+			{"columns", "column_name", "é[col]", "É[%", "0"},
+			{"columns", "column_name", "é[col]", "é[C%", "1"},
+			// Unicode lowercasing changes İ to i, which regexp (?i) does not match back to İ.
+			{"columns", "column_name", "İ[col]", "İ[%", "1"},
+			// Even an ASCII pattern can over-match because regexp (?i) equates k with K.
+			{"columns", "column_name", "K[col]", "k[%", "0"},
+		}
+		for _, ca := range cases {
+			tk.MustQuery(fmt.Sprintf("select '%s' ilike '%s'", ca.value, ca.pattern)).Check(testkit.Rows(ca.matches))
+			tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.%s where table_schema = 'ilike_unicode_repro' and %s ilike '%s'",
+				ca.table, ca.column, ca.pattern)).Check(testkit.Rows(ca.matches))
+		}
+	})
 	var cases = []struct {
 		sql           string
 		skipRequest   bool
 		colPredicates map[string]set.StringSet
+		likePatterns  []string
+		remained      string
 	}{
+		{
+			sql:           `select * from information_schema.tables where table_name like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name like 't%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[like(Column#3, t%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name collate utf8mb4_bin like 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			remained:      "[like(cast(Column#3, varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin), T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name ilike 'T%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"t%"},
+			remained:      "[ilike(Column#3, T%, 92)]",
+		},
+		{
+			sql:           `select * from information_schema.tables where table_name ilike 'É[%';`,
+			colPredicates: map[string]set.StringSet{},
+			likePatterns:  []string{"é[%"},
+			remained:      "[ilike(Column#3, É[%, 92)]",
+		},
 		{
 			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_schema='test';`,
 			skipRequest: false,
@@ -2095,7 +2263,12 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 	}
 	parser := parser.New()
 	for _, ca := range cases {
-		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
+		logicalMemTable, remained := getLogicalMemTableWithRemained(t, dom, se, parser, ca.sql)
+		if ca.remained != "" {
+			require.Equal(t, ca.remained, expression.StringifyExpressionsWithCtx(se.GetExprCtx().GetEvalCtx(), remained), ca.sql)
+		} else if ca.likePatterns != nil {
+			require.Empty(t, remained, ca.sql)
+		}
 		require.NotNil(t, logicalMemTable.Extractor)
 		ex, ok := logicalMemTable.Extractor.(interface {
 			GetBase() *plannercore.InfoSchemaBaseExtractor
@@ -2103,6 +2276,7 @@ func TestInfoSchemaTableExtract(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, ca.skipRequest, ex.GetBase().SkipRequest, "SQL: %v", ca.sql)
 		require.Equal(t, ca.colPredicates, ex.GetBase().ColPredicates, "SQL: %v", ca.sql)
+		require.Equal(t, ca.likePatterns, ex.GetBase().LikePatterns["table_name"], ca.sql)
 	}
 }
 

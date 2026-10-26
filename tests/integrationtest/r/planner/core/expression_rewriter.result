@@ -462,3 +462,53 @@ where is_reimburse is not null or is_reimburse = 'Y';
 count(*)
 4
 set names default;
+drop table if exists t1, t;
+create table t1(a int default null);
+create table t(a int not null);
+explain format='brief' select * from t1 where t1.a > 1 or t1.a in (select a from t);
+id	estRows	task	access object	operator info
+Projection	8000.00	root		planner__core__expression_rewriter.t1.a
+└─Selection	8000.00	root		or(gt(planner__core__expression_rewriter.t1.a, 1), Column#5)
+  └─HashJoin	10000.00	root		left outer semi join, equal:[eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)]
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select * from t1 where t1.a > 1 and t1.a in (select a from t);
+id	estRows	task	access object	operator info
+HashJoin	3333.33	root		inner join, equal:[eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)]
+├─HashAgg(Build)	2666.67	root		group by:planner__core__expression_rewriter.t.a, funcs:firstrow(planner__core__expression_rewriter.t.a)->planner__core__expression_rewriter.t.a
+│ └─TableReader	2666.67	root		data:HashAgg
+│   └─HashAgg	2666.67	cop[tikv]		group by:planner__core__expression_rewriter.t.a, 
+│     └─Selection	3333.33	cop[tikv]		gt(planner__core__expression_rewriter.t.a, 1)
+│       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	3333.33	root		data:Selection
+  └─Selection	3333.33	cop[tikv]		gt(planner__core__expression_rewriter.t1.a, 1), not(isnull(planner__core__expression_rewriter.t1.a))
+    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select t1.a in (select a from t) from t1;
+id	estRows	task	access object	operator info
+HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)
+├─TableReader(Build)	10000.00	root		data:TableFullScan
+│ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader(Probe)	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select * from t1 where (t1.a in (select a from t)) = 1;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		planner__core__expression_rewriter.t1.a
+└─Selection	8000.00	root		eq(Column#5, 1)
+  └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format='brief' select t1.a from t1 group by t1.a having t1.a > 1 or t1.a in (select a from t);
+id	estRows	task	access object	operator info
+Projection	6400.00	root		planner__core__expression_rewriter.t1.a
+└─Selection	6400.00	root		or(gt(planner__core__expression_rewriter.t1.a, 1), Column#7)
+  └─HashJoin	8000.00	root		left outer semi join, equal:[eq(planner__core__expression_rewriter.t1.a, planner__core__expression_rewriter.t.a)]
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	8000.00	root		group by:planner__core__expression_rewriter.t1.a, funcs:firstrow(planner__core__expression_rewriter.t1.a)->planner__core__expression_rewriter.t1.a
+      └─TableReader	8000.00	root		data:HashAgg
+        └─HashAgg	8000.00	cop[tikv]		group by:planner__core__expression_rewriter.t1.a, 
+          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
