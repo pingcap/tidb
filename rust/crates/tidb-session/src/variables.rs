@@ -68,6 +68,16 @@ fn sysvar_native_expr(name: &str, value: String) -> tidb_ast::Expr {
     }
 }
 
+/// A SET value Go's `buildSet` rewrote (`VarAssignment.Expr`): the
+/// expression with its system variables read, the one-field query it is
+/// planned as, that plan, and the value's type.
+struct PlannedSetValue {
+    bound: tidb_ast::Expr,
+    query: tidb_ast::NodeBox<tidb_ast::QueryStmt>,
+    physical: tidb_planner::physical::PhysicalPlan,
+    field: tidb_datatype::FieldType,
+}
+
 fn is_set_literal(expr: &tidb_ast::Expr) -> bool {
     matches!(
         expr,
@@ -238,151 +248,13 @@ impl Session {
                 Ok(Some(()))
             }
             SessionStmt::Set(set) => {
-                // Go `buildSet` appends the privilege visit info of EVERY
-                // assignment (SYSTEM_VARIABLES_ADMIN for GLOBAL/INSTANCE,
-                // RESTRICTED_VARIABLES_ADMIN under SEM) and checks them all
-                // before `SetExecutor` runs, so a denied assignment leaves
-                // the earlier ones unapplied -- removed variables included.
-                for assignment in &set.assignments {
-                    if matches!(
-                        assignment.scope,
-                        tidb_ast::SystemVariableScope::Global
-                            | tidb_ast::SystemVariableScope::Instance
-                    ) {
-                        self.require_set_global_privilege()?;
-                    }
-                    self.require_sem_visible_sysvar(&assignment.name)?;
-                }
-                for assignment in &set.assignments {
-                    self.apply_assignment(assignment)?;
-                }
+                self.run_set_stmt(set)?;
                 Ok(Some(()))
             }
             // `SET PASSWORD` shares the `SET` keyword and the front end's
             // OK-packet reply, but writes `mysql.user`, not a variable.
             SessionStmt::SetPassword(set_password) => {
                 self.set_password_stmt(set_password)?;
-                Ok(Some(()))
-            }
-            SessionStmt::SetCharset {
-                kind,
-                charset,
-                collation,
-                assignments,
-            } => {
-                self.apply_charset(*kind, charset.as_deref(), collation.as_deref())?;
-                for assignment in assignments {
-                    self.apply_assignment(assignment)?;
-                }
-                Ok(Some(()))
-            }
-            SessionStmt::SetMixed(items) => {
-                for item in items {
-                    match item {
-                        tidb_ast::SetItem::System(assignment) => {
-                            self.apply_assignment(assignment)?;
-                        }
-                        tidb_ast::SetItem::Charset {
-                            kind,
-                            charset,
-                            collation,
-                        } => self.apply_charset(*kind, charset.as_deref(), collation.as_deref())?,
-                    }
-                }
-                Ok(Some(()))
-            }
-            SessionStmt::SetUserVar(set) => {
-                // Go builds all RHS expressions before SetExecutor changes values/types.
-                // Keep those physical plans, so later assignments cannot rebind a read
-                // against the type installed by an earlier assignment.
-                let mut planned = Vec::with_capacity(set.assignments.len());
-                for assignment in &set.assignments {
-                    let mut bound = self.bind_variables_in(&assignment.value)?;
-                    if let tidb_ast::Expr::Column(path) = &bound {
-                        if let [word] = path.as_slice() {
-                            bound = tidb_ast::Expr::String(word.clone());
-                        }
-                    }
-                    // Go `buildSet` rewrites the parsed assignment expression
-                    // itself. Restoring it to text and reparsing would print a
-                    // plain literal with a `_UTF8MB4` introducer, which pins
-                    // utf8mb4_bin where Go's literal takes the connection
-                    // collation -- and the variable stores that type. The
-                    // expression is substituted into a parsed one-field SELECT
-                    // instead.
-                    let query = match &bound {
-                        tidb_ast::Expr::Subquery(query) => query.clone(),
-                        _ => {
-                            let Stmt::Query(mut query) = tidb_parser::parse_with_sql_mode(
-                                "SELECT 1",
-                                self.scanner_sql_mode(),
-                            )
-                            .map_err(|error| DriverError::Parse(format!("{error:?}")))?
-                            else {
-                                unreachable!("SELECT 1 parses as a query")
-                            };
-                            let tidb_ast::QueryStmt::Select(select) = &mut *query else {
-                                unreachable!("SELECT 1 is a plain SELECT")
-                            };
-                            select.fields.fields_mut()[0] = tidb_ast::SelectField::Expr {
-                                expr: bound.clone(),
-                                alias: None,
-                            };
-                            query
-                        }
-                    };
-                    let ctx = self.statement_context(false);
-                    let database = self.current_database().to_owned();
-                    let physical = self.with_catalog_retrieving(&ctx, |catalog| {
-                        tidb_executor::plan_query_meta_stmt(&query, catalog, &database, &ctx)
-                    })?;
-                    let field = physical
-                        .schema()
-                        .and_then(|schema| schema.columns.first())
-                        .and_then(|column| column.ret_type.clone())
-                        .ok_or_else(|| DriverError::unsupported("SET expression has no type"))?;
-                    planned.push((
-                        bound,
-                        tidb_util::stringutil::go_to_lower(&assignment.name),
-                        query,
-                        physical,
-                        field,
-                    ));
-                }
-                for (bound, key, query, mut physical, field) in planned {
-                    let value = if is_set_literal(&bound) {
-                        // Raising a cancelled query's quota must not allocate a SELECT result.
-                        self.eval_bound_value(&bound)?
-                    } else {
-                        let ctx = self.statement_context(false);
-                        let database = self.current_database().to_owned();
-                        let (_, rows) = self.with_catalog_retrieving(&ctx, |catalog| {
-                            tidb_executor::run_query_meta_stmt_with_physical(
-                                &query,
-                                Some(&mut physical),
-                                catalog,
-                                &database,
-                                &ctx,
-                            )
-                        })?;
-                        // Go's SET evaluates the expression under the
-                        // statement's own context, so what the evaluation
-                        // warned (`SET @a = (SELECT 1/0)`'s 1365) is the
-                        // statement's warning.
-                        self.drain_eval_warnings(&ctx);
-                        match rows.len() {
-                            0 => Datum::Null,
-                            1 => rows[0].first().cloned().unwrap_or(Datum::Null),
-                            _ => return Err(DriverError::SubqueryReturnsMoreThanOneRow),
-                        }
-                    };
-                    if value.is_null() {
-                        self.user_vars.unset_user_var(&key);
-                    } else {
-                        self.user_vars.set_user_var_val(&key, value);
-                        self.user_vars.set_user_var_type(&key, field);
-                    }
-                }
                 Ok(Some(()))
             }
             SessionStmt::SetResourceGroup(resource_group) => {
@@ -530,6 +402,160 @@ impl Session {
         Ok(self.statement_resource_group(&stmt).into_owned())
     }
 
+    /// Go `buildSet` followed by `SetExecutor.Next` for one `SET` statement.
+    ///
+    /// `buildSet` appends the privilege visit info of EVERY assignment
+    /// (SYSTEM_VARIABLES_ADMIN for GLOBAL/INSTANCE, RESTRICTED_VARIABLES_ADMIN
+    /// under SEM) and rewrites every value before the executor runs, so a
+    /// denied or unplannable assignment leaves the earlier ones unapplied.
+    /// `SetExecutor` then applies each assignment in source order: a later
+    /// value observes earlier writes, and a later error keeps them.
+    fn run_set_stmt(&mut self, set: &tidb_ast::SetStmt) -> Result<(), DriverError> {
+        let mut planned = Vec::with_capacity(set.variables.len());
+        for variable in &set.variables {
+            if variable.is_global || variable.is_instance {
+                self.require_set_global_privilege()?;
+            }
+            self.require_sem_visible_sysvar(&variable.name.go_to_lower())?;
+            // Go: `DEFAULT` is `IsDefault`, with no expression to rewrite;
+            // `NAMES` / `CHARSET` carry their charset as a constant.
+            let rewrites = !matches!(variable.value, tidb_ast::Expr::Default(None))
+                && variable.name != tidb_ast::SET_NAMES
+                && variable.name != tidb_ast::SET_CHARSET;
+            planned.push(if rewrites {
+                Some(self.plan_set_value(&variable.value)?)
+            } else {
+                None
+            });
+        }
+        for (variable, planned) in set.variables.iter().zip(planned) {
+            if variable.name == tidb_ast::SET_NAMES || variable.name == tidb_ast::SET_CHARSET {
+                let charset = match &variable.value {
+                    tidb_ast::Expr::RawString(charset) => Some(charset.as_str()),
+                    _ => None,
+                };
+                let collation = match &variable.extend_value {
+                    Some(tidb_ast::Expr::RawString(collation)) => Some(collation.as_str()),
+                    _ => None,
+                };
+                self.apply_charset(variable.name == tidb_ast::SET_NAMES, charset, collation)?;
+            } else if !variable.is_system {
+                let planned = planned.expect("a user variable's value is never DEFAULT");
+                self.assign_user_var(&variable.name.go_to_lower(), planned)?;
+            } else {
+                self.apply_assignment(variable, planned)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Go `buildSet`'s rewrite of one value: a bare column name becomes its
+    /// string, system variables are read now (Go's `rewriteSystemVariable`
+    /// folds them at build time, so `SET @@x = 7, @y = @@x` stores the OLD
+    /// `@@x`), and the value is planned over a one-row dual. Planning every
+    /// value before any is applied also keeps a later read from rebinding
+    /// against the type an earlier assignment installs.
+    fn plan_set_value(&mut self, value: &tidb_ast::Expr) -> Result<PlannedSetValue, DriverError> {
+        let mut bound = self.bind_variables_in(value)?;
+        if let tidb_ast::Expr::Column(path) = &bound {
+            if let [word] = path.as_slice() {
+                bound = tidb_ast::Expr::String(word.clone());
+            }
+        }
+        // Go `buildSet` rewrites the parsed assignment expression
+        // itself. Restoring it to text and reparsing would print a
+        // plain literal with a `_UTF8MB4` introducer, which pins
+        // utf8mb4_bin where Go's literal takes the connection
+        // collation -- and the variable stores that type. The
+        // expression is substituted into a parsed one-field SELECT
+        // instead.
+        let query = match &bound {
+            tidb_ast::Expr::Subquery(query) => query.clone(),
+            _ => {
+                let Stmt::Query(mut query) =
+                    tidb_parser::parse_with_sql_mode("SELECT 1", self.scanner_sql_mode())
+                        .map_err(|error| DriverError::Parse(format!("{error:?}")))?
+                else {
+                    unreachable!("SELECT 1 parses as a query")
+                };
+                let tidb_ast::QueryStmt::Select(select) = &mut *query else {
+                    unreachable!("SELECT 1 is a plain SELECT")
+                };
+                select.fields.fields_mut()[0] = tidb_ast::SelectField::Expr {
+                    expr: bound.clone(),
+                    alias: None,
+                };
+                query
+            }
+        };
+        let ctx = self.statement_context(false);
+        let database = self.current_database().to_owned();
+        let physical = self.with_catalog_retrieving(&ctx, |catalog| {
+            tidb_executor::plan_query_meta_stmt(&query, catalog, &database, &ctx)
+        })?;
+        let field = physical
+            .schema()
+            .and_then(|schema| schema.columns.first())
+            .and_then(|column| column.ret_type.clone())
+            .ok_or_else(|| DriverError::unsupported("SET expression has no type"))?;
+        Ok(PlannedSetValue {
+            bound,
+            query,
+            physical,
+            field,
+        })
+    }
+
+    /// Go `SetExecutor`'s user-variable arm: evaluate the planned value and
+    /// store it with its type; NULL unsets the variable.
+    fn assign_user_var(&mut self, key: &str, planned: PlannedSetValue) -> Result<(), DriverError> {
+        let field = planned.field.clone();
+        let value = self.eval_set_value(planned)?;
+        if value.is_null() {
+            self.user_vars.unset_user_var(key);
+        } else {
+            self.user_vars.set_user_var_val(key, value);
+            self.user_vars.set_user_var_type(key, field);
+        }
+        Ok(())
+    }
+
+    /// Go `v.Expr.Eval`: a planned SET value's datum.
+    fn eval_set_value(&mut self, planned: PlannedSetValue) -> Result<Datum, DriverError> {
+        let PlannedSetValue {
+            bound,
+            query,
+            mut physical,
+            ..
+        } = planned;
+        Ok(if is_set_literal(&bound) {
+            // Raising a cancelled query's quota must not allocate a SELECT result.
+            self.eval_bound_value(&bound)?
+        } else {
+            let ctx = self.statement_context(false);
+            let database = self.current_database().to_owned();
+            let (_, rows) = self.with_catalog_retrieving(&ctx, |catalog| {
+                tidb_executor::run_query_meta_stmt_with_physical(
+                    &query,
+                    Some(&mut physical),
+                    catalog,
+                    &database,
+                    &ctx,
+                )
+            })?;
+            // Go's SET evaluates the expression under the
+            // statement's own context, so what the evaluation
+            // warned (`SET @a = (SELECT 1/0)`'s 1365) is the
+            // statement's warning.
+            self.drain_eval_warnings(&ctx);
+            match rows.len() {
+                0 => Datum::Null,
+                1 => rows[0].first().cloned().unwrap_or(Datum::Null),
+                _ => return Err(DriverError::SubqueryReturnsMoreThanOneRow),
+            }
+        })
+    }
+
     /// One `name = value` assignment.
     ///
     /// `GLOBAL` writes the shared table every session of this factory reads
@@ -540,7 +566,8 @@ impl Session {
     /// (1228/1229), matching Go's `validateScope`.
     fn apply_assignment(
         &mut self,
-        assignment: &tidb_ast::SystemVariableAssignment,
+        assignment: &tidb_ast::VariableAssignment,
+        planned: Option<PlannedSetValue>,
     ) -> Result<(), DriverError> {
         // Go's SetExecutor deliberately checks the removed-variable table
         // before privilege and scope handling: these names are parse-but-
@@ -548,7 +575,7 @@ impl Session {
         if sysvar::removed_sys_var_reason(&assignment.name).is_some() {
             return Ok(());
         }
-        let is_global = assignment.scope == tidb_ast::SystemVariableScope::Global;
+        let is_global = assignment.is_global;
         if is_global {
             self.require_set_global_privilege()?;
         }
@@ -571,13 +598,8 @@ impl Session {
         // An explicit `SET INSTANCE` is Go's `v.IsInstance`; anything else
         // unqualified/SESSION reaches the tier only through the legacy
         // rewrite, which warns.
-        let is_instance = match assignment.scope {
-            tidb_ast::SystemVariableScope::Instance => true,
-            tidb_ast::SystemVariableScope::Session => {
-                self.routes_to_instance_tier(&assignment.name)?
-            }
-            tidb_ast::SystemVariableScope::Global => false,
-        };
+        let is_instance = assignment.is_instance
+            || (!is_global && self.routes_to_instance_tier(&assignment.name)?);
         // The GLOBAL and INSTANCE tiers share one node-wide table keyed by
         // scope (`GlobalSysvars::store`), so a DEFAULT or a value written
         // through either lands where the read path looks.
@@ -590,12 +612,12 @@ impl Session {
         } else {
             self.vars.snapshot_ts()
         };
-        let value = match &assignment.value {
+        let value = match (&assignment.value, planned) {
             // Go `getVarValue`: a SESSION (or unqualified) variable set to
             // DEFAULT takes the GLOBAL value -- the compiled default only for
             // a variable with no global scope (`GetGlobalSysVar` falls back to
             // `sv.Value`) -- and is then set like any explicit value.
-            tidb_ast::SetVariableValue::Default if !is_node_wide => Some(
+            (tidb_ast::Expr::Default(None), _) if !is_node_wide => Some(
                 self.vars
                     .global_value_for_session_default(&assignment.name)
                     .map_err(var_error)?,
@@ -603,7 +625,7 @@ impl Session {
             // Go `getVarValue`: GLOBAL and INSTANCE DEFAULT resolve to
             // `GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)`,
             // which is then validated and set like any explicit value.
-            tidb_ast::SetVariableValue::Default => {
+            (tidb_ast::Expr::Default(None), _) => {
                 Some(crate::vars::global_system_variable_initial_value(
                     sysvar::get_sys_var(&assignment.name).ok_or_else(|| {
                         var_error(VarError::UnknownSystemVariable(
@@ -612,7 +634,9 @@ impl Session {
                     })?,
                 ))
             }
-            tidb_ast::SetVariableValue::Expr(expr) => self.eval_literal(expr)?,
+            // Go `getVarValue`: the evaluated datum's string; NULL is "".
+            (_, Some(planned)) => datum_text(&self.eval_set_value(planned)?),
+            (_, None) => unreachable!("buildSet rewrote every non-DEFAULT value"),
         };
         // Go stores every system variable as a string.
         let value = value.unwrap_or_default();
@@ -1330,29 +1354,22 @@ impl Session {
     /// `SET NAMES` / `SET CHARACTER SET`: Go `SetExecutor.executeSet` hands
     /// both to `setCharset`, with `DEFAULT` as `mysql.DefaultCharset` and no
     /// collation.
+    /// Go `SetExecutor.setCharset`; `DEFAULT` (no charset) is Go's
+    /// `mysql.DefaultCharset`.
     fn apply_charset(
         &mut self,
-        kind: tidb_ast::CharsetSetKind,
+        is_set_names: bool,
         charset: Option<&str>,
         collation: Option<&str>,
     ) -> Result<(), DriverError> {
         let charset = charset.unwrap_or(tidb_mysql::DefaultCharset);
         self.vars
-            .set_charset(charset, collation, kind == tidb_ast::CharsetSetKind::Names)
+            .set_charset(charset, collation, is_set_names)
             .map_err(var_error)
     }
 
-    /// Evaluates a `SET` right-hand side. Go runs it through the expression
-    /// evaluator; this evaluates it as a constant expression, which covers the
-    /// literals and simple arithmetic a `SET` carries.
-    fn eval_literal(&mut self, expr: &tidb_ast::Expr) -> Result<Option<String>, DriverError> {
-        Ok(datum_text(&self.eval_value(expr)?))
-    }
-
     /// Evaluates a `SET` right-hand side to its TYPED value, which is what a
-    /// user variable stores (Go's `SetUserVarVal` takes a `types.Datum`). A
-    /// system variable keeps only the text, so [`Self::eval_literal`] is this
-    /// plus `datum_text`.
+    /// user variable stores (Go's `SetUserVarVal` takes a `types.Datum`).
     ///
     /// System variables are substituted before planning; user variables are
     /// resolved by the shared expression rewriter against the session owner.

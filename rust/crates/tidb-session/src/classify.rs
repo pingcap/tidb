@@ -85,16 +85,8 @@ pub enum StoredStateChange {
 /// moment any assignment is GLOBAL-scoped; the session-scoped assignments in
 /// the same statement still run, against the same driver, once routed.
 fn has_global_assignment(session: &tidb_ast::SessionStmt) -> bool {
-    fn is_global(assignment: &tidb_ast::SystemVariableAssignment) -> bool {
-        assignment.scope == tidb_ast::SystemVariableScope::Global
-    }
     match session {
-        tidb_ast::SessionStmt::Set(set) => set.assignments.iter().any(is_global),
-        tidb_ast::SessionStmt::SetCharset { assignments, .. } => assignments.iter().any(is_global),
-        tidb_ast::SessionStmt::SetMixed(items) => items.iter().any(|item| match item {
-            tidb_ast::SetItem::System(assignment) => is_global(assignment),
-            tidb_ast::SetItem::Charset { .. } => false,
-        }),
+        tidb_ast::SessionStmt::Set(set) => set.variables.iter().any(|variable| variable.is_global),
         _ => false,
     }
 }

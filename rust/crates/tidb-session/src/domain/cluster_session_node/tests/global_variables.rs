@@ -336,3 +336,41 @@ fn instance_plan_cache_shares_factory_schema_versions_across_rebuilt_catalogs() 
         vec![vec![Datum::Int(1)]]
     );
 }
+
+/// Go `buildSet` plans every value of one SET -- user variable, system
+/// variable, `NAMES` -- and evaluates subqueries against the statement's
+/// snapshot, whatever kinds the statement mixes (captured from Go:
+/// `2|2|latin1`).
+#[test]
+fn mixed_set_reads_its_subqueries_through_the_node() {
+    let mut session = crate::Session::new_on_mock_store();
+    for sql in [
+        "create database set_mixed",
+        "use set_mixed",
+        "create table t (a int)",
+        "insert into t values (1), (2)",
+        "set @a = (select count(*) from t), \
+         @@session.div_precision_increment = (select max(a) from t), names latin1",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    let crate::StmtResult::Rows(rows) = session
+        .run("select @a, @@div_precision_increment, @@character_set_client")
+        .expect("read the assignments")
+    else {
+        panic!("SELECT answers rows");
+    };
+    let rendered: Vec<String> = rows[0]
+        .iter()
+        .map(|datum| match datum {
+            Datum::Int(value) => value.to_string(),
+            Datum::UInt(value) => value.to_string(),
+            Datum::String(value) => String::from_utf8_lossy(&value.bytes()).into_owned(),
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(rendered, ["2", "2", "latin1"]);
+}

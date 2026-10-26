@@ -20,8 +20,8 @@ use tidb_ast::{
     AdminStmt, BinaryOp, ColumnType, ColumnTypeArg, CreateProcedureStmt, DdlStmt, Expr,
     NodeBox, ProcedureDeclaration, ProcedureHandlerAction, ProcedureHandlerCondition,
     ProcedureParameter, ProcedureParameterMode, ProcedureStatement, ProcedureWhen,
-    QueryStmt, SelectField, SelectStatementKind, SelectStmt, SessionStmt, SetStmt,
-    SetVariableValue, Stmt, SystemVariableAssignment, SystemVariableScope, Visitable, Visitor,
+    QueryStmt, SelectField, SelectStatementKind, SelectStmt, SessionStmt, SetStmt, Stmt,
+    VariableAssignment, Visitable, Visitor,
 };
 
 fn column(path: &[&str]) -> Expr {
@@ -567,15 +567,10 @@ fn decimal_type(flen: u32, scale: u32) -> ColumnType {
 /// `SET @@SESSION.\`id\`=\`id\`+1` (Go keeps a session-scoped write).
 fn set_session_id_plus_one() -> ProcedureStatement {
     let stmt = Stmt::Session(NodeBox::new(SessionStmt::Set(Box::new(SetStmt {
-        assignments: vec![SystemVariableAssignment {
-            scope: SystemVariableScope::Session,
-            name: "id".to_string(),
-            value: SetVariableValue::Expr(binary(
-                BinaryOp::Plus,
-                column(&["id"]),
-                int("1"),
-            )),
-        }],
+        variables: vec![VariableAssignment::system(
+            "id",
+            binary(BinaryOp::Plus, column(&["id"]), int("1")),
+        )],
     }))));
     ProcedureStatement::Sql(Box::new(stmt))
 }

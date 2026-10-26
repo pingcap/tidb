@@ -108,9 +108,7 @@ impl SessionStmt {
     fn sem_command(&self) -> &'static str {
         match self {
             Self::Use(_) => "USE",
-            Self::Set(_) | Self::SetUserVar(_) | Self::SetCharset { .. } | Self::SetMixed(_) => {
-                "SET"
-            }
+            Self::Set(_) => "SET",
             Self::SetPassword(_) => "SET PASSWORD",
             Self::SetRole(_) => "SET ROLE",
             Self::SetDefaultRole(_) => "SET DEFAULT ROLE",

@@ -24,7 +24,7 @@ use tidb_ast::{
     LeadingElement, NodeBox, PlanReplayerStmt, PlanReplayerTarget,
     QueryWatchOption, QueryWatchTextOption, ResourceGroupRunawayAction, RunawayWatchType,
     SelectStatementKind, SelectStmt, ServerControlStmt, SessionStmt, SetPasswordStmt, SetStmt,
-    SetVariableValue, Stmt, SystemVariableAssignment, SystemVariableScope, TableRef,
+    Stmt, TableRef, VariableAssignment,
     TrafficCaptureOption, TrafficReplayOption, TrafficStmt, TransactionMode, UserSpec,
     Visitable, Visitor,
 };
@@ -222,11 +222,7 @@ fn misc_visitor_cover() {
         }))),
         // &ast.SetStmt{Variables:[{Value}]}
         session(SessionStmt::Set(Box::new(SetStmt {
-            assignments: vec![SystemVariableAssignment {
-                scope: SystemVariableScope::Session,
-                name: String::new(),
-                value: SetVariableValue::Expr(int("42")),
-            }],
+            variables: vec![VariableAssignment::system("", int("42"))],
         }))),
         // &ast.UseStmt{}
         session(SessionStmt::Use("db".to_string())),

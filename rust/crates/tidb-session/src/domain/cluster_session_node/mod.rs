@@ -7635,15 +7635,14 @@ impl ClusterServerSession {
             CompiledStatement::StoredState(route) => Ok(self
                 .run_routed_statement(route, sql, stmt)?
                 .expect("a stored-state route answers an outcome")),
+            // Go runs `SetExecutor` through the ordinary statement
+            // lifecycle: a value's subquery reads the statement snapshot,
+            // and a failure is recorded as the statement's error.
             CompiledStatement::Set => self.observe_routed_write(sql, stmt, |node| {
-                node.store.session.apply_set_stmt(stmt).map_err(map_error)?;
-                // SET autocommit=1 may commit the open transaction without
-                // entering the snapshot/executor path.
+                let outcome = node.execute_ordinary_write_parsed(sql, stmt)?;
+                // SET autocommit=1 may commit the open transaction.
                 node.commit_if_session_left_transaction()?;
-                Ok(WriteOutcome {
-                    affected_rows: 0,
-                    last_insert_id: 0,
-                })
+                Ok(outcome)
             }),
             // Go `session.ExecuteStmt`: compile and `runStmt`, the autocommit
             // commit included.

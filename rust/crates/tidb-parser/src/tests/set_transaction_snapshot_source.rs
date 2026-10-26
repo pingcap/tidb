@@ -48,12 +48,9 @@ fn set_transaction_read_only_as_of_timestamp_keeps_typed_assignment() {
     let tidb_ast::SessionStmt::Set(set) = session.as_ref() else {
         panic!("expected typed SET statement");
     };
-    assert_eq!(set.assignments.len(), 1);
-    assert_eq!(set.assignments[0].name, "tx_read_ts");
-    assert!(matches!(
-        set.assignments[0].value,
-        tidb_ast::SetVariableValue::Expr(_)
-    ));
+    assert_eq!(set.variables.len(), 1);
+    assert_eq!(set.variables[0].name, "tx_read_ts");
+    assert!(set.variables[0].is_system);
 }
 
 #[test]

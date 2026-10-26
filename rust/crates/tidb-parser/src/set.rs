@@ -12,53 +12,72 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete SET grammar translated from `pkg/parser/set_explain_parser.go`.
-//! The statement router distinguishes bindings first; this leaf then owns
-//! account passwords, roles, user variables, and ordinary session/system
-//! settings without routing any of them through the generic assignment AST.
+//! SET grammar translated from `pkg/parser/set_explain_parser.go`. The
+//! statement router takes `SET BINDING` and `SET CONFIG` first; every other
+//! SET enters [`Parser::parse_set_statement`], Go's `parseSetStmt`.
 
 use tidb_ast::{
-    CharsetSetKind, DefaultRoleSelection, Expr, RoleSpec, SessionStmt, SetDefaultRoleStmt, SetItem,
-    SetPasswordStmt, SetResourceGroupStmt, SetRoleSelection, SetRoleStmt, SetSessionStatesStmt,
-    SetStmt, SetUserVarStmt, SetVariableValue, SystemVariableAssignment, SystemVariableScope,
-    UserVariableAssignment,
+    DefaultRoleSelection, Expr, RoleSpec, SessionStmt, SetDefaultRoleStmt, SetPasswordStmt,
+    SetResourceGroupStmt, SetRoleSelection, SetRoleStmt, SetSessionStatesStmt, SetStmt,
+    VariableAssignment, SET_CHARSET, SET_NAMES,
 };
-use tidb_lexer::{canonical_charset, TokenKind};
+use tidb_lexer::TokenKind;
 
 use crate::{prec, PResult, Parser};
 
 impl Parser {
-    /// Recognizes SET families whose typed payload is not the ordinary
-    /// system/session-variable [`SetStmt`]. The top-level router uses this
-    /// exact predicate before falling through to [`Self::parse_session_set_statement`].
-    pub(crate) fn is_specialized_set_statement(&self) -> bool {
-        self.is_kw("SET")
-            && (self.is_kw_at(1, "PASSWORD")
-                || self.is_kw_at(1, "ROLE")
-                || (self.is_kw_at(1, "DEFAULT") && self.is_kw_at(2, "ROLE"))
-                || (self.peek_n(1).kind == TokenKind::UserVar
-                    && !self.peek_n(1).text.starts_with("@@")))
-    }
-
-    pub(crate) fn parse_specialized_set_statement(&mut self) -> PResult<SessionStmt> {
-        if self.is_kw_at(1, "PASSWORD") {
+    /// Go `parseSetStmt`: the one-shot forms first, then the generic loop
+    /// of `NAMES`, `CHARSET` and variable assignments, mixed in any order.
+    pub(crate) fn parse_set_statement(&mut self) -> PResult<SessionStmt> {
+        self.expect_kw("SET")?;
+        if self.is_kw("TRANSACTION") {
+            return Ok(set_stmt(self.parse_set_transaction(false, false)?));
+        }
+        if (self.is_kw("GLOBAL") || self.is_kw("SESSION")) && self.is_kw_at(1, "TRANSACTION") {
+            let is_global = self.bump().text.eq_ignore_ascii_case("GLOBAL");
+            return Ok(set_stmt(self.parse_set_transaction(is_global, true)?));
+        }
+        if self.is_kw("ROLE") || (self.is_kw("DEFAULT") && self.is_kw_at(1, "ROLE")) {
+            return self.parse_set_role_command();
+        }
+        if self.is_kw("SESSION_STATES") {
+            return Ok(SessionStmt::SetSessionStates(Box::new(
+                self.parse_set_session_states()?,
+            )));
+        }
+        if self.is_kw("RESOURCE") {
+            return Ok(SessionStmt::SetResourceGroup(Box::new(
+                self.parse_set_resource_group()?,
+            )));
+        }
+        if self.is_kw("PASSWORD") {
             return Ok(SessionStmt::SetPassword(Box::new(
                 self.parse_set_password()?,
             )));
         }
-        if self.is_kw_at(1, "ROLE") || (self.is_kw_at(1, "DEFAULT") && self.is_kw_at(2, "ROLE")) {
-            return self.parse_set_role_command();
+        let mut variables = Vec::new();
+        loop {
+            if self.is_kw("NAMES") {
+                self.bump();
+                variables.push(self.parse_set_names_assignment()?);
+            } else if self.is_kw("CHARACTER") || self.is_kw("CHAR") || self.is_kw("CHARSET") {
+                // CHARACTER and CHAR require SET after them.
+                if !self.bump().text.eq_ignore_ascii_case("CHARSET") {
+                    self.expect_kw("SET")?;
+                }
+                variables.push(self.parse_set_charset_assignment()?);
+            } else {
+                variables.push(self.parse_variable_assignment()?);
+            }
+            if !self.is_op(",") {
+                break;
+            }
+            self.bump();
         }
-        if self.peek_n(1).kind == TokenKind::UserVar && !self.peek_n(1).text.starts_with("@@") {
-            return Ok(SessionStmt::SetUserVar(Box::new(
-                self.parse_set_uservar_stmt()?,
-            )));
-        }
-        Err(self.err_here("expected specialized SET statement"))
+        Ok(set_stmt(SetStmt { variables }))
     }
 
     fn parse_set_password(&mut self) -> PResult<SetPasswordStmt> {
-        self.expect_kw("SET")?;
         self.expect_kw("PASSWORD")?;
         let user = if self.is_kw("FOR") {
             self.bump();
@@ -105,7 +124,6 @@ impl Parser {
     }
 
     fn parse_set_role_command(&mut self) -> PResult<SessionStmt> {
-        self.expect_kw("SET")?;
         if self.is_kw("ROLE") {
             self.bump();
             let selection = if self.is_kw("DEFAULT") {
@@ -171,145 +189,7 @@ impl Parser {
         Ok(roles)
     }
 
-    fn parse_set_uservar_stmt(&mut self) -> PResult<SetUserVarStmt> {
-        self.expect_kw("SET")?;
-        let mut assignments = vec![self.parse_set_uservar_assignment()?];
-        while self.is_op(",") {
-            self.bump();
-            assignments.push(self.parse_set_uservar_assignment()?);
-        }
-        Ok(SetUserVarStmt { assignments })
-    }
-
-    fn parse_set_uservar_assignment(&mut self) -> PResult<UserVariableAssignment> {
-        let token = self.bump();
-        if !token.text.starts_with('@') || token.text.starts_with("@@") {
-            return Err(self.err_here("malformed user variable"));
-        }
-        let name = self.decode_at_name(&token.text);
-        if self.is_op(":=") {
-            self.bump();
-        } else {
-            self.expect_op("=")?;
-        }
-        let value = self.parse_set_expr_value()?;
-        Ok(UserVariableAssignment { name, value })
-    }
-
-    /// Routes ordinary current-session SET families after the top-level
-    /// parser excludes bindings, account/role commands, and `@user_var`.
-    pub(crate) fn parse_session_set_statement(&mut self) -> PResult<SessionStmt> {
-        if self.is_set_session_states_command() {
-            return Ok(SessionStmt::SetSessionStates(Box::new(
-                self.parse_set_session_states()?,
-            )));
-        }
-        if self.is_set_resource_group_command() {
-            return Ok(SessionStmt::SetResourceGroup(Box::new(
-                self.parse_set_resource_group()?,
-            )));
-        }
-        if self.is_mixed_charset_set_statement() {
-            return self.parse_mixed_charset_set_statement();
-        }
-        if self.is_set_charset_command() {
-            return self.parse_set_charset_command();
-        }
-        Ok(SessionStmt::Set(Box::new(self.parse_set_stmt()?)))
-    }
-
-    fn is_mixed_charset_set_statement(&self) -> bool {
-        let mut offset = 1;
-        let mut item_start = true;
-        let mut has_comma = false;
-        let mut has_charset = false;
-        while self.peek_n(offset).kind != TokenKind::Eof && !self.is_op_at(offset, ";") {
-            if self.is_op_at(offset, ",") {
-                has_comma = true;
-                item_start = true;
-            } else if item_start {
-                has_charset |= self.is_kw_at(offset, "NAMES")
-                    || self.is_kw_at(offset, "CHARSET")
-                    || ((self.is_kw_at(offset, "CHARACTER") || self.is_kw_at(offset, "CHAR"))
-                        && self.is_kw_at(offset + 1, "SET"));
-                item_start = false;
-            }
-            offset += 1;
-        }
-        has_comma && has_charset
-    }
-
-    fn parse_mixed_charset_set_statement(&mut self) -> PResult<SessionStmt> {
-        self.expect_kw("SET")?;
-        let mut items = Vec::new();
-        loop {
-            if self.is_kw("NAMES")
-                || self.is_kw("CHARSET")
-                || ((self.is_kw("CHARACTER") || self.is_kw("CHAR")) && self.is_kw_at(1, "SET"))
-            {
-                let (kind, charset, collation) = self.parse_set_charset_item()?;
-                items.push(SetItem::Charset {
-                    kind,
-                    charset,
-                    collation,
-                });
-            } else {
-                items.push(SetItem::System(self.parse_system_variable_assignment()?));
-            }
-            if !self.is_op(",") {
-                break;
-            }
-            self.bump();
-        }
-        Ok(SessionStmt::SetMixed(items))
-    }
-
-    fn parse_set_stmt(&mut self) -> PResult<SetStmt> {
-        self.expect_kw("SET")?;
-        if self.is_kw("TRANSACTION") {
-            return self.parse_set_transaction(true);
-        }
-        if self.is_kw("SESSION") && self.is_kw_at(1, "TRANSACTION") {
-            self.bump();
-            return self.parse_set_transaction(false);
-        }
-        if self.is_kw("GLOBAL") && self.is_kw_at(1, "TRANSACTION") {
-            self.bump();
-            let mut statement = self.parse_set_transaction(false)?;
-            for assignment in &mut statement.assignments {
-                assignment.scope = SystemVariableScope::Global;
-            }
-            return Ok(statement);
-        }
-        let mut assignments = Vec::new();
-        loop {
-            assignments.push(self.parse_system_variable_assignment()?);
-            if !self.is_op(",") {
-                break;
-            }
-            self.bump();
-        }
-        Ok(SetStmt { assignments })
-    }
-
-    fn is_set_charset_command(&self) -> bool {
-        self.is_kw("SET")
-            && (self.is_kw_at(1, "NAMES")
-                || self.is_kw_at(1, "CHARSET")
-                || ((self.is_kw_at(1, "CHARACTER") || self.is_kw_at(1, "CHAR"))
-                    && self.is_kw_at(2, "SET")))
-    }
-
-    fn is_set_session_states_command(&self) -> bool {
-        self.is_kw("SET") && self.is_kw_at(1, "SESSION_STATES")
-    }
-
-    fn is_set_resource_group_command(&self) -> bool {
-        self.is_kw("SET") && self.is_kw_at(1, "RESOURCE") && self.is_kw_at(2, "GROUP")
-    }
-
     fn parse_set_session_states(&mut self) -> PResult<SetSessionStatesStmt> {
-        self.expect_kw("SET")?;
         self.expect_kw("SESSION_STATES")?;
         let token = self.peek().clone();
         if token.kind != TokenKind::Str {
@@ -322,7 +202,6 @@ impl Parser {
     }
 
     fn parse_set_resource_group(&mut self) -> PResult<SetResourceGroupStmt> {
-        self.expect_kw("SET")?;
         self.expect_kw("RESOURCE")?;
         self.expect_kw("GROUP")?;
         let token = self.peek().clone();
@@ -338,120 +217,136 @@ impl Parser {
         Ok(SetResourceGroupStmt { name })
     }
 
-    fn parse_set_charset_command(&mut self) -> PResult<SessionStmt> {
-        self.expect_kw("SET")?;
-        let (kind, charset, collation) = self.parse_set_charset_item()?;
-        Ok(SessionStmt::SetCharset {
-            kind,
-            charset,
-            collation,
-            assignments: Vec::new(),
-        })
-    }
-
-    fn parse_set_charset_item(
-        &mut self,
-    ) -> PResult<(CharsetSetKind, Option<String>, Option<String>)> {
-        let kind = if self.is_kw("NAMES") {
-            self.bump();
-            CharsetSetKind::Names
-        } else if self.is_kw("CHARSET") {
-            self.bump();
-            CharsetSetKind::Charset
-        } else {
-            self.bump(); // CHARACTER or CHAR
-            self.expect_kw("SET")?;
-            CharsetSetKind::Charset
+    /// Go `parseSetNamesAssignment`, after `NAMES`.
+    fn parse_set_names_assignment(&mut self) -> PResult<VariableAssignment> {
+        let mut assignment = VariableAssignment {
+            name: SET_NAMES.to_owned(),
+            value: Expr::Default(None),
+            is_instance: false,
+            is_global: false,
+            is_system: false,
+            extend_value: None,
         };
-        if kind == CharsetSetKind::Charset && self.is_op("=") {
-            // go-sql-driver v1.9.3's connect sequence renders lightning's
-            // `charset` connection parameter as `SET charset = utf8mb4, ...`
-            // (connection.go handleParams joins every DSN param into one
-            // multi-assignment SET). Accept the `=` so the statement parses
-            // and the charset applies, matching the tool's intent.
+        if self.is_kw("DEFAULT") {
             self.bump();
+            return Ok(assignment);
         }
-        let charset = if self.is_kw("DEFAULT") {
-            self.bump();
-            None
-        } else {
-            Some(self.parse_set_charset_name()?)
-        };
-        let collation = if kind == CharsetSetKind::Names && self.is_kw("COLLATE") {
+        assignment.value = self.parse_set_charset_name()?;
+        if self.is_kw("COLLATE") {
             self.bump();
             if self.is_kw("DEFAULT") {
                 self.bump();
-                None
             } else {
-                Some(self.parse_set_collation_name()?)
+                // Go: `COLLATE StringName`, a string literal or identifier,
+                // kept as `ast.NewValueExpr(lit, "", "")`.
+                let collation = match self.peek().kind {
+                    TokenKind::Str => self.bumped_string(),
+                    TokenKind::Ident | TokenKind::Keyword => self.bump().text,
+                    _ => return Err(self.err_here("expected a collation name")),
+                };
+                assignment.extend_value = Some(Expr::RawString(collation));
             }
-        } else {
-            None
-        };
-        Ok((kind, charset, collation))
+        }
+        Ok(assignment)
     }
 
-    fn parse_set_charset_name(&mut self) -> PResult<String> {
+    /// Go `parseSetCharsetAssignment`, after `CHARSET` / `CHARACTER SET`.
+    fn parse_set_charset_assignment(&mut self) -> PResult<VariableAssignment> {
+        let value = if self.is_kw("DEFAULT") {
+            self.bump();
+            Expr::Default(None)
+        } else {
+            self.parse_set_charset_name()?
+        };
+        Ok(VariableAssignment {
+            name: SET_CHARSET.to_owned(),
+            value,
+            is_instance: false,
+            is_global: false,
+            is_system: false,
+            extend_value: None,
+        })
+    }
+
+    /// Go's charset operand of `SET NAMES` / `SET CHARSET`: whatever token
+    /// comes next, validated by `charset.GetCharsetInfo` -- a name it does
+    /// not support is `ErrUnknownCharacterSet` at parse time, so no earlier
+    /// assignment of the statement runs -- and replaced by its canonical name.
+    fn parse_set_charset_name(&mut self) -> PResult<Expr> {
         let name = if self.peek().kind == TokenKind::Str {
             self.bumped_string()
-        } else if self.peek().kind == TokenKind::Op {
-            // Go's grammar accepts an operator token as the charset name and
-            // defers the failure to execution: `SET charset = utf8mb4` (the
-            // connect sequence go-sql-driver v1.9.3 emits) surfaces from Go
-            // TiDB as 1115 "Unknown character set: '='" at run time, not as
-            // a parse error. Take the token's text verbatim and let the
-            // session's charset validation raise the coded error.
-            let name = self.bump().text.to_string();
-            return Ok(name);
         } else {
-            self.parse_charset_name()?
+            self.bump().text
         };
-        // go's parser accepts ANY identifier/string as the charset spelling
-        // here and defers the failure to execution, where an unknown name
-        // answers 1115 `Unknown character set: '...'` (and a known alias is
-        // canonicalized). Refusing at parse time turned
-        // `SET NAMES bogus_charset` into a 1064 the go server never gives.
-        Ok(canonical_charset(&name).map_or_else(|| name.clone(), |canonical| canonical.to_owned()))
+        let info = tidb_datatype::get_charset_info(&name).map_err(|_| {
+            self.err_coded(
+                &tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET,
+                &format!("Unknown character set: '{name}'"),
+            )
+        })?;
+        // Go `ast.NewValueExpr(cs.Name, "", "")`: no charset, so the restore
+        // carries no introducer.
+        Ok(Expr::RawString(info.name))
     }
 
-    fn parse_set_collation_name(&mut self) -> PResult<String> {
-        if self.peek().kind == TokenKind::Str {
-            Ok(self.bumped_string())
-        } else {
-            self.parse_charset_name()
+    /// Go `parseVariableAssignment`.
+    fn parse_variable_assignment(&mut self) -> PResult<VariableAssignment> {
+        if self.peek().kind == TokenKind::UserVar && !self.peek().text.starts_with("@@") {
+            let token = self.bump();
+            let name = self.decode_at_name(&token.text);
+            self.expect_eq_or_assign()?;
+            let value = self.parse_set_expr_value()?;
+            return Ok(VariableAssignment {
+                name,
+                value,
+                is_instance: false,
+                is_global: false,
+                is_system: false,
+                extend_value: None,
+            });
         }
+        if self.peek().kind == TokenKind::UserVar {
+            let (is_global, is_instance, name) = self.parse_atat_system_variable_name()?;
+            self.expect_eq_or_assign()?;
+            return Ok(VariableAssignment {
+                is_global,
+                is_instance,
+                ..VariableAssignment::system(name, self.parse_set_expr()?)
+            });
+        }
+        // Go: a scope keyword directly followed by `=` is the variable's
+        // name (`SET GLOBAL = DEFAULT`), not a scope.
+        let (is_global, is_instance) = if self.is_assignment_at(1) {
+            (false, false)
+        } else if self.is_kw("GLOBAL") {
+            self.bump();
+            (true, false)
+        } else if self.is_kw("INSTANCE") {
+            self.bump();
+            (false, true)
+        } else {
+            if self.is_kw("SESSION") || self.is_kw("LOCAL") {
+                self.bump();
+            }
+            (false, false)
+        };
+        let name = self.parse_system_variable_name()?;
+        self.expect_eq_or_assign()?;
+        Ok(VariableAssignment {
+            is_global,
+            is_instance,
+            ..VariableAssignment::system(name, self.parse_set_expr()?)
+        })
     }
 
-    fn parse_system_variable_assignment(&mut self) -> PResult<SystemVariableAssignment> {
-        let scope = if self.peek().kind == TokenKind::UserVar {
-            self.parse_atat_system_variable_scope_and_name()?
-        } else {
-            let scope = if self.is_kw("GLOBAL") && !self.is_assignment_at(1) {
-                self.bump();
-                SystemVariableScope::Global
-            } else if self.is_kw("INSTANCE") && !self.is_assignment_at(1) {
-                self.bump();
-                SystemVariableScope::Instance
-            } else if (self.is_kw("SESSION") || self.is_kw("LOCAL")) && !self.is_assignment_at(1) {
-                self.bump();
-                SystemVariableScope::Session
-            } else {
-                SystemVariableScope::Session
-            };
-            let name = self.parse_system_variable_name()?;
-            (scope, name)
-        };
+    /// Go `acceptEqOrAssign`.
+    fn expect_eq_or_assign(&mut self) -> PResult<()> {
         if self.is_op(":=") {
             self.bump();
+            Ok(())
         } else {
-            self.expect_op("=")?;
+            self.expect_op("=")
         }
-        let value = self.parse_set_variable_value()?;
-        Ok(SystemVariableAssignment {
-            scope: scope.0,
-            name: scope.1,
-            value,
-        })
     }
 
     fn is_assignment_at(&self, offset: usize) -> bool {
@@ -459,41 +354,35 @@ impl Parser {
             && matches!(self.peek_n(offset).text.as_str(), "=" | ":=")
     }
 
-    fn parse_atat_system_variable_scope_and_name(
-        &mut self,
-    ) -> PResult<(SystemVariableScope, String)> {
+    /// Go's `doubleAtIdentifier` arm: `(is_global, is_instance, name)`, the
+    /// name lowercased as Go lowercases the whole token.
+    fn parse_atat_system_variable_name(&mut self) -> PResult<(bool, bool, String)> {
         let text = self.bump().text;
         let rest = text
             .strip_prefix("@@")
             .ok_or_else(|| self.err_here("expected a system variable"))?;
-        let (scope, name) = match rest.split_once('.') {
-            Some((prefix, name)) if prefix.eq_ignore_ascii_case("GLOBAL") => {
-                (SystemVariableScope::Global, name)
-            }
-            Some((prefix, name)) if prefix.eq_ignore_ascii_case("INSTANCE") => {
-                (SystemVariableScope::Instance, name)
-            }
+        let (is_global, is_instance, name) = match rest.split_once('.') {
+            Some((prefix, name)) if prefix.eq_ignore_ascii_case("GLOBAL") => (true, false, name),
+            Some((prefix, name)) if prefix.eq_ignore_ascii_case("INSTANCE") => (false, true, name),
             Some((prefix, name))
                 if prefix.eq_ignore_ascii_case("SESSION")
                     || prefix.eq_ignore_ascii_case("LOCAL") =>
             {
-                (SystemVariableScope::Session, name)
+                (false, false, name)
             }
-            _ => (SystemVariableScope::Session, rest),
+            _ => (false, false, rest),
         };
         if name.is_empty() || name.split('.').count() > 2 {
             return Err(self.err_here("expected a one- or two-part system variable name"));
         }
-        // Go's `ast.VariableAssignment.Restore` receives the normalized
-        // lower-case variable name even when the source wrote `SQL_MODE` in
-        // upper case. Keep this normalization local to SET's variable leaf;
-        // expression-level `@@` references retain their own AST contract.
         Ok((
-            scope,
+            is_global,
+            is_instance,
             decode_set_variable_name(self, name).to_ascii_lowercase(),
         ))
     }
 
+    /// Go `parseVariableName`.
     fn parse_system_variable_name(&mut self) -> PResult<String> {
         let first = match self.peek().kind {
             TokenKind::Ident | TokenKind::Keyword => self.bump().text,
@@ -510,31 +399,26 @@ impl Parser {
         Ok(format!("{}.{}", first, second))
     }
 
-    fn parse_set_variable_value(&mut self) -> PResult<SetVariableValue> {
+    /// Go `parseSetExpr`: `DEFAULT` is Go's `DefaultExpr`; `BINARY` and `ON`
+    /// are SET-specific strings, while `OFF` stays an identifier.
+    fn parse_set_expr(&mut self) -> PResult<Expr> {
         if self.is_kw("DEFAULT") {
             self.bump();
-            return Ok(SetVariableValue::Default);
+            return Ok(Expr::Default(None));
         }
-        // Go's SetExpr treats BINARY and ON as SET-specific strings. OFF
-        // deliberately remains an ordinary identifier expression.
         if self.is_kw("BINARY") {
             self.bump();
-            return Ok(SetVariableValue::Expr(Expr::String("BINARY".to_string())));
+            return Ok(Expr::String("BINARY".to_string()));
         }
         if self.is_kw("ON") {
             self.bump();
-            return Ok(SetVariableValue::Expr(Expr::String("ON".to_string())));
+            return Ok(Expr::String("ON".to_string()));
         }
-        let expr = self.parse_set_expr_value()?;
-        // Go's SET parser restores a bare trailing-dot decimal (`1.`) as the
-        // integer spelling (`1`). This is a SET-value boundary, so normalize
-        // only the direct decimal leaf rather than changing every expression
-        // context's numeric restore contract at once.
-        Ok(SetVariableValue::Expr(expr))
+        self.parse_set_expr_value()
     }
 
-    /// Parses the expression arm of Go's `parseSetExpr` and applies its
-    /// direct SET-only numeric spelling normalization.
+    /// Go's `parseExpression` at a SET value, with Go's restore of a bare
+    /// trailing-dot decimal (`1.`) as the integer spelling (`1`).
     fn parse_set_expr_value(&mut self) -> PResult<Expr> {
         let expr = self.parse_expr(prec::NONE)?;
         Ok(match expr {
@@ -545,87 +429,72 @@ impl Parser {
         })
     }
 
-    fn parse_set_transaction(&mut self, one_shot: bool) -> PResult<SetStmt> {
+    /// Go `parseSetTransaction`: each comma-separated characteristic is one
+    /// system assignment; `has_scope` picks `tx_isolation` over the one-shot
+    /// `tx_isolation_one_shot`.
+    fn parse_set_transaction(&mut self, is_global: bool, has_scope: bool) -> PResult<SetStmt> {
         self.expect_kw("TRANSACTION")?;
-        if self.is_kw("ISOLATION") {
-            self.bump();
-            self.expect_kw("LEVEL")?;
-            let level = if self.is_kw("READ") {
+        let mut variables = Vec::new();
+        loop {
+            let (name, value) = if self.is_kw("ISOLATION") {
                 self.bump();
-                if self.is_kw("UNCOMMITTED") {
+                self.expect_kw("LEVEL")?;
+                let level = if self.is_kw("READ") {
                     self.bump();
-                    "READ-UNCOMMITTED"
-                } else if self.is_kw("COMMITTED") {
+                    if self.is_kw("UNCOMMITTED") {
+                        self.bump();
+                        "READ-UNCOMMITTED"
+                    } else {
+                        self.expect_kw("COMMITTED")?;
+                        "READ-COMMITTED"
+                    }
+                } else if self.is_kw("REPEATABLE") {
                     self.bump();
-                    "READ-COMMITTED"
+                    self.expect_kw("READ")?;
+                    "REPEATABLE-READ"
+                } else if self.is_kw("SERIALIZABLE") {
+                    self.bump();
+                    "SERIALIZABLE"
                 } else {
-                    return Err(self.err_here("expected UNCOMMITTED or COMMITTED after READ"));
-                }
-            } else if self.is_kw("REPEATABLE") {
-                self.bump();
+                    return Err(self.err_here("expected an isolation level"));
+                };
+                let name = if has_scope {
+                    "tx_isolation"
+                } else {
+                    "tx_isolation_one_shot"
+                };
+                (name, Expr::String(level.to_owned()))
+            } else {
                 self.expect_kw("READ")?;
-                "REPEATABLE-READ"
-            } else if self.is_kw("SERIALIZABLE") {
-                self.bump();
-                "SERIALIZABLE"
-            } else {
-                return Err(self.err_here("expected an isolation level"));
-            };
-            let name = if one_shot {
-                "tx_isolation_one_shot"
-            } else {
-                "tx_isolation"
-            };
-            Ok(SetStmt {
-                assignments: vec![SystemVariableAssignment {
-                    scope: SystemVariableScope::Session,
-                    name: name.to_string(),
-                    value: SetVariableValue::Expr(Expr::String(level.to_string())),
-                }],
-            })
-        } else if self.is_kw("READ") {
-            self.bump();
-            if self.is_kw("ONLY") {
-                self.bump();
-                // Go's `parseSetTransaction` gives the stale-read form its
-                // own `tx_read_ts` assignment rather than folding it into
-                // the ordinary `tx_read_only` boolean.  Keep the expression
-                // in the existing SetStmt envelope so source ordering and
-                // generic SET execution boundaries remain unchanged.
-                if self.is_kw("AS OF") {
+                if self.is_kw("WRITE") {
                     self.bump();
-                    self.expect_kw("TIMESTAMP")?;
-                    return Ok(SetStmt {
-                        assignments: vec![SystemVariableAssignment {
-                            scope: SystemVariableScope::Session,
-                            name: "tx_read_ts".to_string(),
-                            value: SetVariableValue::Expr(self.parse_set_expr_value()?),
-                        }],
-                    });
+                    ("tx_read_only", Expr::String("0".to_owned()))
+                } else {
+                    self.expect_kw("ONLY")?;
+                    if self.is_kw("AS OF") {
+                        self.bump();
+                        self.expect_kw("TIMESTAMP")?;
+                        ("tx_read_ts", self.parse_expr(prec::NONE)?)
+                    } else {
+                        ("tx_read_only", Expr::String("1".to_owned()))
+                    }
                 }
-                Ok(SetStmt {
-                    assignments: vec![SystemVariableAssignment {
-                        scope: SystemVariableScope::Session,
-                        name: "tx_read_only".to_string(),
-                        value: SetVariableValue::Expr(Expr::String("1".to_string())),
-                    }],
-                })
-            } else if self.is_kw("WRITE") {
-                self.bump();
-                Ok(SetStmt {
-                    assignments: vec![SystemVariableAssignment {
-                        scope: SystemVariableScope::Session,
-                        name: "tx_read_only".to_string(),
-                        value: SetVariableValue::Expr(Expr::String("0".to_string())),
-                    }],
-                })
-            } else {
-                Err(self.err_here("expected ONLY or WRITE after READ"))
+            };
+            variables.push(VariableAssignment {
+                is_global,
+                ..VariableAssignment::system(name, value)
+            });
+            if !self.is_op(",") {
+                break;
             }
-        } else {
-            Err(self.err_here("expected ISOLATION LEVEL or READ ONLY/WRITE"))
+            self.bump();
         }
+        Ok(SetStmt { variables })
     }
+}
+
+fn set_stmt(set: SetStmt) -> SessionStmt {
+    SessionStmt::Set(Box::new(set))
 }
 
 fn decode_set_variable_name(parser: &Parser, raw: &str) -> String {

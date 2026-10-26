@@ -17,7 +17,7 @@
 use super::*;
 
 #[test]
-fn user_variable_assignments_restore_as_their_own_typed_set() {
+fn user_variable_assignments_restore() {
     assert_eq!(r("set @x = 5"), "SET @`x`=5");
     assert_eq!(r("set @x := 5"), "SET @`x`=5");
     assert_eq!(r("set @X = 1 + 2"), "SET @`X`=1+2");
@@ -27,85 +27,48 @@ fn user_variable_assignments_restore_as_their_own_typed_set() {
         r("set @a = 1, @b := @a + 2, @a = @b + 3"),
         "SET @`a`=1, @`b`=@`a`+2, @`a`=@`b`+3"
     );
-    assert!(parse("set @a = 1, @@session.autocommit = 0").is_err());
+    // Go's one generic loop mixes user and system assignments.
+    assert_eq!(
+        r("set @a = 1, @@session.autocommit = 0"),
+        "SET @`a`=1, @@SESSION.`autocommit`=0"
+    );
     assert!(parse("set xx.xx.xx = 666").is_err());
 }
 
-/// Exact 11-row AST matrix from `pkg/parser/parser_test.go::TestSetVariable`.
+/// Exact 11-row AST matrix from `pkg/parser/parser_test.go::TestSetVariable`:
+/// `(input, name, is_global, is_instance, is_system)`.
 #[test]
 fn test_set_variable_source_of_truth() {
-    use tidb_ast::{SessionStmt, Stmt, SystemVariableScope};
+    use tidb_ast::{SessionStmt, Stmt};
 
-    #[derive(Clone, Copy)]
-    enum ExpectedKind {
-        System(SystemVariableScope),
-        User,
-    }
-
-    for (sql, expected) in [
-        (
-            "set xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Session),
-        ),
-        (
-            "set session xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Session),
-        ),
-        (
-            "set local xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Session),
-        ),
-        (
-            "set global xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Global),
-        ),
-        (
-            "set instance xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Instance),
-        ),
-        (
-            "set @@xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Session),
-        ),
-        (
-            "set @@session.xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Session),
-        ),
-        (
-            "set @@local.xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Session),
-        ),
-        (
-            "set @@global.xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Global),
-        ),
-        (
-            "set @@instance.xx.xx = 666",
-            ExpectedKind::System(SystemVariableScope::Instance),
-        ),
-        ("set @xx.xx = 666", ExpectedKind::User),
+    for (sql, name, is_global, is_instance, is_system) in [
+        ("set xx.xx = 666", "xx.xx", false, false, true),
+        ("set session xx.xx = 666", "xx.xx", false, false, true),
+        ("set local xx.xx = 666", "xx.xx", false, false, true),
+        ("set global xx.xx = 666", "xx.xx", true, false, true),
+        ("set instance xx.xx = 666", "xx.xx", false, true, true),
+        ("set @@xx.xx = 666", "xx.xx", false, false, true),
+        ("set @@session.xx.xx = 666", "xx.xx", false, false, true),
+        ("set @@local.xx.xx = 666", "xx.xx", false, false, true),
+        ("set @@global.xx.xx = 666", "xx.xx", true, false, true),
+        ("set @@instance.xx.xx = 666", "xx.xx", false, true, true),
+        ("set @xx.xx = 666", "xx.xx", false, false, false),
     ] {
         let Stmt::Session(statement) =
             parse(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"))
         else {
             panic!("{sql}: expected session statement");
         };
-        match (statement.as_ref(), expected) {
-            (SessionStmt::Set(set), ExpectedKind::System(expected_scope)) => {
-                let [assignment] = set.assignments.as_slice() else {
-                    panic!("{sql}: expected one system-variable assignment");
-                };
-                assert_eq!(assignment.name, "xx.xx", "{sql}");
-                assert_eq!(assignment.scope, expected_scope, "{sql}");
-            }
-            (SessionStmt::SetUserVar(set), ExpectedKind::User) => {
-                let [assignment] = set.assignments.as_slice() else {
-                    panic!("{sql}: expected one user-variable assignment");
-                };
-                assert_eq!(assignment.name, "xx.xx", "{sql}");
-            }
-            (actual, _) => panic!("{sql}: unexpected SET statement shape: {actual:?}"),
-        }
+        let SessionStmt::Set(set) = statement.as_ref() else {
+            panic!("{sql}: expected SetStmt, got {statement:?}");
+        };
+        let [variable] = set.variables.as_slice() else {
+            panic!("{sql}: expected one assignment");
+        };
+        assert_eq!(variable.name, name, "{sql}");
+        assert_eq!(variable.is_global, is_global, "{sql}");
+        assert_eq!(variable.is_instance, is_instance, "{sql}");
+        assert_eq!(variable.is_system, is_system, "{sql}");
     }
 
     assert!(parse("set xx.xx.xx = 666").is_err());
@@ -277,11 +240,14 @@ fn system_variable_assignments() {
         panic!("expected generic SET");
     };
     assert!(matches!(
-        set.assignments.as_slice(),
-        [tidb_ast::SystemVariableAssignment {
-            scope: tidb_ast::SystemVariableScope::Global,
+        set.variables.as_slice(),
+        [tidb_ast::VariableAssignment {
             name,
-            value: tidb_ast::SetVariableValue::Default,
+            value: tidb_ast::Expr::Default(None),
+            is_global: true,
+            is_instance: false,
+            is_system: true,
+            extend_value: None,
         }] if name == "autocommit"
     ));
     assert!(parse("set @@xx.xx.xx = 666").is_err());
@@ -306,15 +272,30 @@ fn charset_commands_are_typed_and_canonical() {
         assert!(matches!(
             parse(sql),
             Ok(tidb_ast::Stmt::Session(session))
-                if matches!(session.as_ref(), tidb_ast::SessionStmt::SetCharset {
-                    kind: tidb_ast::CharsetSetKind::Charset,
-                    ..
-                })
+                if matches!(session.as_ref(), tidb_ast::SessionStmt::Set(set)
+                    if set.variables.len() == 1
+                        && set.variables[0].name == tidb_ast::SET_CHARSET
+                        && !set.variables[0].is_system)
         ));
     }
-    // go defers the unknown-charset check to execution (1115), so the
-    // parse itself succeeds.
-    assert!(parse("set names unknown_charset").is_ok());
+    assert_eq!(r("set character set default"), "SET CHARSET DEFAULT");
+    // Go `parseSetNamesAssignment` validates the name through
+    // `charset.GetCharsetInfo`: an unknown or unsupported charset is
+    // `ErrUnknownCharacterSet` at parse time, and `CHARSET` takes no `=`.
+    for sql in [
+        "set names unknown_charset",
+        "set names big5",
+        "set @a = 5, names big5",
+        "set charset = utf8mb4",
+    ] {
+        let error = parse(sql).expect_err(sql);
+        assert_eq!(
+            error.terror.map(|terror| terror.code()),
+            Some(tidb_error::catalog::parser::ERR_UNKNOWN_CHARACTER_SET.code()),
+            "{sql}: {error:?}"
+        );
+    }
+    assert_eq!(r("set names gbk"), "SET NAMES 'gbk'");
     assert!(parse("set character utf8").is_err());
     assert!(parse("set charset utf8 collate utf8_general_ci").is_err());
     assert_eq!(
@@ -322,6 +303,15 @@ fn charset_commands_are_typed_and_canonical() {
         "SET NAMES 'utf8', @@SESSION.`autocommit`=1"
     );
     assert!(parse("set names utf8; set autocommit = 1").is_err());
+    // `pkg/parser/parser_test.go`: SET NAMES and variables mix freely.
+    assert_eq!(
+        r("set names utf8, @@session.sql_mode=1;"),
+        "SET NAMES 'utf8', @@SESSION.`sql_mode`=1"
+    );
+    assert_eq!(
+        r("set @@session.sql_mode=1, names utf8, charset utf8;"),
+        "SET @@SESSION.`sql_mode`=1, NAMES 'utf8', CHARSET 'utf8'"
+    );
 }
 
 #[test]
@@ -401,21 +391,26 @@ fn transaction_set_sugar_restores_as_system_variables() {
         r("set global transaction isolation level repeatable read"),
         "SET @@GLOBAL.`tx_isolation`=_UTF8MB4'REPEATABLE-READ'"
     );
-    assert!(parse("set transaction isolation level read committed, read only").is_err());
+    // Go `parseSetTransaction` takes a comma list of characteristics.
+    assert_eq!(
+        r("set transaction isolation level read committed, read only"),
+        "SET @@SESSION.`tx_isolation_one_shot`=_UTF8MB4'READ-COMMITTED', \
+         @@SESSION.`tx_read_only`=_UTF8MB4'1'"
+    );
 }
 
 /// Exact AST assertions from `pkg/parser/parser_test.go::TestSetTransaction`.
 #[test]
 fn test_set_transaction_source_of_truth() {
-    for (sql, expected_scope, expected_value) in [
+    for (sql, is_global, expected_value) in [
         (
             "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
-            tidb_ast::SystemVariableScope::Session,
+            false,
             "READ-COMMITTED",
         ),
         (
             "SET GLOBAL TRANSACTION ISOLATION LEVEL REPEATABLE READ",
-            tidb_ast::SystemVariableScope::Global,
+            true,
             "REPEATABLE-READ",
         ),
     ] {
@@ -426,15 +421,15 @@ fn test_set_transaction_source_of_truth() {
         let tidb_ast::SessionStmt::Set(set) = session.as_ref() else {
             panic!("expected SET statement");
         };
-        let [assignment] = set.assignments.as_slice() else {
+        let [assignment] = set.variables.as_slice() else {
             panic!("expected one assignment");
         };
         assert_eq!(assignment.name, "tx_isolation", "{sql}");
-        assert_eq!(assignment.scope, expected_scope, "{sql}");
+        assert_eq!(assignment.is_global, is_global, "{sql}");
+        assert!(assignment.is_system, "{sql}");
         assert!(matches!(
             &assignment.value,
-            tidb_ast::SetVariableValue::Expr(tidb_ast::Expr::String(value))
-                if value == expected_value
+            tidb_ast::Expr::String(value) if value == expected_value
         ));
     }
 }

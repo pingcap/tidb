@@ -420,3 +420,42 @@ fn a_subquery_value_reports_its_evaluation_warnings() {
     );
     assert_eq!(one_row(&mut session, "SELECT @a"), ["NULL"]);
 }
+
+/// Go `buildSet` rewrites every value of one SET before `SetExecutor`
+/// applies any, and `rewriteSystemVariable` folds a system variable into a
+/// constant then: a later value reads the system variable's OLD value even
+/// after an earlier assignment changed it (captured from Go: `4|7|104`).
+#[test]
+fn set_values_read_system_variables_when_the_statement_is_built() {
+    let mut session = Session::new();
+    session
+        .run(
+            "set @@div_precision_increment = 7, @y = @@div_precision_increment, \
+             @@max_sort_length = @@div_precision_increment + 100",
+        )
+        .unwrap();
+    assert_eq!(
+        one_row(
+            &mut session,
+            "select @y, @@div_precision_increment, @@max_sort_length"
+        ),
+        ["4", "7", "104"]
+    );
+}
+
+/// Go's one generic SET loop mixes user variables, system variables and
+/// `NAMES` in source order; a later user value sees an earlier user write.
+#[test]
+fn one_set_mixes_user_system_and_names_assignments() {
+    let mut session = Session::new();
+    session
+        .run("set @a = 1, @@session.sql_mode = '', names latin1, @b = @a + 1")
+        .unwrap();
+    assert_eq!(
+        one_row(
+            &mut session,
+            "select @a, @b, @@sql_mode, @@character_set_client"
+        ),
+        ["1", "2", "", "latin1"]
+    );
+}

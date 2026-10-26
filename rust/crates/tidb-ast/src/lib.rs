@@ -90,8 +90,6 @@ mod traffic;
 mod transaction;
 #[path = "stmt/user.rs"]
 mod user;
-#[path = "stmt/user_variable.rs"]
-mod user_variable;
 mod util;
 mod visitor;
 
@@ -165,8 +163,8 @@ pub use session::{
     SetRoleSelection, SetRoleStmt,
 };
 pub use set::{
-    CharsetSetKind, SetItem, SetResourceGroupStmt, SetSessionStatesStmt, SetStmt, SetVariableValue,
-    SystemVariableAssignment, SystemVariableScope,
+    SetResourceGroupStmt, SetSessionStatesStmt, SetStmt, VariableAssignment, SET_CHARSET,
+    SET_NAMES,
 };
 pub use show::{ShowProfileType, ShowStmt, ShowStmtType};
 pub use traffic::{
@@ -180,7 +178,6 @@ pub use user::{
     CreateUserCommentOrAttribute, CreateUserCredential, CreateUserPasswordOption, CreateUserSpec,
     UserSpec,
 };
-pub use user_variable::{SetUserVarStmt, UserVariableAssignment};
 pub use util::{back_quote, push_name_path, redact_url};
 pub use visitor::{Visitable, Visitor};
 

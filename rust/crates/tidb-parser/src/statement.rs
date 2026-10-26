@@ -599,13 +599,9 @@ impl Parser {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::SetBinding(
                 Box::new(self.parse_set_binding()?),
             ))))
-        } else if self.is_specialized_set_statement() {
-            Ok(Stmt::Session(tidb_ast::NodeBox::new(
-                self.parse_specialized_set_statement()?,
-            )))
         } else if self.is_kw("SET") {
             Ok(Stmt::Session(tidb_ast::NodeBox::new(
-                self.parse_session_set_statement()?,
+                self.parse_set_statement()?,
             )))
         } else if self.is_kw("BEGIN") {
             self.bump();

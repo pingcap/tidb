@@ -655,9 +655,6 @@ impl Session {
                 let fast = matches!(stmt, Stmt::Session(session_stmt) if matches!(
                     &**session_stmt,
                     tidb_ast::SessionStmt::Set(_)
-                        | tidb_ast::SessionStmt::SetUserVar(_)
-                        | tidb_ast::SessionStmt::SetCharset { .. }
-                        | tidb_ast::SessionStmt::SetMixed(_)
                 ));
                 if !fast || tidb_util::topsql_state::top_profiling_enabled() {
                     let info = top_profiling_begin_info(&observation.ru_details, &user);

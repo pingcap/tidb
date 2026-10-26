@@ -928,7 +928,6 @@ fn session_statements_use_one_outer_envelope() {
         match stmt {
             tidb_ast::SessionStmt::Use(_) => "use",
             tidb_ast::SessionStmt::Set(_) => "set",
-            tidb_ast::SessionStmt::SetCharset { .. } => "set charset",
             tidb_ast::SessionStmt::SetResourceGroup(_) => "set resource group",
             tidb_ast::SessionStmt::SetSessionStates(_) => "set session states",
             tidb_ast::SessionStmt::Prepare { .. } => "prepare",
@@ -951,7 +950,7 @@ fn session_statements_use_one_outer_envelope() {
     for (sql, expected) in [
         ("use test", "use"),
         ("set autocommit = on", "set"),
-        ("set names utf8", "set charset"),
+        ("set names utf8", "set"),
         ("set resource group rg1", "set resource group"),
         ("set session_states 'serialized'", "set session states"),
         ("prepare p from 'select 1'", "prepare"),
