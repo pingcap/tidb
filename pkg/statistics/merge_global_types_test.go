@@ -462,6 +462,72 @@ func TestTypeMatrixCoversAllColumnTypes(t *testing.T) {
 	}
 }
 
+// TestMergeTimestampBoundsInUTC checks that the merge compares TopN values with bucket bounds in the
+// zone the bounds are in: UTC when every partition is marked with
+// HistogramFlagTimestampBoundsInUTC, otherwise the merging session's zone. The session
+// here is +08:00, so comparing in the wrong zone keeps the two halves of the same instant apart.
+func TestMergeTimestampBoundsInUTC(t *testing.T) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.FixedZone("+08:00", 8*3600))
+	killer := sqlkiller.SQLKiller{}
+	ft := types.NewFieldType(mysql.TypeTimestamp)
+	timestamp := func(s string) types.Datum {
+		tm, err := types.ParseTime(types.DefaultStmtNoWarningContext, s, mysql.TypeTimestamp, 0)
+		require.NoError(t, err)
+		return types.NewTimeDatum(tm)
+	}
+	// TopN keys are encoded in UTC whatever the zone, so this is the same instant either way.
+	encoded, err := codec.EncodeKey(time.UTC, nil, timestamp("2024-04-08 02:00:02"))
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name  string
+		bound string
+		flag  int64
+	}{
+		{"marked", "2024-04-08 02:00:02", statistics.HistogramFlagTimestampBoundsInUTC},
+		{"legacy", "2024-04-08 10:00:02", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p0TopN := statistics.NewTopN(1)
+			p0TopN.AppendTopN(encoded, 5)
+			p0Hist := statistics.NewHistogram(1, 1, 0, 0, ft, chunk.InitialCapacity, 0)
+			p0Hist.Flag = tc.flag
+			bound := timestamp(tc.bound)
+			p1Hist := statistics.NewHistogram(1, 1, 0, 0, ft, chunk.InitialCapacity, 0)
+			p1Hist.AppendBucket(&bound, &bound, 10, 10)
+			p1Hist.Flag = tc.flag
+
+			gTopN, gHist, err := statistics.MergePartTopNAndHistToGlobal(
+				sc, &killer,
+				[]*statistics.TopN{p0TopN, statistics.NewTopN(0)},
+				[]*statistics.Histogram{p0Hist, p1Hist},
+				1, 2, false,
+			)
+			require.NoError(t, err)
+			require.NotNil(t, gTopN)
+			require.Len(t, gTopN.TopN, 1)
+			require.Equal(t, encoded, gTopN.TopN[0].Encoded)
+			require.Equal(t, uint64(15), gTopN.TopN[0].Count, "the TopN and the bucket hold the same instant")
+			require.Equal(t, tc.flag, gHist.Flag)
+		})
+	}
+
+	// One unmarked partition makes the merged histogram unmarked.
+	marked := statistics.NewHistogram(1, 0, 0, 0, ft, 0, 0)
+	marked.Flag = statistics.HistogramFlagTimestampBoundsInUTC
+	unmarked := statistics.NewHistogram(1, 0, 0, 0, ft, 0, 0)
+	topN := statistics.NewTopN(1)
+	topN.AppendTopN(encoded, 5)
+	_, gHist, err := statistics.MergePartTopNAndHistToGlobal(
+		sc, &killer,
+		[]*statistics.TopN{topN, statistics.NewTopN(0)},
+		[]*statistics.Histogram{marked, unmarked},
+		1, 2, false,
+	)
+	require.NoError(t, err)
+	require.Zero(t, gHist.Flag)
+}
+
 // outOfScopeType records why a column type needs no merge coverage, and
 // how to spell it in DDL so the claim can be checked rather than
 // trusted. TestOutOfScopeTypesCarryNoStats does the checking.

@@ -17,15 +17,20 @@ package analyze
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/prometheus/client_golang/prometheus"
@@ -310,4 +315,207 @@ func TestAnalyzeMetricsCounters(t *testing.T) {
 
 	require.Equal(t, beforeAutoSucc+1, readCounter(autoSucc))
 	require.Equal(t, beforeAutoFail, readCounter(autoFail))
+}
+
+// timestampStats is a table whose TIMESTAMP column a holds four distinct instants, 512 rows each,
+// analyzed in UTC so the column histogram bounds are UTC. markUTC marks them as such.
+type timestampStats struct {
+	t   *testing.T
+	tk  *testkit.TestKit
+	dom *domain.Domain
+	id  int64
+}
+
+func newTimestampStats(t *testing.T, createTable string) *timestampStats {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(createTable)
+	tk.MustExec("set @@time_zone = 'UTC'")
+	tk.MustExec(`insert into t (a) values ('2024-04-08 02:00:01'), ('2024-04-08 02:00:02'),
+		('2024-04-08 02:00:03'), ('2024-04-08 02:00:04')`)
+	for range 9 {
+		tk.MustExec("insert into t (a) select a from t")
+	}
+	tk.MustExec("analyze table t with 0 topn")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	s := &timestampStats{t: t, tk: tk, dom: dom, id: tbl.Meta().ID}
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	return s
+}
+
+// markUTC sets the marker in storage. Like any write of a histogram it moves the versions forward,
+// or the stats cache would keep the histogram it has.
+func (s *timestampStats) markUTC() {
+	s.tk.MustExec(fmt.Sprintf("update mysql.stats_histograms set flag = flag | %d, version = version + 1 where table_id = %d and is_index = 0 and hist_id = 1",
+		statistics.HistogramFlagTimestampBoundsInUTC, s.id))
+	s.tk.MustExec(fmt.Sprintf("update mysql.stats_meta set last_stats_histograms_version = version + 1, version = version + 1 where table_id = %d", s.id))
+	require.NoError(s.t, s.dom.StatsHandle().Update(context.Background(), s.dom.InfoSchema()))
+}
+
+// estRows returns the estimated row count of the first plan operator, in the given time zone.
+func (s *timestampStats) estRows(timeZone, query string) string {
+	s.tk.MustExec("set @@time_zone = '" + timeZone + "'")
+	return s.tk.MustQuery("explain format = 'brief' " + query).Rows()[0][1].(string)
+}
+
+// sameInstant requires the same estimate for one query spelled out in UTC, +08:00 and -05:00.
+func (s *timestampStats) sameInstant(utc, plus8, minus5 string) string {
+	want := s.estRows("+00:00", utc)
+	require.Equal(s.t, want, s.estRows("+08:00", plus8), plus8)
+	require.Equal(s.t, want, s.estRows("-05:00", minus5), minus5)
+	return want
+}
+
+func (s *timestampStats) showBounds(timeZone string) [][]any {
+	s.tk.MustExec("set @@time_zone = '" + timeZone + "'")
+	rows := s.tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't' and column_name = 'a' and is_index = 0").Rows()
+	bounds := make([][]any, 0, len(rows))
+	for _, row := range rows {
+		bounds = append(bounds, []any{row[8], row[9]})
+	}
+	return bounds
+}
+
+// About half of the 2048 rows are greater than the second of the four distinct instants.
+const halfOfTimestampStats = "1044.48"
+
+// TestTimestampBoundsInUTCFlag covers the marker for UTC TIMESTAMP bounds in
+// mysql.stats_histograms.flag, see issue #52429. A histogram that carries it has its predicate
+// shifted to UTC, so every session sees the same estimate for the same instant. A histogram without
+// it is compared with the predicate as written.
+func TestTimestampBoundsInUTCFlag(t *testing.T) {
+	// The index is on b: an index on a would be used for the estimate instead, and index bounds are
+	// encoded in UTC.
+	s := newTimestampStats(t, "create table t (a timestamp, b int, key(b))")
+	flags := func() [][]any {
+		return s.tk.MustQuery(fmt.Sprintf("select is_index, hist_id, flag from mysql.stats_histograms where table_id = %d order by is_index, hist_id", s.id)).Rows()
+	}
+	const greater = "select * from t where a > '%s'"
+	utcBounds := [][]any{
+		{"2024-04-08 02:00:01", "2024-04-08 02:00:01"},
+		{"2024-04-08 02:00:02", "2024-04-08 02:00:02"},
+		{"2024-04-08 02:00:03", "2024-04-08 02:00:03"},
+		{"2024-04-08 02:00:04", "2024-04-08 02:00:04"},
+	}
+	plus8Bounds := [][]any{
+		{"2024-04-08 10:00:01", "2024-04-08 10:00:01"},
+		{"2024-04-08 10:00:02", "2024-04-08 10:00:02"},
+		{"2024-04-08 10:00:03", "2024-04-08 10:00:03"},
+		{"2024-04-08 10:00:04", "2024-04-08 10:00:04"},
+	}
+	checkLegacy := func() {
+		// The predicate is compared as written, so only the wall clock the bounds hold matches.
+		require.Equal(t, halfOfTimestampStats, s.estRows("+08:00", fmt.Sprintf(greater, "2024-04-08 02:00:02")))
+		require.NotEqual(t, halfOfTimestampStats, s.estRows("+08:00", fmt.Sprintf(greater, "2024-04-08 10:00:02")))
+		// And the bounds are shown as stored.
+		require.Equal(t, utcBounds, s.showBounds("+08:00"))
+	}
+	checkMarked := func() {
+		require.Equal(t, halfOfTimestampStats, s.sameInstant(
+			fmt.Sprintf(greater, "2024-04-08 02:00:02"),
+			fmt.Sprintf(greater, "2024-04-08 10:00:02"),
+			fmt.Sprintf(greater, "2024-04-07 21:00:02")))
+		// The bounds are shown in the session time zone, like the column value itself.
+		require.Equal(t, plus8Bounds, s.showBounds("+08:00"))
+		require.Equal(t, utcBounds, s.showBounds("+00:00"))
+	}
+
+	require.Equal(t, testkit.Rows("0 1 0", "0 2 0", "1 1 0"), flags())
+	checkLegacy()
+
+	marked := testkit.Rows("0 1 2", "0 2 0", "1 1 0")
+	s.markUTC()
+	require.Equal(t, marked, flags())
+	checkMarked()
+
+	// LOAD STATS keeps the marker. The statement only registers the load; the server then sends the
+	// file content to LoadStatsInfo.Update, which is done by hand here.
+	loadStats := func(jsonTbl *statsutil.JSONTable) {
+		data, err := json.Marshal(jsonTbl)
+		require.NoError(t, err)
+		path := filepath.Join(t.TempDir(), "stats.json")
+		require.NoError(t, os.WriteFile(path, data, 0o644))
+		s.tk.MustExec("drop stats t")
+		require.Equal(t, testkit.Rows("0 1 0", "0 2 0", "1 1 0"), flags())
+		s.tk.MustExec(fmt.Sprintf("load stats '%s'", path))
+		info, ok := s.tk.Session().Value(executor.LoadStatsVarKey).(*executor.LoadStatsInfo)
+		require.True(t, ok)
+		s.tk.Session().SetValue(executor.LoadStatsVarKey, nil)
+		content, err := os.ReadFile(info.Path)
+		require.NoError(t, err)
+		require.NoError(t, info.Update(content))
+		require.NoError(t, s.dom.StatsHandle().Update(context.Background(), s.dom.InfoSchema()))
+	}
+	tbl, ok := s.dom.InfoSchema().TableByID(context.Background(), s.id)
+	require.True(t, ok)
+	jsonTbl, err := s.dom.StatsHandle().DumpStatsToJSON("test", tbl.Meta(), nil, true)
+	require.NoError(t, err)
+	require.Equal(t, statistics.HistogramFlagTimestampBoundsInUTC, jsonTbl.Columns["a"].Flag)
+	require.Zero(t, jsonTbl.Columns["b"].Flag)
+	loadStats(jsonTbl)
+	require.Equal(t, marked, flags())
+	checkMarked()
+
+	// A file without a flag field loads unmarked.
+	jsonTbl.Columns["a"].Flag = 0
+	data, err := json.Marshal(jsonTbl)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"flag"`)
+	loadStats(jsonTbl)
+	require.Equal(t, testkit.Rows("0 1 0", "0 2 0", "1 1 0"), flags())
+	checkLegacy()
+}
+
+// TestTimestampBoundsInUTCFlagIndexRange covers a range on a single-column index over the TIMESTAMP
+// column. Out of the index's range, the estimate borrows the column histogram, whose bounds are
+// what the marker describes, while the index bounds are encoded in UTC.
+func TestTimestampBoundsInUTCFlagIndexRange(t *testing.T) {
+	s := newTimestampStats(t, "create table t (a timestamp, key ia(a))")
+	// Rows added since ANALYZE are what the out-of-range estimate distributes.
+	s.tk.MustExec("insert into t (a) select a from t limit 512")
+	require.NoError(t, s.dom.StatsHandle().DumpStatsDeltaToKV(true))
+	s.markUTC()
+	require.Equal(t, testkit.Rows("2560 512"),
+		s.tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", s.id)).Rows())
+
+	const between = "select * from t use index(ia) where a between '%s' and '%s'"
+	// Entirely past the last instant, 02:00:04 UTC.
+	s.sameInstant(
+		fmt.Sprintf(between, "2024-04-08 02:00:05", "2024-04-08 02:30:00"),
+		fmt.Sprintf(between, "2024-04-08 10:00:05", "2024-04-08 10:30:00"),
+		fmt.Sprintf(between, "2024-04-07 21:00:05", "2024-04-07 21:30:00"))
+	// Straddling the last instant.
+	s.sameInstant(
+		fmt.Sprintf(between, "2024-04-08 02:00:03", "2024-04-08 02:00:10"),
+		fmt.Sprintf(between, "2024-04-08 10:00:03", "2024-04-08 10:00:10"),
+		fmt.Sprintf(between, "2024-04-07 21:00:03", "2024-04-07 21:00:10"))
+}
+
+// TestTimestampBoundsInUTCFlagSyncLoad covers the marker on the path production takes: with a stats
+// lease, column statistics are not loaded up front but on demand by the query that needs them.
+func TestTimestampBoundsInUTCFlagSyncLoad(t *testing.T) {
+	s := newTimestampStats(t, "create table t (a timestamp)")
+	s.markUTC()
+
+	h := s.dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer h.SetLease(oriLease)
+	// Start from an empty cache; with a lease, Update only records that the statistics exist.
+	h.Clear()
+	require.NoError(t, h.Update(context.Background(), s.dom.InfoSchema()))
+	tbl, ok := s.dom.InfoSchema().TableByID(context.Background(), s.id)
+	require.True(t, ok)
+	colID := tbl.Meta().Columns[0].ID
+	col := h.GetPhysicalTableStats(s.id, tbl.Meta()).GetCol(colID)
+	require.True(t, col == nil || col.Histogram.Len() == 0, "the column histogram must not be loaded yet")
+
+	// The first query loads the histogram, and has to see the marker already.
+	require.Equal(t, halfOfTimestampStats, s.estRows("+08:00", "select * from t where a > '2024-04-08 10:00:02'"))
+	col = h.GetPhysicalTableStats(s.id, tbl.Meta()).GetCol(colID)
+	require.NotNil(t, col)
+	require.Positive(t, col.Histogram.Len())
+	require.True(t, col.Histogram.TimestampBoundsInUTC())
 }

@@ -65,6 +65,8 @@ type JSONColumn struct {
 	TotColSize        int64   `json:"tot_col_size"`
 	LastUpdateVersion uint64  `json:"last_update_version"`
 	Correlation       float64 `json:"correlation"`
+	// Flag is mysql.stats_histograms.flag. It is omitted when 0, and read as 0 when absent.
+	Flag int64 `json:"flag,omitempty"`
 }
 
 // TotalMemoryUsage returns the total memory usage of this column.
