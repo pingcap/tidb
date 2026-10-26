@@ -740,6 +740,10 @@ type Request struct {
 	RequestSource util.RequestSource
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// RangesPerTask, when positive, caps the number of key ranges in one
+	// coprocessor task. With 1, every key range becomes its own task, so a
+	// pushed-down Limit applies to each range separately.
+	RangesPerTask int
 	// AllowBatchTaskDataMerge lets requests without row-count hints (e.g.
 	// full-sampling ANALYZE) use store batching and allows stores to merge
 	// child task data into the main response.
