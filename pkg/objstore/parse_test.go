@@ -644,6 +644,17 @@ func TestParseBackend(t *testing.T) {
 			EncryptionScope: "test",
 		}, *retBackend3.AzureBlobStorage)
 	}
+	{
+		// IsS3Like must match every scheme that is parsed into an S3 backend,
+		// callers rely on it to apply S3 credential restrictions.
+		for _, rawURL := range []string{"s3://bucket", "ks3://bucket", "oss://bucket", "gcs://bucket", "azure://bucket", "local:///tmp"} {
+			u, err := ParseRawURL(rawURL)
+			require.NoError(t, err)
+			b, err := ParseBackend(rawURL, nil)
+			require.NoError(t, err)
+			require.Equal(t, b.GetS3() != nil, IsS3Like(u), rawURL)
+		}
+	}
 }
 
 func TestS3DefaultForceStylePath(t *testing.T) {

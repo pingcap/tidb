@@ -334,5 +334,5 @@ func IsLocal(u *url.URL) bool {
 
 // IsS3Like returns true if the URL is an S3 like store URL.
 func IsS3Like(u *url.URL) bool {
-	return u.Scheme == "s3" || u.Scheme == "oss"
+	return u.Scheme == "s3" || u.Scheme == "ks3" || u.Scheme == "oss"
 }
