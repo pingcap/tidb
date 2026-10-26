@@ -15,14 +15,34 @@
 //! Go `pkg/executor/show.go`: the `ShowExec` fetchers that moved here from
 //! the session.
 
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, PoisonError};
+
 use tidb_datatype::Datum;
 use tidb_variable::sysvar;
 
 use crate::sessionctx::{sys_var_hidden_for_sem, SessionContext};
 
+/// The `ShowBaseExtractor` of a planned SHOW, as Go's fetchers read it.
+type Extractor<'a> = Option<&'a tidb_planner::show_predicate_extractor::ShowBaseExtractor>;
+
+/// Go's `fieldFilter` / `fieldPatternsLike` test, `field_name` against the
+/// exact field and `pattern_name` against the wildcard: each fetcher passes
+/// the spelling Go's own comparison uses.
+fn extractor_admits(extractor: Extractor<'_>, field_name: &str, pattern_name: &str) -> bool {
+    let Some(extractor) = extractor else {
+        return true;
+    };
+    if !extractor.field().is_empty() && field_name != extractor.field() {
+        return false;
+    }
+    extractor
+        .field_pattern_like()
+        .is_none_or(|pattern| pattern.is_match(pattern_name.as_bytes()))
+}
+
 /// Go `ShowExec.fetchShowVariables`: one `Variable_name | Value` row per
-/// variable whose name matches `pattern` (already lowercased, Go
-/// `ShowBaseExtractor`). GLOBAL lists no SESSION-only variable; neither form
+/// variable the extractor admits by its name. GLOBAL lists no SESSION-only variable; neither form
 /// lists a noop variable while `tidb_enable_noop_variables` is OFF, a
 /// variable SEM hides, or an internal session variable. GLOBAL reads the
 /// GLOBAL tier (a variable with no GLOBAL copy reports its default);
@@ -31,7 +51,7 @@ use crate::sessionctx::{sys_var_hidden_for_sem, SessionContext};
 pub fn fetch_show_variables(
     ctx: &dyn SessionContext,
     global: bool,
-    pattern: Option<&str>,
+    extractor: Extractor<'_>,
 ) -> Vec<Vec<Datum>> {
     let vars = ctx.session_vars();
     let noop_enabled = vars.noop_variables_enabled();
@@ -46,15 +66,7 @@ pub fn fetch_show_variables(
         {
             continue;
         }
-        let matches = pattern.is_none_or(|pattern| {
-            crate::like_match_with_collation(
-                definition.name,
-                pattern,
-                None,
-                tidb_datatype::Collation::Utf8Mb4Bin,
-            )
-        });
-        if !matches {
+        if !extractor_admits(extractor, definition.name, definition.name) {
             continue;
         }
         let live = if global {
@@ -87,10 +99,18 @@ pub fn fetch_show_variables(
 /// Go `ShowExec.fetchShowDatabases`: every schema the session can see (one
 /// `DBIsVisible` per schema), `information_schema` first as the schema lists
 /// it.
-pub fn fetch_show_databases(ctx: &dyn SessionContext, is: &crate::Catalog) -> Vec<String> {
+pub fn fetch_show_databases(
+    ctx: &dyn SessionContext,
+    is: &crate::Catalog,
+    extractor: Extractor<'_>,
+) -> Vec<String> {
     is.database_names()
         .into_iter()
         .filter(|name| ctx.privilege_manager().db_is_visible(name))
+        .filter(|name| {
+            let lower = tidb_hack::go_to_lower(name);
+            extractor_admits(extractor, &lower, &lower)
+        })
         .collect()
 }
 
@@ -104,6 +124,7 @@ pub fn fetch_show_tables(
     is: &crate::Catalog,
     database: &str,
     full: bool,
+    extractor: Extractor<'_>,
 ) -> Result<Vec<(String, Option<&'static str>)>, crate::DriverError> {
     use tidb_hack::GoCaseCompare;
     use tidb_mysql::privilege::{AllPrivMask, CreateTMPTablePriv, PrivilegeType};
@@ -135,6 +156,10 @@ pub fn fetch_show_tables(
         .filter(|name| {
             ctx.privilege_manager()
                 .request_verification(database, name, any_but_temporary)
+        })
+        .filter(|name| {
+            let lower = tidb_hack::go_to_lower(name);
+            extractor_admits(extractor, &lower, &lower)
         })
         .map(|name| {
             let table_type = full.then(|| {
@@ -203,21 +228,12 @@ fn utf8mb4_default_collation(ctx: &dyn SessionContext) -> String {
 
 /// Go `ShowExec.fetchShowCharset`: `charset.GetSupportedCharsets` (whose
 /// rows carry the default collation `switchDefaultCollation` last wrote),
-/// utf8mb4's default read from the session, filtered by `pattern`.
-pub fn fetch_show_charset(ctx: &dyn SessionContext, pattern: Option<&str>) -> Vec<Vec<Datum>> {
+/// utf8mb4's default read from the session. Go installs no extractor for
+/// it: the plan's selection applies LIKE / WHERE.
+pub fn fetch_show_charset(ctx: &dyn SessionContext) -> Vec<Vec<Datum>> {
     let utf8mb4_default = utf8mb4_default_collation(ctx);
     tidb_datatype::get_supported_charsets()
         .into_iter()
-        .filter(|info| {
-            pattern.is_none_or(|pattern| {
-                crate::like_match_with_collation(
-                    &info.name,
-                    pattern,
-                    None,
-                    tidb_datatype::Collation::Utf8Mb4Bin,
-                )
-            })
-        })
         .map(|info| {
             let default_collation = if info.name == "utf8mb4" {
                 utf8mb4_default.clone()
@@ -235,50 +251,31 @@ pub fn fetch_show_charset(ctx: &dyn SessionContext, pattern: Option<&str>) -> Ve
 }
 
 /// Go `ShowExec.fetchShowEngines` as the mock/embedded single-engine server
-/// answers it: the one `InnoDB` row, filtered by `pattern`.
-pub fn fetch_show_engines(pattern: Option<&str>) -> Vec<Vec<Datum>> {
-    let included = pattern.is_none_or(|pattern| {
-        crate::like_match_with_collation(
-            "InnoDB",
-            pattern,
-            None,
-            tidb_datatype::Collation::Utf8Mb4Bin,
-        )
-    });
-    included
-        .then(|| {
-            vec![
-                Datum::Bytes(b"InnoDB".to_vec()),
-                Datum::Bytes(b"DEFAULT".to_vec()),
-                Datum::Bytes(
-                    b"Supports transactions, row-level locking, and foreign keys".to_vec(),
-                ),
-                Datum::Bytes(b"YES".to_vec()),
-                Datum::Bytes(b"YES".to_vec()),
-                Datum::Bytes(b"YES".to_vec()),
-            ]
-        })
-        .into_iter()
-        .collect()
+/// answers it: the one `InnoDB` row. Go installs no extractor for it: the
+/// plan's selection applies LIKE / WHERE.
+#[must_use]
+pub fn fetch_show_engines() -> Vec<Vec<Datum>> {
+    vec![vec![
+        Datum::Bytes(b"InnoDB".to_vec()),
+        Datum::Bytes(b"DEFAULT".to_vec()),
+        Datum::Bytes(b"Supports transactions, row-level locking, and foreign keys".to_vec()),
+        Datum::Bytes(b"YES".to_vec()),
+        Datum::Bytes(b"YES".to_vec()),
+        Datum::Bytes(b"YES".to_vec()),
+    ]]
 }
 
 /// Go `ShowExec.fetchShowCollation`: one `Collation | Charset | Id | Default
-/// | Compiled | Sortlen | Pad_attribute` row per collation Go lists, the
-/// pattern already lowercased (Go `ShowBaseExtractor`).
-pub fn fetch_show_collation(ctx: &dyn SessionContext, pattern: Option<&str>) -> Vec<Vec<Datum>> {
+/// | Compiled | Sortlen | Pad_attribute` row per collation Go lists and the
+/// extractor admits: the lowercased name against its field, the name as is
+/// against its pattern.
+pub fn fetch_show_collation(ctx: &dyn SessionContext, extractor: Extractor<'_>) -> Vec<Vec<Datum>> {
     let utf8mb4_default = utf8mb4_default_collation(ctx);
     let mut rows = Vec::new();
     for &collation in SHOW_COLLATION_ROWS {
         let name = collation.name();
-        if let Some(pattern) = pattern {
-            if !crate::like_match_with_collation(
-                name,
-                pattern,
-                None,
-                tidb_datatype::Collation::Utf8Mb4Bin,
-            ) {
-                continue;
-            }
+        if !extractor_admits(extractor, &tidb_hack::go_to_lower(name), name) {
+            continue;
         }
         let (sortlen, pad_attribute): (i64, &str) = match collation {
             tidb_datatype::Collation::Utf8UnicodeCi
@@ -304,4 +301,35 @@ pub fn fetch_show_collation(ctx: &dyn SessionContext, pattern: Option<&str>) -> 
         ]);
     }
     rows
+}
+
+/// The rows Go's `ShowExec.fetchAll` produced for each `PhysicalShow` of one
+/// statement, keyed by its plan id. Go's `ShowExec` fetches through its own
+/// session; the fetchers here read the session, which an executor cannot
+/// borrow, so the session supplies them before the executor is built.
+/// Clones of a statement context share it.
+#[derive(Default)]
+pub struct ShowRetrieval {
+    rows: Mutex<HashMap<i32, Arc<Vec<Vec<Datum>>>>>,
+}
+
+impl ShowRetrieval {
+    /// Supplies the rows of the `PhysicalShow` numbered `plan_id`, one value
+    /// per column of its schema.
+    pub fn supply(&self, plan_id: i32, rows: Vec<Vec<Datum>>) {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(plan_id, Arc::new(rows));
+    }
+
+    /// The rows supplied for the `PhysicalShow` numbered `plan_id`.
+    #[must_use]
+    pub fn rows(&self, plan_id: i32) -> Option<Arc<Vec<Vec<Datum>>>> {
+        self.rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&plan_id)
+            .cloned()
+    }
 }

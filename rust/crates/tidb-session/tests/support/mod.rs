@@ -95,6 +95,9 @@ pub fn byte_lines(session: &mut Session, sql: &str) -> String {
                         tidb_datatype::Datum::Bytes(bytes) => {
                             String::from_utf8_lossy(bytes).into_owned()
                         }
+                        tidb_datatype::Datum::String(string) => {
+                            String::from_utf8_lossy(string.bytes()).into_owned()
+                        }
                         other => format!("{other:?}"),
                     })
                     .collect::<Vec<_>>()
@@ -191,6 +194,9 @@ pub fn byte_rows(session: &mut Session, sql: &str) -> Vec<String> {
                     .map(|d| match d {
                         tidb_datatype::Datum::Bytes(bytes) => {
                             String::from_utf8_lossy(bytes).into_owned()
+                        }
+                        tidb_datatype::Datum::String(string) => {
+                            String::from_utf8_lossy(string.bytes()).into_owned()
                         }
                         other => format!("{other:?}"),
                     })
@@ -341,6 +347,9 @@ pub fn byte_rows_joined(session: &mut Session, sql: &str) -> String {
                     .map(|d| match d {
                         tidb_datatype::Datum::Bytes(bytes) => {
                             String::from_utf8_lossy(bytes).into_owned()
+                        }
+                        tidb_datatype::Datum::String(string) => {
+                            String::from_utf8_lossy(string.bytes()).into_owned()
                         }
                         other => format!("{other:?}"),
                     })

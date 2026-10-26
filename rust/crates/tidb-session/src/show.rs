@@ -417,29 +417,8 @@ pub(crate) fn string_column_output(column: &str, values: Vec<String>) -> StmtOut
 /// resolves against.
 const SHOW_VARIABLE_COLUMNS: &[&str; 2] = &["Variable_name", "Value"];
 
-/// The virtual column names available to `SHOW CHARSET WHERE`.
-const SHOW_CHARSET_COLUMNS: &[&str; 4] = &["Charset", "Description", "Default collation", "Maxlen"];
 
-/// The virtual column names available to `SHOW ENGINES WHERE`.
-const SHOW_ENGINES_COLUMNS: &[&str; 6] = &[
-    "Engine",
-    "Support",
-    "Comment",
-    "Transactions",
-    "XA",
-    "Savepoints",
-];
 
-/// The virtual column names available to `SHOW COLLATION WHERE`.
-const SHOW_COLLATION_COLUMNS: &[&str; 7] = &[
-    "Collation",
-    "Charset",
-    "Id",
-    "Default",
-    "Compiled",
-    "Sortlen",
-    "Pad_attribute",
-];
 
 /// The status variables this tier truthfully reports for `SHOW STATUS`, as
 /// `(name, value, session_only)`, in row order.
@@ -590,7 +569,6 @@ fn show_like_predicate(
 pub(crate) struct ShowLikePattern {
     value: Option<String>,
     fold_lowercase: bool,
-    literal_name: Option<String>,
     /// A pattern that names columns: Go plans it as a predicate over each
     /// row ([`show_like_predicate`]) instead of a literal match.
     row_pattern: Option<tidb_ast::Expr>,
@@ -615,15 +593,9 @@ impl ShowLikePattern {
             return Self {
                 value: None,
                 fold_lowercase: false,
-                literal_name: None,
                 row_pattern: Some(expr.clone()),
             };
         }
-        let literal_name = if extracted_literal {
-            value.clone().filter(|name| !name.is_empty())
-        } else {
-            None
-        };
         Self {
             value: if extracted_literal {
                 value.map(go_to_lower)
@@ -631,7 +603,6 @@ impl ShowLikePattern {
                 value
             },
             fold_lowercase: extracted_literal,
-            literal_name,
             row_pattern: None,
         }
     }
@@ -644,12 +615,6 @@ impl ShowLikePattern {
             .as_ref()
             .map(|pattern| show_like_predicate(pattern, columns))
             .transpose()
-    }
-
-    fn column_name(&self, base: &str) -> String {
-        self.literal_name
-            .as_ref()
-            .map_or_else(|| base.to_owned(), |pattern| format!("{base} ({pattern})"))
     }
 
     fn matches(&self, text: &str) -> bool {
@@ -823,6 +788,50 @@ impl Session {
         ];
         let row_like = like_pattern.filter(|pattern| pattern.row_pattern.is_some());
         self.filter_show_output(StmtOutput::Rows { columns, rows }, row_like, where_clause)
+    }
+
+    /// Go `Compile` + `runStmt` for a SHOW the planner builds: the statement
+    /// preprocessed (`resolveShowStmt`) and planned (`buildShow` and the
+    /// optimizer), its `PhysicalShow`'s rows fetched by `fetch` (Go
+    /// `ShowExec.fetchAll`, over the plan's contents and extractor), and the
+    /// plan's selections, limit, projection and sort run over them.
+    pub(crate) fn run_planned_show(
+        &mut self,
+        show: &tidb_ast::ShowStmt,
+        fetch: impl FnOnce(
+            &Self,
+            &tidb_executor::Catalog,
+            &tidb_planner::physical::PhysicalShow,
+        ) -> Result<Vec<Vec<Datum>>, DriverError>,
+    ) -> Result<StmtOutput, DriverError> {
+        let mut show = show.clone();
+        let auth_user = self
+            .vars
+            .current_user
+            .clone()
+            .and_then(|identity| {
+                identity
+                    .split_once('@')
+                    .map(|(user, host)| (user.to_owned(), host.to_owned()))
+            });
+        tidb_planner::preprocess::resolve_show_stmt(
+            &mut show,
+            &self.vars.current_db,
+            auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
+        );
+        let ctx = self.statement_context(false);
+        let current_db = self.vars.current_db.clone();
+        let catalog = self.shared_catalog();
+        let catalog = catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut physical =
+            tidb_executor::driver::plan_show_stmt(&show, &catalog, &current_db, &ctx)?;
+        let leaf = tidb_executor::driver::physical_show_of(&physical)
+            .ok_or_else(|| DriverError::unsupported("a SHOW plan without its PhysicalShow"))?;
+        let rows = fetch(self, &catalog, leaf)?;
+        ctx.show_retrieval().supply(leaf.base.base.id(), rows);
+        let (columns, rows) =
+            tidb_executor::driver::open_show_plan(&mut physical, &catalog, &ctx)?.collect()?;
+        Ok(StmtOutput::Rows { columns, rows })
     }
 
     /// Go `buildShow`'s LIKE / WHERE handling for one `ShowStmt`: the LIKE
@@ -1569,29 +1578,19 @@ impl Session {
             }
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Databases => {
-                let (like_pattern, where_clause) = match show_filter(show) {
-                    None => (None, None),
-                    Some(ShowFilter::Like(expr)) => {
-                        let value = datum_text(&self.eval_value(expr)?);
-                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-                    }
-                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
-                };
-                let names = {
-                    let catalog = self.shared_catalog();
-                    let catalog =
-                        catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    tidb_executor::show::fetch_show_databases(self, &catalog)
-                };
-                let column_name = like_pattern.as_ref().map_or_else(
-                    || "Database".into(),
-                    |pattern| pattern.column_name("Database"),
-                );
-                let output = string_column_output(&column_name, names);
-                self.filter_show_output(output, like_pattern, where_clause)
-                    .map(Some)
-            }
+            // Go `buildShow` + `fetchShowDatabases`.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Databases => self
+                .run_planned_show(show, |session, catalog, leaf| {
+                    Ok(tidb_executor::show::fetch_show_databases(
+                        session,
+                        catalog,
+                        base_extractor(leaf),
+                    )
+                    .into_iter()
+                    .map(|name| vec![Datum::new_string(name)])
+                    .collect())
+                })
+                .map(Some),
             // Go `fetchShowTableStatus`: its restricted SQL over
             // `information_schema.tables` for the schema, ordered by table
             // name, so every size and count is the TABLES reader's.
@@ -1717,46 +1716,16 @@ impl Session {
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
-            // Go `ShowExec` with `ShowVariables`: one row per variable,
-            // as `Variable_name` and `Value`, filtered by LIKE.
-            //
-            // `GLOBAL` reads the shared table live (a variable with no
-            // GLOBAL scope at all falls back to its registry default, as Go
-            // reports SOMETHING for every name `SHOW GLOBAL VARIABLES`
-            // lists rather than erroring); `SESSION`/unqualified reads this
-            // session's own copy, same as a plain `@@x`.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Variables => {
-                // Go `ShowBaseExtractor` lowercases the pattern.
-                let pattern = match &show.pattern {
-                    Some(tidb_ast::Expr::String(text)) => {
-                        Some(tidb_util::stringutil::go_to_lower(text))
-                    }
-                    _ => None,
-                };
-                let like_predicate = match &show.pattern {
-                    Some(expr) if !matches!(expr, tidb_ast::Expr::String(_)) => {
-                        Some(show_like_predicate(expr, SHOW_VARIABLE_COLUMNS)?)
-                    }
-                    _ => None,
-                };
-                let predicate = show.r#where.as_ref().or(like_predicate.as_ref());
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let rows =
-                    tidb_executor::show::fetch_show_variables(self, show.global_scope, pattern.as_deref());
-                self.filter_show_output(
-                    StmtOutput::Rows {
-                        columns: vec![
-                            (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
-                            (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
-                        ],
-                        rows,
-                    },
-                    None,
-                    predicate,
-                )
-                .map(Some)
-            }
+            // Go `buildShow` + `fetchShowVariables`.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Variables => self
+                .run_planned_show(show, |session, _catalog, leaf| {
+                    Ok(tidb_executor::show::fetch_show_variables(
+                        session,
+                        leaf.contents.global_scope,
+                        base_extractor(leaf),
+                    ))
+                })
+                .map(Some),
             // Go `fetchShowStatus`: one `Variable_name | Value` row per
             // status variable that `variable.GetStatusVars` collects from
             // the registered `Statistics` providers, with `GLOBAL` scope
@@ -1899,95 +1868,19 @@ impl Session {
                 )
                 .map(Some)
             }
-            // Go `fetchShowCharset`: one row per charset in the parser's
-            // registry, captured from mock TiDB (`Charset | Description |
-            // Default collation | Maxlen`).
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Charset => {
-                let pattern = match show_filter(show) {
-                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
-                        Some(text.clone())
-                    }
-                    _ => None,
-                };
-                let like_predicate = match show_filter(show) {
-                    Some(ShowFilter::Like(expr))
-                        if !matches!(expr, tidb_ast::Expr::String(_)) =>
-                    {
-                        Some(show_like_predicate(expr, SHOW_CHARSET_COLUMNS)?)
-                    }
-                    _ => None,
-                };
-                let predicate = match show_filter(show) {
-                    Some(ShowFilter::Where(expr)) => Some(expr),
-                    _ => like_predicate.as_ref(),
-                };
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let number =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                // Go's `SHOW CHARSET` is `charset.GetSupportedCharsets`, whose
-                // rows carry whatever default collation
-                // `switchDefaultCollation` last wrote. Reading the registry
-                // here rather than a table copied out of it is what keeps the
-                // `gbk`/`gb18030` default from having a second spelling.
-                let rows = tidb_executor::show::fetch_show_charset(self, pattern.as_deref());
-                self.filter_show_output(
-                    StmtOutput::Rows {
-                        columns: vec![
-                            ("Charset".to_owned(), text()),
-                            ("Description".to_owned(), text()),
-                            ("Default collation".to_owned(), text()),
-                            ("Maxlen".to_owned(), number()),
-                        ],
-                        rows,
-                    },
-                    None,
-                    predicate,
-                )
-                .map(Some)
-            }
-            // Go `fetchShowEngines`: this tier is the mock/embedded
-            // single-engine server, so the table is always the single
-            // `InnoDB` row Go's mock session reports.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Engines => {
-                let pattern = match show_filter(show) {
-                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
-                        Some(text.as_str())
-                    }
-                    _ => None,
-                };
-                let like_predicate = match show_filter(show) {
-                    Some(ShowFilter::Like(expr))
-                        if !matches!(expr, tidb_ast::Expr::String(_)) =>
-                    {
-                        Some(show_like_predicate(expr, SHOW_ENGINES_COLUMNS)?)
-                    }
-                    _ => None,
-                };
-                let predicate = match show_filter(show) {
-                    Some(ShowFilter::Where(expr)) => Some(expr),
-                    _ => like_predicate.as_ref(),
-                };
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let rows = tidb_executor::show::fetch_show_engines(pattern);
-                self.filter_show_output(
-                    StmtOutput::Rows {
-                        columns: vec![
-                            ("Engine".to_owned(), text()),
-                            ("Support".to_owned(), text()),
-                            ("Comment".to_owned(), text()),
-                            ("Transactions".to_owned(), text()),
-                            ("XA".to_owned(), text()),
-                            ("Savepoints".to_owned(), text()),
-                        ],
-                        rows,
-                    },
-                    None,
-                    predicate,
-                )
-                .map(Some)
-            }
+            // Go `buildShow` + `fetchShowCharset`: `charset.GetSupportedCharsets`, utf8mb4's
+            // default collation read from the session.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Charset => self
+                .run_planned_show(show, |session, _catalog, _leaf| {
+                    Ok(tidb_executor::show::fetch_show_charset(session))
+                })
+                .map(Some),
+            // Go `buildShow` + `fetchShowEngines`, as the embedded single-engine server answers it.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Engines => self
+                .run_planned_show(show, |_session, _catalog, _leaf| {
+                    Ok(tidb_executor::show::fetch_show_engines())
+                })
+                .map(Some),
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsTopN => self.stats_topn_stmt(show).map(Some),
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
@@ -2001,60 +1894,12 @@ impl Session {
                 self.require_show_stats_privilege("stats_table_locked")?;
                 self.stats_locked_stmt(show).map(Some)
             }
-            // Go `fetchShowCollation`: one row per collation in the
-            // parser's registry (`Collation | Charset | Id | Default |
-            // Compiled | Sortlen | Pad_attribute`).
-            //
-            // NOT MODELLED (documented): `Utf8Mb4ZhPinyinTiDbAsCs`, TiDB's
-            // reserved pinyin collation stub -- mock TiDB's own `SHOW
-            // COLLATION` capture omits it too, so this table matches the
-            // 15 collations Go actually lists rather than this crate's
-            // full 16-variant registry.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Collation => {
-                // Go `ShowBaseExtractor` lowercases the pattern
-                // (`strings.ToLower(ptn)`) before matching it against the
-                // lowercase collation names.
-                let pattern = match show_filter(show) {
-                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
-                        Some(tidb_util::stringutil::go_to_lower(text))
-                    }
-                    _ => None,
-                };
-                let like_predicate = match show_filter(show) {
-                    Some(ShowFilter::Like(expr))
-                        if !matches!(expr, tidb_ast::Expr::String(_)) =>
-                    {
-                        Some(show_like_predicate(expr, SHOW_COLLATION_COLUMNS)?)
-                    }
-                    _ => None,
-                };
-                let predicate = match show_filter(show) {
-                    Some(ShowFilter::Where(expr)) => Some(expr),
-                    _ => like_predicate.as_ref(),
-                };
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let number =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                let rows = tidb_executor::show::fetch_show_collation(self, pattern.as_deref());
-                self.filter_show_output(
-                    StmtOutput::Rows {
-                        columns: vec![
-                            ("Collation".to_owned(), text()),
-                            ("Charset".to_owned(), text()),
-                            ("Id".to_owned(), number()),
-                            ("Default".to_owned(), text()),
-                            ("Compiled".to_owned(), text()),
-                            ("Sortlen".to_owned(), number()),
-                            ("Pad_attribute".to_owned(), text()),
-                        ],
-                        rows,
-                    },
-                    None,
-                    predicate,
-                )
-                .map(Some)
-            }
+            // Go `buildShow` + `fetchShowCollation`.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Collation => self
+                .run_planned_show(show, |session, _catalog, leaf| {
+                    Ok(tidb_executor::show::fetch_show_collation(session, base_extractor(leaf)))
+                })
+                .map(Some),
             // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
             // `fetchShowMasterStatus` live in `crate::show_admin`: they
             // answer without touching a user table, and keeping them here
@@ -2620,75 +2465,26 @@ impl Session {
                 )
                 .map(Some)
             }
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Tables => {
-                let (like_pattern, where_clause) = match show_filter(show) {
-                    None => (None, None),
-                    Some(ShowFilter::Like(expr)) => {
-                        let value = datum_text(&self.eval_value(expr)?);
-                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-                    }
-                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
-                };
-                let database = match show_db_name(show) {
-                    Some(name) => name.to_owned(),
-                    None => self.require_current_database()?.into(),
-                };
-                let full = show.full;
-                let listed = {
-                    let catalog = self.shared_catalog();
-                    let catalog =
-                        catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                    tidb_executor::show::fetch_show_tables(self, &catalog, &database, full)?
-                };
-                let listed: Vec<_> = listed
-                    .into_iter()
-                    .filter(|(name, _)| {
-                        like_pattern
-                            .as_ref()
-                            .is_none_or(|pattern| pattern.matches(name))
-                    })
-                    .collect();
-                // Go names the column after the schema being listed.
-                let base_name = format!("Tables_in_{database}");
-                let name_column = match &like_pattern {
-                    Some(pattern) => pattern.column_name(&base_name),
-                    None => base_name,
-                };
-                let field_type =
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let column_names: Vec<&str> = if full {
-                    vec![name_column.as_str(), "Table_type"]
-                } else {
-                    vec![name_column.as_str()]
-                };
-                let like_predicate = match &like_pattern {
-                    Some(pattern) => pattern.row_predicate(&column_names)?,
-                    None => None,
-                };
-                let mut rows = Vec::with_capacity(listed.len());
-                for (name, table_type) in listed {
-                    let mut row = vec![Datum::Bytes(name.into_bytes())];
-                    if let Some(table_type) = table_type {
-                        row.push(Datum::Bytes(table_type.as_bytes().to_vec()));
-                    }
-                    if let Some(predicate) = &like_predicate {
-                        if !show_row_matches(predicate, &column_names, &row)? {
-                            continue;
-                        }
-                    }
-                    rows.push(row);
-                }
-                let columns = if full {
-                    vec![
-                        (name_column, field_type.clone()),
-                        ("Table_type".to_owned(), field_type),
-                    ]
-                } else {
-                    vec![(name_column, field_type)]
-                };
-                self.filter_show_output(StmtOutput::Rows { columns, rows }, None, where_clause)
-                    .map(Some)
-            }
+            // Go `buildShow` + `fetchShowTables`.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Tables => self
+                .run_planned_show(show, |session, catalog, leaf| {
+                    let listed = tidb_executor::show::fetch_show_tables(
+                        session,
+                        catalog,
+                        &leaf.contents.db_name,
+                        leaf.contents.full,
+                        base_extractor(leaf),
+                    )?;
+                    Ok(listed
+                        .into_iter()
+                        .map(|(name, table_type)| {
+                            let mut row = vec![Datum::new_string(name)];
+                            row.extend(table_type.map(Datum::new_string));
+                            row
+                        })
+                        .collect())
+                })
+                .map(Some),
             // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
             // (pkg/executor/simple.go:3584-3611): the statement answers
             // success immediately, and a 1-second-delayed task SIGTERMs this
@@ -2809,6 +2605,16 @@ fn admin_needs_super(admin: &tidb_ast::AdminStmt) -> bool {
 enum ShowFilter<'a> {
     Like(&'a tidb_ast::Expr),
     Where(&'a tidb_ast::Expr),
+}
+
+/// The `ShowBaseExtractor` `buildShow` installed on a planned SHOW.
+fn base_extractor(
+    leaf: &tidb_planner::physical::PhysicalShow,
+) -> Option<&tidb_planner::show_predicate_extractor::ShowBaseExtractor> {
+    match &leaf.extractor {
+        Some(tidb_planner::logical::ShowPredicateExtractor::Base(extractor)) => Some(extractor),
+        _ => None,
+    }
 }
 
 /// Go's `ShowStmt.DBName`, where the empty string means "not given".

@@ -2154,6 +2154,44 @@ fn planner_optimized_query_with_allocators(
     )
 }
 
+/// Go `planner.Optimize` for a `ShowStmt`: `PlanBuilder.Build`'s
+/// `buildShow` over the preprocessed statement, then the logical and
+/// physical optimization every plan goes through.
+pub(crate) fn physical_show_plan(
+    show: &tidb_ast::ShowStmt,
+    catalog: &Catalog,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<PhysicalPlan, tidb_planner::plan_base::PlanError> {
+    let plan_ids = PlanIdAllocator::new();
+    let column_ids = ColumnIdAllocator::new();
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+    };
+    let (plan, opt_flag) = parts.build(None, None, |builder| {
+        let plan = builder.build_show(show)?;
+        Ok((plan, builder.get_opt_flag()))
+    })?;
+    let logical = optimize_built_logical(
+        plan,
+        opt_flag,
+        catalog,
+        ctx,
+        false,
+        &plan_ids,
+        &column_ids,
+        &ctx.session_zone(),
+    )?;
+    physical_plan_for_logical(&logical, &plan_ids, &column_ids, ctx)
+}
+
 /// Go `PlanBuilder.Build` for a query: the logical plan before any
 /// optimization, with the optimizer flags the build collected.
 /// `building_view` names the view whose stored body this is, which Go builds

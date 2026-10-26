@@ -730,6 +730,49 @@ pub fn open_query_meta_stmt_with_physical_without_sequence_validation(
     }
 }
 
+/// Go `planner.Optimize` for a preprocessed `ShowStmt`
+/// ([`tidb_planner::preprocess::resolve_show_stmt`]).
+///
+/// # Errors
+///
+/// `buildShow`'s errors and any optimization failure.
+pub fn plan_show_stmt(
+    show: &tidb_ast::ShowStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner::physical::PhysicalPlan, DriverError> {
+    planner_bridge::physical_show_plan(show, catalog, current_db, ctx)
+        .map_err(planner_error_to_driver)
+}
+
+/// The `PhysicalShow` a planned SHOW reads: the node whose rows the session
+/// fetches (Go `ShowExec.fetchAll`) and supplies through
+/// [`crate::StmtContext::show_retrieval`] before [`open_show_plan`].
+#[must_use]
+pub fn physical_show_of(
+    plan: &tidb_planner::physical::PhysicalPlan,
+) -> Option<&tidb_planner::physical::PhysicalShow> {
+    match plan {
+        tidb_planner::physical::PhysicalPlan::Show(show) => Some(show),
+        other => other.children().iter().find_map(physical_show_of),
+    }
+}
+
+/// Go `executorBuilder.build` + `ExecStmt.Exec` for a planned SHOW whose
+/// rows the session supplied.
+///
+/// # Errors
+///
+/// A build failure, including a `PhysicalShow` with no supplied rows.
+pub fn open_show_plan(
+    physical: &mut tidb_planner::physical::PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<QueryRecordSet, DriverError> {
+    physical_builder::open_show(physical, catalog, ctx)
+}
+
 /// Builds the ordinary physical query tree without opening an executor.
 ///
 /// Information-schema execution uses this to inspect the resolved, pruned

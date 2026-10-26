@@ -15,6 +15,9 @@ fn rows(session: &mut Session, sql: &str) -> Vec<String> {
                         tidb_datatype::Datum::Bytes(bytes) => {
                             String::from_utf8_lossy(bytes).into_owned()
                         }
+                        tidb_datatype::Datum::String(string) => {
+                            String::from_utf8_lossy(string.bytes()).into_owned()
+                        }
                         tidb_datatype::Datum::Int(v) => format!("i:{v}"),
                         other => format!("{other:?}"),
                     })

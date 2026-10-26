@@ -7122,6 +7122,18 @@ fn build_with_state(
         }
         PhysicalPlan::CTE(cte) => build_cte(plan, cte, catalog, ctx, state),
         PhysicalPlan::CTETable(table) => build_cte_table(plan, table, state, ctx),
+        // Go `executorBuilder.buildShow`: a `ShowExec` whose `fetchAll` rows
+        // the session supplied for this node.
+        PhysicalPlan::Show(_) => {
+            let rows = ctx
+                .show_retrieval()
+                .rows(plan.base().base.id())
+                .ok_or_else(|| DriverError::unsupported("SHOW rows were not fetched"))?;
+            Ok(Box::new(crate::mem_table::MemTableSourceExec::new(
+                meta(ctx, plan, plan_schema(plan)?),
+                rows.as_ref().clone(),
+            )) as Box<dyn Executor>)
+        }
         _ => Err(DriverError::unsupported(format!(
             "physical executor construction for {} is not implemented",
             plan.base().base.tp()
@@ -7742,6 +7754,27 @@ pub(super) fn open_query(
         tidb_ast::QueryStmt::SetOpr(_) => physical_result_columns(physical, root.schema()),
     };
     // Go `recordSet.Fields()` reads the names captured before optimization.
+    let output_names = forwarded_output_names(physical)
+        .iter()
+        .map(|name| name.names.clone())
+        .collect();
+    let current_db = ctx.current_database_name().unwrap_or_default();
+    ctx.notify_before_executor_first_run();
+    super::QueryRecordSet::open(root, columns, ctx.statement_memory())
+        .map(|record_set| record_set.with_output_names(output_names, current_db))
+}
+
+/// Go `runStmt` -> `ExecStmt.Exec` for a planned SHOW: the executor built
+/// over the rows the session supplied, and opened.
+pub(super) fn open_show(
+    physical: &mut PhysicalPlan,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<super::QueryRecordSet, DriverError> {
+    super::begin_run_stmt_region();
+    prepare_execution_plan(physical, catalog, ctx)?;
+    let root = build(physical, catalog, ctx)?;
+    let columns = physical_result_columns(physical, root.schema());
     let output_names = forwarded_output_names(physical)
         .iter()
         .map(|name| name.names.clone())

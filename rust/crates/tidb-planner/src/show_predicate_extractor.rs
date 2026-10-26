@@ -17,6 +17,7 @@
 //! off the plan and hands it to the executor as a name or wildcard filter.
 
 use tidb_ast::{Expr, ShowStmt, ShowStmtType};
+use tidb_hack::go_to_lower;
 use tidb_util::stringutil::{compile_pattern, is_exact_match};
 
 /// Go `ShowBaseExtractor`.
@@ -68,19 +69,33 @@ impl ShowBaseExtractor {
             let pattern = value_expr_string(pattern)?;
             let (value, types) = compile_pattern(pattern.as_bytes(), b'\\');
             if is_exact_match(&types) {
-                extractor.field = value.into_iter().collect::<String>().to_lowercase();
+                extractor.field = go_to_lower(value.into_iter().collect::<String>());
             } else {
-                extractor.field_pattern = pattern.to_lowercase();
+                extractor.field_pattern = go_to_lower(pattern);
             }
             return Some(extractor);
         }
         match &show.column {
             Some(column) if !column.is_empty() => {
-                extractor.field = column.to_lowercase();
+                extractor.field = go_to_lower(column.clone());
                 Some(extractor)
             }
             _ => None,
         }
+    }
+
+    /// Go `Field()`.
+    #[must_use]
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    /// Go `FieldPatternLike()`: the utf8mb4 default collation's wildcard
+    /// over the lowercased pattern, with `\\` as the escape.
+    #[must_use]
+    pub fn field_pattern_like(&self) -> Option<tidb_datatype::WildcardPattern> {
+        (!self.field_pattern.is_empty())
+            .then(|| tidb_datatype::Collation::Utf8Mb4Bin.pattern(&self.field_pattern, b'\\'))
     }
 
     /// Go `ExplainInfo`.

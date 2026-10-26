@@ -32,6 +32,14 @@ fn show_stats_extended_reports_the_go_removal_error() {
     );
 }
 
+/// Each row's values as text, for comparing rows whatever datum form the
+/// executor hands back.
+fn texts(rows: &[Vec<Datum>]) -> Vec<Vec<String>> {
+    rows.iter()
+        .map(|row| row.iter().map(|value| datum_text(value).unwrap()).collect())
+        .collect()
+}
+
 /// SHOW DATABASES and SHOW TABLES, with Go's column naming and ordering.
 #[test]
 fn show_databases_and_tables() {
@@ -89,12 +97,10 @@ fn show_databases_and_tables() {
     {
         StmtOutput::Rows { rows, .. } => {
             assert_eq!(
-                rows,
-                vec![
-                    vec![Datum::Bytes(b"INFORMATION_SCHEMA".to_vec())],
-                    vec![Datum::Bytes(b"METRICS_SCHEMA".to_vec())],
-                    vec![Datum::Bytes(b"PERFORMANCE_SCHEMA".to_vec())],
-                ]
+                rows.iter()
+                    .map(|row| datum_text(&row[0]).unwrap())
+                    .collect::<Vec<_>>(),
+                vec!["INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA"]
             )
         }
         other => panic!("expected rows, got {other:?}"),
@@ -106,21 +112,23 @@ fn show_databases_and_tables() {
         .unwrap()
     {
         StmtOutput::Rows { rows, .. } => assert_eq!(
-            rows,
-            vec![
-                vec![Datum::Bytes(b"INFORMATION_SCHEMA".to_vec())],
-                vec![Datum::Bytes(b"METRICS_SCHEMA".to_vec())],
-                vec![Datum::Bytes(b"PERFORMANCE_SCHEMA".to_vec())],
-                vec![Datum::Bytes(b"other".to_vec())]
-            ]
+            rows.iter()
+                .map(|row| datum_text(&row[0]).unwrap())
+                .collect::<Vec<_>>(),
+            vec!["INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA", "other"]
         ),
         other => panic!("expected rows, got {other:?}"),
     }
+    // Go `ShowBaseExtractor.Extract`: a NULL literal's `GetString()` is
+    // empty, an exact pattern, so the extractor claims it with an empty
+    // `Field()` that `fetchShowDatabases` does not filter on -- every
+    // database (local gorun: `show databases like null` answers the same
+    // rows as `show databases`).
     match session
         .run_with_columns("SHOW DATABASES LIKE NULL")
         .unwrap()
     {
-        StmtOutput::Rows { rows, .. } => assert!(rows.is_empty()),
+        StmtOutput::Rows { rows, .. } => assert_eq!(rows.len(), 7),
         other => panic!("expected rows, got {other:?}"),
     }
 
@@ -146,13 +154,17 @@ fn show_databases_and_tables() {
     {
         StmtOutput::Rows { columns, rows } => {
             assert_eq!(columns[0].0, "Tables_in_test");
-            assert_eq!(rows, vec![vec![Datum::Bytes(b"zeta".to_vec())]]);
+            assert_eq!(texts(&rows), vec![vec!["zeta"]]);
         }
         other => panic!("expected rows, got {other:?}"),
     }
     assert!(row_text(session.run("SHOW TABLES LIKE CONCAT('%', 'TA')")).is_empty());
+    // Go: the NULL literal is an empty exact field, which filters nothing
+    // (local gorun: `show tables like null` lists every table).
     match session.run_with_columns("SHOW TABLES LIKE NULL").unwrap() {
-        StmtOutput::Rows { rows, .. } => assert!(rows.is_empty()),
+        StmtOutput::Rows { rows, .. } => {
+            assert_eq!(texts(&rows), vec![vec!["alpha"], vec!["zeta"]])
+        }
         other => panic!("expected rows, got {other:?}"),
     }
     match session
@@ -162,13 +174,7 @@ fn show_databases_and_tables() {
         StmtOutput::Rows { columns, rows } => {
             assert_eq!(columns[0].0, "Tables_in_test (alpha)");
             assert_eq!(columns[1].0, "Table_type");
-            assert_eq!(
-                rows,
-                vec![vec![
-                    Datum::Bytes(b"alpha".to_vec()),
-                    Datum::Bytes(b"BASE TABLE".to_vec())
-                ]]
-            );
+            assert_eq!(texts(&rows), vec![vec!["alpha", "BASE TABLE"]]);
         }
         other => panic!("expected rows, got {other:?}"),
     }
@@ -177,7 +183,7 @@ fn show_databases_and_tables() {
         .unwrap()
     {
         StmtOutput::Rows { rows, .. } => {
-            assert_eq!(rows, vec![vec![Datum::Bytes(b"alpha".to_vec())]])
+            assert_eq!(texts(&rows), vec![vec!["alpha"]])
         }
         other => panic!("expected rows, got {other:?}"),
     }
@@ -187,13 +193,9 @@ fn show_databases_and_tables() {
         )
         .unwrap()
     {
-        StmtOutput::Rows { rows, .. } => assert_eq!(
-            rows,
-            vec![vec![
-                Datum::Bytes(b"zeta".to_vec()),
-                Datum::Bytes(b"BASE TABLE".to_vec())
-            ]]
-        ),
+        StmtOutput::Rows { rows, .. } => {
+            assert_eq!(texts(&rows), vec![vec!["zeta", "BASE TABLE"]])
+        }
         other => panic!("expected rows, got {other:?}"),
     }
 

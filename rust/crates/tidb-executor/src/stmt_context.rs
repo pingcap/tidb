@@ -675,6 +675,8 @@ pub struct StmtContextData {
     /// The memory-table rows this statement's scans read and the requests
     /// still waiting for the session to retrieve them.
     mem_table_retrieval: Arc<crate::mem_table_retrieval::MemTableRetrieval>,
+    /// The rows the session fetched for this statement's `PhysicalShow`s.
+    show_retrieval: Arc<crate::show::ShowRetrieval>,
     /// Warnings raised while a coprocessor-equivalent evaluation ran
     /// ([`StmtContext::enter_cop_eval`]).
     ///
@@ -2517,6 +2519,7 @@ impl StmtContext {
             explain_table_hints: Vec::new(),
             block_as_names: Arc::default(),
             mem_table_retrieval: Arc::default(),
+            show_retrieval: Arc::default(),
             cop_batch_warnings: Arc::default(),
             cop_eval_depth: Arc::new(AtomicU32::new(0)),
             used_stats_info: Arc::default(),
@@ -2800,6 +2803,13 @@ impl StmtContext {
     #[must_use]
     pub fn mem_table_retrieval(&self) -> &crate::mem_table_retrieval::MemTableRetrieval {
         &self.mem_table_retrieval
+    }
+
+    /// The rows the session fetched for this statement's `PhysicalShow`s
+    /// (Go `ShowExec.fetchAll`).
+    #[must_use]
+    pub fn show_retrieval(&self) -> &crate::show::ShowRetrieval {
+        &self.show_retrieval
     }
 
     /// The statement's select-block aliases.
