@@ -2904,6 +2904,20 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				},
 			}
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			if v.Table.Name.L == strings.ToLower(infoschema.ClusterTableSlowLog) {
+				// Coprocessor sessions do not load common global variables. Read the
+				// current mode so remote plaintext lookups follow the global setting.
+				vars := b.sctx.GetSessionVars()
+				mode, err := vars.GetGlobalSystemVar(b.ctx, vardef.TiDBRedactLog)
+				if err != nil {
+					b.err = err
+					return nil
+				}
+				if err := vars.SetSystemVarWithRelaxedValidation(vardef.TiDBRedactLog, mode); err != nil {
+					b.err = err
+					return nil
+				}
+			}
 			extractor := v.Extractor.(*plannercore.SlowQueryExtractor)
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.sctx.GetSessionVars().StmtCtx.MemTracker)
