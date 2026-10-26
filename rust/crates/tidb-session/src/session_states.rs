@@ -16,7 +16,7 @@
 //! This is repair evidence, not complete acceptance of Go's sessionstates package:
 //! signing certificates and token authentication retain their separate obligations.
 
-use crate::{Session, SqlWarning, StmtOutput, WarningLevel};
+use crate::{Session, SqlWarning, WarningLevel};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -222,13 +222,12 @@ impl Session {
         Ok(state)
     }
 
-    pub(crate) fn show_session_states(&self) -> Result<StmtOutput, DriverError> {
+    /// Go `ShowExec.fetchShowSessionStates`: the encoded session state, and
+    /// no token.
+    pub(crate) fn show_session_states_rows(&self) -> Result<Vec<Vec<Datum>>, DriverError> {
         let json = tidb_datatype::BinaryJSON::parse(&self.encode_session_states()?.to_string())
             .map_err(invalid_state)?;
-        Ok(StmtOutput::Rows {
-            columns: columns(),
-            rows: vec![vec![Datum::Json(json), Datum::Null]],
-        })
+        Ok(vec![vec![Datum::Json(json), Datum::Null]])
     }
 
     /// Restores portable SQL state. Connection handlers rebuild binary handles first.

@@ -362,25 +362,6 @@ pub(crate) fn column_key_flag(table: &tidb_executor::KvTable, offset: usize) -> 
     }
 }
 
-/// A one-column result set of strings, the shape SHOW DATABASES and SHOW
-/// TABLES produce.
-/// A result set with the named VARCHAR columns and no rows, which is what
-/// several Go `SHOW` arms answer when the feature they report on is absent.
-pub(crate) fn text_columns_output(columns: &[&str]) -> StmtOutput {
-    StmtOutput::Rows {
-        columns: columns
-            .iter()
-            .map(|name| {
-                (
-                    (*name).into(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                )
-            })
-            .collect(),
-        rows: Vec::new(),
-    }
-}
-
 
 
 
@@ -628,13 +609,12 @@ impl Session {
     /// partition (`partition` level) carrying an AFFINITY, with its PD group's
     /// state from `affinity.GetAllGroupStates` -- NULL where PD holds no such
     /// group. The rows follow `ListTablesWithSpecialAttribute` over infoschema
-    /// v2: schema name, then table id, both descending. A literal LIKE is Go's
-    /// extractor, matched against the TABLE name.
-    fn show_affinity_stmt(
+    /// v2: schema name, then table id, both descending, each table the
+    /// extractor admits by its lowercased name.
+    fn show_affinity_rows(
         &mut self,
-        show: &tidb_ast::ShowStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
+        extractor: tidb_executor::show::Extractor<'_>,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
         struct AffinityRow {
             db_lower: String,
             table_id: i64,
@@ -656,9 +636,8 @@ impl Session {
                     let Some(affinity) = table.affinity() else {
                         continue;
                     };
-                    if like_pattern.as_ref().is_some_and(|pattern| {
-                        pattern.row_pattern.is_none() && !pattern.matches(&go_to_lower(&table.name))
-                    }) {
+                    let lower = go_to_lower(&table.name);
+                    if !tidb_executor::show::extractor_admits(extractor, &lower, &lower) {
                         continue;
                     }
                     let row = |partition: Option<String>, group_id: String| AffinityRow {
@@ -742,20 +721,7 @@ impl Session {
                 ]
             })
             .collect();
-        let varchar = || FieldType::new(tidb_datatype::FieldTypeCode::Varchar);
-        let longlong = || FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-        let columns = vec![
-            ("Db_name".to_owned(), varchar()),
-            ("Table_name".to_owned(), varchar()),
-            ("Partition_name".to_owned(), varchar()),
-            ("Leader_store_id".to_owned(), longlong()),
-            ("Voter_store_ids".to_owned(), varchar()),
-            ("Status".to_owned(), varchar()),
-            ("Region_count".to_owned(), longlong()),
-            ("Affinity_region_count".to_owned(), longlong()),
-        ];
-        let row_like = like_pattern.filter(|pattern| pattern.row_pattern.is_some());
-        self.filter_show_output(StmtOutput::Rows { columns, rows }, row_like, where_clause)
+        Ok(rows)
     }
 
     /// Go `Compile` + `runStmt` for a SHOW the planner builds: the statement
@@ -1171,6 +1137,11 @@ impl Session {
             // Go `ShowExec.fetchShowProcessList`: one row per live connection
             // of this server, read from the session manager.
             T::ProcessList => self.process_list_rows(contents.full),
+            T::SessionStates => self.show_session_states_rows()?,
+            // Go `fetchShowClusterConfigs`; Go gives CONFIG no extractor, so
+            // LIKE is the plan's selection on `Type`.
+            T::Config => self.cluster_config_table_rows(&[Default::default()])?,
+            T::Affinity => self.show_affinity_rows(extractor)?,
             T::StatsTopN => self.stats_topn_rows()?,
             T::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
@@ -1971,53 +1942,11 @@ impl Session {
             tidb_ast::AdminStmt::Show(show) if is_planned_show(show.tp) => {
                 self.run_planned_show(show).map(Some)
             }
-            // Go `ShowExec.fetchShowProcessList`: one row per live
-            // connection of this server, read from the session manager.
-            tidb_ast::AdminStmt::Show(show)
-                if matches!(
-                    show.tp,
-                    tidb_ast::ShowStmtType::Imports
-                        | tidb_ast::ShowStmtType::Config
-                        | tidb_ast::ShowStmtType::ReplicaStatus
-                        | tidb_ast::ShowStmtType::SessionStates
-                        | tidb_ast::ShowStmtType::Affinity
-                ) =>
-            {
-                if show.tp == tidb_ast::ShowStmtType::SessionStates {
-                    return self.show_session_states().map(Some);
-                }
-                // Go `ShowExec.fetchShowReplicaStatus` refuses outright:
-                // `This version of TiDB doesn't yet support 'SHOW {REPLICA |
-                // SLAVE} STATUS'` (1235).
-                if matches!(
-                    show.tp,
-                    tidb_ast::ShowStmtType::ReplicaStatus
-                ) {
-                    return Err(DriverError::NotSupportedYet(
-                        "SHOW {REPLICA | SLAVE} STATUS".into(),
-                    ));
-                }
-                if show.tp == tidb_ast::ShowStmtType::Config {
-                    let rows = self.cluster_config_table_rows(&[Default::default()])?;
-                    let StmtOutput::Rows { columns, .. } = text_columns_output(&[
-                        "Type", "Instance", "Name", "Value",
-                    ]) else { unreachable!() };
-                    let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
-                    return self
-                        .filter_show_output(
-                            StmtOutput::Rows { columns, rows },
-                            like_pattern,
-                            where_clause,
-                        )
-                        .map(Some);
-                }
-                if show.tp == tidb_ast::ShowStmtType::Affinity {
-                    return self.show_affinity_stmt(show).map(Some);
-                }
-                if show.tp == tidb_ast::ShowStmtType::Imports {
-                    return Ok(Some(crate::show_admin::show_imports_output()));
-                }
-                Ok(None)
+            // Go has no `ShowImports` fetcher or schema (`buildShowSchema`
+            // names no columns for it); this tier answers the empty
+            // `Job_ID | State` listing.
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Imports => {
+                Ok(Some(crate::show_admin::show_imports_output()))
             }
             // Go `SimpleExec.executeKillStmt`.
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
@@ -2315,6 +2244,10 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::Bindings
             | T::BindingCacheStatus
             | T::ProcessList
+            | T::SessionStates
+            | T::Config
+            | T::Affinity
+            | T::ReplicaStatus
     )
 }
 
