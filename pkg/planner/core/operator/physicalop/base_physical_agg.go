@@ -82,7 +82,7 @@ func (p *BasePhysicalAgg) InitForHash(ctx base.PlanContext, stats *property.Stat
 
 // InitForStream initializes BasePhysicalAgg for stream aggregation.
 func (p *BasePhysicalAgg) InitForStream(ctx base.PlanContext, stats *property.StatsInfo, offset int, schema *expression.Schema, props ...*property.PhysicalProperty) base.PhysicalPlan {
-	streamAgg := &PhysicalStreamAgg{*p}
+	streamAgg := &PhysicalStreamAgg{BasePhysicalAgg: *p}
 	streamAgg.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypeStreamAgg, streamAgg, offset)
 	streamAgg.SetChildrenReqProps(props)
 	streamAgg.SetStats(stats)
