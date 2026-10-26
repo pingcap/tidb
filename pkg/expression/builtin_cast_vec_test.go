@@ -188,6 +188,37 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 	}
 }
 
+func TestCastRealAsDate(t *testing.T) {
+	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
+	ctx := createContext(t)
+	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeDate))
+	require.NoError(t, err)
+	cast := &builtinCastRealAsTimeSig{baseFunc}
+	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
+
+	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeDouble)}, 4)
+	input.AppendFloat64(0, 0)
+	input.AppendFloat64(0, 0.19411194)
+	input.AppendFloat64(0, 0.9938275)
+	input.AppendFloat64(0, 20240101)
+	result := chunk.NewColumn(types.NewFieldType(mysql.TypeDate), input.NumRows())
+	require.NoError(t, cast.vecEvalTime(ctx, input, result))
+
+	for i := range input.NumRows() {
+		res, isNull, err := cast.evalTime(ctx, input.GetRow(i))
+		require.NoError(t, err)
+		if i < 3 {
+			require.True(t, result.IsNull(i))
+			require.True(t, isNull)
+			continue
+		}
+		require.False(t, result.IsNull(i))
+		require.False(t, isNull)
+		require.Equal(t, "2024-01-01", result.GetTime(i).String())
+		require.Equal(t, "2024-01-01", res.String())
+	}
+}
+
 func getTime(year int, month int, day int, hour int, minute int, second int) *types.Time {
 	retTime := types.NewTime(types.FromDate(year, month, day, hour, minute, second, 0), mysql.TypeDatetime, types.DefaultFsp)
 	return &retTime
