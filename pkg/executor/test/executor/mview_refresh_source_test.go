@@ -103,22 +103,29 @@ func TestMViewRefreshSourceInfoCutoverCancelRollsBack(t *testing.T) {
 }
 
 func TestMViewRefreshSourceInfoCutoverCancelAfterSQL(t *testing.T) {
-	_, tk, mviewID, _ := newMViewRefreshSourceFixture(t)
-	beforeRefresh := tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows()
-	beforeSources := tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows()
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", "1*return()")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
-		if job.Type == model.ActionMViewRefreshOutOfPlaceCutover && job.TableID == mviewID && job.Error != nil {
-			// Exercise terminal cancellation after SQL has released the runtime writes
-			// from statement staging into the DDL transaction buffer.
-			job.State = model.JobStateCancelled
-		}
-	})
-	tk.MustExec("insert into t_source_init values (1, 5)")
-	require.ErrorContains(t, tk.ExecToErr("refresh materialized view mv_source_init complete out of place"), "error after migrating refresh info")
-	require.Equal(t, beforeRefresh, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
-	require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows())
-	tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'mv_source_init'").Check(testkit.Rows(fmt.Sprint(mviewID)))
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changed=%t", changed), func(t *testing.T) {
+			_, tk, mviewID, _ := newMViewRefreshSourceFixture(t)
+			if changed {
+				tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_fast_refresh_source_info set MLOG_ID = -1 where MVIEW_ID = %d", mviewID))
+			}
+			beforeRefresh := tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows()
+			beforeSources := tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows()
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlaceCutoverAfterMigrateRefreshInfoError", "1*return()")
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+				if job.Type == model.ActionMViewRefreshOutOfPlaceCutover && job.TableID == mviewID && job.Error != nil {
+					// Exercise terminal cancellation after SQL has released the runtime writes
+					// from statement staging into the DDL transaction buffer.
+					job.State = model.JobStateCancelled
+				}
+			})
+			tk.MustExec("insert into t_source_init values (1, 5)")
+			require.ErrorContains(t, tk.ExecToErr("refresh materialized view mv_source_init complete out of place"), "error after migrating refresh info")
+			require.Equal(t, beforeRefresh, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
+			require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows())
+			tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'mv_source_init'").Check(testkit.Rows(fmt.Sprint(mviewID)))
+		})
+	}
 }
 
 func TestMViewRefreshSourceInfoBaselineRecovery(t *testing.T) {
@@ -181,6 +188,25 @@ func TestMViewRefreshSourceInfoBaselineRecovery(t *testing.T) {
 				require.Greater(t, after, before)
 			})
 		}
+	})
+	t.Run("unchanged out-of-place input", func(t *testing.T) {
+		_, tk, oldMViewID, mlogID := newMViewRefreshSourceFixture(t)
+		// A migration must preserve additional metadata when the log set is unchanged.
+		tk.MustExec("alter table mysql.tidb_mview_fast_refresh_source_info add column EXTRA int default 7")
+		tk.MustExec(fmt.Sprintf("update mysql.tidb_mview_fast_refresh_source_info set EXTRA = 42 where MVIEW_ID = %d", oldMViewID))
+		tk.MustExec("insert into t_source_init values (1, 5)")
+		tk.MustExec("refresh materialized view mv_source_init complete out of place")
+		newIDRows := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_schema='test' and table_name='mv_source_init'").Rows()
+		require.Len(t, newIDRows, 1)
+		newMViewID, err := strconv.ParseInt(fmt.Sprint(newIDRows[0][0]), 10, 64)
+		require.NoError(t, err)
+		require.NotEqual(t, oldMViewID, newMViewID)
+		tk.MustQuery("select MVIEW_ID, MLOG_ID, EXTRA from mysql.tidb_mview_fast_refresh_source_info").
+			Check(testkit.Rows(fmt.Sprintf("%d %d 42", newMViewID, mlogID)))
+		tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
+		tk.MustExec("insert into t_source_init values (2, 3)")
+		tk.MustExec("refresh materialized view mv_source_init fast")
+		tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 15 2", "2 23 2"))
 	})
 	t.Run("empty input", func(t *testing.T) {
 		_, tk, _, mlogID := newMViewRefreshSourceFixture(t)

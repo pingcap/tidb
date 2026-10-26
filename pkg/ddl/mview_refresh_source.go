@@ -74,10 +74,17 @@ func (w *worker) migrateMViewRefreshSourceInfo(jobCtx *jobContext, oldMViewID, n
 	if len(newIDs) != 0 {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: shadow already has input log records")
 	}
+	buildLogIDs := mviewutil.RefreshSourceLogIDs(buildSources)
+	if slices.Equal(mlogIDs, buildLogIDs) {
+		_, err = w.sess.Execute(ctx,
+			"UPDATE mysql.tidb_mview_fast_refresh_source_info SET MVIEW_ID = %? WHERE MVIEW_ID = %?",
+			"mview-refresh-cutover-migrate-source-info", newMViewID, oldMViewID)
+		return errors.Trace(err)
+	}
 	if err := mviewutil.DeleteRefreshSourceInfo(ctx, w.sess.GetSQLExecutor(), []int64{oldMViewID}); err != nil {
 		return err
 	}
-	return mviewutil.InsertRefreshSourceIDs(ctx, w.sess.GetSQLExecutor(), newMViewID, mviewutil.RefreshSourceLogIDs(buildSources))
+	return mviewutil.InsertRefreshSourceIDs(ctx, w.sess.GetSQLExecutor(), newMViewID, buildLogIDs)
 }
 
 // Validate the persisted build bindings against historical metadata, not the
