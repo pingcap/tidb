@@ -1800,7 +1800,7 @@ pub struct PhysicalShow {
     /// Go's embedded `logicalop.ShowContents`.
     pub contents: crate::logical::ShowContents,
     /// Go `Extractor`, in the one ported form.
-    pub extractor: Option<crate::logical::ShowStatsMetaPredicateExtractor>,
+    pub extractor: Option<crate::logical::ShowPredicateExtractor>,
 }
 
 /// Go `physicalop.PhysicalShowDDLJobs` (`physical_show.go:53`): the

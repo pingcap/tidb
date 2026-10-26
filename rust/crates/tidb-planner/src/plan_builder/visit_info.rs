@@ -41,6 +41,19 @@ pub enum VisitAuthError {
     },
     /// `plannererrors.ErrViewNoExplain`.
     ViewNoExplain,
+    /// `plannererrors.ErrDBaccessDenied` (1044) for the database named.
+    DbAccessDenied {
+        /// The database as Go prints it.
+        database: String,
+    },
+    /// `plannererrors.ErrSpecificAccessDenied` (1227) naming the privilege.
+    SpecificAccessDenied {
+        /// The privilege text the message names (`CONFIG`, `SUPER or
+        /// BACKUP_ADMIN`).
+        privilege: &'static str,
+    },
+    /// `plannererrors.ErrPrivilegeCheckFail`.
+    PrivilegeCheckFail,
 }
 
 /// Go `visitInfo`.
@@ -57,6 +70,10 @@ pub struct VisitInfo {
     pub column: String,
     /// Go's `authErr`.
     pub error: VisitAuthError,
+    /// Go `dynamicPrivs`: any one of them passes the check.
+    pub dynamic_privs: Vec<String>,
+    /// Go `dynamicWithGrant`.
+    pub dynamic_with_grant: bool,
 }
 
 /// Go `privilege.Manager.RequestVerificationWithUser`, which the planner asks

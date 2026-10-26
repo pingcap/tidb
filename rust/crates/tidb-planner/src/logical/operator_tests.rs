@@ -3977,7 +3977,10 @@ fn show_installs_an_extractor_only_when_it_claimed_a_predicate() {
         ],
     );
     assert!(remained.is_empty());
-    let extractor = claimed.extractor.clone().expect("extractor installed");
+    let Some(crate::logical::ShowPredicateExtractor::StatsMeta(extractor)) = claimed.extractor.clone()
+    else {
+        panic!("the stats-meta extractor installed");
+    };
     assert!(extractor.db.contains("d"));
     assert!(extractor.table.contains("t"));
 

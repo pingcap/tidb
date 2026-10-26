@@ -603,6 +603,10 @@ pub(super) fn planner_error_to_driver(error: tidb_planner::plan_base::PlanError)
         tidb_planner::plan_base::PlanErrorKind::MemTableRetrievalNeeded => {
             DriverError::MemTableRetrievalNeeded
         }
+        tidb_planner::plan_base::PlanErrorKind::OptOnTemporaryTable(_) => DriverError::DdlCoded {
+            proto: &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE,
+            message: error.message().to_owned(),
+        },
         tidb_planner::plan_base::PlanErrorKind::NotSupportedYet(feature) => {
             DriverError::NotSupportedYet(feature.clone().into())
         }

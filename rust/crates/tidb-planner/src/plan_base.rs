@@ -368,6 +368,8 @@ pub enum PlanErrorKind {
     UnknownDatabase(String),
     /// Go `plannererrors.ErrNoDB` (1046).
     NoDB,
+    /// Go `plannererrors.ErrOptOnTemporaryTable` (8006), naming the operation.
+    OptOnTemporaryTable(String),
     /// Go `infoschema.ErrTableNotExists`.
     UnknownTable(String),
     /// Go `plannererrors.ErrNoSuchTable` raised by `checkRecursiveView` for the
@@ -965,6 +967,16 @@ impl PlanError {
         Self {
             message: "a memory table was read without its rows being retrieved".to_owned(),
             kind: PlanErrorKind::MemTableRetrievalNeeded,
+        }
+    }
+
+    /// Go `plannererrors.ErrOptOnTemporaryTable`.
+    #[must_use]
+    pub fn opt_on_temporary_table(operation: impl Into<String>) -> Self {
+        let operation = operation.into();
+        Self {
+            message: format!("`{operation}` is unsupported on temporary tables."),
+            kind: PlanErrorKind::OptOnTemporaryTable(operation),
         }
     }
 

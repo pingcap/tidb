@@ -61,6 +61,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 command,
                 table: table.clone(),
             },
+            dynamic_privs: Vec::new(),
+            dynamic_with_grant: false,
         };
         self.visit_info.push(named(tidb_mysql::InsertPriv, "INSERT"));
         if insert.replace {
@@ -182,6 +184,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 table,
                 column: String::new(),
                 error: VisitAuthError::None,
+                dynamic_privs: Vec::new(),
+                dynamic_with_grant: false,
             });
         }
         Ok(visits)
@@ -230,6 +234,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                     command: "DELETE",
                     table,
                 },
+                dynamic_privs: Vec::new(),
+                dynamic_with_grant: false,
             });
         }
         Ok(visits)

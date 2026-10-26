@@ -189,6 +189,9 @@ mod projection_group_check;
 pub mod set_opr;
 #[cfg(test)]
 mod set_opr_tests;
+mod show;
+#[cfg(test)]
+mod show_tests;
 mod summary_time_range;
 pub mod visit_info;
 pub mod window;
@@ -2893,6 +2896,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 command: "SELECT",
                 table,
             },
+            dynamic_privs: Vec::new(),
+            dynamic_with_grant: false,
         });
     }
 
@@ -2909,6 +2914,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 command: "SELECT with locking clause",
                 table: table.to_owned(),
             },
+            dynamic_privs: Vec::new(),
+            dynamic_with_grant: false,
         });
     }
 

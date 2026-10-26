@@ -1459,7 +1459,9 @@ fn a_show_and_its_ddl_jobs_twin_are_born_in_root_tasks() {
     let mut base = BaseLogicalPlan::new(&allocator, LogicalShow::TYPE, 0);
     base.base.set_schema(Some(Schema::default()));
     let mut show = LogicalShow::new(base, ShowContents::default());
-    show.extractor = Some(ShowStatsMetaPredicateExtractor::default());
+    show.extractor = Some(crate::logical::ShowPredicateExtractor::StatsMeta(
+        ShowStatsMetaPredicateExtractor::default(),
+    ));
 
     let sorted = PhysicalProperty {
         sort_items: vec![SortItem::new(1, false)],

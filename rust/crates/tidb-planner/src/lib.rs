@@ -127,6 +127,7 @@ pub mod ranger;
 pub mod transaction_control;
 pub mod txn_mode;
 pub mod selectivity_greedy;
+pub mod show_predicate_extractor;
 pub mod show_schema;
 pub mod stats_info;
 pub mod table_sampler;

@@ -1838,6 +1838,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 table: view_lower,
                 column: String::new(),
                 error: super::visit_info::VisitAuthError::ViewNoExplain,
+                dynamic_privs: Vec::new(),
+                dynamic_with_grant: false,
             });
         }
         if let Some(alias) = alias.filter(|alias| !alias.is_empty()) {
