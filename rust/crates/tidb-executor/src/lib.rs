@@ -47,6 +47,7 @@ pub mod base_join_probe;
 pub mod concurrent_entry_map;
 pub use tidb_util::execdetails;
 pub mod sessionctx;
+pub mod show;
 pub mod simple;
 pub mod join_stats;
 pub mod index_lookup_stats;

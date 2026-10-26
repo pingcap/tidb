@@ -34,4 +34,18 @@ pub trait PrivilegeManager {
     /// Go `DBIsVisible(activeRoles, db)`; a session with no user sees every
     /// schema.
     fn db_is_visible(&self, database: &str) -> bool;
+    /// Go `RequestDynamicVerification(activeRoles, privName, grantable)`;
+    /// a session with no user passes.
+    fn request_dynamic_verification(&self, privilege: &str, grantable: bool) -> bool;
+}
+
+/// Go `infoschema.SysVarHiddenForSem`: under SEM an invisible variable is
+/// hidden from a session without `RESTRICTED_VARIABLES_ADMIN`.
+pub fn sys_var_hidden_for_sem(ctx: &dyn SessionContext, name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    tidb_util::sem_compat::is_enabled()
+        && tidb_util::sem_compat::is_invisible_sys_var(&name)
+        && !ctx
+            .privilege_manager()
+            .request_dynamic_verification("RESTRICTED_VARIABLES_ADMIN", false)
 }

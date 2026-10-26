@@ -494,6 +494,18 @@ pub fn escape_glob_question_mark(value: impl AsRef<[u8]>) -> String {
     escaped
 }
 
+/// Go `json.Marshal` of a value: `encoding/json` escapes `<`, `>`, `&` and the
+/// U+2028/U+2029 separators inside strings.
+pub fn go_json_marshal(value: &serde_json::Value) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_default()
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;

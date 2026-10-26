@@ -1771,64 +1771,8 @@ impl Session {
                 let predicate = show.where_clause.as_ref().or(like_predicate.as_ref());
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let mut rows = Vec::new();
-                let noop_enabled = self.vars.noop_variables_enabled();
-                for definition in sysvar::SYS_VARS {
-                    // Go `fetchShowVariables`: GLOBAL lists no SESSION-only
-                    // variable, and neither form lists a noop variable while
-                    // `tidb_enable_noop_variables` is OFF.
-                    if (show.global && definition.scope == sysvar::SCOPE_SESSION)
-                        || (definition.is_noop() && !noop_enabled)
-                    {
-                        continue;
-                    }
-                    // Go `fetchShowVariables` also skips `InternalSessionVariable`.
-                    if self.sem_hides_sysvar(definition.name)
-                        || definition.is_internal_session_variable()
-                    {
-                        continue;
-                    }
-                    let matches = match &pattern {
-                        Some(pattern) => tidb_executor::like_match_with_collation(
-                            definition.name,
-                            pattern,
-                            None,
-                            tidb_datatype::Collation::Utf8Mb4Bin,
-                        ),
-                        None => true,
-                    };
-                    if !matches {
-                        continue;
-                    }
-                    // The read-only session getters Go computes from live
-                    // session state (`GetSession`), not from a stored value.
-                    let live = if show.global {
-                        None
-                    } else {
-                        match definition.name {
-                            "tidb_last_ddl_info" => Some(self.last_ddl_info_value()),
-                            "tidb_last_query_info" => Some(self.last_query_info_value()),
-                            "tidb_last_txn_info" => Some(self.last_txn_info_value()),
-                            _ => None,
-                        }
-                    };
-                    let value = if let Some(live) = live {
-                        live
-                    } else if show.global {
-                        self.vars
-                            .get_global(definition.name)
-                            .unwrap_or_else(|_| sysvar::effective_default(definition))
-                    } else {
-                        self.vars
-                            .get_system(definition.name)
-                            .unwrap_or_else(|_| sysvar::effective_default(definition))
-                    };
-                    let row = vec![
-                        Datum::Bytes(definition.name.as_bytes().to_vec()),
-                        Datum::Bytes(value.into_bytes()),
-                    ];
-                    rows.push(row);
-                }
+                let rows =
+                    tidb_executor::show::fetch_show_variables(self, show.global, pattern.as_deref());
                 self.filter_show_output(
                     StmtOutput::Rows {
                         columns: vec![

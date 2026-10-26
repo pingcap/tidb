@@ -2024,6 +2024,23 @@ pub struct SessionVars {
     pub secure_transport: bool,
     /// Go `SessionVars.preparedStmtID`.
     pub prepared_statement_id: u32,
+    /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
+    /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
+    /// full (with `commit_ts`) after a commit, start-only otherwise, and
+    /// untouched by a statement that never took a timestamp (`SELECT 1`).
+    /// Empty until the first one, as Go's is.
+    /// (Go `SessionVars.LastTxnInfo`.)
+    pub last_txn_info: String,
+    /// Go `SessionVars.LastQueryInfo`, exposed by the read-only
+    /// `tidb_last_query_info` getter. The zero value is still useful before a
+    /// DML/EXECUTE/SHOW statement records query diagnostics, so retain the
+    /// JSON shape Go's `json.Marshal(sessionstates.QueryInfo{})` emits.
+    /// (Go `SessionVars.LastQueryInfo`.)
+    pub last_query_info: String,
+    /// Go `SessionVars.LastDDLInfo` (`sessionstates.LastDDLInfo`): the query
+    /// and sequence number of the last DDL job this session waited for.
+    /// (Go `SessionVars.LastDDLInfo`.)
+    pub last_ddl_info: (String, u64),
 }
 
 /// Go `GetSessionOrGlobalSystemVar`'s lazy population of `s.systems` for a
@@ -2091,6 +2108,10 @@ fn resolve_session_time_zone_value(written: &str) -> tidb_datatype::SessionTimeZ
 impl Default for SessionVars {
     fn default() -> Self {
         Self {
+            last_txn_info: String::new(),
+            last_query_info: "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
+                    .to_owned(),
+            last_ddl_info: (String::new(), 0),
             resource_group: "default".to_owned(),
             restricted_sql: false,
             secure_transport: false,
@@ -2158,6 +2179,22 @@ impl Default for SessionVars {
 }
 
 impl SessionVars {
+    /// Go `GetSession`'s `tidb_last_txn_info` getter.
+    pub fn last_txn_info_value(&self) -> String {
+        self.last_txn_info.clone()
+    }
+
+    /// Go `GetSession`'s `tidb_last_query_info` getter.
+    pub fn last_query_info_value(&self) -> String {
+        self.last_query_info.clone()
+    }
+
+    /// Go `GetSession`'s `tidb_last_ddl_info` getter: `{"query", "seq_num"}`.
+    pub fn last_ddl_info_value(&self) -> String {
+        let (query, seq) = &self.last_ddl_info;
+        tidb_util::stringutil::go_json_marshal(&serde_json::json!({"query": query, "seq_num": seq}))
+    }
+
     /// Restore only Go's typed SnapshotTS after failed storage/schema validation.
     /// SetExecutor leaves the system-variable string as assigned.
     pub fn restore_snapshot_ts(&mut self, ts: u64) {

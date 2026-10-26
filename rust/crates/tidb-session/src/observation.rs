@@ -1551,7 +1551,7 @@ impl Session {
     /// outcome. This tier recorded the storage error already, so the owner
     /// rewrites the recorded `error` once it knows the outcome.
     pub(crate) fn rerecord_last_query_error(&mut self, error: &str) {
-        let mut info = self.last_query_info.borrow_mut();
+        let info = &mut self.vars.last_query_info;
         let Some(position) = info.find(",\"error\":") else {
             return;
         };
@@ -1587,7 +1587,7 @@ impl Session {
             info.push_str(&quoted);
         }
         info.push('}');
-        *self.last_query_info.borrow_mut() = info;
+        self.vars.last_query_info = info;
     }
 
     /// Go `session.logStmt`: a crucial statement goes to the background log

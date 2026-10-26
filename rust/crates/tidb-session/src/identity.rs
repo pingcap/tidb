@@ -338,12 +338,7 @@ impl Session {
     }
 
     pub(crate) fn sem_hides_sysvar(&self, name: &str) -> bool {
-        let name = name.to_ascii_lowercase();
-        tidb_util::sem_compat::is_enabled()
-            && tidb_util::sem_compat::is_invisible_sys_var(&name)
-            && self
-                .privilege_context()
-                .is_some_and(|_| !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false))
+        tidb_executor::sessionctx::sys_var_hidden_for_sem(self, name)
     }
 
     pub(crate) fn require_sem_visible_sysvar(&self, name: &str) -> Result<(), DriverError> {

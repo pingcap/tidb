@@ -361,7 +361,7 @@ impl TxnManager {
     /// `kv.CommitHook`: a transaction that committed records its own timestamps
     /// as `@@tidb_last_txn_info`. One that published nothing leaves what the
     /// statement recorded.
-    fn record_committed_txn_info(session: &Session, committed: Option<CommittedTxnInfo>) {
+    fn record_committed_txn_info(session: &mut Session, committed: Option<CommittedTxnInfo>) {
         if let Some(committed) = committed {
             session.record_committed_txn_info(
                 committed.start_ts,
@@ -398,7 +398,7 @@ impl TxnManager {
     /// made it a silent overwrite.
     pub fn commit_autocommit_buffer(
         &mut self,
-        session: &Session,
+        session: &mut Session,
         hooks: &dyn CommitHooks,
         read_ts: Option<u64>,
         resource_group: &str,

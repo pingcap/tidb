@@ -181,19 +181,19 @@ impl Session {
             "sys-vars": system_vars, "prepared-stmts": prepared,
             "prepared-stmt-id": self.vars.prepared_statement_id,
             "status": if self.is_autocommit() { 2u32 } else { 0 },
-            "current-db": self.vars.current_db, "txn-info": *self.last_txn_info.borrow(),
+            "current-db": self.vars.current_db, "txn-info": self.vars.last_txn_info,
             "found-rows": self.vars.last_found_rows, "in-plan-cache": self.vars.prev_found_in_plan_cache,
             "in-binding": self.vars.prev_found_in_binding,
             "seq-values": *self.sequence_last_values.lock().unwrap_or_else(std::sync::PoisonError::into_inner),
             "affected-rows": self.vars.prev_row_count, "last-insert-id": self.vars.last_insert_id,
             "warnings": warnings, "rs-group": self.vars.resource_group,
         });
-        let (ddl_query, ddl_seq) = self.last_ddl_info.borrow().clone();
+        let (ddl_query, ddl_seq) = self.vars.last_ddl_info.clone();
         if ddl_seq != 0 {
             state["ddl-info"] = json!({"query": ddl_query, "seq_num": ddl_seq});
         }
         let query: Value =
-            serde_json::from_str(&self.last_query_info.borrow()).unwrap_or(Value::Null);
+            serde_json::from_str(&self.vars.last_query_info).unwrap_or(Value::Null);
         if query.get("start_ts").and_then(Value::as_u64).unwrap_or(0) != 0 {
             state["query-info"] = query;
         }
@@ -395,13 +395,13 @@ impl Session {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        *self.last_txn_info.borrow_mut() = state
+        self.vars.last_txn_info = state
             .get("txn-info")
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
         if let Some(info) = state.get("ddl-info").filter(|q| !q.is_null()) {
-            *self.last_ddl_info.borrow_mut() = (
+            self.vars.last_ddl_info = (
                 info.get("query")
                     .and_then(Value::as_str)
                     .unwrap_or_default()
@@ -410,7 +410,7 @@ impl Session {
             );
         }
         if let Some(query) = state.get("query-info").filter(|q| !q.is_null()) {
-            *self.last_query_info.borrow_mut() = query.to_string();
+            self.vars.last_query_info = query.to_string();
         }
         self.vars.last_found_rows = state.get("found-rows").and_then(Value::as_u64).unwrap_or(0);
         self.vars.found_in_plan_cache = state

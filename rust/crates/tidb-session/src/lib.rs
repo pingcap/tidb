@@ -773,20 +773,6 @@ pub struct Session {
         std::cell::RefCell<Option<(u64, Arc<tidb_planner::find_best_task::coster::CostEnv>)>>,
     prepared_plan_cache_environment_cache:
         std::cell::RefCell<Option<crate::prepared_ast::PreparedPlanCacheEnvironmentCache>>,
-    /// Go `SessionVars.LastTxnInfo` (`pkg/sessionctx/variable/session.go:1467`):
-    /// client-go's `TxnInfo` JSON for the last transaction that ACTIVATED --
-    /// full (with `commit_ts`) after a commit, start-only otherwise, and
-    /// untouched by a statement that never took a timestamp (`SELECT 1`).
-    /// Empty until the first one, as Go's is.
-    last_txn_info: std::cell::RefCell<String>,
-    /// Go `SessionVars.LastQueryInfo`, exposed by the read-only
-    /// `tidb_last_query_info` getter. The zero value is still useful before a
-    /// DML/EXECUTE/SHOW statement records query diagnostics, so retain the
-    /// JSON shape Go's `json.Marshal(sessionstates.QueryInfo{})` emits.
-    last_query_info: std::cell::RefCell<String>,
-    /// Go `SessionVars.LastDDLInfo` (`sessionstates.LastDDLInfo`): the query
-    /// and sequence number of the last DDL job this session waited for.
-    last_ddl_info: std::cell::RefCell<(String, u64)>,
     /// Where this session reports the tables its statements bind, for the
     /// node's metadata-lock gate; see [`MdlRelatedTableSink`].
     mdl_related_tables: Option<std::sync::Arc<dyn MdlRelatedTableSink>>,
@@ -1059,12 +1045,6 @@ impl Session {
             statement_var_cache: std::cell::RefCell::new(None),
             cost_env_cache: std::cell::RefCell::new(None),
             prepared_plan_cache_environment_cache: std::cell::RefCell::new(None),
-            last_txn_info: std::cell::RefCell::new(String::new()),
-            last_query_info: std::cell::RefCell::new(
-                "{\"txn_scope\":\"global\",\"start_ts\":0,\"for_update_ts\":0,\"ru_consumption\":0}"
-                    .to_owned(),
-            ),
-            last_ddl_info: std::cell::RefCell::new((String::new(), 0)),
             published_last_insert_id: Arc::default(),
             retry_auto_ids: Arc::default(),
             row_id_shards: Arc::default(),
@@ -1553,8 +1533,8 @@ impl Session {
     /// Go's `kv.CommitHook` (`sessiontxn/isolation/base.go:510`): the cluster
     /// transaction's own start and commit timestamps and the protocol that
     /// committed it, recorded once the commit is done.
-    pub fn record_committed_txn_info(&self, start_ts: u64, commit_ts: u64, commit_mode: &str) {
-        *self.last_txn_info.borrow_mut() = format!(
+    pub fn record_committed_txn_info(&mut self, start_ts: u64, commit_ts: u64, commit_mode: &str) {
+        self.vars.last_txn_info = format!(
             "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"{commit_mode}\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
         );
     }
@@ -1563,7 +1543,7 @@ impl Session {
     /// owns: Go `setLastTxnInfoBeforeTxnEnd` runs at the start of both
     /// `CommitTxn` and `RollbackTxn`, and only for a transaction that was
     /// activated.
-    pub fn record_started_txn_info(&self, start_ts: u64) {
+    pub fn record_started_txn_info(&mut self, start_ts: u64) {
         self.set_last_txn_info_started(start_ts);
     }
 
@@ -1571,18 +1551,18 @@ impl Session {
     /// a transaction that activated but did not commit -- read-only, rolled
     /// back, stale -- records the same struct with only scope and start set,
     /// zeros included, because Go marshals the whole thing.
-    pub(crate) fn set_last_txn_info_started(&self, start_ts: u64) {
-        *self.last_txn_info.borrow_mut() = format!(
+    pub(crate) fn set_last_txn_info_started(&mut self, start_ts: u64) {
+        self.vars.last_txn_info = format!(
             "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":0,\"txn_commit_mode\":\"\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
         );
     }
 
     pub(crate) fn last_txn_info_value(&self) -> String {
-        self.last_txn_info.borrow().clone()
+        self.vars.last_txn_info_value()
     }
 
     pub(crate) fn last_query_info_value(&self) -> String {
-        self.last_query_info.borrow().clone()
+        self.vars.last_query_info_value()
     }
 
     /// `(tidb_init_chunk_size, tidb_max_chunk_size)` in effect.
@@ -1609,16 +1589,15 @@ impl Session {
     /// Go `recordLastDDLInfo`: the query of a DDL job this session waited for
     /// and its sequence number -- Go's `seqAllocator`, a per-process counter
     /// of finished jobs.
-    pub fn record_last_ddl_info(&self, query: &str) {
+    pub fn record_last_ddl_info(&mut self, query: &str) {
         static DDL_JOB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let seq = DDL_JOB_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        *self.last_ddl_info.borrow_mut() = (query.to_owned(), seq);
+        self.vars.last_ddl_info = (query.to_owned(), seq);
     }
 
     /// `@@tidb_last_ddl_info`: Go's `json.Marshal(LastDDLInfo)`.
     pub(crate) fn last_ddl_info_value(&self) -> String {
-        let (query, seq) = self.last_ddl_info.borrow().clone();
-        go_json_marshal(&serde_json::json!({"query": query, "seq_num": seq}))
+        self.vars.last_ddl_info_value()
     }
 
     /// Binds where this session reports the tables its statements bind --
@@ -3454,17 +3433,7 @@ pub(crate) fn datetime_datum(unix_seconds: i64) -> tidb_datatype::Datum {
     .map_or(tidb_datatype::Datum::Null, tidb_datatype::Datum::Time)
 }
 
-/// Go `json.Marshal` of a value: `encoding/json` escapes `<`, `>`, `&` and the
-/// U+2028/U+2029 separators inside strings.
-pub(crate) fn go_json_marshal(value: &serde_json::Value) -> String {
-    serde_json::to_string(value)
-        .unwrap_or_default()
-        .replace('<', "\\u003c")
-        .replace('>', "\\u003e")
-        .replace('&', "\\u0026")
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029")
-}
+pub(crate) use tidb_util::stringutil::go_json_marshal;
 
 impl tidb_executor::sessionctx::SessionContext for Session {
     fn session_vars(&self) -> &SessionVars {
@@ -3483,5 +3452,9 @@ impl tidb_executor::sessionctx::SessionContext for Session {
 impl tidb_executor::sessionctx::PrivilegeManager for Session {
     fn db_is_visible(&self, database: &str) -> bool {
         self.database_is_visible(database)
+    }
+
+    fn request_dynamic_verification(&self, privilege: &str, grantable: bool) -> bool {
+        self.has_dynamic_privilege(privilege, grantable)
     }
 }
