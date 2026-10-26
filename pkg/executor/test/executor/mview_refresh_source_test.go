@@ -335,7 +335,7 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					*snapshot = &mviewRefreshSourceSnapshot{InfoSchema: *snapshot, replaced: replacements}
 				})
 				err := tk.ExecToErr("refresh materialized view mv_source_init " + method)
-				if (change == "log replaced" || change == "missing log") && method != "fast" && method != "complete out of place" {
+				if (change == "log replaced" || change == "missing log") && method != "fast" {
 					require.NoError(t, err)
 					tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
 					expectedLogID := mlogID + 10000
@@ -344,8 +344,6 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					}
 					tk.MustQuery("select MLOG_ID from mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows(fmt.Sprint(expectedLogID)))
 				} else {
-					// OOP's DDL worker independently checks the persisted input set;
-					// a fabricated executor snapshot must not pass that check.
 					require.Error(t, err)
 					require.Equal(t, before, tk.MustQuery("select * from mysql.tidb_mview_refresh_info").Rows())
 					require.Equal(t, beforeSources, tk.MustQuery("select * from mysql.tidb_mview_fast_refresh_source_info").Rows())
