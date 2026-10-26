@@ -76,9 +76,11 @@ fn table_rows(
 
 impl Session {
     /// The unfiltered rows of one SHOW PLACEMENT form.
+    /// Go `fetchShowPlacement` and its FOR DATABASE / TABLE / PARTITION and
+    /// LABELS forms (`executor/show_placement.go`).
     pub(crate) fn placement_rows(
         &mut self,
-        show: &tidb_ast::ShowStmt,
+        show: &tidb_planner::logical::ShowContents,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         match show.tp {
             tidb_ast::ShowStmtType::Placement => self.all_placement_rows(),
@@ -99,7 +101,8 @@ impl Session {
                 })
             }
             tidb_ast::ShowStmtType::PlacementForTable => {
-                let path = show.table.as_deref().unwrap_or_default();
+                let path = [show.db_name.clone(), show.table_name.clone().unwrap_or_default()];
+                let path = path.as_slice();
                 let (database, table_name) = self.placement_table_name(path)?;
                 self.require_show_create_privilege(&database, &table_name)?;
                 self.with_catalog_mut(|catalog| {
@@ -110,7 +113,8 @@ impl Session {
                 })
             }
             tidb_ast::ShowStmtType::PlacementForPartition => {
-                let table = show.table.as_deref().unwrap_or_default();
+                let table = [show.db_name.clone(), show.table_name.clone().unwrap_or_default()];
+                let table = table.as_slice();
                 let partition = &show.partition;
                 let (database, table_name) = self.placement_table_name(table)?;
                 self.require_show_create_privilege(&database, &table_name)?;

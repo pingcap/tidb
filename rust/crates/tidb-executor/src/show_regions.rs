@@ -27,7 +27,7 @@ use crate::kv_table::KvTable;
 use crate::region_map::RegionMeta;
 use crate::{Catalog, DriverError, MysqlError, SchemaErrorKind, TableEntry};
 use tidb_codec::decode_int;
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::Datum;
 use tidb_error::tidb::errcode;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
@@ -37,46 +37,6 @@ use tidb_model::PlacementSettings;
 /// applies: the in-process store runs no placement rules, so the schedule
 /// never completes.
 const PENDING: &str = "PENDING";
-
-/// Go `buildTableRegionsSchema`.
-#[must_use]
-pub fn table_region_columns() -> Vec<(String, FieldType)> {
-    let number = |flen: i64| {
-        let mut field_type = FieldType::new(FieldTypeCode::LongLong);
-        field_type.set_flen(flen);
-        field_type.add_flags(FieldTypeFlags::UNSIGNED);
-        field_type.set_charset_name("binary");
-        field_type.set_collation_name("binary");
-        field_type
-    };
-    let text = |flen: i64| {
-        let mut field_type = FieldType::new(FieldTypeCode::Varchar);
-        field_type.set_flen(flen);
-        field_type.set_charset_name("utf8mb4");
-        field_type.set_collation_name("utf8mb4_bin");
-        field_type
-    };
-    let mut scattering = FieldType::new(FieldTypeCode::Tiny);
-    scattering.set_flen(1);
-    scattering.add_flags(FieldTypeFlags::UNSIGNED);
-    scattering.set_charset_name("binary");
-    scattering.set_collation_name("binary");
-    vec![
-        ("REGION_ID".to_owned(), number(4)),
-        ("START_KEY".to_owned(), text(64)),
-        ("END_KEY".to_owned(), text(64)),
-        ("LEADER_ID".to_owned(), number(4)),
-        ("LEADER_STORE_ID".to_owned(), number(4)),
-        ("PEERS".to_owned(), text(64)),
-        ("SCATTERING".to_owned(), scattering),
-        ("WRITTEN_BYTES".to_owned(), number(4)),
-        ("READ_BYTES".to_owned(), number(4)),
-        ("APPROXIMATE_SIZE(MB)".to_owned(), number(4)),
-        ("APPROXIMATE_KEYS".to_owned(), number(4)),
-        ("SCHEDULING_CONSTRAINTS".to_owned(), text(256)),
-        ("SCHEDULING_STATE".to_owned(), text(16)),
-    ]
-}
 
 /// The table a `SHOW TABLE` statement names, reduced to what Go's region
 /// listing reads of its `TableInfo`.

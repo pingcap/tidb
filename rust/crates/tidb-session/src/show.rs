@@ -1142,6 +1142,41 @@ impl Session {
             // LIKE is the plan's selection on `Type`.
             T::Config => self.cluster_config_table_rows(&[Default::default()])?,
             T::Affinity => self.show_affinity_rows(extractor)?,
+            // Go `fetchShowPlacement` and its FOR DATABASE / TABLE /
+            // PARTITION and LABELS forms (`executor/show_placement.go`); Go
+            // gives them no extractor, so LIKE is the plan's selection.
+            T::Placement
+            | T::PlacementLabels
+            | T::PlacementForDatabase
+            | T::PlacementForTable
+            | T::PlacementForPartition => self.placement_rows(contents)?,
+            // Go `fetchShowTableRegions`.
+            T::Regions => {
+                let table_name = contents.table_name.clone().unwrap_or_default();
+                self.with_catalog_mut(|catalog| {
+                    tidb_executor::show_regions::show_table_regions(
+                        catalog,
+                        &contents.db_name,
+                        &table_name,
+                        &contents.table_partitions,
+                        (!contents.index_name.is_empty()).then_some(contents.index_name.as_str()),
+                    )
+                })?
+            }
+            // Go `fetchShowDistributions`, which needs PD's HTTP client: the
+            // table and partitions are checked, then PD's error answers.
+            T::Distributions => {
+                let table_name = contents.table_name.clone().unwrap_or_default();
+                self.with_catalog_mut(|catalog| {
+                    tidb_executor::show_regions::show_table_distributions(
+                        catalog,
+                        &contents.db_name,
+                        &table_name,
+                        &contents.table_partitions,
+                    )
+                })?;
+                Vec::new()
+            }
             T::StatsTopN => self.stats_topn_rows()?,
             T::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
@@ -1858,49 +1893,6 @@ impl Session {
             tidb_ast::AdminStmt::Traffic(_) => Err(DriverError::Mysql(tidb_executor::MysqlError::unknown(
                 "no tiproxy server found",
             ))),
-            // Go `fetchShowPlacement` and its FOR DATABASE/TABLE/PARTITION and
-            // LABELS forms (`executor/show_placement.go`).
-            tidb_ast::AdminStmt::Show(show)
-                if matches!(
-                    show.tp,
-                    tidb_ast::ShowStmtType::Placement
-                        | tidb_ast::ShowStmtType::PlacementLabels
-                        | tidb_ast::ShowStmtType::PlacementForDatabase
-                        | tidb_ast::ShowStmtType::PlacementForTable
-                        | tidb_ast::ShowStmtType::PlacementForPartition
-                ) =>
-            {
-                let columns = if show.tp == tidb_ast::ShowStmtType::PlacementLabels {
-                    vec![
-                        (
-                            "Key".to_owned(),
-                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                        ),
-                        (
-                            "Values".to_owned(),
-                            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Json),
-                        ),
-                    ]
-                } else {
-                    ["Target", "Placement", "Scheduling_State"]
-                        .iter()
-                        .map(|name| {
-                            (
-                                (*name).to_owned(),
-                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                            )
-                        })
-                        .collect()
-                };
-                let rows = self.placement_rows(show)?;
-                let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
-                self.filter_show_output(
-                    StmtOutput::Rows { columns, rows },
-                    like_pattern,
-                    where_clause,
-                )
-                .map(Some)
-            }
             // Go `RecommendIndexExec` (`executor/recommend_index.go`).
             tidb_ast::AdminStmt::RecommendIndex(recommend) => {
                 self.recommend_index_stmt(recommend).map(Some)
@@ -2020,45 +2012,6 @@ impl Session {
                     ],
                     rows,
                 }))
-            }
-            // Go `fetchShowTableRegions` / `fetchShowDistributions`.
-            tidb_ast::AdminStmt::Show(show)
-                if matches!(
-                    show.tp,
-                    tidb_ast::ShowStmtType::Regions | tidb_ast::ShowStmtType::Distributions
-                ) =>
-            {
-                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
-                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
-                    [database, table] => (database.clone(), table.clone()),
-                    _ => return Err(DriverError::unsupported("empty table name")),
-                };
-                if show.tp == tidb_ast::ShowStmtType::Distributions {
-                    self.with_catalog_mut(|catalog| {
-                        tidb_executor::show_regions::show_table_distributions(
-                            catalog,
-                            &database,
-                            &table_name,
-                            &show.table_partitions,
-                        )
-                    })?;
-                    return Ok(None);
-                }
-                let rows = self.with_catalog_mut(|catalog| {
-                    tidb_executor::show_regions::show_table_regions(
-                        catalog,
-                        &database,
-                        &table_name,
-                        &show.table_partitions,
-                        (!show.index_name.is_empty()).then_some(show.index_name.as_str()),
-                    )
-                })?;
-                let output = StmtOutput::Rows {
-                    columns: tidb_executor::show_regions::table_region_columns(),
-                    rows,
-                };
-                let where_clause = show.r#where.as_ref();
-                self.filter_show_output(output, None, where_clause).map(Some)
             }
             // Go's parser makes `DESCRIBE tbl [col]` an `ExplainStmt` over
             // `ShowStmt{Tp: ShowColumns, Table, Column}`, which
@@ -2248,6 +2201,13 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::Config
             | T::Affinity
             | T::ReplicaStatus
+            | T::Placement
+            | T::PlacementLabels
+            | T::PlacementForDatabase
+            | T::PlacementForTable
+            | T::PlacementForPartition
+            | T::Regions
+            | T::Distributions
     )
 }
 

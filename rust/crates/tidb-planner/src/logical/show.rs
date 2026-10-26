@@ -68,6 +68,8 @@ pub struct ShowContents {
     pub db_name: String,
     /// Go `Table.Name.O`, for `SHOW COLUMNS`.
     pub table_name: Option<String>,
+    /// Go `Table.PartitionNames`, for SHOW TABLE ... PARTITION (...).
+    pub table_partitions: Vec<String>,
     /// Go `Partition`.
     pub partition: String,
     /// Go `Column.Name.O`, the `DESC table column` selector.

@@ -57,6 +57,7 @@ fn show_contents(show: &ShowStmt) -> ShowContents {
         tp: show.tp,
         db_name: show.db_name.clone(),
         table_name: show.table.as_ref().and_then(|path| path.last().cloned()),
+        table_partitions: show.table_partitions.clone(),
         partition: show.partition.clone(),
         column_name: show.column.clone(),
         index_name: show.index_name.clone(),
