@@ -81,7 +81,6 @@ func RedactURL(rawURL string) string {
 	if err != nil {
 		return InvalidURLPlaceholder
 	}
-	u.User = nil
 	u.Fragment = ""
 	u.RawFragment = ""
 	rawURL = u.String()
@@ -89,6 +88,7 @@ func RedactURL(rawURL string) string {
 	case "", "file", "local", "hdfs", "noop", "gs", "gcs", "s3", "ks3", "oss", "azure", "azblob":
 		return ast.RedactURL(rawURL)
 	}
+	u.User = nil
 	u.RawQuery = ""
 	return u.String()
 }

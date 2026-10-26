@@ -346,6 +346,10 @@ func TestBRIESecureText(t *testing.T) {
 			input:   "backup database * to 'azure://container/prefix?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token'",
 			secured: `^\QBACKUP DATABASE * TO 'azure://container/prefix?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx'\E$`,
 		},
+		{
+			input:   "backup database * to 's3://user:pass@bucket/prefix?region=us-west-2'",
+			secured: `^\QBACKUP DATABASE * TO 's3://bucket/prefix?region=us-west-2'\E$`,
+		},
 	}
 
 	p := parser.New()
@@ -441,6 +445,8 @@ func TestRedactURL(t *testing.T) {
 		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%25zz%3Fsig%3Dsecret"}, "azure://container/file?endpoint=xxxxxx"},
 		{args{"azblob://container/file?endpoint=first-secret&endpoint=second-secret"}, "azblob://container/file?endpoint=xxxxxx"},
 		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"},
+		{args{"s3://user:pass@b/p?region=r"}, "s3://b/p?region=r"},
+		{args{"gs://user:pass@bucket/file"}, "gs://bucket/file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {

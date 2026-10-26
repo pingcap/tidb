@@ -4251,7 +4251,7 @@ const RedactedValue = "xxxxxx"
 // is not necessarily a storage URL; it may also be an endpoint or a local path.
 const InvalidURLPlaceholder = "(invalid URL)"
 
-// RedactURL redacts sensitive query parameters and removes fragments in supported storage URLs.
+// RedactURL removes userinfo, and in supported storage URLs redacts sensitive query parameters and removes fragments.
 // Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
@@ -4262,6 +4262,7 @@ func RedactURL(str string) string {
 	if err != nil {
 		return InvalidURLPlaceholder
 	}
+	u.User = nil
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
