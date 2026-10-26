@@ -651,10 +651,7 @@ impl crate::Session {
         };
         match &show.where_clause {
             None => Ok(output),
-            Some(expr) => {
-                let (like_pattern, where_clause) = (None, Some(expr));
-                self.filter_show_output(output, like_pattern, where_clause)
-            }
+            Some(expr) => self.filter_show_output(output, Some(expr)),
         }
     }
 }

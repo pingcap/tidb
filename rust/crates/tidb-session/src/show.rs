@@ -483,115 +483,6 @@ fn first_unknown_output_column(predicate: &tidb_ast::Expr, columns: &[&str]) -> 
     collector.missing
 }
 
-/// Whether `expr` names any column.
-fn references_column(expr: &tidb_ast::Expr) -> bool {
-    first_unknown_output_column(expr, &[]).is_some()
-}
-
-/// Go `buildShow`: `LIKE <pattern>` is `<first output column> LIKE
-/// <pattern>`, planned as a Selection over the SHOW's own rows, so an
-/// identifier in the pattern names one of those columns. One the output does
-/// not have is 1054 when the statement is built, whatever the rows, spelled
-/// in lower case as Go reports it.
-fn show_like_predicate(
-    pattern: &tidb_ast::Expr,
-    columns: &[&str],
-) -> Result<tidb_ast::Expr, DriverError> {
-    if let Some(missing) = first_unknown_output_column(pattern, columns) {
-        return Err(DriverError::UnknownColumnInClause {
-            column: go_to_lower(&missing),
-            clause: "where clause".into(),
-        });
-    }
-    let first = columns.first().copied().unwrap_or_default();
-    Ok(tidb_ast::Expr::Like {
-        expr: Box::new(tidb_ast::Expr::Column(vec![first.to_owned()])),
-        pattern: Box::new(pattern.clone()),
-        not: false,
-        ilike: false,
-        escape: None,
-    })
-}
-
-/// An evaluated SHOW LIKE operand, including whether Go's predicate extractor
-/// lower-cases both the metadata name and a literal pattern.
-pub(crate) struct ShowLikePattern {
-    value: Option<String>,
-    fold_lowercase: bool,
-    /// A pattern that names columns: Go plans it as a predicate over each
-    /// row ([`show_like_predicate`]) instead of a literal match.
-    row_pattern: Option<tidb_ast::Expr>,
-}
-
-impl ShowLikePattern {
-    fn from_expr(expr: &tidb_ast::Expr, value: Option<String>, has_extractor: bool) -> Self {
-        let extracted_literal = has_extractor
-            && matches!(
-                expr,
-                tidb_ast::Expr::Null
-                    | tidb_ast::Expr::Int(_)
-                    | tidb_ast::Expr::Decimal(_)
-                    | tidb_ast::Expr::Float(_)
-                    | tidb_ast::Expr::Hex(_)
-                    | tidb_ast::Expr::Bit(_)
-                    | tidb_ast::Expr::String(_)
-                    | tidb_ast::Expr::RawString(_)
-                    | tidb_ast::Expr::Bool(_)
-            );
-        if references_column(expr) {
-            return Self {
-                value: None,
-                fold_lowercase: false,
-                row_pattern: Some(expr.clone()),
-            };
-        }
-        Self {
-            value: if extracted_literal {
-                value.map(go_to_lower)
-            } else {
-                value
-            },
-            fold_lowercase: extracted_literal,
-            row_pattern: None,
-        }
-    }
-
-    /// The per-row predicate for a pattern that names columns, after Go's
-    /// build-time 1054 for a column `columns` does not have; `None` for a
-    /// literal pattern.
-    fn row_predicate(&self, columns: &[&str]) -> Result<Option<tidb_ast::Expr>, DriverError> {
-        self.row_pattern
-            .as_ref()
-            .map(|pattern| show_like_predicate(pattern, columns))
-            .transpose()
-    }
-
-    fn matches(&self, text: &str) -> bool {
-        // A row predicate is applied where the whole row is known.
-        if self.row_pattern.is_some() {
-            return true;
-        }
-        let Some(pattern) = &self.value else {
-            return false;
-        };
-        if self.fold_lowercase {
-            tidb_executor::like_match_with_collation(
-                go_to_lower(text),
-                pattern,
-                None,
-                tidb_datatype::Collation::Utf8Mb4Bin,
-            )
-        } else {
-            tidb_executor::like_match_with_collation(
-                text,
-                pattern,
-                None,
-                tidb_datatype::Collation::Utf8Mb4Bin,
-            )
-        }
-    }
-}
-
 /// The SHOW result Go's `buildShow` hands its `LogicalSelection` when a
 /// `WHERE` reads a subquery: the rows as a table the planner reads, under a
 /// schema name no statement can write.
@@ -1289,39 +1180,17 @@ impl Session {
         })
     }
 
-    /// Go `buildShow`'s LIKE / WHERE handling for one `ShowStmt`: the LIKE
-    /// operand is evaluated into the pattern the extractor matches, and the
-    /// WHERE stays an expression over the output rows.
-    pub(crate) fn show_like_or_where<'a>(
-        &mut self,
-        show: &'a tidb_ast::ShowStmt,
-        fold_lowercase: bool,
-    ) -> Result<(Option<ShowLikePattern>, Option<&'a tidb_ast::Expr>), DriverError> {
-        Ok(match show_filter(show) {
-            None => (None, None),
-            Some(ShowFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (
-                    Some(ShowLikePattern::from_expr(expr, value, fold_lowercase)),
-                    None,
-                )
-            }
-            Some(ShowFilter::Where(expr)) => (None, Some(expr)),
-        })
-    }
-
     pub(crate) fn filter_show_output(
         &mut self,
         output: StmtOutput,
-        like_pattern: Option<ShowLikePattern>,
         where_clause: Option<&tidb_ast::Expr>,
     ) -> Result<StmtOutput, DriverError> {
         let Some(predicate) =
             where_clause.filter(|predicate| predicate.flags() & tidb_ast::FLAG_HAS_SUBQUERY != 0)
         else {
-            return filter_show_rows(output, like_pattern, where_clause);
+            return filter_show_rows(output, where_clause);
         };
-        let StmtOutput::Rows { columns, rows } = filter_show_rows(output, like_pattern, None)?
+        let StmtOutput::Rows { columns, rows } = filter_show_rows(output, None)?
         else {
             unreachable!("filtering keeps a row result a row result")
         };
@@ -1357,34 +1226,18 @@ impl Session {
     }
 }
 
-/// Applies the `LIKE`/`WHERE` layer Go builds over a virtual SHOW result,
-/// evaluating the predicate row by row against the result's columns.
+/// Applies a `WHERE` over a virtual result (ADMIN SHOW DDL JOBS), evaluating
+/// the predicate row by row against the result's columns.
 pub(crate) fn filter_show_rows(
     output: StmtOutput,
-    like_pattern: Option<ShowLikePattern>,
     where_clause: Option<&tidb_ast::Expr>,
 ) -> Result<StmtOutput, DriverError> {
     let StmtOutput::Rows { columns, rows } = output else {
         return Ok(output);
     };
     let column_names: Vec<&str> = columns.iter().map(|(name, _)| name.as_str()).collect();
-    let like_predicate = match &like_pattern {
-        Some(pattern) => pattern.row_predicate(&column_names)?,
-        None => None,
-    };
     let mut filtered = Vec::with_capacity(rows.len());
     for row in rows {
-        let matches_like = match (&like_predicate, &like_pattern) {
-            (Some(predicate), _) => show_row_matches(predicate, &column_names, &row)?,
-            (None, None) => true,
-            (None, Some(pattern)) => row
-                .first()
-                .and_then(datum_text)
-                .is_some_and(|text| pattern.matches(&text)),
-        };
-        if !matches_like {
-            continue;
-        }
         if let Some(predicate) = where_clause {
             if !show_row_matches(predicate, &column_names, &row)? {
                 continue;
@@ -2083,14 +1936,6 @@ fn admin_needs_super(admin: &tidb_ast::AdminStmt) -> bool {
     )
 }
 
-/// The LIKE / WHERE of a Go-shaped SHOW (Go's `Pattern` and `Where`, at most
-/// one of which the grammar sets), as the session's SHOW arms read it until
-/// SHOW is planned (Go's Selection over the Show plan).
-enum ShowFilter<'a> {
-    Like(&'a tidb_ast::Expr),
-    Where(&'a tidb_ast::Expr),
-}
-
 /// The SHOW kinds Go's `buildShow` plans here ([`Session::run_planned_show`]);
 /// the rest still answer in the session's SHOW arms.
 fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
@@ -2169,10 +2014,3 @@ fn base_extractor(
     }
 }
 
-fn show_filter(show: &tidb_ast::ShowStmt) -> Option<ShowFilter<'_>> {
-    match (&show.pattern, &show.r#where) {
-        (Some(pattern), _) => Some(ShowFilter::Like(pattern)),
-        (None, Some(r#where)) => Some(ShowFilter::Where(r#where)),
-        (None, None) => None,
-    }
-}
