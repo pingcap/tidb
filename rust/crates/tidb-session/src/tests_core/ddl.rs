@@ -238,7 +238,7 @@ fn use_changes_unqualified_name_resolution() {
     };
     assert_eq!(columns.len(), 1);
     assert_eq!(columns[0].0, "Tables_in_other");
-    assert_eq!(rows, vec![vec![Datum::Bytes(b"t".to_vec())]]);
+    assert_eq!(rows, vec![vec![Datum::new_string("t")]]);
 
     session.run("USE test").unwrap();
     assert_eq!(

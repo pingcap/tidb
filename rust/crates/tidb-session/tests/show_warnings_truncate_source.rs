@@ -42,7 +42,7 @@ fn truncation_warning_is_visible_through_show_warnings() {
 
     assert_eq!(
         strings(&mut session, "show warnings"),
-        vec!["Warning|1406|Data too long for column 'b' at row 1"]
+        vec!["'Warning'|1406|'Data too long for column 'b' at row 1'"]
     );
     // Go's `warning_count` is a TypeStr session variable, and
     // `rewriteSystemVariable` builds its constant from `GetNativeValType`:

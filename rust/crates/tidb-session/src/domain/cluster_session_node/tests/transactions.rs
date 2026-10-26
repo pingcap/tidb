@@ -683,10 +683,11 @@ fn an_explicit_transaction_that_lost_the_race_fails_at_commit() {
 /// The `Error` row `SHOW WARNINGS` / `SHOW ERRORS` report after a failure,
 /// followed by the counts `@@warning_count` / `@@error_count` read back.
 fn assert_failure_filed(session: &mut ClusterServerSession, error: &SqlQueryError) {
+    // Go `buildShowWarningsSchema`: `Code` is an UNSIGNED column.
     let row = vec![
-        Datum::Bytes(b"Error".to_vec()),
-        Datum::Int(i64::from(error.code)),
-        Datum::Bytes(error.message.clone().into_bytes()),
+        Datum::new_string("Error"),
+        Datum::UInt(u64::from(error.code)),
+        Datum::new_string(error.message.clone()),
     ];
     assert_eq!(rows(session, "SHOW WARNINGS"), vec![row.clone()]);
     assert_eq!(rows(session, "SHOW ERRORS"), vec![row]);

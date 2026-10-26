@@ -184,9 +184,9 @@ fn stats_lock_uses_the_internal_cluster_route_without_ending_the_user_transactio
     assert_eq!(
         rows(&mut session, "SHOW WARNINGS"),
         vec![vec![
-            tidb_datatype::Datum::Bytes(b"Warning".to_vec()),
-            tidb_datatype::Datum::Int(1105),
-            tidb_datatype::Datum::Bytes(b"skip locking locked table: app.t".to_vec()),
+            tidb_datatype::Datum::new_string("Warning"),
+            tidb_datatype::Datum::UInt(1105),
+            tidb_datatype::Datum::new_string("skip locking locked table: app.t"),
         ]]
     );
     session

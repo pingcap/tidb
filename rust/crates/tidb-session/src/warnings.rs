@@ -22,9 +22,9 @@
 use std::borrow::Cow;
 
 use tidb_ast::{AdminStmt, Stmt};
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::Datum;
 
-use crate::{DriverError, Session, StmtOutput};
+use crate::{DriverError, Session};
 
 /// Go `ddl.errCheckConstraintIsOff` is built with `errors.NewNoStackError`, so
 /// it carries no MySQL code of its own and `AppendWarning` files it under
@@ -172,27 +172,18 @@ impl Session {
         self.append_warning(WarningLevel::Note, reported.code, reported.message);
     }
 
-    pub(crate) fn warning_output(&self, count_only: bool, errors_only: bool) -> StmtOutput {
+    /// Go `ShowExec.fetchShowWarnings(errOnly)`: one `Level | Code | Message`
+    /// row per reported warning (errors only for SHOW ERRORS), or, for SHOW
+    /// COUNT(*), the one count.
+    pub(crate) fn warning_rows(&self, count_only: bool, errors_only: bool) -> Vec<Vec<Datum>> {
         let reported = self
             .warnings
             .iter()
             .filter(|warning| !errors_only || warning.level == WarningLevel::Error);
         if count_only {
-            let count = reported.count() as i64;
-            // go names this one column `Count` for both SHOW COUNT(*) WARNINGS
-            // and SHOW COUNT(*) ERRORS (pkg/executor/simple.go), NOT the
-            // internal @@session variable text.
-            let name = "Count";
-            return StmtOutput::Rows {
-                columns: vec![(
-                    name.to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                )],
-                rows: vec![vec![Datum::Int(count)]],
-            };
+            return vec![vec![Datum::Int(reported.count() as i64)]];
         }
-        let text = || FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-        let rows = reported
+        reported
             .map(|warning| {
                 vec![
                     Datum::Bytes(warning.level.as_str().as_bytes().to_vec()),
@@ -203,18 +194,7 @@ impl Session {
                     Datum::Bytes(tidb_hack::raw_bytes::str_to_bytes(&warning.message).into_owned()),
                 ]
             })
-            .collect();
-        StmtOutput::Rows {
-            columns: vec![
-                ("Level".to_owned(), text()),
-                (
-                    "Code".to_owned(),
-                    FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                ),
-                ("Message".to_owned(), text()),
-            ],
-            rows,
-        }
+            .collect()
     }
 
     /// Moves what evaluation recorded into the statement's warning buffer.

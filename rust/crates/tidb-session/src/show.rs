@@ -891,6 +891,9 @@ impl Session {
                 crate::show_admin::master_status_rows(self.current_tso().value())
             }
             T::Privileges => crate::show_admin::show_privileges_rows(),
+            T::Warnings | T::Errors => {
+                self.warning_rows(contents.count_warnings_or_errors, contents.tp == T::Errors)
+            }
             // Go `fetchShowBuiltins` over `expression.GetBuiltinList`.
             T::Builtins => strings(tidb_executor::builtin_list()),
             other => {
@@ -1011,24 +1014,6 @@ pub(crate) fn filter_show_rows(
 }
 
 impl Session {
-    /// Go `buildShow`'s selections over `SHOW WARNINGS` / `SHOW ERRORS`
-    /// rows: `LIKE` matches the `Level` column, `WHERE` any of the three.
-    fn filter_warning_output(
-        &mut self,
-        output: StmtOutput,
-        like: Option<&tidb_ast::Expr>,
-        where_clause: Option<&tidb_ast::Expr>,
-    ) -> Result<StmtOutput, DriverError> {
-        let like_pattern = match like {
-            Some(expr) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                Some(ShowLikePattern::from_expr(expr, value, false))
-            }
-            None => None,
-        };
-        self.filter_show_output(output, like_pattern, where_clause)
-    }
-
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
     /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
     /// The schema `SHOW COLUMNS` / `DESCRIBE` default to: the `FROM db` clause,
@@ -1930,29 +1915,6 @@ impl Session {
             tidb_ast::AdminStmt::Show(show) if is_planned_show(show.tp) => {
                 self.run_planned_show(show).map(Some)
             }
-            // Go `buildShow` plans a `LIKE` as a selection on the first
-            // output column (`Level`) and a `WHERE` as a selection over the
-            // rows; there is no extractor, so a literal pattern is not
-            // folded. The rows are read before the operand is evaluated, so
-            // the filter cannot disturb the warnings it filters.
-            tidb_ast::AdminStmt::Show(show)
-                if matches!(
-                    show.tp,
-                    tidb_ast::ShowStmtType::Warnings | tidb_ast::ShowStmtType::Errors
-                ) =>
-            {
-                let output = self.warning_output(
-                    show.count_warnings_or_errors,
-                    show.tp == tidb_ast::ShowStmtType::Errors,
-                );
-                let (like, where_clause) = match show_filter(show) {
-                    None => (None, None),
-                    Some(ShowFilter::Like(expr)) => (Some(expr), None),
-                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
-                };
-                self.filter_warning_output(output, like, where_clause)
-                    .map(Some)
-            }
             // Go `ShowExec.fetchShowProcessList`: one row per live
             // connection of this server, read from the session manager.
             tidb_ast::AdminStmt::Show(show)
@@ -2568,6 +2530,8 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::BinlogStatus
             | T::Privileges
             | T::Builtins
+            | T::Warnings
+            | T::Errors
     )
 }
 

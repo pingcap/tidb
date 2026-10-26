@@ -218,9 +218,10 @@ fn generated_write_policy_odku_warning_retains_expression_input() {
         panic!("warnings")
     };
     assert_eq!(warnings.len(), 1);
-    let tidb_datatype::Datum::Bytes(message) = &warnings[0][2] else {
+    let tidb_datatype::Datum::String(message) = &warnings[0][2] else {
         panic!("warning message: {:?}", warnings[0][2])
     };
+    let message = message.bytes();
     assert_eq!(
         message,
         b"Incorrect int value: '12abc' for column 'b' at row 1"
@@ -285,7 +286,7 @@ fn generated_read_policy_uses_column_cast_and_raw_warning_shape() {
     assert_eq!(warnings.len(), 1);
     assert_eq!(
         warnings[0][2],
-        tidb_datatype::Datum::new_bytes(b"Truncated incorrect DOUBLE value: '12x'".to_vec())
+        tidb_datatype::Datum::new_string("Truncated incorrect DOUBLE value: '12x'")
     );
 }
 
