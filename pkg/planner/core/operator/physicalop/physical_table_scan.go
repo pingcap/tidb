@@ -121,6 +121,11 @@ type PhysicalTableScan struct {
 
 	TableAsName *ast.CIStr `plan-cache-clone:"shallow"`
 
+	// PKFilterHinted is set when a pk_filter hint matches this table.
+	// PKFilterHintIndexes are the indexes the hint names, empty for all.
+	PKFilterHinted      bool
+	PKFilterHintIndexes []ast.CIStr `plan-cache-clone:"shallow"`
+
 	PhysicalTableID int64
 
 	RangeInfo string
@@ -219,6 +224,10 @@ func GetOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 		Prop:            prop,
 		FilterCondition: slices.Clone(path.TableFilters),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	for _, hint := range ds.PkFilterHints {
+		ts.PKFilterHinted = true
+		ts.PKFilterHintIndexes = append(ts.PKFilterHintIndexes, hint.IndexHint.IndexNames...)
+	}
 	ts.SetSchema(ds.Schema().Clone())
 	rowCount := path.CountAfterAccess
 	origRowCount := ds.StatsInfo().RowCount

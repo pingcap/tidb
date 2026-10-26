@@ -53,7 +53,6 @@ const (
 	FlagFullTextIndexResolveTopN
 	FlagFullTextIndexResolveProjection
 	FlagFullTextIndexResolveReject
-	FlagGeneratePKFilter
 )
 
 func setPredicatePushDownFlag(u uint64) uint64 {

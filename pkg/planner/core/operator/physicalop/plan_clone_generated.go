@@ -356,6 +356,7 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 	if op.TableScanAndPartitionInfos != nil {
 		return nil, false
 	}
+	cloned.PKRangeProbes = clonePKRangeProbesForPlanCache(op.PKRangeProbes)
 	return cloned, true
 }
 

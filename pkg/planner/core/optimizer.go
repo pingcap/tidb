@@ -111,7 +111,6 @@ var optRuleList = []base.LogicalOptRule{
 	&FullTextIndexResolverProjection{},
 	&rule.OrderAwareJoinReorder{},
 	&rule.SyncWaitStatsLoadPoint{},
-	&GeneratePKFilterOptimizer{},
 	&JoinReOrderSolver{},
 	&rule.OuterJoinToSemiJoin{},
 	&CorrelateSolver{},
@@ -149,7 +148,6 @@ var optRuleFlags = []uint64{
 	rule.FlagFullTextIndexResolveProjection,
 	rule.FlagOrderAwareJoinReorder,
 	rule.FlagSyncWaitStatsLoadPoint,
-	rule.FlagGeneratePKFilter,
 	rule.FlagJoinReOrder,
 	rule.FlagOuterJoinToSemiJoin,
 	rule.FlagCorrelate,
@@ -424,7 +422,6 @@ func adjustOptimizationFlags(flag uint64, logic base.LogicalPlan) uint64 {
 			flag |= rule.FlagPruneColumnsAgain
 		}
 	}
-	flag |= rule.FlagGeneratePKFilter
 	return flag
 }
 
@@ -477,6 +474,7 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
+	attachPKRangeProbes(sctx, plan)
 	return plan
 }
 

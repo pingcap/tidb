@@ -5236,25 +5236,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if hint.Match(dbName, tblName) {
 				hints.PkFilterHintList[i].Matched = true
 				// check whether the index names in PkFilterHint are valid.
-				// pk_filter derives PK bounds FROM secondary indexes,
-				// so "primary" is not a valid source index.
+				// The indexes are checked against the table rather than the
+				// access paths: index hints such as use_index(t, primary)
+				// remove paths, but the probes read the index regardless.
+				// A clustered primary key is the table itself.
 				invalidIdxNames := make([]string, 0, len(hint.IndexHint.IndexNames))
 				for _, idxName := range hint.IndexHint.IndexNames {
-					if idxName.L == "primary" {
-						invalidIdxNames = append(invalidIdxNames, idxName.String())
-						continue
-					}
-					hasIdxName := false
-					for _, path := range possiblePaths {
-						if path.IsTablePath() || path.Index == nil {
-							continue
-						}
-						if idxName.L == path.Index.Name.L {
-							hasIdxName = true
-							break
-						}
-					}
-					if !hasIdxName {
+					idx := tableInfo.FindIndexByName(idxName.L)
+					if idx == nil || idx.State != model.StatePublic || (idx.Primary && tableInfo.HasClusteredIndex()) ||
+						(idxName.L == "primary" && tableInfo.PKIsHandle) {
 						invalidIdxNames = append(invalidIdxNames, idxName.String())
 					}
 				}

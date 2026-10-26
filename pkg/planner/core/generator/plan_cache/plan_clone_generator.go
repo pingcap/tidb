@@ -153,6 +153,8 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 			c.write("cloned.%v = op.%v.Clone()", f.Name, f.Name)
 		case "*physicalop.PhysPlanPartInfo":
 			c.write("cloned.%v = op.%v.CloneForPlanCache()", f.Name, f.Name)
+		case "[]*physicalop.PKRangeProbe":
+			c.write("cloned.%v = clonePKRangeProbesForPlanCache(op.%v)", f.Name, f.Name)
 		case "*physicalop.ColWithCmpFuncManager", "physicalop.InsertGeneratedColumns":
 			c.write("cloned.%v = op.%v.cloneForPlanCache()", f.Name, f.Name)
 		case "kv.Handle":

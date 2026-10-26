@@ -575,9 +575,6 @@ type PlanCacheValue struct {
 	OutputColumns    types.NameSlice    // output column names of this plan
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
-	// reuseHooks prepare session-bound parts of Plan, such as PK filter
-	// probes, for a new execution. Only plans in the session cache have them.
-	reuseHooks []func(ctx context.Context)
 
 	// Parameter indexes requiring exact DECIMAL precision and scale.
 	// Only COALESCE arguments are included; immutable once the plan is cached.
@@ -724,7 +721,6 @@ func NewPlanCacheValue(
 		ParamTypes:               userParamTypes,
 		StmtHints:                stmtHints.Clone(),
 		exactDecimalParamOffsets: slices.Clone(stmt.exactDecimalParamOffsets),
-		reuseHooks:               sctx.GetSessionVars().StmtCtx.PlanCacheReuseHooks,
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv
