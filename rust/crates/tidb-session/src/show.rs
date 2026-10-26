@@ -792,28 +792,20 @@ impl Session {
 
     /// Go `Compile` + `runStmt` for a SHOW the planner builds: the statement
     /// preprocessed (`resolveShowStmt`) and planned (`buildShow` and the
-    /// optimizer), its `PhysicalShow`'s rows fetched by `fetch` (Go
-    /// `ShowExec.fetchAll`, over the plan's contents and extractor), and the
-    /// plan's selections, limit, projection and sort run over them.
+    /// optimizer), its `PhysicalShow`'s rows fetched ([`Self::fetch_show`],
+    /// Go `ShowExec.fetchAll`), and the plan's selections, limit, projection
+    /// and sort run over them. The catalog is held while planning and
+    /// running, not while fetching: a fetcher takes it as it needs it.
     pub(crate) fn run_planned_show(
         &mut self,
         show: &tidb_ast::ShowStmt,
-        fetch: impl FnOnce(
-            &Self,
-            &tidb_executor::Catalog,
-            &tidb_planner::physical::PhysicalShow,
-        ) -> Result<Vec<Vec<Datum>>, DriverError>,
     ) -> Result<StmtOutput, DriverError> {
         let mut show = show.clone();
-        let auth_user = self
-            .vars
-            .current_user
-            .clone()
-            .and_then(|identity| {
-                identity
-                    .split_once('@')
-                    .map(|(user, host)| (user.to_owned(), host.to_owned()))
-            });
+        let auth_user = self.vars.current_user.clone().and_then(|identity| {
+            identity
+                .split_once('@')
+                .map(|(user, host)| (user.to_owned(), host.to_owned()))
+        });
         tidb_planner::preprocess::resolve_show_stmt(
             &mut show,
             &self.vars.current_db,
@@ -821,17 +813,92 @@ impl Session {
         );
         let ctx = self.statement_context(false);
         let current_db = self.vars.current_db.clone();
-        let catalog = self.shared_catalog();
-        let catalog = catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut physical =
-            tidb_executor::driver::plan_show_stmt(&show, &catalog, &current_db, &ctx)?;
+        let shared = self.shared_catalog();
+        let mut physical = {
+            let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            tidb_executor::driver::plan_show_stmt(&show, &catalog, &current_db, &ctx)?
+        };
         let leaf = tidb_executor::driver::physical_show_of(&physical)
+            .cloned()
             .ok_or_else(|| DriverError::unsupported("a SHOW plan without its PhysicalShow"))?;
-        let rows = fetch(self, &catalog, leaf)?;
+        let rows = self.fetch_show(&leaf)?;
         ctx.show_retrieval().supply(leaf.base.base.id(), rows);
+        let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (columns, rows) =
             tidb_executor::driver::open_show_plan(&mut physical, &catalog, &ctx)?.collect()?;
         Ok(StmtOutput::Rows { columns, rows })
+    }
+
+    /// Go `ShowExec.fetchAll`: the rows of one planned SHOW, by its type.
+    /// Only the kinds [`is_planned_show`] lists reach it.
+    fn fetch_show(
+        &mut self,
+        leaf: &tidb_planner::physical::PhysicalShow,
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        use tidb_ast::ShowStmtType as T;
+        let contents = &leaf.contents;
+        let extractor = base_extractor(leaf);
+        let shared = self.shared_catalog();
+        let strings = |names: Vec<String>| -> Vec<Vec<Datum>> {
+            names.into_iter().map(|name| vec![Datum::new_string(name)]).collect()
+        };
+        Ok(match contents.tp {
+            T::Charset => tidb_executor::show::fetch_show_charset(self),
+            T::Collation => tidb_executor::show::fetch_show_collation(self, extractor),
+            T::Databases => {
+                let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                strings(tidb_executor::show::fetch_show_databases(self, &catalog, extractor))
+            }
+            T::Engines => tidb_executor::show::fetch_show_engines(),
+            // Go `fetchShowProcedureStatus`, `fetchShowTriggers` and the
+            // `ShowEvents` / `ShowProfiles` / `ShowFunctionStatus` arms
+            // answer nothing; `fetchShowOpenTables` answers the empty set;
+            // `fetchShowPlugins` lists an empty `plugin.GetAll()`; the BRIE
+            // listings read a queue this server never fills.
+            T::ProcedureStatus
+            | T::FunctionStatus
+            | T::Triggers
+            | T::Events
+            | T::Profiles
+            | T::OpenTables
+            | T::Plugins
+            | T::Backups
+            | T::Restores => Vec::new(),
+            T::Tables => {
+                let catalog = shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                tidb_executor::show::fetch_show_tables(
+                    self,
+                    &catalog,
+                    &contents.db_name,
+                    contents.full,
+                    extractor,
+                )?
+                .into_iter()
+                .map(|(name, table_type)| {
+                    let mut row = vec![Datum::new_string(name)];
+                    row.extend(table_type.map(Datum::new_string));
+                    row
+                })
+                .collect()
+            }
+            T::Variables => {
+                tidb_executor::show::fetch_show_variables(self, contents.global_scope, extractor)
+            }
+            // Go `executorBuilder.buildShow`: "show master status need start
+            // ts", then `fetchShowMasterStatus`.
+            T::MasterStatus | T::BinlogStatus => {
+                self.activate_statement_txn();
+                crate::show_admin::master_status_rows(self.current_tso().value())
+            }
+            T::Privileges => crate::show_admin::show_privileges_rows(),
+            // Go `fetchShowBuiltins` over `expression.GetBuiltinList`.
+            T::Builtins => strings(tidb_executor::builtin_list()),
+            other => {
+                return Err(DriverError::unsupported(format!(
+                    "SHOW {other:?} is not planned"
+                )))
+            }
+        })
     }
 
     /// Go `buildShow`'s LIKE / WHERE handling for one `ShowStmt`: the LIKE
@@ -1384,34 +1451,6 @@ impl Session {
                 })?;
                 Ok(Some(StmtOutput::Rows { columns, rows }))
             }
-            // go `fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
-            // static table then every dynamic privilege.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Privileges => {
-                Ok(Some(crate::show_admin::show_privileges_output()))
-            }
-            // Go `fetchShowOpenTables` answers the empty set; the schema is
-            // `buildShowSchema`'s four columns.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::OpenTables => Ok(Some(StmtOutput::Rows {
-                columns: vec![
-                    (
-                        "Database".to_owned(),
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                    ),
-                    (
-                        "Table".to_owned(),
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar),
-                    ),
-                    (
-                        "In_use".to_owned(),
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long),
-                    ),
-                    (
-                        "Name_locked".to_owned(),
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Long),
-                    ),
-                ],
-                rows: Vec::new(),
-            })),
             // go `fetchShowImportJobs` over the dist-task framework: this
             // tier runs no IMPORT jobs, so the answer is the empty set (the
             // oracle's own answer on the battery's table).
@@ -1578,19 +1617,6 @@ impl Session {
             }
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
-            // Go `buildShow` + `fetchShowDatabases`.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Databases => self
-                .run_planned_show(show, |session, catalog, leaf| {
-                    Ok(tidb_executor::show::fetch_show_databases(
-                        session,
-                        catalog,
-                        base_extractor(leaf),
-                    )
-                    .into_iter()
-                    .map(|name| vec![Datum::new_string(name)])
-                    .collect())
-                })
-                .map(Some),
             // Go `fetchShowTableStatus`: its restricted SQL over
             // `information_schema.tables` for the schema, ordered by table
             // name, so every size and count is the TABLES reader's.
@@ -1716,16 +1742,6 @@ impl Session {
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
-            // Go `buildShow` + `fetchShowVariables`.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Variables => self
-                .run_planned_show(show, |session, _catalog, leaf| {
-                    Ok(tidb_executor::show::fetch_show_variables(
-                        session,
-                        leaf.contents.global_scope,
-                        base_extractor(leaf),
-                    ))
-                })
-                .map(Some),
             // Go `fetchShowStatus`: one `Variable_name | Value` row per
             // status variable that `variable.GetStatusVars` collects from
             // the registered `Statistics` providers, with `GLOBAL` scope
@@ -1868,19 +1884,6 @@ impl Session {
                 )
                 .map(Some)
             }
-            // Go `buildShow` + `fetchShowCharset`: `charset.GetSupportedCharsets`, utf8mb4's
-            // default collation read from the session.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Charset => self
-                .run_planned_show(show, |session, _catalog, _leaf| {
-                    Ok(tidb_executor::show::fetch_show_charset(session))
-                })
-                .map(Some),
-            // Go `buildShow` + `fetchShowEngines`, as the embedded single-engine server answers it.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Engines => self
-                .run_planned_show(show, |_session, _catalog, _leaf| {
-                    Ok(tidb_executor::show::fetch_show_engines())
-                })
-                .map(Some),
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsTopN => self.stats_topn_stmt(show).map(Some),
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
@@ -1894,12 +1897,6 @@ impl Session {
                 self.require_show_stats_privilege("stats_table_locked")?;
                 self.stats_locked_stmt(show).map(Some)
             }
-            // Go `buildShow` + `fetchShowCollation`.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Collation => self
-                .run_planned_show(show, |session, _catalog, leaf| {
-                    Ok(tidb_executor::show::fetch_show_collation(session, base_extractor(leaf)))
-                })
-                .map(Some),
             // Go `SimpleExec.executeFlush`, `ShowDDLExec` and
             // `fetchShowMasterStatus` live in `crate::show_admin`: they
             // answer without touching a user table, and keeping them here
@@ -1929,12 +1926,9 @@ impl Session {
                     &self.show_ddl_rows(),
                 )));
             }
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::MasterStatus => {
-                // Go `buildShow`: "show master status need start ts".
-                self.activate_statement_txn();
-                return Ok(Some(crate::show_admin::master_status_output(
-                    self.current_tso().value(),
-                )));
+            // Go `Compile` + `runStmt` over `buildShow`'s plan.
+            tidb_ast::AdminStmt::Show(show) if is_planned_show(show.tp) => {
+                self.run_planned_show(show).map(Some)
             }
             // Go `buildShow` plans a `LIKE` as a selection on the first
             // output column (`Level`) and a `WHERE` as a selection over the
@@ -1964,25 +1958,16 @@ impl Session {
             tidb_ast::AdminStmt::Show(show)
                 if matches!(
                     show.tp,
-                    tidb_ast::ShowStmtType::Triggers
-                        | tidb_ast::ShowStmtType::ProcedureStatus
-                        | tidb_ast::ShowStmtType::FunctionStatus
-                        | tidb_ast::ShowStmtType::Events
-                        | tidb_ast::ShowStmtType::Plugins
-                        | tidb_ast::ShowStmtType::StatsExtended
+                    tidb_ast::ShowStmtType::StatsExtended
                         | tidb_ast::ShowStmtType::StatsMeta
                         | tidb_ast::ShowStmtType::StatsHealthy
                         | tidb_ast::ShowStmtType::HistogramsInFlight
                         | tidb_ast::ShowStmtType::ColumnStatsUsage
                         | tidb_ast::ShowStmtType::BindingCacheStatus
                         | tidb_ast::ShowStmtType::AnalyzeStatus
-                        | tidb_ast::ShowStmtType::Backups
-                        | tidb_ast::ShowStmtType::Restores
                         | tidb_ast::ShowStmtType::Imports
                         | tidb_ast::ShowStmtType::Config
                         | tidb_ast::ShowStmtType::ReplicaStatus
-                        | tidb_ast::ShowStmtType::BinlogStatus
-                        | tidb_ast::ShowStmtType::Profiles
                         | tidb_ast::ShowStmtType::SessionStates
                         | tidb_ast::ShowStmtType::ProcessList
                         | tidb_ast::ShowStmtType::Affinity
@@ -2002,22 +1987,6 @@ impl Session {
                 // `crate::binding_arm`.
                 if show.tp == tidb_ast::ShowStmtType::BindingCacheStatus {
                     return Ok(Some(self.binding_cache_status_stmt()?));
-                }
-                // Go `ShowExec.fetchShowPlugins` over `plugin.GetAll()`. No
-                // plugin framework runs here, so the answer is the empty set
-                // -- which is also what a stock `tidb-server` reports.
-                // Go answers these two without a source: see
-                // `crate::show_admin`.
-                // `SHOW BINARY LOG STATUS` is go's renamed `SHOW MASTER
-                // STATUS` (`fetchShowMasterStatus`): the same
-                // `('tidb-binlog', position, '', '', '')` row at the
-                // session's current TSO.
-                if show.tp == tidb_ast::ShowStmtType::BinlogStatus {
-                    // Go `buildShow` activates the transaction for both.
-                    self.activate_statement_txn();
-                    return Ok(Some(crate::show_admin::master_status_output(
-                        self.current_tso().value(),
-                    )));
                 }
                 // Go `ShowExec.fetchShowReplicaStatus` refuses outright:
                 // `This version of TiDB doesn't yet support 'SHOW {REPLICA |
@@ -2047,8 +2016,8 @@ impl Session {
                 if show.tp == tidb_ast::ShowStmtType::Affinity {
                     return self.show_affinity_stmt(show).map(Some);
                 }
-                if let Some(output) = crate::show_admin::inspection_output(show.tp) {
-                    return Ok(Some(output));
+                if show.tp == tidb_ast::ShowStmtType::Imports {
+                    return Ok(Some(crate::show_admin::show_imports_output()));
                 }
                 // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
                 if show.tp == tidb_ast::ShowStmtType::StatsMeta {
@@ -2088,19 +2057,6 @@ impl Session {
                     ));
                 }
                 Ok(Some(self.process_list_output(show.full)))
-            }
-            // Go `ShowExec.fetchShowBuiltins` (`show.go:2459`) over
-            // `expression.GetBuiltinList`, under the single column
-            // `planbuilder.go:6084` names.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Builtins => {
-                let text = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![("Supported_builtin_functions".to_owned(), text)],
-                    rows: tidb_executor::builtin_list()
-                        .into_iter()
-                        .map(|name| vec![Datum::new_string(name)])
-                        .collect(),
-                }))
             }
             // Go `SimpleExec.executeKillStmt`.
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
@@ -2465,26 +2421,6 @@ impl Session {
                 )
                 .map(Some)
             }
-            // Go `buildShow` + `fetchShowTables`.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Tables => self
-                .run_planned_show(show, |session, catalog, leaf| {
-                    let listed = tidb_executor::show::fetch_show_tables(
-                        session,
-                        catalog,
-                        &leaf.contents.db_name,
-                        leaf.contents.full,
-                        base_extractor(leaf),
-                    )?;
-                    Ok(listed
-                        .into_iter()
-                        .map(|(name, table_type)| {
-                            let mut row = vec![Datum::new_string(name)];
-                            row.extend(table_type.map(Datum::new_string));
-                            row
-                        })
-                        .collect())
-                })
-                .map(Some),
             // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
             // (pkg/executor/simple.go:3584-3611): the statement answers
             // success immediately, and a 1-second-delayed task SIGTERMs this
@@ -2605,6 +2541,34 @@ fn admin_needs_super(admin: &tidb_ast::AdminStmt) -> bool {
 enum ShowFilter<'a> {
     Like(&'a tidb_ast::Expr),
     Where(&'a tidb_ast::Expr),
+}
+
+/// The SHOW kinds Go's `buildShow` plans here ([`Session::run_planned_show`]);
+/// the rest still answer in the session's SHOW arms.
+fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
+    use tidb_ast::ShowStmtType as T;
+    matches!(
+        tp,
+        T::Charset
+            | T::Collation
+            | T::Databases
+            | T::Engines
+            | T::ProcedureStatus
+            | T::FunctionStatus
+            | T::Triggers
+            | T::Events
+            | T::Profiles
+            | T::OpenTables
+            | T::Plugins
+            | T::Backups
+            | T::Restores
+            | T::Tables
+            | T::Variables
+            | T::MasterStatus
+            | T::BinlogStatus
+            | T::Privileges
+            | T::Builtins
+    )
 }
 
 /// The `ShowBaseExtractor` `buildShow` installed on a planned SHOW.

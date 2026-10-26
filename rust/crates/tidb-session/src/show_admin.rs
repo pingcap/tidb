@@ -84,143 +84,35 @@ pub(crate) fn show_ddl_output(rows: &[Vec<Datum>]) -> StmtOutput {
 /// file and the CURRENT transaction's start timestamp as the position, with
 /// the three replication columns empty. Tools that call this to fence a dump
 /// read the position.
-pub(crate) fn master_status_output(position: i64) -> StmtOutput {
-    let varchar = || FieldType::new(FieldTypeCode::Varchar);
+pub(crate) fn master_status_rows(position: i64) -> Vec<Vec<Datum>> {
+    vec![vec![
+        Datum::Bytes(b"tidb-binlog".to_vec()),
+        Datum::Int(position),
+        Datum::Bytes(Vec::new()),
+        Datum::Bytes(Vec::new()),
+        Datum::Bytes(Vec::new()),
+    ]]
+}
+
+/// Go `ShowImports`, which `buildShowSchema` has no case for: this tier
+/// answers the empty `Job_ID | State` listing.
+pub(crate) fn show_imports_output() -> StmtOutput {
     StmtOutput::Rows {
         columns: vec![
-            ("File".to_owned(), varchar()),
-            (
-                "Position".to_owned(),
-                FieldType::new(FieldTypeCode::LongLong),
-            ),
-            ("Binlog_Do_DB".to_owned(), varchar()),
-            ("Binlog_Ignore_DB".to_owned(), varchar()),
-            ("Executed_Gtid_Set".to_owned(), varchar()),
+            ("Job_ID".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
+            ("State".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
         ],
-        rows: vec![vec![
-            Datum::Bytes(b"tidb-binlog".to_vec()),
-            Datum::Int(position),
-            Datum::Bytes(Vec::new()),
-            Datum::Bytes(Vec::new()),
-            Datum::Bytes(Vec::new()),
-        ]],
+        rows: Vec::new(),
     }
-}
-
-/// Go's two `SHOW` inspections that answer their column list and no rows:
-/// `fetchShowPlugins` over an empty `plugin.GetAll()`, and `ShowProfiles`,
-/// whose arm in Go is literally `// empty result`.
-///
-/// `None` means the kind is some other inspection, which the caller handles.
-pub(crate) fn inspection_output(kind: tidb_ast::ShowStmtType) -> Option<StmtOutput> {
-    match kind {
-        tidb_ast::ShowStmtType::Plugins => Some(crate::show::text_columns_output(&[
-            "Name", "Status", "Type", "Library", "License", "Version",
-        ])),
-        tidb_ast::ShowStmtType::Profiles => Some(StmtOutput::Rows {
-            columns: vec![
-                ("Query_ID".to_owned(), FieldType::new(FieldTypeCode::Long)),
-                ("Duration".to_owned(), FieldType::new(FieldTypeCode::Double)),
-                ("Query".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-            ],
-            rows: Vec::new(),
-        }),
-        // Go `ShowExec.fetchShowTriggers`/`fetchShowEvents`/`fetchShowProcedureStatus`/
-        // `fetchShowFunctionStatus` are literal `return nil` bodies — the schema
-        // comes from the plan, the rows are always empty, and the client sees an
-        // empty result set. Same for the BRIE/import job listings, which read
-        // their system tables this build does not populate, and `SHOW REPLICA
-        // STATUS`, which answers nothing without replication.
-        tidb_ast::ShowStmtType::Triggers => Some(StmtOutput::Rows {
-            columns: crate::show_admin::trigger_columns(),
-            rows: Vec::new(),
-        }),
-        tidb_ast::ShowStmtType::ProcedureStatus | tidb_ast::ShowStmtType::FunctionStatus => {
-            Some(StmtOutput::Rows {
-                columns: crate::show_admin::routine_columns(),
-                rows: Vec::new(),
-            })
-        }
-        tidb_ast::ShowStmtType::Events => Some(StmtOutput::Rows {
-            columns: crate::show_admin::event_columns(),
-            rows: Vec::new(),
-        }),
-        tidb_ast::ShowStmtType::Backups | tidb_ast::ShowStmtType::Restores => {
-            Some(StmtOutput::Rows {
-                // Go `buildShowSchema` for `ShowBackups`/`ShowRestores`.
-                columns: vec![
-                    ("Id".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-                    ("Destination".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-                    ("State".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-                    ("Progress".to_owned(), FieldType::new(FieldTypeCode::Double)),
-                    ("Queue_time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
-                    ("Execution_time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
-                    ("Finish_time".to_owned(), FieldType::new(FieldTypeCode::Datetime)),
-                    ("Connection".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-                    ("Message".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-                ],
-                rows: Vec::new(),
-            })
-        }
-        tidb_ast::ShowStmtType::Imports => Some(StmtOutput::Rows {
-            columns: vec![
-                ("Job_ID".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
-                ("State".to_owned(), FieldType::new(FieldTypeCode::Varchar)),
-            ],
-            rows: Vec::new(),
-        }),
-        _ => None,
-    }
-}
-
-/// The empty-result column families: `SHOW TRIGGERS`' eleven MySQL-standard
-/// columns, `SHOW PROCEDURE/FUNCTION STATUS`'s eleven, `SHOW EVENTS`' fifteen.
-/// With no rows the wire never sends the names, but the shapes stay faithful
-/// for `EXPLAIN`-level introspection of the result schema.
-fn trigger_columns() -> Vec<(String, FieldType)> {
-    let varchar = || FieldType::new(FieldTypeCode::Varchar);
-    ["Trigger", "Event", "Table", "Statement", "Timing", "Created", "sql_mode", "Definer", "character_set_client", "collation_connection", "Database Collation"]
-        .into_iter()
-        .map(|name| (name.to_owned(), varchar()))
-        .collect()
-}
-
-fn routine_columns() -> Vec<(String, FieldType)> {
-    let varchar = || FieldType::new(FieldTypeCode::Varchar);
-    ["Db", "Name", "Type", "Definer", "Modified", "Created", "Security_type", "Comment", "character_set_client", "collation_connection", "Database Collation"]
-        .into_iter()
-        .map(|name| (name.to_owned(), varchar()))
-        .collect()
-}
-
-fn event_columns() -> Vec<(String, FieldType)> {
-    // Go `buildShowEventsSchema`.
-    let varchar = || FieldType::new(FieldTypeCode::Varchar);
-    let datetime = || FieldType::new(FieldTypeCode::Datetime);
-    vec![
-        ("Db".to_owned(), varchar()),
-        ("Name".to_owned(), varchar()),
-        ("Time zone".to_owned(), varchar()),
-        ("Definer".to_owned(), varchar()),
-        ("Type".to_owned(), varchar()),
-        ("Execute At".to_owned(), datetime()),
-        ("Interval Value".to_owned(), varchar()),
-        ("Interval Field".to_owned(), varchar()),
-        ("Starts".to_owned(), datetime()),
-        ("Ends".to_owned(), datetime()),
-        ("Status".to_owned(), varchar()),
-        ("Originator".to_owned(), FieldType::new(FieldTypeCode::Int24)),
-        ("character_set_client".to_owned(), varchar()),
-        ("collation_connection".to_owned(), varchar()),
-        ("Database Collation".to_owned(), varchar()),
-    ]
 }
 
 /// Go `ShowExec.fetchShowPrivileges`: the static MySQL privilege table
 /// (`executor/show.go:2037` onward) followed by every registered dynamic
 /// privilege as `("<NAME>", "Server Admin", "")` — `privileges.GetDynamicPrivileges()`
 /// over `pkg/privilege/privileges/privileges.go:60`'s list, in stored order.
-pub(crate) fn show_privileges_output() -> StmtOutput {
+/// Go `ShowExec.fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
+/// static table, then every dynamic privilege.
+pub(crate) fn show_privileges_rows() -> Vec<Vec<Datum>> {
     const STATIC_PRIVILEGES: &[(&str, &str, &str)] = &[
         ("Alter", "Tables", "To alter the table"),
         ("Alter routine", "Functions,Procedures", "To alter or drop stored functions/procedures"),
@@ -280,7 +172,6 @@ pub(crate) fn show_privileges_output() -> StmtOutput {
         "TRAFFIC_REPLAY_ADMIN",
         "APPLICATION_PASSWORD_ADMIN",
     ];
-    let varchar = || FieldType::new(FieldTypeCode::Varchar);
     let mut rows: Vec<Vec<Datum>> = STATIC_PRIVILEGES
         .iter()
         .map(|(privilege, context, comment)| {
@@ -298,14 +189,7 @@ pub(crate) fn show_privileges_output() -> StmtOutput {
             Datum::Bytes(Vec::new()),
         ]
     }));
-    StmtOutput::Rows {
-        columns: vec![
-            ("Privilege".to_owned(), varchar()),
-            ("Context".to_owned(), varchar()),
-            ("Comment".to_owned(), varchar()),
-        ],
-        rows,
-    }
+    rows
 }
 
 /// The `SHOW TABLE STATUS` header, with the columns Go reports as numbers
