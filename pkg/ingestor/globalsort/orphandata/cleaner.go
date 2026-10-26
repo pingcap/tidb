@@ -104,7 +104,7 @@ func (c *Cleaner) Trigger(ctx context.Context) {
 		}
 		return
 	}
-	if hasActiveProducers || ctx.Err() != nil {
+	if hasActiveProducers {
 		return
 	}
 
@@ -153,10 +153,9 @@ func (c *Cleaner) Trigger(ctx context.Context) {
 				c.cfg.Logger.Warn("global sort orphan data cleaner failed to delete objects",
 					zap.Int("deletion-candidate-count", len(stats.deletionCandidates)))
 			}
-			return
 		}
 	}
-	c.cfg.Logger.Info("global sort orphan data cleaner success",
+	c.cfg.Logger.Info("global sort orphan data cleaner finished",
 		zap.Int64("size-bytes", stats.sizeBytes),
 		zap.Int64("object-count", stats.objectCount),
 		zap.Int("deletion-candidate-count", len(stats.deletionCandidates)),
