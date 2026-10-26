@@ -232,10 +232,10 @@ func TestCleaner(t *testing.T) {
 		require.Equal(t, 1, remaining)
 		require.Equal(t, 1, store.deleteCalls)
 		requireGauge(t, 1001)
-		successLogs := m.logs.FilterMessage("global sort orphan data cleaner success").All()
-		require.Len(t, successLogs, 1)
-		require.EqualValues(t, 1001, successLogs[0].ContextMap()["object-count"])
-		require.EqualValues(t, 1000, successLogs[0].ContextMap()["deletion-candidate-count"])
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.EqualValues(t, 1001, summaryLogs[0].ContextMap()["object-count"])
+		require.EqualValues(t, 1000, summaryLogs[0].ContextMap()["deletion-candidate-count"])
 		m.Trigger(ctx)
 		requireGauge(t, 1)
 		require.Equal(t, 2, store.deleteCalls)
@@ -267,7 +267,12 @@ func TestCleaner(t *testing.T) {
 		warnings := m.logs.FilterLevelExact(zap.WarnLevel).All()
 		require.Len(t, warnings, 1)
 		require.EqualValues(t, 2, warnings[0].ContextMap()["deletion-candidate-count"])
-		require.Empty(t, m.logs.FilterMessage("global sort orphan data cleaner success").All())
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.EqualValues(t, 8, summaryLogs[0].ContextMap()["size-bytes"])
+		require.EqualValues(t, 2, summaryLogs[0].ContextMap()["object-count"])
+		require.Equal(t, zap.WarnLevel, m.logs.All()[0].Level)
+		require.Equal(t, zap.InfoLevel, m.logs.All()[1].Level)
 		requireNoCredentials(t, m.logs, uri, secret)
 		store.deleteFn = nil
 		m.Trigger(ctx)
@@ -289,6 +294,7 @@ func TestCleaner(t *testing.T) {
 				store := &cleanerStorage{Storage: objstore.NewMemStorage()}
 				require.NoError(t, store.WriteFile(ctx, "123/file", []byte("data")))
 				checks := 0
+				factoryCalls := 0
 				m := newTestCleaner(t, Config{
 					ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
 						checks++
@@ -311,7 +317,10 @@ func TestCleaner(t *testing.T) {
 				if scenario == "walk canceled" {
 					store.walkFn = func(context.Context) error { cancel(); return context.Canceled }
 				}
-				m.storeFactory = func(context.Context, string) (storeapi.Storage, error) { return store, nil }
+				m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
+					factoryCalls++
+					return store, nil
+				}
 
 				m.Trigger(ctx)
 
@@ -320,6 +329,9 @@ func TestCleaner(t *testing.T) {
 				require.True(t, exists)
 				require.Zero(t, store.deleteCalls)
 				requireGauge(t, 37)
+				if scenario == "first canceled without error" {
+					require.Equal(t, 1, factoryCalls)
+				}
 			})
 		}
 	})
@@ -507,7 +519,7 @@ func TestCleaner(t *testing.T) {
 
 		require.Equal(t, 1, store.closeCount)
 		requireGauge(t, 0)
-		require.Len(t, m.logs.FilterMessage("global sort orphan data cleaner success").All(), 1)
+		require.Len(t, m.logs.FilterMessage("global sort orphan data cleaner finished").All(), 1)
 	})
 
 	t.Run("configured nonempty store", func(t *testing.T) {
@@ -540,9 +552,9 @@ func TestCleaner(t *testing.T) {
 
 		require.Equal(t, 1, store.closeCount)
 		requireGauge(t, 66)
-		successLogs := m.logs.FilterMessage("global sort orphan data cleaner success").All()
-		require.Len(t, successLogs, 1)
-		fields := successLogs[0].ContextMap()
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		fields := summaryLogs[0].ContextMap()
 		require.NotContains(t, fields, "storage-uri")
 		require.EqualValues(t, 66, fields["size-bytes"])
 		require.EqualValues(t, 11, fields["object-count"])
@@ -575,9 +587,9 @@ func TestCleaner(t *testing.T) {
 		m.Trigger(context.Background())
 
 		requireGauge(t, 5)
-		successLogs := m.logs.FilterMessage("global sort orphan data cleaner success").All()
-		require.Len(t, successLogs, 1)
-		require.EqualValues(t, 1, successLogs[0].ContextMap()["object-count"])
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.EqualValues(t, 1, summaryLogs[0].ContextMap()["object-count"])
 	})
 
 	t.Run("configured Azure URI is omitted", func(t *testing.T) {
@@ -600,9 +612,9 @@ func TestCleaner(t *testing.T) {
 
 		require.Equal(t, 1, store.closeCount)
 		requireGauge(t, 0)
-		successLogs := m.logs.FilterMessage("global sort orphan data cleaner success").All()
-		require.Len(t, successLogs, 1)
-		require.NotContains(t, successLogs[0].ContextMap(), "storage-uri")
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.NotContains(t, summaryLogs[0].ContextMap(), "storage-uri")
 		requireNoCredentials(t, m.logs, accountKey, sasToken, encryptionKey, "azure%2Bsas")
 	})
 
@@ -633,7 +645,7 @@ func TestCleaner(t *testing.T) {
 		require.Equal(t, 1, store.closeCount)
 		// the previous value is kept while producers are active.
 		requireGauge(t, 37)
-		require.Empty(t, m.logs.FilterMessage("global sort orphan data cleaner success").All())
+		require.Empty(t, m.logs.FilterMessage("global sort orphan data cleaner finished").All())
 		discardLogs := m.logs.FilterMessage("global sort orphan data cleaner discarded scan because tasks appeared").All()
 		require.Len(t, discardLogs, 1)
 		require.Len(t, m.logs.FilterLevelExact(zap.InfoLevel).All(), 1)
@@ -814,7 +826,7 @@ func TestCleaner(t *testing.T) {
 		exists, err := store.FileExists(context.Background(), "candidate-prefix/file")
 		require.NoError(t, err)
 		require.True(t, exists)
-		require.Empty(t, m.logs.FilterMessage("global sort orphan data cleaner success").All())
+		require.Len(t, m.logs.FilterMessage("global sort orphan data cleaner finished").All(), 1)
 		require.Empty(t, m.logs.FilterLevelExact(zap.WarnLevel).All())
 	})
 }
