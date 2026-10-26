@@ -296,7 +296,6 @@ impl AdminStmt {
                 }
             }
             Self::PlanReplayer(_) => "PLAN REPLAYER",
-            Self::DescribeTable(_) => "EXPLAIN",
             Self::LoadStats(_) => "LOAD STATS",
             Self::DropStats(_) => "DROP STATS",
             Self::SplitRegion(_) => "SPLIT REGION",

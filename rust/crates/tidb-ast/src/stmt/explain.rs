@@ -17,29 +17,6 @@
 use crate::util::{back_quote, escape_string_literal, push_name_path};
 use crate::Stmt;
 
-/// TiDB's shared describe-table normal form: standalone `DESC`/`DESCRIBE`
-/// and `EXPLAIN <table>` all reach Go's `ShowColumns` branch and therefore
-/// restore as `DESC <table> [column]`. This is distinct from an `EXPLAIN`
-/// wrapper around a query or DML statement.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DescribeTableStmt {
-    /// The described table's dotted name path.
-    pub table: Vec<String>,
-    /// An optional dotted column-name path filter.
-    pub column: Option<Vec<String>>,
-}
-
-impl DescribeTableStmt {
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("DESC ");
-        push_name_path(out, &self.table);
-        if let Some(column) = &self.column {
-            out.push(' ');
-            push_name_path(out, column);
-        }
-    }
-}
-
 /// One table target of `LOCK STATS` or `UNLOCK STATS`. Go attaches an
 /// optional partition list only to the final table in the target list.
 #[derive(Debug, Clone, PartialEq)]
@@ -125,6 +102,19 @@ impl ExplainStmt {
     }
 
     pub(crate) fn restore_into(&self, out: &mut String) {
+        // Go `ExplainStmt.Restore`: the DESCRIBE form wraps a SHOW COLUMNS
+        // and restores as `DESC table [column]`.
+        if let Some(Stmt::Admin(admin)) = self.statement() {
+            if let crate::AdminStmt::Show(show) = admin.as_ref() {
+                out.push_str("DESC ");
+                show.restore_table(out);
+                if let Some(column) = &show.column {
+                    out.push(' ');
+                    push_name_path(out, column);
+                }
+                return;
+            }
+        }
         out.push_str("EXPLAIN ");
         if self.analyze {
             out.push_str("ANALYZE ");
@@ -169,18 +159,6 @@ fn restore_format(out: &mut String, format: &str) {
 }
 
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
-
-impl crate::Visitable for DescribeTableStmt {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        let Self { table, column } = self;
-        let _ = table;
-        let _ = column;
-        visitor.leave(self)
-    }
-}
 
 impl crate::Visitable for StatsLockTable {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {

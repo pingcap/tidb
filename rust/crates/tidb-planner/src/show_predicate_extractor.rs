@@ -75,7 +75,7 @@ impl ShowBaseExtractor {
             }
             return Some(extractor);
         }
-        match &show.column {
+        match show.column.as_ref().and_then(|path| path.last()) {
             Some(column) if !column.is_empty() => {
                 extractor.field = go_to_lower(column.clone());
                 Some(extractor)
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn describe_column_is_an_exact_field() {
         let mut show = ShowStmt::new(ShowStmtType::Columns);
-        show.column = Some("A".to_owned());
+        show.column = Some(vec!["A".to_owned()]);
         assert_eq!(ShowBaseExtractor::extract(&show).unwrap().field, "a");
         assert!(ShowBaseExtractor::extract(&ShowStmt::new(ShowStmtType::Columns)).is_none());
     }

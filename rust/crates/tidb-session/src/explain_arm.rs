@@ -41,6 +41,12 @@ impl Session {
         &mut self,
         explain: &tidb_ast::ExplainStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
+        // Go `buildExplain`: the DESCRIBE form's SHOW COLUMNS is `buildShow`'s.
+        if let Some(Stmt::Admin(admin)) = explain.statement() {
+            if let tidb_ast::AdminStmt::Show(show) = admin.as_ref() {
+                return self.run_planned_show(show).map(Some);
+            }
+        }
         if explain.format.is_empty() {
             // go's schema builder answers an EMPTY format from its `default:`
             // arm with the unsupported-format 1105 (oracle:

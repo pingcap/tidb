@@ -59,7 +59,7 @@ fn show_contents(show: &ShowStmt) -> ShowContents {
         table_name: show.table.as_ref().and_then(|path| path.last().cloned()),
         table_partitions: show.table_partitions.clone(),
         partition: show.partition.clone(),
-        column_name: show.column.clone(),
+        column_name: show.column.as_ref().and_then(|path| path.last().cloned()),
         index_name: show.index_name.clone(),
         resource_group_name: show.resource_group_name.clone(),
         flag: show.flag,

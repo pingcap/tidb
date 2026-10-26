@@ -120,7 +120,7 @@ pub use ddl_stmt::{
 };
 pub use dml::*;
 pub use dml_stmt::{BatchDml, BatchDmlDryRun, BatchDmlStmt, CallStmt, DmlStmt};
-pub use explain::{DescribeTableStmt, ExplainStmt, ExplainTarget, StatsLockStmt, StatsLockTable};
+pub use explain::{ExplainStmt, ExplainTarget, StatsLockStmt, StatsLockTable};
 pub use expr::*;
 pub use flush::{FlushLogType, FlushStmt, FlushTarget};
 pub use format::{

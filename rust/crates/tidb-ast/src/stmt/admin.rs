@@ -5,8 +5,7 @@
 use crate::util::{escape_string_literal, push_name_path};
 use crate::{
     AddQueryWatchStmt, AnalyzeIncrementalStmt, AnalyzeTableStmt, BinlogStmt, BrieStmt,
-    CalibrateResourceStmt, CreateBindingStmt, CreateStatisticsStmt, DescribeTableStmt,
-    DropBindingStmt, DropQueryWatchStmt, ExplainForStmt, ExplainStmt, Expr, FlushStmt, KillStmt,
+    CalibrateResourceStmt, CreateBindingStmt, CreateStatisticsStmt, DropBindingStmt, DropQueryWatchStmt, ExplainForStmt, ExplainStmt, Expr, FlushStmt, KillStmt,
     RecommendIndexStmt, RefreshStatsStmt, ServerControlStmt, SetBindingStmt, SetConfigStmt,
     SplitRegionStmt,
     StatsLockStmt, Stmt, TrafficStmt, UserSpec,
@@ -215,8 +214,6 @@ pub enum AdminStmt {
     /// expressions, and capture state which need their own faithful AST
     /// contracts instead of being silently discarded here.
     PlanReplayer(Box<PlanReplayerStmt>),
-    /// `DESC`/`DESCRIBE` or the `EXPLAIN <table>` fallback.
-    DescribeTable(Box<DescribeTableStmt>),
     /// `LOAD STATS 'path'`.
     ///
     /// TiDB owns this in `ast/stats.go`, separately from `LOAD DATA`: it
@@ -330,7 +327,6 @@ impl AdminStmt {
             Self::UnlockStats(lock) => lock.restore_into(out, false),
             Self::Explain(explain) => explain.restore_into(out),
             Self::PlanReplayer(replayer) => replayer.restore_into(out),
-            Self::DescribeTable(describe) => describe.restore_into(out),
             Self::LoadStats(load) => load.restore_into(out),
             Self::DropStats(drop) => drop.restore_into(out),
             Self::SplitRegion(split) => split.restore_into(out),
@@ -648,12 +644,6 @@ impl crate::Visitable for AdminStmt {
                 let _ = field_0;
             }
             Self::PlanReplayer(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::DescribeTable(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
                 }

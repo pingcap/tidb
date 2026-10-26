@@ -56,7 +56,7 @@ pub mod util_parser;
 use std::any::Any;
 
 use tidb_ast::{
-    AdminStmt, DdlStmt, DescribeTableStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
+    AdminStmt, DdlStmt, ExplainForStmt, ExplainStmt, ExplainTarget, Expr,
     PlanReplayerStmt, PlanReplayerTarget, StatsLockStmt, StatsLockTable, Stmt, Visitable, Visitor,
 };
 
@@ -1859,9 +1859,20 @@ impl Parser {
         } else {
             None
         };
-        Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-            AdminStmt::DescribeTable(Box::new(DescribeTableStmt { table, column })),
-        )))
+        // Go: `ShowStmt{Tp: ShowColumns, Table, Column}` under an
+        // `ExplainStmt` whose format is empty.
+        let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::Columns);
+        show.table = Some(table);
+        show.column = column;
+        Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Explain(Box::new(
+            ExplainStmt {
+                analyze: false,
+                format: String::new(),
+                target: ExplainTarget::Statement(Box::new(Stmt::Admin(tidb_ast::NodeBox::new(
+                    AdminStmt::Show(Box::new(show)),
+                )))),
+            },
+        )))))
     }
 
     /// Parses a dotted name path from Go's wider `isIdentLike` slots. This

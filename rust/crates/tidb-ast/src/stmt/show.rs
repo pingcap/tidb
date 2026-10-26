@@ -110,8 +110,8 @@ pub struct ShowStmt {
     pub procedure: Option<Vec<String>>,
     /// Go `Partition`.
     pub partition: String,
-    /// Go `Column`, for `DESC table column`.
-    pub column: Option<String>,
+    /// Go `Column`, for `DESC table column`, as its name path.
+    pub column: Option<Vec<String>>,
     /// Go `IndexName`.
     pub index_name: String,
     /// Go `ResourceGroupName`.
@@ -191,7 +191,7 @@ impl ShowStmt {
     }
 
     /// Go `TableName.Restore` for `Table`: the name, then its partitions.
-    fn restore_table(&self, out: &mut String) {
+    pub(crate) fn restore_table(&self, out: &mut String) {
         if let Some(table) = &self.table {
             push_name_path(out, table);
         }

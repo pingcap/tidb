@@ -77,8 +77,7 @@ impl AdminStmt {
             | Self::ShowDdlJobs(_)
             | Self::ShowDdlJobQueries(_)
             | Self::ShowNextRowId(_)
-            | Self::Show(_)
-            | Self::DescribeTable(_) => true,
+            | Self::Show(_) => true,
             _ => false,
         }
     }

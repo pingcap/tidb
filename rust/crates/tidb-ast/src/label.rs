@@ -105,7 +105,6 @@ impl AdminStmt {
             Self::CreateBinding(_) => "CreateBinding",
             Self::DropBinding(_) => "DropBinding",
             Self::AnalyzeTable(_) | Self::AnalyzeIncremental(_) => "AnalyzeTable",
-            Self::DescribeTable(_) => "DescTable",
             Self::Explain(explain) if explain.statement().is_some_and(Stmt::is_show_statement) => {
                 "DescTable"
             }

@@ -257,7 +257,6 @@ fn admin_plan_has_result_schema(admin: &tidb_ast::AdminStmt) -> bool {
         | AdminStmt::ExplainFor(_)
         | AdminStmt::Explain(_)
         | AdminStmt::PlanReplayer(_)
-        | AdminStmt::DescribeTable(_)
         | AdminStmt::SplitRegion(_) => true,
         // `buildCreateBindPlan`/`buildDropBindPlan`/
         // `buildSetBindingStatusPlan` -> `SQLBindPlan`; `buildAnalyze`,

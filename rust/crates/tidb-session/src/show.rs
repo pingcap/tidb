@@ -1812,16 +1812,6 @@ impl Session {
                     rows,
                 }))
             }
-            // Go's parser makes `DESCRIBE tbl [col]` an `ExplainStmt` over
-            // `ShowStmt{Tp: ShowColumns, Table, Column}`, which
-            // `buildExplain` hands to `buildShow`; this parser keeps a node
-            // of its own, so the same statement is built from it here.
-            tidb_ast::AdminStmt::DescribeTable(describe) => {
-                let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::Columns);
-                show.table = Some(describe.table.clone());
-                show.column = describe.column.as_ref().and_then(|path| path.last().cloned());
-                self.run_planned_show(&show).map(Some)
-            }
             // Go `SimpleExec.executeShutdown` + `asyncDelayShutdown`
             // (pkg/executor/simple.go:3584-3611): the statement answers
             // success immediately, and a 1-second-delayed task SIGTERMs this
