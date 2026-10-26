@@ -350,7 +350,6 @@ func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessi
 			if err != nil {
 				return err
 			}
-			break
 		}
 		//TODO Optimized for batch, one-shot.
 	}
