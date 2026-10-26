@@ -14,27 +14,6 @@
 
 use tidb_datatype::{Datum, FieldTypeFlags};
 
-/// The `SHOW INDEX` header, with the columns Go reports as numbers marked.
-pub(crate) const SHOW_INDEX_COLUMNS: &[(&str, bool)] = &[
-    ("Table", false),
-    ("Non_unique", true),
-    ("Key_name", false),
-    ("Seq_in_index", true),
-    ("Column_name", false),
-    ("Collation", false),
-    ("Cardinality", true),
-    ("Sub_part", true),
-    ("Packed", false),
-    ("Null", false),
-    ("Index_type", false),
-    ("Comment", false),
-    ("Index_comment", false),
-    ("Visible", false),
-    ("Expression", false),
-    ("Clustered", false),
-    ("Global", false),
-];
-
 /// One `SHOW INDEX` row per index column, in Go's own order: the clustered
 /// primary key first, then each index in definition order. `column_ndv` is
 /// Go `fetchShowIndex`'s Cardinality: the column's NDV in the table's stats

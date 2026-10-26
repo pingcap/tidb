@@ -24,7 +24,7 @@
 //! modules (`explain_arm`, `account`, `process_arm`) and are only delegated
 //! to from [`Session::dispatch_admin_stmt`] here.
 
-use crate::show_index::{show_index_rows, SHOW_INDEX_COLUMNS};
+use crate::show_index::show_index_rows;
 use crate::*;
 use tidb_datatype::STRICT_INTEGER_DISPLAY_WIDTH;
 use tidb_hack::GoCaseCompare;
@@ -971,6 +971,51 @@ impl Session {
             }
             T::Privileges => crate::show_admin::show_privileges_rows(),
             T::Status => self.show_status_rows(contents.global_scope)?,
+            // Go `fetchShowIndex`: one row per index COLUMN, ordered
+            // with the clustered primary key first, then the table's own
+            // indexes in definition order.
+            //
+            // Cardinality is each column's NDV from the table's stats and
+            // Sub_part the declared prefix length; Packed is NULL and
+            // Comment empty, as Go writes them; Expression is NULL when no
+            // expression key part exists; Global is the stored
+            // `IndexInfo.Global` flag.
+            // An unqualified table without a current database is the
+            // preprocessor's `ErrNoDB`.
+            T::Index => {
+                if contents.db_name.is_empty() {
+                    self.require_current_database()?;
+                }
+                let database = contents.db_name.clone();
+                let table_name = contents.table_name.clone().unwrap_or_default();
+                self.with_catalog_mut(|catalog| {
+                    let Some(entry) = catalog.table_in(&database, &table_name) else {
+                        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                            "{database}.{table_name}"
+                        ))));
+                    };
+                    let table = match entry {
+                        tidb_executor::TableEntry::Kv(table) => table,
+                        // A view's `TableInfo` carries no indexes (Go answers
+                        // the header and no rows).
+                        tidb_executor::TableEntry::View(_)
+                        | tidb_executor::TableEntry::Sequence(_) => return Ok(Vec::new()),
+                        _ => {
+                            return Err(DriverError::unsupported(
+                                "SHOW INDEX needs a storage-backed table",
+                            ));
+                        }
+                    };
+                    // Go `GetPhysicalTableStats(tb.Meta().ID, ...)`.
+                    let statistics = catalog.table_statistics(table.table_id);
+                    Ok(show_index_rows(&table_name, table, |column_id| {
+                        statistics
+                            .as_ref()
+                            .and_then(|statistics| statistics.columns.get(&column_id))
+                            .map_or(0, |column| column.histogram.ndv)
+                    }))
+                })?
+            }
             // Go `fetchShowColumns`: an unqualified table without a current
             // database is the preprocessor's `ErrNoDB`.
             T::Columns => {
@@ -1700,74 +1745,6 @@ impl Session {
             }
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
-            // Go `fetchShowIndex`: one row per index COLUMN, ordered
-            // with the clustered primary key first, then the table's own
-            // indexes in definition order.
-            //
-            // Cardinality is each column's NDV from the table's stats and
-            // Sub_part the declared prefix length; Packed is NULL and
-            // Comment empty, as Go writes them; Expression is NULL when no
-            // expression key part exists; Global is the stored
-            // `IndexInfo.Global` flag.
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Index => {
-                let (like_pattern, where_clause) = match show_filter(show) {
-                    None => (None, None),
-                    Some(ShowFilter::Like(expr)) => {
-                        let value = datum_text(&self.eval_value(expr)?);
-                        (Some(ShowLikePattern::from_expr(expr, value, false)), None)
-                    }
-                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
-                };
-                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
-                    // go resolves a QUALIFIED name without consulting the
-                    // session database: `SHOW INDEX FROM d3p.t2` answers with
-                    // no `USE` in sight. Only the bare form needs one, and go
-                    // answers 1046 (`ErrNoDB`) for it.
-                    [table] => (self.require_current_database()?.to_owned(), table.clone()),
-                    [database, table] => (database.clone(), table.clone()),
-                    _ => return Err(DriverError::unsupported("empty table name")),
-                };
-                let rows = self.with_catalog_mut(|catalog| {
-                    let Some(entry) = catalog.table_in(&database, &table_name) else {
-                        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                            "{database}.{table_name}"
-                        ))));
-                    };
-                    let table = match entry {
-                        tidb_executor::TableEntry::Kv(table) => table,
-                        // A view's `TableInfo` carries no indexes (Go answers
-                        // the header and no rows).
-                        tidb_executor::TableEntry::View(_)
-                        | tidb_executor::TableEntry::Sequence(_) => return Ok(Vec::new()),
-                        _ => {
-                            return Err(DriverError::unsupported(
-                                "SHOW INDEX needs a storage-backed table",
-                            ));
-                        }
-                    };
-                    // Go `GetPhysicalTableStats(tb.Meta().ID, ...)`.
-                    let statistics = catalog.table_statistics(table.table_id);
-                    Ok(show_index_rows(&table_name, table, |column_id| {
-                        statistics
-                            .as_ref()
-                            .and_then(|statistics| statistics.columns.get(&column_id))
-                            .map_or(0, |column| column.histogram.ndv)
-                    }))
-                })?;
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let number =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                let columns = SHOW_INDEX_COLUMNS
-                    .iter()
-                    .map(|(name, numeric)| {
-                        ((*name).to_owned(), if *numeric { number() } else { text() })
-                    })
-                    .collect();
-                let output = StmtOutput::Rows { columns, rows };
-                self.filter_show_output(output, like_pattern, where_clause)
-                    .map(Some)
-            }
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsTopN => self.stats_topn_stmt(show).map(Some),
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
@@ -2413,6 +2390,7 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::Status
             | T::TableStatus
             | T::Columns
+            | T::Index
     )
 }
 
