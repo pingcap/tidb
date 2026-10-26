@@ -1898,15 +1898,8 @@ func (p *LogicalJoin) updateEQCond() {
 }
 
 func isCastWrappedJoinKey(expr expression.Expression, originalCol *expression.Column) bool {
-	castExpr, ok := expr.(*expression.ScalarFunction)
-	if !ok || castExpr.FuncName.L != ast.Cast {
-		return false
-	}
-	castArg, ok := castExpr.GetArgs()[0].(*expression.Column)
-	if !ok {
-		return false
-	}
-	return castArg.EqualColumn(originalCol)
+	castArg, ok := ExtractCastSourceColumn(expr)
+	return ok && castArg.EqualColumn(originalCol)
 }
 
 func (p *LogicalJoin) keyCastSourceColumn(key expression.Expression) (*expression.Column, bool) {
@@ -1914,15 +1907,11 @@ func (p *LogicalJoin) keyCastSourceColumn(key expression.Expression) (*expressio
 		src, ok := p.ProjectedKeyCastSources[col.UniqueID]
 		return src, ok
 	}
-	return extractCastSourceColumn(key)
+	return ExtractCastSourceColumn(key)
 }
 
 // ExtractCastSourceColumn returns the column that expr casts, if expr is a cast of a column.
 func ExtractCastSourceColumn(expr expression.Expression) (*expression.Column, bool) {
-	return extractCastSourceColumn(expr)
-}
-
-func extractCastSourceColumn(expr expression.Expression) (*expression.Column, bool) {
 	castExpr, ok := expr.(*expression.ScalarFunction)
 	if !ok || castExpr.FuncName.L != ast.Cast {
 		return nil, false
