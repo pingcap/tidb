@@ -1816,6 +1816,8 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 		// If int_col got null, compare result cannot be true
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.GetFlag())) {
 			finalArg1 = arg1
+		} else if isNegativeUnderflowForUnsigned(ctx, arg0Type, arg1) {
+			finalArg1 = NewInt64Const(-1)
 		}
 		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
 		// to check the NotNullFlag, then more optimizations can be enabled.
@@ -1840,6 +1842,8 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
 		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())) {
 			finalArg0 = arg0
+		} else if isNegativeUnderflowForUnsigned(ctx, arg1Type, arg0) {
+			finalArg0 = NewInt64Const(-1)
 		}
 		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
 		// to check the NotNullFlag, then more optimizations can be enabled.
@@ -1889,6 +1893,18 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	}
 
 	return c.refineArgsByUnsignedFlag(ctx, []Expression{finalArg0, finalArg1}), nil
+}
+
+// isNegativeUnderflowForUnsigned reports whether refined is the exceptional value
+// RefineComparedConstant returns when a negative constant underflows an unsigned
+// int type. Every unsigned value, and NULL, compares with any negative constant
+// exactly as it compares with -1 under each of LT, LE, GT, GE, EQ, NE and NullEQ.
+// So for a nullable unsigned column the constant can be replaced with the
+// integer -1, which avoids casting the column for the comparison.
+func isNegativeUnderflowForUnsigned(ctx BuildContext, intType *types.FieldType, refined *Constant) bool {
+	return mysql.HasUnsignedFlag(intType.GetFlag()) &&
+		refined.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt &&
+		!refined.Value.IsNull() && refined.Value.GetUint64() == 0
 }
 
 // see https://github.com/pingcap/tidb/issues/38361 for more details
