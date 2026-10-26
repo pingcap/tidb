@@ -233,8 +233,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		dbInfo.State = model.StateNone
 		var (
 			miniTables         []*notifier.MiniTableInfoForSchemaEvent
-			mviewIDs           []int64
-			mlogIDs            []int64
 			allDroppedTableIDs []int64
 			affinityErr        error
 		)
@@ -248,12 +246,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			miniTables = append(miniTables, notifier.NewMiniTableInfoForSchemaEvent(tblInfo))
 			if tblInfo.Affinity != nil && affinityErr == nil {
 				affinityErr = collectTableAffinityGroupIDs(codec, tblInfo, affinityGroupIDs)
-			}
-			if tblInfo.MaterializedView != nil {
-				mviewIDs = append(mviewIDs, tblInfo.ID)
-			}
-			if tblInfo.MaterializedViewLog != nil {
-				mlogIDs = append(mlogIDs, tblInfo.ID)
 			}
 			allDroppedTableIDs = appendPhysicalTableIDs(allDroppedTableIDs, tblInfo)
 			return nil
@@ -288,26 +280,6 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			break
 		}
 
-<<<<<<< HEAD
-=======
-		// Refresh and purge records drive MView and MLog maintenance, so their
-		// cleanup must roll back DROP DATABASE on failure. Refresh alerts are
-		// advisory state, so retaining stale alerts is preferable to blocking DDL.
-		if err = w.deleteCreateMaterializedViewRefreshInfos(jobCtx, mviewIDs); err != nil {
-			return ver, errors.Trace(err)
-		}
-		if err = w.deleteCreateMaterializedViewRefreshAlerts(jobCtx, mviewIDs); err != nil {
-			logutil.DDLLogger().Warn(
-				"drop schema: failed to delete materialized view refresh alerts",
-				zap.String("schemaName", job.SchemaName),
-				zap.Error(err),
-			)
-		}
-		if err = w.deleteMaterializedViewLogPurgeInfos(jobCtx, mlogIDs); err != nil {
-			return ver, errors.Trace(err)
-		}
-
->>>>>>> d0665b07134 (ddl, infoschema: stream table metadata for DROP DATABASE (#72141))
 		// Split tables into multiple jobs to avoid too big records in the notifier.
 		const tooManyTablesThreshold = 100000
 		tablesPerJob := 100
