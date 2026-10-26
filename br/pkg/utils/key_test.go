@@ -40,6 +40,8 @@ func TestParseKey(t *testing.T) {
 		ans        []byte
 	}{
 		{"\\a\\x1", []byte("\a\x01")},
+		{"\\x4a\\xFF", []byte("\x4a\xff")},
+		{"a\\x00b", []byte("a\x00b")},
 		{"\\b\\f", []byte("\b\f")},
 		{"\\n\\r", []byte("\n\r")},
 		{"\\t\\v", []byte("\t\v")},
@@ -50,6 +52,12 @@ func TestParseKey(t *testing.T) {
 		parsedKey, err := ParseKey("escaped", tt.EscapedKey)
 		require.NoError(t, err)
 		require.Equal(t, tt.ans, parsedKey)
+	}
+
+	// test malformed hex escapes are rejected instead of yielding a wrong key
+	for _, bad := range []string{"\\xZZ", "\\x4g", "\\x", "a\\x", "\\x+1"} {
+		_, err := ParseKey("escaped", bad)
+		require.Error(t, err, "key %q", bad)
 	}
 
 	// test hexKey
