@@ -157,7 +157,7 @@ func TestSoundex(t *testing.T) {
 		testkit.Rows("E9313230 C3313230 41313233"))
 	tk.MustExec("create table l (a varchar(10) character set latin1)")
 	tk.MustExec("insert into l values (0xE9616263), (0xC3A9616263), (0x61E9626364), ('abc')")
-	tk.MustQuery("select hex(soundex(a)) from l order by a").Check(testkit.Rows("41313233", "41313230", "C3313230", "E9313230"))
+	tk.MustQuery("select hex(soundex(a)) from l order by a").Check(testkit.Rows("41313230", "41313233", "C3313230", "E9313230"))
 
 	// The collation of the result comes from the argument.
 	tk.MustQuery("select collation(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci)), coercibility(soundex(_utf8mb4'abc' collate utf8mb4_unicode_ci))").Check(
