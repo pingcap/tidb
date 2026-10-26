@@ -413,9 +413,6 @@ pub(crate) fn string_column_output(column: &str, values: Vec<String>) -> StmtOut
 
 
 
-/// The column names a `SHOW VARIABLES` row carries, which its `WHERE` filter
-/// resolves against.
-const SHOW_VARIABLE_COLUMNS: &[&str; 2] = &["Variable_name", "Value"];
 
 
 
@@ -829,6 +826,106 @@ impl Session {
         Ok(StmtOutput::Rows { columns, rows })
     }
 
+    /// Go `ShowExec.fetchShowStatus`: one `Variable_name | Value` row per
+    /// status variable that `variable.GetStatusVars` collects from the
+    /// registered `Statistics` providers, sorted by name, with `GLOBAL` scope
+    /// skipping session-only variables.
+    ///
+    /// This tier serves only `SHOW_STATUS_VARS` (see its doc comment for what
+    /// is not modelled). As for SHOW VARIABLES, GLOBAL and SESSION read the
+    /// same values because this tier keeps no persisted global tier; GLOBAL
+    /// still drops session-only rows, which the Go capture confirms (`SHOW
+    /// GLOBAL STATUS` omits the `Compression*` family).
+    fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
+        let mut rows = Vec::new();
+        let (tls_cipher, tls_version) = self.tls_status();
+        let (tls_cipher, tls_version) = (tls_cipher.to_owned(), tls_version.to_owned());
+        // The SERVER provider's dynamic row (`stat.go:87`):
+        // `Uptime` is the seconds since the hosting server started,
+        // GLOBAL scope (shown by both SESSION and GLOBAL views).
+        let uptime = self.server_start_timestamp.map(|start| {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs() as i64);
+            (now - start).max(0).to_string()
+        });
+        // `tidb_keys_examined` (`statusvar.go`), session scope.
+        let keys_examined = self.keys_examined().to_string();
+        // The DDL provider's rows (`pkg/ddl/stat.go`): the schema
+        // version and this node's DDL id, GLOBAL|SESSION scope.
+        let ddl_schema_version = self
+            .cluster_schema_version
+            .as_ref()
+            .map_or_else(|| self.lock_catalog().map_or(0, |c| c.schema_version() as i64), |source| source())
+            .to_string();
+        let server_id = self
+            .server_info_syncer
+            .as_ref()
+            .map(|syncer| syncer.local_server_info().static_info.id.clone())
+            .unwrap_or_default();
+        // The binding handle's row (`binding_handle.go`), session
+        // scope: `Time.String()` of the last update, zero until a
+        // binding was loaded.
+        let binding_update_time = self
+            .global_binding_cache
+            .as_ref()
+            .map(|cache| cache.load().last_update_time())
+            .filter(|time| !time.is_empty())
+            .unwrap_or_else(|| "0000-00-00 00:00:00".to_owned());
+        let mut dynamic = vec![
+            ("Performance_schema_session_connect_attrs_longest_seen", "0", false),
+            ("Performance_schema_session_connect_attrs_lost", "0", false),
+            ("ddl_schema_version", ddl_schema_version.as_str(), false),
+            ("last_plan_binding_update_time", binding_update_time.as_str(), true),
+            ("server_id", server_id.as_str(), false),
+            ("tidb_keys_examined", keys_examined.as_str(), true),
+        ];
+        if let Some(value) = uptime.as_ref() {
+            dynamic.push(("Uptime", value.as_str(), false));
+        }
+        // Go `variable.GetStatusVars`: the registered providers'
+        // rows (the GC worker's `tidb_gc_*`).
+        let registered = crate::statusvar::get_status_vars().map_err(|error| {
+            DriverError::Mysql(tidb_executor::MysqlError::unknown(error))
+        })?;
+        dynamic.extend(registered.iter().map(|(name, status)| {
+            (
+                name.as_str(),
+                status.value.as_str(),
+                status.scope == crate::sysvar::SCOPE_SESSION,
+            )
+        }));
+        // Go lists the collected statuses sorted by name.
+        let mut listed = SHOW_STATUS_VARS
+            .iter()
+            .copied()
+            .chain(dynamic)
+            .collect::<Vec<_>>();
+        listed.sort_by(|left, right| left.0.cmp(right.0));
+        for (name, value, session_only) in listed {
+            // Go fills these two per connection from the negotiated
+            // TLS state (`server.go:1329`); a plaintext connection
+            // keeps the table's empty strings.
+            let value = match name {
+                "Ssl_cipher" => tls_cipher.as_str(),
+                "Ssl_version" => tls_version.as_str(),
+                _ => value,
+            };
+            if self.sem_hides_status_var(name) {
+                continue;
+            }
+            if global && session_only {
+                continue;
+            }
+            let row = vec![
+                Datum::Bytes(name.as_bytes().to_vec()),
+                Datum::Bytes(value.as_bytes().to_vec()),
+            ];
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+
     /// Go `ShowExec.fetchAll`: the rows of one planned SHOW, by its type.
     /// Only the kinds [`is_planned_show`] lists reach it.
     fn fetch_show(
@@ -891,6 +988,7 @@ impl Session {
                 crate::show_admin::master_status_rows(self.current_tso().value())
             }
             T::Privileges => crate::show_admin::show_privileges_rows(),
+            T::Status => self.show_status_rows(contents.global_scope)?,
             T::Warnings | T::Errors => {
                 self.warning_rows(contents.count_warnings_or_errors, contents.tp == T::Errors)
             }
@@ -1727,148 +1825,6 @@ impl Session {
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
-            // Go `fetchShowStatus`: one `Variable_name | Value` row per
-            // status variable that `variable.GetStatusVars` collects from
-            // the registered `Statistics` providers, with `GLOBAL` scope
-            // skipping session-only variables.
-            //
-            // This tier serves only `SHOW_STATUS_VARS` (see its doc
-            // comment for what is not modelled). As with the
-            // `ShowVariables` arm above, GLOBAL and SESSION read the same
-            // values here because this tier keeps no persisted global
-            // tier; GLOBAL still drops session-only rows, which the Go
-            // capture confirms (`SHOW GLOBAL STATUS` omits the
-            // `Compression*` family).
-            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Status => {
-                let pattern = match show_filter(show) {
-                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
-                        Some(text.clone())
-                    }
-                    _ => None,
-                };
-                let like_predicate = match show_filter(show) {
-                    Some(ShowFilter::Like(expr))
-                        if !matches!(expr, tidb_ast::Expr::String(_)) =>
-                    {
-                        Some(show_like_predicate(expr, SHOW_VARIABLE_COLUMNS)?)
-                    }
-                    _ => None,
-                };
-                let predicate = match show_filter(show) {
-                    Some(ShowFilter::Where(expr)) => Some(expr),
-                    _ => like_predicate.as_ref(),
-                };
-                let text =
-                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let mut rows = Vec::new();
-                let (tls_cipher, tls_version) = self.tls_status();
-                let (tls_cipher, tls_version) = (tls_cipher.to_owned(), tls_version.to_owned());
-                // The SERVER provider's dynamic row (`stat.go:87`):
-                // `Uptime` is the seconds since the hosting server started,
-                // GLOBAL scope (shown by both SESSION and GLOBAL views).
-                let uptime = self.server_start_timestamp.map(|start| {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |since| since.as_secs() as i64);
-                    (now - start).max(0).to_string()
-                });
-                // `tidb_keys_examined` (`statusvar.go`), session scope.
-                let keys_examined = self.keys_examined().to_string();
-                // The DDL provider's rows (`pkg/ddl/stat.go`): the schema
-                // version and this node's DDL id, GLOBAL|SESSION scope.
-                let ddl_schema_version = self
-                    .cluster_schema_version
-                    .as_ref()
-                    .map_or_else(|| self.lock_catalog().map_or(0, |c| c.schema_version() as i64), |source| source())
-                    .to_string();
-                let server_id = self
-                    .server_info_syncer
-                    .as_ref()
-                    .map(|syncer| syncer.local_server_info().static_info.id.clone())
-                    .unwrap_or_default();
-                // The binding handle's row (`binding_handle.go`), session
-                // scope: `Time.String()` of the last update, zero until a
-                // binding was loaded.
-                let binding_update_time = self
-                    .global_binding_cache
-                    .as_ref()
-                    .map(|cache| cache.load().last_update_time())
-                    .filter(|time| !time.is_empty())
-                    .unwrap_or_else(|| "0000-00-00 00:00:00".to_owned());
-                let mut dynamic = vec![
-                    ("Performance_schema_session_connect_attrs_longest_seen", "0", false),
-                    ("Performance_schema_session_connect_attrs_lost", "0", false),
-                    ("ddl_schema_version", ddl_schema_version.as_str(), false),
-                    ("last_plan_binding_update_time", binding_update_time.as_str(), true),
-                    ("server_id", server_id.as_str(), false),
-                    ("tidb_keys_examined", keys_examined.as_str(), true),
-                ];
-                if let Some(value) = uptime.as_ref() {
-                    dynamic.push(("Uptime", value.as_str(), false));
-                }
-                // Go `variable.GetStatusVars`: the registered providers'
-                // rows (the GC worker's `tidb_gc_*`).
-                let registered = crate::statusvar::get_status_vars().map_err(|error| {
-                    DriverError::Mysql(tidb_executor::MysqlError::unknown(error))
-                })?;
-                dynamic.extend(registered.iter().map(|(name, status)| {
-                    (
-                        name.as_str(),
-                        status.value.as_str(),
-                        status.scope == crate::sysvar::SCOPE_SESSION,
-                    )
-                }));
-                // Go lists the collected statuses sorted by name.
-                let mut listed = SHOW_STATUS_VARS
-                    .iter()
-                    .copied()
-                    .chain(dynamic)
-                    .collect::<Vec<_>>();
-                listed.sort_by(|left, right| left.0.cmp(right.0));
-                for (name, value, session_only) in listed {
-                    // Go fills these two per connection from the negotiated
-                    // TLS state (`server.go:1329`); a plaintext connection
-                    // keeps the table's empty strings.
-                    let value = match name {
-                        "Ssl_cipher" => tls_cipher.as_str(),
-                        "Ssl_version" => tls_version.as_str(),
-                        _ => value,
-                    };
-                    if self.sem_hides_status_var(name) {
-                        continue;
-                    }
-                    if show.global_scope && session_only {
-                        continue;
-                    }
-                    if let Some(pattern) = &pattern {
-                        if !tidb_executor::like_match_with_collation(
-                            name,
-                            pattern,
-                            None,
-                            tidb_datatype::Collation::Utf8Mb4Bin,
-                        ) {
-                            continue;
-                        }
-                    }
-                    let row = vec![
-                        Datum::Bytes(name.as_bytes().to_vec()),
-                        Datum::Bytes(value.as_bytes().to_vec()),
-                    ];
-                    rows.push(row);
-                }
-                self.filter_show_output(
-                    StmtOutput::Rows {
-                        columns: vec![
-                            (SHOW_VARIABLE_COLUMNS[0].to_owned(), text()),
-                            (SHOW_VARIABLE_COLUMNS[1].to_owned(), text()),
-                        ],
-                        rows,
-                    },
-                    None,
-                    predicate,
-                )
-                .map(Some)
-            }
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsTopN => self.stats_topn_stmt(show).map(Some),
             tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
@@ -2532,6 +2488,7 @@ fn is_planned_show(tp: tidb_ast::ShowStmtType) -> bool {
             | T::Builtins
             | T::Warnings
             | T::Errors
+            | T::Status
     )
 }
 
