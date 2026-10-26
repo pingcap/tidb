@@ -129,31 +129,7 @@ impl Visitor for VariableBinder<'_> {
 
 /// Maps a variable error onto the driver error the wire layer renders.
 pub(crate) fn var_error(error: VarError) -> DriverError {
-    DriverError::Var(match error {
-        VarError::UnknownSystemVariable(name) => {
-            tidb_executor::VarErrorKind::UnknownSystemVariable(name)
-        }
-        VarError::RemovedSystemVariable { name, reason } => {
-            tidb_executor::VarErrorKind::RemovedSystemVariable { name, reason }
-        }
-        VarError::ReadOnlyVariable(name) => tidb_executor::VarErrorKind::ReadOnlyVariable(name),
-        VarError::WrongTypeForVar(name) => tidb_executor::VarErrorKind::WrongTypeForVar(name),
-        VarError::WrongValueForVar(name, value) => {
-            tidb_executor::VarErrorKind::WrongValueForVar(name, value)
-        }
-        VarError::SqlError(error) => tidb_executor::VarErrorKind::SqlError(error),
-        VarError::SessionOnlyVariable(name) => {
-            tidb_executor::VarErrorKind::SessionOnlyVariable(name)
-        }
-        VarError::GlobalOnlyVariable(name) => tidb_executor::VarErrorKind::GlobalOnlyVariable(name),
-        VarError::NoGlobalCopy(name) => tidb_executor::VarErrorKind::NoGlobalCopy(name),
-        VarError::IncorrectScope(name, allowed) => {
-            tidb_executor::VarErrorKind::IncorrectScope(name, allowed.to_owned())
-        }
-        VarError::ValidationRefused(message) => {
-            tidb_executor::VarErrorKind::ValidationRefused(message)
-        }
-    })
+    DriverError::from(error)
 }
 
 /// The text form a system variable stores for a datum (Go keeps every system

@@ -1952,36 +1952,11 @@ impl Session {
         self.vars.current_db = String::new();
     }
 
-    /// Go `executeUse`: an unknown schema is `ErrDatabaseNotExists`, and the
-    /// switch also updates `collation_database`.
+    /// Go `SimpleExec.executeUse` over this session and its schema.
     fn use_database(&mut self, name: &str) -> Result<(), DriverError> {
-        // An empty schema name (`USE ``) is `ErrNoDB`, as Go's preprocessor
-        // answers it, not an unknown database.
-        if name.is_empty() {
-            return Err(DriverError::Schema(SchemaErrorKind::NoDatabaseSelected));
-        }
-        // Go `executeUse` (`executor/simple.go` around line 608) refuses an
-        // invisible schema with 1044 BEFORE it looks the schema up, so a
-        // schema the account cannot see is never distinguishable from one
-        // that does not exist.
-        self.require_visible_database(name)?;
-        let charset = self.with_catalog_mut(|catalog| Ok(catalog.database_charset(name)))?;
-        let Some(charset) = charset else {
-            return Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(
-                name.to_owned(),
-            )));
-        };
-        self.vars.current_db_changed = name != self.vars.current_db;
-        self.vars.current_db = name.to_owned();
-        // The schema's collation, substituted when new collations do not
-        // support it, becomes `collation_database`; that variable's hook
-        // mirrors its charset into `character_set_database`.
-        let collation =
-            tidb_datatype::substitute_missing_collation_to_default(charset.collation.name());
-        self.vars
-            .set_system("collation_database", collation)
-            .map_err(crate::variables::var_error)?;
-        Ok(())
+        let catalog = self.shared_catalog();
+        let catalog = catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        tidb_executor::simple::execute_use(self, &catalog, name)
     }
 
     /// The current database, or Go's `ErrNoDB` when none is selected.
@@ -3489,4 +3464,24 @@ pub(crate) fn go_json_marshal(value: &serde_json::Value) -> String {
         .replace('&', "\\u0026")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029")
+}
+
+impl tidb_executor::sessionctx::SessionContext for Session {
+    fn session_vars(&self) -> &SessionVars {
+        &self.vars
+    }
+
+    fn session_vars_mut(&mut self) -> &mut SessionVars {
+        &mut self.vars
+    }
+
+    fn privilege_manager(&self) -> &dyn tidb_executor::sessionctx::PrivilegeManager {
+        self
+    }
+}
+
+impl tidb_executor::sessionctx::PrivilegeManager for Session {
+    fn db_is_visible(&self, database: &str) -> bool {
+        self.database_is_visible(database)
+    }
 }
