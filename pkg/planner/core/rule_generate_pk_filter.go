@@ -177,7 +177,7 @@ func tryGeneratePKFilter(ctx context.Context, ds *logicalop.DataSource) (base.Lo
 
 	// Generate PK filter conditions and track source indexes.
 	var pkFilterConds []util.PKFilterCondInfo
-	var probes []*pkFilterProbe
+	probes := make([]*pkFilterProbe, 0, len(qualifyingIndexes))
 	for _, idxPath := range qualifyingIndexes {
 		eqConds := checkIndexQualifiesForPKFilter(ds, idxPath)
 		if eqConds == nil {
