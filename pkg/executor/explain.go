@@ -70,6 +70,21 @@ func (e *ExplainExec) Close() error {
 	return nil
 }
 
+// HandleSQLKillerSignal implements the Executor interface.
+func (e *ExplainExec) HandleSQLKillerSignal() error {
+	if e.analyzeDMLCommitted() {
+		return nil
+	}
+	return e.BaseExecutor.HandleSQLKillerSignal()
+}
+
+// analyzeDMLCommitted reports whether this is an autocommit EXPLAIN ANALYZE DML that has
+// already committed, so a kill can no longer stop it and must not be returned as its result.
+func (e *ExplainExec) analyzeDMLCommitted() bool {
+	vars := e.Ctx().GetSessionVars()
+	return vars.StmtCtx.IsExplainAnalyzeDML && !vars.InTxn()
+}
+
 // Next implements the Executor Next interface.
 func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.rows == nil {
