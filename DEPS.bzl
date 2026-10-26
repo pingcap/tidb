@@ -6155,6 +6155,10 @@ def go_deps():
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
+        patch_args = ["-p1"],
+        patches = [
+            "//build/patches:org_golang_x_tools.patch",
+        ],
         sum = "h1:7Kn5x/d1svx/PzryTsqeoZN4TZwqeH5pGWjefhLi/1Q=",
         version = "v0.47.0",
     )
