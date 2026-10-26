@@ -252,6 +252,13 @@ impl ClusterServerSession {
         if let Some(mut result) = self.execute_stmt(sql, &stmt).map_err(driver_error)? {
             return drain_result(result.source()).map_err(tidb_executor::DriverError::Mysql);
         }
+        // Go `clientConn.handleQuery`: a LOAD DATA LOCAL or LOAD STATS parks
+        // its file request, and the connection answers it with the client's
+        // file -- here the session's installed client-file reader.
+        if let Some(path) = self.take_local_infile_request() {
+            let data = self.store.session.read_client_local_file(&path)?;
+            self.finish_local_infile(&data).map_err(driver_error)?;
+        }
         // The outputs the session's own DDL arms give: CREATE TABLE reports
         // whether it created the table (an IF NOT EXISTS that found it leaves
         // the 1050 note), placement-policy DDL reports nothing created, and

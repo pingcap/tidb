@@ -563,3 +563,32 @@ fn analyze_scan_concurrency_uses_system_setting_only_for_auto_analyze() {
         tidb_vardef::tidb_vars::TIDB_SYS_PROC_SCAN_CONCURRENCY
     );
 }
+
+/// Go `LoadStatsExec` only parks the file request; the connection serves it
+/// (`clientConn.handleLoadStats`) and `LoadStatsInfo.Update` loads the dump.
+/// A session run through its node plays that connection, so its LOAD STATS
+/// must load the dump rather than answer OK with nothing loaded.
+#[test]
+fn load_stats_through_the_node_loads_the_client_file() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../tests/integrationtest/s/explain_complex_stats_rr.json");
+    let mut session = crate::Session::new_on_mock_store();
+    session.set_client_local_file_reader(Arc::new(move |_path: &str| std::fs::read(&fixture)));
+    for sql in [
+        "create database explain_complex_stats",
+        "use explain_complex_stats",
+        "create table rr (aid varchar(35) not null, pt varchar(10) not null, \
+         dic varchar(64) not null, gid varchar(42) not null, acd varchar(32) not null, \
+         t int(13) default null, bm tinyint(1) default '0', primary key (aid, dic))",
+        "load stats 'rr.json'",
+    ] {
+        session.run(sql).unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+    let crate::StmtResult::Rows(rows) = session
+        .run("select `count` from mysql.stats_meta where table_id = (select tidb_table_id from information_schema.tables where table_schema = 'explain_complex_stats' and table_name = 'rr')")
+        .expect("read stats_meta")
+    else {
+        panic!("stats_meta answers rows");
+    };
+    assert_eq!(rows, vec![vec![Datum::UInt(2000)]]);
+}
