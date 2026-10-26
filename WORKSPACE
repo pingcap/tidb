@@ -2,10 +2,10 @@ load("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_archive(
     name = "platforms",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/platforms/releases/download/1.0.0/platforms-1.0.0.tar.gz",
-        "https://github.com/bazelbuild/platforms/releases/download/1.0.0/platforms-1.0.0.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/platforms/releases/download/1.1.0/platforms-1.1.0.tar.gz",
+        "https://github.com/bazelbuild/platforms/releases/download/1.1.0/platforms-1.1.0.tar.gz",
     ],
-    sha256 = "3384eb1c30762704fbe38e440204e114154086c8fc8a8c2e3e28441028c019a8",
+    sha256 = "dbad4a23abcca6171e47b79edc53bd6a41067a3b75f9e8b104656b459ff25046",
 )
 
 # To use the new Starlark host platform in @platforms, also include the following snippet:
@@ -41,21 +41,11 @@ versions.check(minimum_bazel_version = "6.5.0")
 
 http_archive(
     name = "io_bazel_rules_go",
-<<<<<<< HEAD
-    sha256 = "68af54cb97fbdee5e5e8fe8d210d15a518f9d62abfd71620c3eaff3b26a5ff86",
-    urls = [
-        "http://bazel-cache.pingcap.net:8080/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
-        "http://ats.apps.svc/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
-        "https://cache.hawkingrei.com/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
-        "https://mirror.bazel.build/github.com/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
-        "https://github.com/bazel-contrib/rules_go/releases/download/v0.59.0/rules_go-v0.59.0.zip",
-=======
     sha256 = "d5c2c953bf24697b209c21f3ff4edf46fedea98514ec358b10c0e78fc35d363e",
     # v0.64.2 is not available on mirror.bazel.build. Restricted builders must
     # preseed this checksum-verified archive or allow the official release URL.
     urls = [
         "https://github.com/bazel-contrib/rules_go/releases/download/v0.64.2/rules_go-v0.64.2.zip",
->>>>>>> 18ec04a2d8f (build: prepare Bazel tooling for Go 1.27 (#72082))
     ],
 )
 

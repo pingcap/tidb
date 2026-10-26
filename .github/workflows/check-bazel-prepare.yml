@@ -3,6 +3,7 @@ on:
   pull_request:
     branches:
       - master
+      - release-8.5
 
 permissions:
   contents: read
