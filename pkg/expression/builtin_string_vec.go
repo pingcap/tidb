@@ -1255,7 +1255,7 @@ func (b *builtinSoundexSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, r
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(soundex(buf.GetString(i), b.isBinary))
+		result.AppendString(soundex(buf.GetString(i), b.mode))
 	}
 	return nil
 }

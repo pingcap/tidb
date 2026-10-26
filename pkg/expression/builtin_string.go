@@ -865,7 +865,7 @@ func (c *soundexFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 		bf.tp.SetFlen(max(flen, soundexMinLen))
 	}
 	SetBinFlagOrBinStr(argTp, bf.tp)
-	return &builtinSoundexSig{baseBuiltinFunc: bf, isBinary: types.IsBinaryStr(argTp)}, nil
+	return &builtinSoundexSig{baseBuiltinFunc: bf, mode: soundexModeOf(argTp)}, nil
 }
 
 // soundexMinLen is the minimum length of the result of SOUNDEX, shorter codes are padded with '0'.
@@ -881,12 +881,34 @@ type builtinSoundexSig struct {
 	// as this expression may be shared across sessions.
 	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 
-	// isBinary is true for a binary string argument, whose bytes are letters only when they are ASCII letters.
-	isBinary bool
+	// mode tells how the bytes of the argument are read.
+	mode soundexMode
+}
+
+// soundexMode is how SOUNDEX reads its argument.
+type soundexMode int
+
+const (
+	// soundexModeRunes reads UTF-8 characters; a byte that is not valid UTF-8 is a single-byte character.
+	soundexModeRunes soundexMode = iota
+	// soundexModeLatin1 reads every byte as a Latin-1 character.
+	soundexModeLatin1
+	// soundexModeBinary reads every byte, and only ASCII letters are letters.
+	soundexModeBinary
+)
+
+func soundexModeOf(tp *types.FieldType) soundexMode {
+	switch {
+	case types.IsBinaryStr(tp):
+		return soundexModeBinary
+	case tp.GetCharset() == charset.CharsetLatin1:
+		return soundexModeLatin1
+	}
+	return soundexModeRunes
 }
 
 func (b *builtinSoundexSig) Clone() builtinFunc {
-	newSig := &builtinSoundexSig{isBinary: b.isBinary}
+	newSig := &builtinSoundexSig{mode: b.mode}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
@@ -898,29 +920,36 @@ func (b *builtinSoundexSig) evalString(ctx EvalContext, row chunk.Row) (string, 
 	if isNull || err != nil {
 		return "", true, err
 	}
-	return soundex(str, b.isBinary), false, nil
+	return soundex(str, b.mode), false, nil
 }
 
 // soundex returns the MySQL SOUNDEX string of str. Characters that are not letters are ignored. The first
 // letter is kept (upper cased if it is an ASCII letter) and every later letter adds its code, unless the
 // code is '0' or the same as the last added one; a vowel does not separate two equal codes. The result is
 // padded with '0' to at least four characters, and is empty when str has no letter.
-func soundex(str string, isBinary bool) string {
+func soundex(str string, mode soundexMode) string {
 	var (
 		buf  strings.Builder
 		n    int
 		last byte
 	)
-	add := func(r rune) {
-		if !isSoundexLetter(r, isBinary) {
+	// add takes one character: r is its code point and b the byte that stands for it when it is a single
+	// byte of the input (-1 for a multibyte UTF-8 character).
+	add := func(r rune, b int) {
+		if !isSoundexLetter(r, mode) {
 			return
 		}
 		code := soundexCode(r)
 		if n == 0 {
-			if r >= 'a' && r <= 'z' {
-				r -= 'a' - 'A'
+			switch {
+			case b >= 0:
+				if b >= 'a' && b <= 'z' {
+					b -= 'a' - 'A'
+				}
+				buf.WriteByte(byte(b))
+			default:
+				buf.WriteRune(r)
 			}
-			buf.WriteRune(r)
 			n++
 			last = code
 		} else if code != '0' && code != last {
@@ -929,13 +958,22 @@ func soundex(str string, isBinary bool) string {
 			last = code
 		}
 	}
-	if isBinary {
-		for i := range len(str) {
-			add(rune(str[i]))
+	if mode == soundexModeRunes {
+		for i := 0; i < len(str); {
+			r, size := utf8.DecodeRuneInString(str[i:])
+			if r == utf8.RuneError && size == 1 {
+				// Not valid UTF-8: the byte is a character of its own and is kept as it is.
+				add(rune(str[i]), int(str[i]))
+			} else if size == 1 {
+				add(r, int(str[i]))
+			} else {
+				add(r, -1)
+			}
+			i += size
 		}
 	} else {
-		for _, r := range str {
-			add(r)
+		for i := range len(str) {
+			add(rune(str[i]), int(str[i]))
 		}
 	}
 	if n == 0 {
@@ -950,11 +988,11 @@ func soundex(str string, isBinary bool) string {
 // isSoundexLetter reports whether r is a letter for SOUNDEX. MySQL 8.0 takes every non-ASCII character from
 // U+00C0 up as a letter (including U+00D7 and U+00F7) and none below it; a byte of a binary string is a
 // letter only when it is an ASCII letter.
-func isSoundexLetter(r rune, isBinary bool) bool {
+func isSoundexLetter(r rune, mode soundexMode) bool {
 	switch {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
 		return true
-	case isBinary:
+	case mode == soundexModeBinary:
 		return false
 	}
 	return r >= 0xC0
