@@ -3,7 +3,7 @@ on:
   pull_request:
     branches:
       - master
-      - release-8.5
+      - release-*
 
 permissions:
   contents: read
@@ -16,6 +16,7 @@ jobs:
   check:
     name: Check Bazel Prepare
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
@@ -41,12 +42,13 @@ jobs:
           # Avoid the TiDB CI path that assumes Jenkins-owned temp directories.
           unset CI
           make check-bazel-prepare
-      - name: Test x/tools export-data formats
+      - name: Check x/tools export-data reader and formats
         shell: bash
         run: |
           set -euo pipefail
           unset CI
-          # External tests are not included by TiDB's //... target pattern.
+          # External targets are not included by TiDB's //... target pattern.
+          bazel build @org_golang_x_tools//internal/gcimporter
           bazel test @org_golang_x_tools//internal/pkgbits:pkgbits_test \
             --test_output=all \
             --nocache_test_results \
