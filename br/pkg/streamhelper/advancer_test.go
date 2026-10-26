@@ -656,7 +656,7 @@ func TestResolveLock(t *testing.T) {
 	adv.StartTaskListener(ctx)
 
 	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
-	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+	adv.WithCheckpoints(func(s *spans.ValuedFull) {
 		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
 		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
 		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
@@ -725,7 +725,7 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 	adv.StartTaskListener(ctx)
 
 	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(2 * time.Minute))
-	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+	adv.WithCheckpoints(func(s *spans.ValuedFull) {
 		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
 		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
 		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
@@ -796,15 +796,24 @@ func TestResolveLockIntervalUsesTiKVFlushInterval(t *testing.T) {
 	}
 	adv.TESTRefreshLogBackupFlushInterval(context.Background())
 	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
-	require.Equal(t, 240*time.Millisecond, adv.TESTDefaultStartPollThreshold())
-	require.Equal(t, 108*time.Millisecond, adv.TESTSubscriberErrorStartPollThreshold())
+	require.Equal(t, 360*time.Millisecond, adv.TESTDefaultStartPollThreshold())
+	require.Equal(t, 162*time.Millisecond, adv.TESTSubscriberErrorStartPollThreshold())
+
+	env.getLogBackupFlushInterval = func(context.Context) (time.Duration, error) {
+		return 20 * time.Second, nil
+	}
+	adv.TESTRefreshLogBackupFlushInterval(context.Background())
+	require.Equal(t, 20*time.Second, adv.TESTResolveLockInterval())
+	require.Equal(t, 40*time.Second, adv.TESTDefaultStartPollThreshold())
+	require.Equal(t, 18*time.Second, adv.TESTSubscriberErrorStartPollThreshold())
 
 	env.getLogBackupFlushInterval = func(context.Context) (time.Duration, error) {
 		return 0, errors.New("tikv config is temporarily unavailable")
 	}
 	adv.TESTRefreshLogBackupFlushInterval(context.Background())
-	require.Equal(t, 180*time.Millisecond, adv.TESTResolveLockInterval())
-	require.Equal(t, 240*time.Millisecond, adv.TESTDefaultStartPollThreshold())
+	require.Equal(t, 20*time.Second, adv.TESTResolveLockInterval())
+	require.Equal(t, 40*time.Second, adv.TESTDefaultStartPollThreshold())
+	require.Equal(t, 18*time.Second, adv.TESTSubscriberErrorStartPollThreshold())
 }
 
 func TestGetLogBackupFlushIntervalFromTiKVConfig(t *testing.T) {
@@ -848,7 +857,7 @@ func TestResolveLockTargetsUseUpperBound(t *testing.T) {
 	checkpointTS := oracle.GoTimeToTS(checkpointTime)
 	withinUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(6 * time.Second))
 	outsideUpperBoundTS := oracle.GoTimeToTS(checkpointTime.Add(8 * time.Second))
-	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+	adv.WithCheckpoints(func(s *spans.ValuedFull) {
 		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: checkpointTS})
 		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: []byte("a"), EndKey: []byte("b")}, Value: withinUpperBoundTS})
 		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: []byte("b")}, Value: outsideUpperBoundTS})
@@ -898,7 +907,7 @@ func TestResolveLockRetryWhenCheckpointNotAdvanced(t *testing.T) {
 	adv.StartTaskListener(ctx)
 
 	outsideUpperBoundTS := oracle.GoTimeToTS(oracle.GetTimeFromTS(minCheckpoint).Add(2 * time.Minute))
-	adv.WithCheckpoints(func(s *spans.ValueSortedFull) {
+	adv.WithCheckpoints(func(s *spans.ValuedFull) {
 		s.Merge(spans.Valued{Key: kv.KeyRange{}, Value: minCheckpoint})
 		s.Merge(spans.Valued{Key: kv.KeyRange{EndKey: lockRegion.Range.StartKey}, Value: outsideUpperBoundTS})
 		s.Merge(spans.Valued{Key: kv.KeyRange{StartKey: lockRegion.Range.EndKey}, Value: outsideUpperBoundTS})
@@ -953,9 +962,9 @@ func TestOwnerDropped(t *testing.T) {
 	cp := c.advanceCheckpoints()
 	c.flushAll()
 	<-ch
-	adv.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+	adv.WithCheckpoints(func(vsf *spans.ValuedFull) {
 		// Advancer will manually poll the checkpoint...
-		require.Equal(t, vsf.MinValue(), cp)
+		require.Equal(t, minimumCheckpoint(vsf), cp)
 	})
 }
 

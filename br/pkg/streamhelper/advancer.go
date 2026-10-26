@@ -89,7 +89,7 @@ type CheckpointAdvancer struct {
 	inResolvingLock  atomic.Bool
 	isPaused         atomic.Bool
 
-	checkpoints   *spans.ValueSortedFull
+	checkpoints   *spans.ValuedFull
 	checkpointsMu sync.Mutex
 
 	subscriber   *FlushSubscriber
@@ -281,7 +281,8 @@ func (c *CheckpointAdvancer) refreshLogBackupFlushInterval(ctx context.Context) 
 	previous := c.getResolveLockInterval()
 	previousTryAdvanceThreshold := c.getDefaultStartPollThreshold()
 	c.resolveLockInterval.Store(int64(flushInterval))
-	tryAdvanceThreshold := flushInterval * 4 / 3
+	// Let subscriptions deliver the next flush before falling back to polling.
+	tryAdvanceThreshold := flushInterval * 2
 	c.tryAdvanceThreshold.Store(int64(tryAdvanceThreshold))
 	if previous != flushInterval || previousTryAdvanceThreshold != tryAdvanceThreshold {
 		log.Info("refreshed TiKV log-backup.max-flush-interval for advancer intervals",
@@ -307,7 +308,9 @@ func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, en
 		for _, r := range rs {
 			err := collector.CollectRegion(r)
 			if err != nil {
-				log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
+				if ctx.Err() == nil {
+					log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
+				}
 				return err
 			}
 		}
@@ -332,7 +335,13 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	defer c.recordTimeCost("try advance", zap.Int("len", length))()
 	defer utils.PanicToErr(&err)
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	ranges := spans.Collapse(length, getRange)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	workers := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance)*4, "sub ranges")
 	eg, cx := errgroup.WithContext(ctx)
 	collector := NewClusterCollector(ctx, c.env)
@@ -343,6 +352,9 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	})
 	clampedRanges := utils.IntersectAll(ranges, utils.CloneSlice(c.taskRange))
 	for _, r := range clampedRanges {
+		if cx.Err() != nil {
+			break
+		}
 		workers.ApplyOnErrorGroup(eg, func() (e error) {
 			defer c.recordTimeCost("get regions in range")()
 			defer utils.PanicToErr(&e)
@@ -354,6 +366,9 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 		return err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	_, err = collector.Finish(ctx)
 	if err != nil {
 		return err
@@ -382,7 +397,7 @@ func tsoAfter(ts uint64, n time.Duration) uint64 {
 	return oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(n))
 }
 
-func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
+func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValuedFull)) {
 	c.checkpointsMu.Lock()
 	defer c.checkpointsMu.Unlock()
 
@@ -390,7 +405,7 @@ func (c *CheckpointAdvancer) WithCheckpoints(f func(*spans.ValueSortedFull)) {
 }
 
 // only used for test
-func (c *CheckpointAdvancer) NewCheckpoints(cps *spans.ValueSortedFull) {
+func (c *CheckpointAdvancer) NewCheckpoints(cps *spans.ValuedFull) {
 	c.checkpoints = cps
 }
 
@@ -412,18 +427,52 @@ func (c *CheckpointAdvancer) fetchRegionHint(ctx context.Context, startKey []byt
 		prs, logutil.StringifyRangeOf(r.GetStartKey(), r.GetEndKey()))
 }
 
+// checkpointSelection belongs to a single tick. It combines minimum and polling
+// selection in the same traversal; it is not an index or a cross-tick cache.
+type checkpointSelection struct {
+	threshold uint64
+	minimum   spans.Valued
+	targets   []spans.Valued
+	valid     bool
+}
+
+// scan must run under checkpointsMu. Only selected ranges and the final
+// minimum are copied; borrowed record pointers never leave the locked scan.
+func (s *checkpointSelection) scan(tree *spans.ValuedFull, resolveThreshold uint64) []spans.Valued {
+	s.minimum, s.targets, s.valid = spans.Valued{}, nil, false
+	var minimum *spans.Valued
+	var resolveTargets []spans.Valued
+	tree.TraverseRef(func(v *spans.Valued) bool {
+		if minimum == nil || v.Value < minimum.Value {
+			minimum = v
+		}
+		if v.Value < s.threshold {
+			s.targets = append(s.targets, *v)
+		}
+		if v.Value < resolveThreshold {
+			resolveTargets = append(resolveTargets, *v)
+		}
+		return true
+	})
+	if minimum != nil {
+		s.minimum, s.valid = *minimum, true
+	}
+	return resolveTargets
+}
+
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 	threshold time.Duration) (spans.Valued, error) {
-	var targets []spans.Valued
-	var minValue spans.Valued
-	thresholdTso := tsoBefore(threshold)
-	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-		vsf.TraverseValuesLessThan(thresholdTso, func(v spans.Valued) bool {
-			targets = append(targets, v)
-			return true
+	return c.calculateGlobalCheckpointLight(ctx, &checkpointSelection{threshold: tsoBefore(threshold)})
+}
+
+func (c *CheckpointAdvancer) calculateGlobalCheckpointLight(ctx context.Context,
+	selection *checkpointSelection) (spans.Valued, error) {
+	if !selection.valid {
+		c.WithCheckpoints(func(vsf *spans.ValuedFull) {
+			selection.scan(vsf, 0)
 		})
-		minValue = vsf.Min()
-	})
+	}
+	minValue, targets, thresholdTso := selection.minimum, selection.targets, selection.threshold
 	sctx, cancel := context.WithTimeout(ctx, time.Second)
 	// Always fetch the hint and update the metrics.
 	hint := c.fetchRegionHint(sctx, minValue.Key.StartKey)
@@ -528,7 +577,7 @@ func (c *CheckpointAdvancer) StartTaskListener(ctx context.Context) {
 	}()
 }
 
-func (c *CheckpointAdvancer) setCheckpoints(cps *spans.ValueSortedFull) {
+func (c *CheckpointAdvancer) setCheckpoints(cps *spans.ValuedFull) {
 	c.checkpointsMu.Lock()
 	c.checkpoints = cps
 	c.checkpointsMu.Unlock()
@@ -543,7 +592,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.closeGlobalCheckpointStorage()
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
-		c.setCheckpoints(spans.Sorted(spans.NewFullWith(e.Ranges, 0)))
+		c.setCheckpoints(spans.NewFullWith(e.Ranges, 0))
 		globalCheckpointTs, err := c.env.GetGlobalCheckpointForTask(ctx, e.Name)
 		if err != nil {
 			// ignore the error, just log it
@@ -651,22 +700,24 @@ func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case event, ok := <-es:
+			case batch, ok := <-es:
 				if !ok {
 					return
 				}
-				failpoint.Inject("subscription-handler-loop", func() {})
-				c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-					if vsf == nil {
-						log.Warn("Span tree not found, perhaps stale event of removed tasks.",
-							zap.String("category", "log backup subscription manager"))
+				// Keep one checkpoint lock per event so ticks can run between updates.
+				for _, event := range batch {
+					if ctx.Err() != nil {
 						return
 					}
-					log.Debug("Accepting region flush event.",
-						zap.Stringer("range", logutil.StringifyRange(event.Key)),
-						zap.Uint64("checkpoint", event.Value))
-					vsf.Merge(event)
-				})
+					failpoint.Inject("subscription-handler-loop", func() {})
+					c.WithCheckpoints(func(vsf *spans.ValuedFull) {
+						if vsf == nil {
+							log.Warn("Span tree not found, perhaps stale event of removed tasks.", zap.String("category", "log backup subscription manager"))
+							return
+						}
+						vsf.Merge(event)
+					})
+				}
 			}
 		}
 	}()
@@ -784,7 +835,16 @@ func (c *CheckpointAdvancer) tryWriteGlobalCheckpointToStorage(ctx context.Conte
 
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
-	c.setCheckpoint(c.checkpoints.Min())
+	var minimum *spans.Valued
+	c.checkpoints.TraverseRef(func(v *spans.Valued) bool {
+		if minimum == nil || v.Value < minimum.Value {
+			minimum = v
+		}
+		return true
+	})
+	if minimum != nil {
+		c.setCheckpoint(*minimum)
+	}
 	c.checkpointsMu.Unlock()
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
@@ -820,21 +880,23 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 }
 
 func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
-	c.tryResolveLocksForCheckpoint(cx)
+	selection := checkpointSelection{threshold: tsoBefore(c.getDefaultStartPollThreshold())}
+	c.tryResolveLocksForCheckpoint(cx, &selection)
 
-	threshold := c.getDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("Subscriber meet error, would polling the checkpoint.", zap.String("category", "log backup advancer"),
 			logutil.ShortError(err))
-		threshold = c.getSubscriberErrorStartPollThreshold()
+		// A shorter polling threshold needs a new selection. The resolver's
+		// earlier snapshot did not collect these additional ranges.
+		selection = checkpointSelection{threshold: tsoBefore(c.getSubscriberErrorStartPollThreshold())}
 	}
 
 	return c.advanceCheckpointBy(cx, func(cx context.Context) (spans.Valued, error) {
-		return c.CalculateGlobalCheckpointLight(cx, threshold)
+		return c.calculateGlobalCheckpointLight(cx, &selection)
 	})
 }
 
-func (c *CheckpointAdvancer) tryResolveLocksForCheckpoint(ctx context.Context) {
+func (c *CheckpointAdvancer) tryResolveLocksForCheckpoint(ctx context.Context, selection *checkpointSelection) {
 	// lastCheckpoint is not increased for long enough.
 	// assume the cluster has expired locks for whatever reasons.
 	resolveLockInterval := c.getResolveLockInterval()
@@ -862,7 +924,7 @@ func (c *CheckpointAdvancer) tryResolveLocksForCheckpoint(ctx context.Context) {
 		return
 	}
 	retryLowerBound, retryLowerBoundValid := resolveLockRetryLowerBound(checkpointToResolve.TS, maxVersion)
-	targets := c.resolveLockTargetsForCheckpoint(checkpointToResolve, maxVersion)
+	targets := c.resolveLockTargetsForCheckpoint(checkpointToResolve, maxVersion, selection)
 	if len(targets) != 0 {
 		// use new context here to avoid timeout
 		ctx := logutil.ContextWithField(context.Background(),
@@ -898,17 +960,21 @@ func (c *CheckpointAdvancer) checkpointToResolve(resolveLockInterval time.Durati
 func (c *CheckpointAdvancer) resolveLockTargetsForCheckpoint(
 	checkpointToResolve *checkpoint,
 	upperBound uint64,
+	selection *checkpointSelection,
 ) []spans.Valued {
+	if selection == nil {
+		selection = &checkpointSelection{}
+	}
 	var targets []spans.Valued
-	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
-		if vsf == nil || vsf.MinValue() != checkpointToResolve.TS {
+	c.WithCheckpoints(func(vsf *spans.ValuedFull) {
+		if vsf == nil {
 			return
 		}
-		vsf.TraverseValuesLessThan(upperBound, func(v spans.Valued) bool {
-			targets = append(targets, v)
-			return true
-		})
+		targets = selection.scan(vsf, upperBound)
 	})
+	if !selection.valid || selection.minimum.Value != checkpointToResolve.TS {
+		return nil
+	}
 	return targets
 }
 

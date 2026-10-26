@@ -65,6 +65,7 @@ go_test(
     name = "streamhelper_test",
     timeout = "short",
     srcs = [
+        "advancer_scan_test.go",
         "advancer_test.go",
         "basic_lib_for_test.go",
         "export_test.go",
@@ -75,7 +76,7 @@ go_test(
     embed = [":streamhelper"],
     flaky = True,
     race = "on",
-    shard_count = 48,
+    shard_count = 50,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
@@ -111,5 +112,6 @@ go_test(
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

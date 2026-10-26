@@ -35,14 +35,44 @@ func installSubscribeSupportForRandomN(c *fakeCluster, n int) {
 	}
 }
 
-func waitPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) {
-	last := len(sub.Events())
-	time.Sleep(100 * time.Microsecond)
-	require.Eventually(t, func() bool {
-		noProg := len(sub.Events()) == last
-		last = len(sub.Events())
-		return noProg
-	}, 3*time.Second, 100*time.Millisecond)
+func minimumCheckpoint(s *spans.ValuedFull) uint64 {
+	minimum := ^uint64(0)
+	s.Traverse(func(v spans.Valued) bool { minimum = min(minimum, v.Value); return true })
+	return minimum
+}
+
+// Consume while producers are running: a single-message batch queue applies
+// backpressure, so waiting for producers to finish before receiving would stall.
+func collectPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) *spans.ValuedFull {
+	t.Helper()
+	s := spans.NewFullWith(spans.Full(), 1)
+	idle := time.NewTimer(100 * time.Millisecond)
+	defer idle.Stop()
+	timeout := time.NewTimer(3 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case batch, ok := <-sub.Events():
+			if !ok {
+				return s
+			}
+			for _, event := range batch {
+				s.Merge(event)
+			}
+			if !idle.Stop() {
+				select {
+				case <-idle.C:
+				default:
+				}
+			}
+			idle.Reset(100 * time.Millisecond)
+		case <-idle.C:
+			return s
+		case <-timeout.C:
+			t.Fatal("subscription did not drain")
+			return s
+		}
+	}
 }
 
 func TestSubBasic(t *testing.T) {
@@ -60,12 +90,8 @@ func TestSubBasic(t *testing.T) {
 	}
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
-	waitPendingEvents(t, sub)
+	s := collectPendingEvents(t, sub)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -73,7 +99,7 @@ func TestSubBasic(t *testing.T) {
 		}
 	}()
 
-	req.Equal(cp, s.MinValue(), "%d vs %d", cp, s.MinValue())
+	req.Equal(cp, minimumCheckpoint(s), "%d vs %d", cp, minimumCheckpoint(s))
 }
 
 func TestNormalError(t *testing.T) {
@@ -95,13 +121,9 @@ func TestNormalError(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	waitPendingEvents(t, sub)
+	s := collectPendingEvents(t, sub)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
-	req.Equal(cp, s.MinValue(), "%d vs %d", cp, s.MinValue())
+	req.Equal(cp, minimumCheckpoint(s), "%d vs %d", cp, minimumCheckpoint(s))
 }
 
 func TestHasFailureStores(t *testing.T) {
@@ -170,12 +192,8 @@ func TestStoreRemoved(t *testing.T) {
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
 
-	waitPendingEvents(t, sub)
+	s := collectPendingEvents(t, sub)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 
 	defer func() {
 		if t.Failed() {
@@ -184,7 +202,7 @@ func TestStoreRemoved(t *testing.T) {
 		}
 	}()
 
-	req.Equal(cp, s.MinValue(), "cp = %d, s = %d", cp, s.MinValue())
+	req.Equal(cp, minimumCheckpoint(s), "cp = %d, s = %d", cp, minimumCheckpoint(s))
 }
 
 func TestSomeOfStoreUnsupported(t *testing.T) {
@@ -202,18 +220,15 @@ func TestSomeOfStoreUnsupported(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	s := collectPendingEvents(t, sub)
 	m := new(sync.Mutex)
-
-	waitPendingEvents(t, sub)
 	sub.Drop()
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 
 	rngs := make([]spans.Span, 0)
-	s.TraverseValuesLessThan(cp, func(v spans.Valued) bool {
-		rngs = append(rngs, v.Key)
+	s.Traverse(func(v spans.Valued) bool {
+		if v.Value < cp {
+			rngs = append(rngs, v.Key)
+		}
 		return true
 	})
 	coll := streamhelper.NewClusterCollector(ctx, c)
@@ -240,7 +255,7 @@ func TestSomeOfStoreUnsupported(t *testing.T) {
 	}
 	_, err := coll.Finish(ctx)
 	req.NoError(err)
-	req.Equal(cp, s.MinValue())
+	req.Equal(cp, minimumCheckpoint(s))
 }
 
 func TestEncounterError(t *testing.T) {
@@ -299,14 +314,16 @@ func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
 
 	cp := c.advanceCheckpoints()
 	c.flushAll()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
+	s := spans.NewFullWith(spans.Full(), 1)
 	req.Eventually(func() bool {
 		for {
 			select {
-			case event := <-sub.Events():
-				s.Merge(event)
+			case batch := <-sub.Events():
+				for _, event := range batch {
+					s.Merge(event)
+				}
 			default:
-				return s.MinValue() == cp
+				return minimumCheckpoint(s) == cp
 			}
 		}
 	}, 3*time.Second, 10*time.Millisecond)
@@ -323,8 +340,12 @@ func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	defer sub.Drop()
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
-	c.advanceCheckpoints()
-	c.flushAll()
+	// Fill the batch queue without consuming it, so a sender remains blocked
+	// until the idle watcher cancels the subscription.
+	for i := 0; i <= cap(sub.Events()); i++ {
+		c.advanceCheckpoints()
+		c.flushAll()
+	}
 
 	req.Eventually(func() bool {
 		err := sub.PendingErrors()

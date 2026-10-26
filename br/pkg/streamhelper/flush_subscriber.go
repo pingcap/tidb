@@ -43,7 +43,7 @@ type FlushSubscriber struct {
 	// Current connections.
 	subscriptions map[uint64]*subscription
 	// The output channel.
-	eventsTunnel chan spans.Valued
+	eventsTunnel chan []spans.Valued
 	// The background context for subscribes.
 	masterCtx context.Context
 	// The max duration a subscription can stay open without receiving any event.
@@ -72,7 +72,7 @@ func NewSubscriber(dialer LogBackupService, cluster TiKVClusterMeta, config ...S
 		cluster: cluster,
 
 		subscriptions:           map[uint64]*subscription{},
-		eventsTunnel:            make(chan spans.Valued, 1024),
+		eventsTunnel:            make(chan []spans.Valued, 8),
 		masterCtx:               context.Background(),
 		subscriptionIdleTimeout: subscriptionIdleTimeout,
 	}
@@ -162,8 +162,8 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 	}
 }
 
-// Events returns the output channel of the events.
-func (f *FlushSubscriber) Events() <-chan spans.Valued {
+// Events returns decoded events in batches, one batch per received message.
+func (f *FlushSubscriber) Events() <-chan []spans.Valued {
 	return f.eventsTunnel
 }
 
@@ -206,7 +206,7 @@ type subscription struct {
 	// we need to try reconnect even there is a error cannot be retry.
 	storeBootAt uint64
 	idleTimeout time.Duration
-	output      chan<- spans.Valued
+	output      chan<- []spans.Valued
 
 	onDaemonExit func()
 }
@@ -232,7 +232,7 @@ func (s *subscription) clearError() {
 	s.err = nil
 }
 
-func newSubscription(toStore Store, output chan<- spans.Valued, idleTimeout time.Duration) *subscription {
+func newSubscription(toStore Store, output chan<- []spans.Valued, idleTimeout time.Duration) *subscription {
 	return &subscription{
 		storeID:     toStore.ID,
 		storeBootAt: toStore.BootAt,
@@ -362,6 +362,7 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream, cancel c
 		}
 
 		log.Debug("Sending events.", zap.Int("size", len(msg.Events)))
+		batch := make([]spans.Valued, 0, len(msg.Events))
 		for _, m := range msg.Events {
 			start, err := decodeKey(m.StartKey)
 			if err != nil {
@@ -384,11 +385,13 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream, cancel c
 				},
 				Value: m.Checkpoint,
 			}
+			batch = append(batch, evt)
+		}
+		if len(batch) != 0 {
 			select {
-			case s.output <- evt:
+			case s.output <- batch:
 			case <-ctx.Done():
-				logutil.CL(ctx).Warn("Context canceled while sending events.",
-					zap.Uint64("store", storeID))
+				logutil.CL(ctx).Warn("Context canceled while sending events.", zap.Uint64("store", storeID))
 				if idleTimedOut.Load() {
 					s.emitError(errors.Annotatef(context.DeadlineExceeded,
 						"flush subscription from store id %d has no activity for %s", s.storeID, s.idleTimeout))

@@ -4,7 +4,9 @@ package spans
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"hash/maphash"
 
 	"github.com/google/btree"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -36,22 +38,66 @@ func (r Valued) String() string {
 	return fmt.Sprintf("(%s, %d)", logutil.StringifyRange(r.Key), r.Value)
 }
 
-func (r Valued) Less(other btree.Item) bool {
-	return bytes.Compare(r.Key.StartKey, other.(Valued).Key.StartKey) < 0
+// valuedItem stores the first 16 key bytes in the node. The record remains
+// shared with exact, so advancing a checkpoint does not rewrite the tree.
+type valuedItem struct {
+	hi, lo uint64
+	record *Valued
 }
 
+func makeValuedItem(record *Valued) valuedItem {
+	key := record.Key.StartKey
+	if len(key) >= 16 {
+		return valuedItem{binary.BigEndian.Uint64(key[:8]), binary.BigEndian.Uint64(key[8:16]), record}
+	}
+	var padded [16]byte
+	copy(padded[:], key)
+	return valuedItem{binary.BigEndian.Uint64(padded[:8]), binary.BigEndian.Uint64(padded[8:]), record}
+}
+
+func lessValuedItem(a, b valuedItem) bool {
+	if a.hi != b.hi {
+		return a.hi < b.hi
+	}
+	if a.lo != b.lo {
+		return a.lo < b.lo
+	}
+	ak, bk := a.record.Key.StartKey, b.record.Key.StartKey
+	if len(ak) >= 16 && len(bk) >= 16 {
+		ak, bk = ak[16:], bk[16:]
+	}
+	return bytes.Compare(ak, bk) < 0
+}
+
+// Do not retain a large temporary array after a wide range update.
+const maxOverlapScratch = 1024
+
 // ValuedFull represents a set of valued ranges, which doesn't overlap and union of them all is the full key space.
+// Retained keys must remain immutable; operations require external synchronization.
 type ValuedFull struct {
-	inner *btree.BTree
+	inner *btree.BTreeG[valuedItem]
+	// exact and inner share records so same-boundary updates need no tree write.
+	// Fingerprints are only hints: both boundaries must match before updating.
+	exact map[uint64]*Valued
+	seed  maphash.Seed
+	// Only fallback merges use these buffers; none are retained per region.
+	lookup         Valued
+	overlapScratch []Valued
 }
 
 // NewFullWith creates a set of a subset of spans.
 func NewFullWith(initSpans []Span, init Value) *ValuedFull {
-	t := btree.New(16)
+	t := btree.NewG[valuedItem](64, lessValuedItem)
+	f := &ValuedFull{inner: t, exact: make(map[uint64]*Valued, len(initSpans)), seed: maphash.MakeSeed()}
 	for _, r := range Collapse(len(initSpans), func(i int) Span { return initSpans[i] }) {
-		t.ReplaceOrInsert(Valued{Value: init, Key: r})
+		f.insert(Valued{Value: init, Key: r})
 	}
-	return &ValuedFull{inner: t}
+	return f
+}
+
+func (f *ValuedFull) insert(val Valued) {
+	f.inner.ReplaceOrInsert(makeValuedItem(&val))
+	f.exact[maphash.Bytes(f.seed, val.Key.StartKey)] = &val
 }
 
 // Merge merges a new interval into the span set. The value of overlapped
@@ -71,29 +117,50 @@ Would Give:
                                     Unchanged, because 44 < 45.
 */
 func (f *ValuedFull) Merge(val Valued) {
-	overlaps := make([]Valued, 0, 16)
+	if old := f.exact[maphash.Bytes(f.seed, val.Key.StartKey)]; old != nil &&
+		bytes.Equal(old.Key.StartKey, val.Key.StartKey) && bytes.Equal(old.Key.EndKey, val.Key.EndKey) {
+		old.Value = join(old.Value, val.Value)
+		return
+	}
+	overlaps := f.overlapScratch[:0]
+	defer func() {
+		clear(overlaps)
+		if cap(overlaps) <= maxOverlapScratch {
+			f.overlapScratch = overlaps[:0]
+		} else {
+			f.overlapScratch = nil
+		}
+	}()
 	f.overlapped(val.Key, &overlaps)
-	f.mergeWithOverlap(val, overlaps, nil)
+	// Old notifications must not rebuild ranges when no checkpoint advances.
+	for _, old := range overlaps {
+		if old.Value < val.Value {
+			f.mergeWithOverlap(val, overlaps)
+			return
+		}
+	}
 }
 
 // Traverse traverses all ranges by order.
 func (f *ValuedFull) Traverse(m func(Valued) bool) {
-	f.inner.Ascend(func(item btree.Item) bool {
-		return m(item.(Valued))
-	})
+	f.inner.Ascend(func(item valuedItem) bool { return m(*item.record) })
 }
 
-func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems *[]Valued) {
-	// There isn't any range overlaps with the input range, perhaps the input range is empty.
-	// do nothing for this case.
-	if len(overlapped) == 0 {
-		return
-	}
+// TraverseRef visits records without copying their key ranges. The callback
+// must not mutate the records or tree. Borrowed records must not outlive the
+// caller's external lock, which must be held throughout the traversal.
+func (f *ValuedFull) TraverseRef(m func(*Valued) bool) {
+	f.inner.Ascend(func(item valuedItem) bool { return m(item.record) })
+}
 
+func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued) {
 	for _, r := range overlapped {
-		f.inner.Delete(r)
+		f.lookup.Key.StartKey = r.Key.StartKey
+		f.inner.Delete(makeValuedItem(&f.lookup))
+		delete(f.exact, maphash.Bytes(f.seed, r.Key.StartKey))
 		// Assert All overlapped ranges are deleted.
 	}
+	f.lookup.Key.StartKey = nil
 
 	var (
 		initialized    = false
@@ -101,10 +168,7 @@ func (f *ValuedFull) mergeWithOverlap(val Valued, overlapped []Valued, newItems 
 		rightTrail     *Valued
 		flushCollected = func() {
 			if initialized {
-				f.inner.ReplaceOrInsert(collected)
-				if newItems != nil {
-					*newItems = append(*newItems, collected)
-				}
+				f.insert(collected)
 			}
 		}
 		emitToCollected = func(rng Valued, standalone bool) {
@@ -166,8 +230,9 @@ func (f *ValuedFull) overlapped(k Span, result *[]Valued) {
 		hasFirst bool
 	)
 	// Firstly, let's find whether there is a overlapped region with less start key.
-	f.inner.DescendLessOrEqual(Valued{Key: k}, func(item btree.Item) bool {
-		first = item.(Valued).Key
+	f.lookup.Key.StartKey = k.StartKey
+	f.inner.DescendLessOrEqual(makeValuedItem(&f.lookup), func(item valuedItem) bool {
+		first = item.record.Key
 		hasFirst = true
 		return false
 	})
@@ -175,12 +240,14 @@ func (f *ValuedFull) overlapped(k Span, result *[]Valued) {
 		first = k
 	}
 
-	f.inner.AscendGreaterOrEqual(Valued{Key: first}, func(item btree.Item) bool {
-		r := item.(Valued)
+	f.lookup.Key.StartKey = first.StartKey
+	f.inner.AscendGreaterOrEqual(makeValuedItem(&f.lookup), func(item valuedItem) bool {
+		r := item.record
 		if !Overlaps(r.Key, k) {
 			return false
 		}
-		*result = append(*result, r)
+		*result = append(*result, *r)
 		return true
 	})
+	f.lookup.Key.StartKey = nil
 }

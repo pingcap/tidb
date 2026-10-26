@@ -133,17 +133,19 @@ func CheckRegionConsistency(startKey, endKey []byte, regions []RegionWithLeader)
 
 // Next get the next page of regions.
 func (r *RegionIter) Next(ctx context.Context) ([]RegionWithLeader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var rs []RegionWithLeader
 	state := utils.InitialRetryState(8, 500*time.Millisecond, 500*time.Millisecond)
 	err := utils.WithRetry(ctx, func() (retErr error) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		defer func() {
 			if retErr != nil {
-				log.Warn("failed with trying to scan regions", logutil.ShortError(retErr),
-					logutil.Key("start", r.currentStartKey),
-					logutil.Key("end", r.endKey),
-				)
+				metrics.RegionCheckpointFailure.WithLabelValues("retryable-scan-region").Inc()
 			}
-			metrics.RegionCheckpointFailure.WithLabelValues("retryable-scan-region").Inc()
 		}()
 		regions, err := r.cli.RegionScan(ctx, r.currentStartKey, r.endKey, r.PageSize)
 		if err != nil {
@@ -160,6 +162,12 @@ func (r *RegionIter) Next(ctx context.Context) ([]RegionWithLeader, error) {
 		return CheckRegionConsistency(r.currentStartKey, r.endKey, regions)
 	}, &state)
 	if err != nil {
+		// Cancellation is reported once by the tick, rather than once per
+		// range/retry after its shared deadline has expired.
+		if ctx.Err() == nil {
+			log.Warn("failed with trying to scan regions", logutil.ShortError(err),
+				logutil.Key("start", r.currentStartKey), logutil.Key("end", r.endKey))
+		}
 		return nil, err
 	}
 	endKey := rs[len(rs)-1].Region.EndKey
