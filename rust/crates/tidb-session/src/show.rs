@@ -411,45 +411,7 @@ pub(crate) fn string_column_output(column: &str, values: Vec<String>) -> StmtOut
     }
 }
 
-/// The collations `SHOW COLLATION` reports, in mock TiDB's own capture order
-/// (alphabetical by collation name). `Utf8Mb4ZhPinyinTiDbAsCs` is
-/// deliberately excluded: it is a reserved stub collation, and Go's own
-/// `SHOW COLLATION` capture omits it too.
-const SHOW_COLLATION_ROWS: &[tidb_datatype::Collation] = &[
-    tidb_datatype::Collation::AsciiBin,
-    tidb_datatype::Collation::Binary,
-    tidb_datatype::Collation::Gb18030Bin,
-    tidb_datatype::Collation::Gb18030ChineseCi,
-    tidb_datatype::Collation::GbkBin,
-    tidb_datatype::Collation::GbkChineseCi,
-    tidb_datatype::Collation::Latin1Bin,
-    tidb_datatype::Collation::Utf8Bin,
-    tidb_datatype::Collation::Utf8GeneralCi,
-    tidb_datatype::Collation::Utf8UnicodeCi,
-    tidb_datatype::Collation::Utf8Mb40900AiCi,
-    tidb_datatype::Collation::Utf8Mb40900Bin,
-    tidb_datatype::Collation::Utf8Mb4Bin,
-    tidb_datatype::Collation::Utf8Mb4GeneralCi,
-    tidb_datatype::Collation::Utf8Mb4UnicodeCi,
-];
 
-/// Whether `collation` is the one `SHOW COLLATION` marks `Default`.
-///
-/// Go reads `Collation.IsDefault`, which `switchDefaultCollation` keeps in
-/// step with the owning charset's default collation, so this is exactly
-/// "`collation` is its charset's default" and is derived rather than listed.
-/// An explicit list here was a second place for the `gbk`/`gb18030` default to
-/// be spelled, and it carried a doc claim -- that
-/// [`tidb_datatype::Charset::default_collation`] returns the `_bin`
-/// collations for those charsets -- that was already untrue when read.
-fn is_default_show_collation(collation: tidb_datatype::Collation, utf8mb4_default: &str) -> bool {
-    // Go `isUTF8MB4AndDefaultCollation`: utf8mb4's default is the session's
-    // `default_collation_for_utf8mb4`.
-    if collation.charset() == tidb_datatype::Charset::Utf8Mb4 {
-        return collation.name() == utf8mb4_default;
-    }
-    collation.charset().default_collation() == collation
-}
 
 /// The column names a `SHOW VARIABLES` row carries, which its `WHERE` filter
 /// resolves against.
@@ -1955,37 +1917,7 @@ impl Session {
                 // `switchDefaultCollation` last wrote. Reading the registry
                 // here rather than a table copied out of it is what keeps the
                 // `gbk`/`gb18030` default from having a second spelling.
-                let mut rows = Vec::new();
-                // Go reads utf8mb4's default from the session's
-                // `default_collation_for_utf8mb4`.
-                let utf8mb4_default = self
-                    .vars
-                    .get_system("default_collation_for_utf8mb4")
-                    .unwrap_or_else(|_| "utf8mb4_bin".to_owned());
-                for info in tidb_datatype::get_supported_charsets() {
-                    if let Some(pattern) = &pattern {
-                        if !tidb_executor::like_match_with_collation(
-                            &info.name,
-                            pattern,
-                            None,
-                            tidb_datatype::Collation::Utf8Mb4Bin,
-                        ) {
-                            continue;
-                        }
-                    }
-                    let default_collation = if info.name == "utf8mb4" {
-                        utf8mb4_default.clone()
-                    } else {
-                        info.default_collation
-                    };
-                    let row = vec![
-                        Datum::Bytes(info.name.into_bytes()),
-                        Datum::Bytes(info.description.into_bytes()),
-                        Datum::Bytes(default_collation.into_bytes()),
-                        Datum::Int(info.maxlen as i64),
-                    ];
-                    rows.push(row);
-                }
+                let rows = tidb_executor::show::fetch_show_charset(self, pattern.as_deref());
                 self.filter_show_output(
                     StmtOutput::Rows {
                         columns: vec![
@@ -2025,24 +1957,7 @@ impl Session {
                 };
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                let row = vec![
-                    Datum::Bytes(b"InnoDB".to_vec()),
-                    Datum::Bytes(b"DEFAULT".to_vec()),
-                    Datum::Bytes(
-                        b"Supports transactions, row-level locking, and foreign keys".to_vec(),
-                    ),
-                    Datum::Bytes(b"YES".to_vec()),
-                    Datum::Bytes(b"YES".to_vec()),
-                    Datum::Bytes(b"YES".to_vec()),
-                ];
-                let included = pattern.is_none_or(|pattern| {
-                    tidb_executor::like_match_with_collation(
-                        "InnoDB",
-                        pattern,
-                        None,
-                        tidb_datatype::Collation::Utf8Mb4Bin,
-                    )
-                });
+                let rows = tidb_executor::show::fetch_show_engines(pattern);
                 self.filter_show_output(
                     StmtOutput::Rows {
                         columns: vec![
@@ -2053,7 +1968,7 @@ impl Session {
                             ("XA".to_owned(), text()),
                             ("Savepoints".to_owned(), text()),
                         ],
-                        rows: included.then_some(row).into_iter().collect(),
+                        rows,
                     },
                     None,
                     predicate,
@@ -2108,46 +2023,7 @@ impl Session {
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let number =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
-                let mut rows = Vec::new();
-                let utf8mb4_default = self
-                    .vars
-                    .get_system("default_collation_for_utf8mb4")
-                    .unwrap_or_else(|_| "utf8mb4_bin".to_owned());
-                for &collation in SHOW_COLLATION_ROWS {
-                    let name = collation.name();
-                    if let Some(pattern) = &pattern {
-                        if !tidb_executor::like_match_with_collation(
-                            name,
-                            pattern,
-                            None,
-                            tidb_datatype::Collation::Utf8Mb4Bin,
-                        ) {
-                            continue;
-                        }
-                    }
-                    let (sortlen, pad_attribute): (i64, &str) = match collation {
-                        tidb_datatype::Collation::Utf8UnicodeCi
-                        | tidb_datatype::Collation::Utf8Mb4UnicodeCi => (8, "PAD SPACE"),
-                        tidb_datatype::Collation::Utf8Mb40900AiCi => (0, "NO PAD"),
-                        tidb_datatype::Collation::Binary
-                        | tidb_datatype::Collation::Utf8Mb40900Bin => (1, "NO PAD"),
-                        _ => (1, "PAD SPACE"),
-                    };
-                    let row = vec![
-                        Datum::Bytes(name.as_bytes().to_vec()),
-                        Datum::Bytes(collation.charset().name().as_bytes().to_vec()),
-                        Datum::Int(i64::from(collation.id())),
-                        Datum::Bytes(if is_default_show_collation(collation, &utf8mb4_default) {
-                            b"Yes".to_vec()
-                        } else {
-                            Vec::new()
-                        }),
-                        Datum::Bytes(b"Yes".to_vec()),
-                        Datum::Int(sortlen),
-                        Datum::Bytes(pad_attribute.as_bytes().to_vec()),
-                    ];
-                    rows.push(row);
-                }
+                let rows = tidb_executor::show::fetch_show_collation(self, pattern.as_deref());
                 self.filter_show_output(
                     StmtOutput::Rows {
                         columns: vec![
