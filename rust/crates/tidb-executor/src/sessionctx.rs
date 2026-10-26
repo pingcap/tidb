@@ -37,6 +37,15 @@ pub trait PrivilegeManager {
     /// Go `RequestDynamicVerification(activeRoles, privName, grantable)`;
     /// a session with no user passes.
     fn request_dynamic_verification(&self, privilege: &str, grantable: bool) -> bool;
+    /// Go `RequestVerification(activeRoles, db, table, column, priv)`: whether
+    /// the session holds any privilege of `privilege` on the object; a
+    /// session with no user passes.
+    fn request_verification(
+        &self,
+        database: &str,
+        table: &str,
+        privilege: tidb_mysql::privilege::PrivilegeType,
+    ) -> bool;
 }
 
 /// Go `infoschema.SysVarHiddenForSem`: under SEM an invisible variable is

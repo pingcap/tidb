@@ -94,3 +94,62 @@ pub fn fetch_show_databases(ctx: &dyn SessionContext, is: &crate::Catalog) -> Ve
         .filter(|name| ctx.privilege_manager().db_is_visible(name))
         .collect()
 }
+
+/// Go `ShowExec.fetchShowTables`: `DBIsVisible` before the schema lookup (so
+/// a schema the session cannot see is 1044 whether or not it exists), the
+/// unknown schema, then every table the session holds any privilege on but
+/// `CREATE TEMPORARY TABLES` (Go's standing TODO: column grants are not
+/// consulted). With `full`, each name carries its `Table_type`.
+pub fn fetch_show_tables(
+    ctx: &dyn SessionContext,
+    is: &crate::Catalog,
+    database: &str,
+    full: bool,
+) -> Result<Vec<(String, Option<&'static str>)>, crate::DriverError> {
+    use tidb_hack::GoCaseCompare;
+    use tidb_mysql::privilege::{AllPrivMask, CreateTMPTablePriv, PrivilegeType};
+
+    if !ctx.privilege_manager().db_is_visible(database) {
+        let (user, host) = ctx
+            .session_vars()
+            .current_user
+            .as_deref()
+            .and_then(|identity| identity.split_once('@'))
+            .unwrap_or_default();
+        return Err(crate::DriverError::DbAccessDenied {
+            user: user.to_owned(),
+            host: host.to_owned(),
+            database: database.to_owned(),
+        });
+    }
+    let Some(names) = is.table_names(database) else {
+        return Err(crate::DriverError::Schema(crate::SchemaErrorKind::UnknownDatabase(
+            database.to_owned(),
+        )));
+    };
+    let any_but_temporary = PrivilegeType(AllPrivMask.0 & !CreateTMPTablePriv.0);
+    let is_virtual_schema = ["information_schema", "performance_schema", "metrics_schema"]
+        .iter()
+        .any(|schema| database.go_lower_eq(schema));
+    Ok(names
+        .into_iter()
+        .filter(|name| {
+            ctx.privilege_manager()
+                .request_verification(database, name, any_but_temporary)
+        })
+        .map(|name| {
+            let table_type = full.then(|| {
+                if is_virtual_schema {
+                    "SYSTEM VIEW"
+                } else if is.is_view_in(database, &name) {
+                    "VIEW"
+                } else if is.is_sequence_in(database, &name) {
+                    "SEQUENCE"
+                } else {
+                    "BASE TABLE"
+                }
+            });
+            (name, table_type)
+        })
+        .collect())
+}

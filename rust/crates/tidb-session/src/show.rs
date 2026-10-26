@@ -105,7 +105,7 @@ pub(crate) fn literal_column_default_text(
 
 #[path = "show_create.rs"]
 mod create;
-use create::{show_create_table_text, show_create_view_text, table_type_of};
+use create::{show_create_table_text, show_create_view_text};
 
 #[path = "show_statistics.rs"]
 pub(crate) mod statistics;
@@ -2728,43 +2728,16 @@ impl Session {
                     Some(name) => name.clone(),
                     None => self.require_current_database()?.into(),
                 };
-                // Go `fetchShowTables` (`executor/show.go` around line 576)
-                // asks `DBIsVisible` BEFORE `SchemaExists`, so a schema this
-                // account could not see reports 1044 whether or not it
-                // exists.
-                self.require_visible_database(&database)?;
                 let full = show.full;
-                let listed = self.with_catalog_mut(|catalog| {
-                    Ok(catalog.table_names(&database).map(|names| {
-                        names
-                            .into_iter()
-                            .map(|name| {
-                                let is_view = catalog.is_view_in(&database, &name);
-                                let is_sequence = catalog.is_sequence_in(&database, &name);
-                                (name, is_view, is_sequence)
-                            })
-                            .collect::<Vec<_>>()
-                    }))
-                })?;
-                let listed = listed.ok_or_else(|| {
-                    DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
-                })?;
-                // Go filters each listed table by "any privilege at all"
-                // (`show.go` around line 613), with `CREATE TEMPORARY
-                // TABLES` excluded from the mask. Column-scope grants are
-                // deliberately not consulted, which is Go's own standing
-                // TODO there and is measured: a `SELECT(a)` grant makes the
-                // SCHEMA visible but lists no table.
+                let listed = {
+                    let catalog = self.shared_catalog();
+                    let catalog =
+                        catalog.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    tidb_executor::show::fetch_show_tables(self, &catalog, &database, full)?
+                };
                 let listed: Vec<_> = listed
                     .into_iter()
-                    .filter(|(name, ..)| {
-                        self.has_any_scoped_privilege(
-                            &database,
-                            name,
-                            privilege::show_tables_priv_mask(),
-                        )
-                    })
-                    .filter(|(name, ..)| {
+                    .filter(|(name, _)| {
                         like_pattern
                             .as_ref()
                             .is_none_or(|pattern| pattern.matches(name))
@@ -2787,19 +2760,11 @@ impl Session {
                     Some(pattern) => pattern.row_predicate(&column_names)?,
                     None => None,
                 };
-                let is_virtual_schema =
-                    ["information_schema", "performance_schema", "metrics_schema"]
-                        .iter()
-                        .any(|schema| database.go_lower_eq(schema));
                 let mut rows = Vec::with_capacity(listed.len());
-                for (name, is_view, is_sequence) in listed {
+                for (name, table_type) in listed {
                     let mut row = vec![Datum::Bytes(name.into_bytes())];
-                    if full {
-                        row.push(Datum::Bytes(
-                            table_type_of(is_virtual_schema, is_view, is_sequence)
-                                .as_bytes()
-                                .to_vec(),
-                        ));
+                    if let Some(table_type) = table_type {
+                        row.push(Datum::Bytes(table_type.as_bytes().to_vec()));
                     }
                     if let Some(predicate) = &like_predicate {
                         if !show_row_matches(predicate, &column_names, &row)? {

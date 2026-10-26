@@ -3457,4 +3457,14 @@ impl tidb_executor::sessionctx::PrivilegeManager for Session {
     fn request_dynamic_verification(&self, privilege: &str, grantable: bool) -> bool {
         self.has_dynamic_privilege(privilege, grantable)
     }
+
+    fn request_verification(
+        &self,
+        database: &str,
+        table: &str,
+        privilege: tidb_mysql::privilege::PrivilegeType,
+    ) -> bool {
+        // The registry's masks are Go's `mysql.PrivilegeType` bits.
+        self.has_any_scoped_privilege(database, table, privilege.0)
+    }
 }

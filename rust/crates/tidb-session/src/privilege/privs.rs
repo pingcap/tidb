@@ -231,8 +231,46 @@ pub(crate) fn all_privs_mask() -> u64 {
 }
 
 impl GlobalPriv {
+    /// Go's `mysql.PrivilegeType` bit for this privilege: a registry mask is
+    /// a Go privilege mask, so executors pass Go's type straight through.
     pub(crate) fn bit(self) -> u64 {
-        1u64 << (self as u32)
+        use tidb_mysql::privilege as mysql;
+        match self {
+            Self::Select => mysql::SelectPriv,
+            Self::Insert => mysql::InsertPriv,
+            Self::Update => mysql::UpdatePriv,
+            Self::Delete => mysql::DeletePriv,
+            Self::Create => mysql::CreatePriv,
+            Self::Drop => mysql::DropPriv,
+            Self::Process => mysql::ProcessPriv,
+            Self::References => mysql::ReferencesPriv,
+            Self::Alter => mysql::AlterPriv,
+            Self::ShowDatabases => mysql::ShowDBPriv,
+            Self::Super => mysql::SuperPriv,
+            Self::Execute => mysql::ExecutePriv,
+            Self::Index => mysql::IndexPriv,
+            Self::CreateUser => mysql::CreateUserPriv,
+            Self::CreateTablespace => mysql::CreateTablespacePriv,
+            Self::Trigger => mysql::TriggerPriv,
+            Self::CreateView => mysql::CreateViewPriv,
+            Self::ShowView => mysql::ShowViewPriv,
+            Self::OperateView => mysql::OperateViewPriv,
+            Self::CreateRole => mysql::CreateRolePriv,
+            Self::DropRole => mysql::DropRolePriv,
+            Self::CreateTemporaryTables => mysql::CreateTMPTablePriv,
+            Self::LockTables => mysql::LockTablesPriv,
+            Self::CreateRoutine => mysql::CreateRoutinePriv,
+            Self::AlterRoutine => mysql::AlterRoutinePriv,
+            Self::Event => mysql::EventPriv,
+            Self::Shutdown => mysql::ShutdownPriv,
+            Self::Reload => mysql::ReloadPriv,
+            Self::File => mysql::FilePriv,
+            Self::Config => mysql::ConfigPriv,
+            Self::ReplicationClient => mysql::ReplicationClientPriv,
+            Self::ReplicationSlave => mysql::ReplicationSlavePriv,
+            Self::GrantOption => mysql::GrantPriv,
+        }
+        .0
     }
 
     /// This privilege as a one-bit mask, the unit every `grant`/`revoke`
