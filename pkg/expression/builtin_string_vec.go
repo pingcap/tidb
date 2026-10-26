@@ -91,12 +91,16 @@ func (b *builtinRepeatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 
 	result.ReserveString(n)
 	nums := buf2.Int64s()
+	isUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) || buf2.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
 		num := nums[i]
+		if num < 0 && isUnsigned {
+			num = math.MaxInt32
+		}
 		if num < 1 {
 			result.AppendString("")
 			continue
@@ -295,12 +299,17 @@ func (b *builtinSpaceSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, res
 
 	result.ReserveString(n)
 	nums := buf.Int64s()
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
 		}
-		num := max(nums[i], 0)
+		num := nums[i]
+		if num < 0 && isUnsigned {
+			num = math.MaxInt64
+		}
+		num = max(num, 0)
 		if uint64(num) > b.maxAllowedPacket {
 			if err := handleAllowedPacketOverflowed(ctx, "space", b.maxAllowedPacket); err != nil {
 				return err
