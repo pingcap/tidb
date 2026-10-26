@@ -543,52 +543,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 		}
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
-<<<<<<< HEAD
-		// Get all schemas except the memory and system database.
-		tbls := make([]*model.TableInfo, 0, 512)
-		// This only occurs during priority queue initialization which is infrequent.
-		halfCPUNum := runtime.NumCPU() / 2
-		start := time.Now()
-		if err := meta.IterAllTables(
-			ctx,
-			sctx.GetStore(),
-			currentTs,
-			halfCPUNum,
-			// Make sure this function is thread-safe.
-			func(info *model.TableInfo) error {
-				// Ignore the memory and system database.
-				db, ok := is.SchemaByID(info.DBID)
-				if !ok || util.IsMemOrSysDB(db.Name.L) {
-					return nil
-				}
-				tbls = append(tbls, info)
-				return nil
-			}); err != nil {
-			return errors.Trace(err)
-		}
-		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", len(tbls)), zap.Duration("duration", time.Since(start)))
-		// Add assertion to verify we've collected all tables by comparing with two different methods.
-		// The below one is way slower than the above one, so we only use it for verification.
-		intest.AssertFunc(func() bool {
-			dbs := is.AllSchemaNames()
-			verifyTbls := make([]*model.TableInfo, 0, 512)
-			for _, db := range dbs {
-				// Ignore the memory and system database.
-				if util.IsMemOrSysDB(db.L) {
-					continue
-				}
-
-				tbls, err := is.SchemaTableInfos(context.Background(), db)
-				if err != nil {
-					panic(err)
-				}
-				verifyTbls = append(verifyTbls, tbls...)
-			}
-			return len(verifyTbls) == len(tbls)
-		})
-
-=======
->>>>>>> da76b94491e (statistics: build auto-analyze jobs during the table scan (#72229))
 		// We need to check every partition of every table to see if it needs to be analyzed.
 		pushJobsForTable := func(tblInfo *model.TableInfo) error {
 			// If table locked, skip analyze all partitions of the table.
@@ -672,7 +626,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			func(info *model.TableInfo) error {
 				// Ignore the memory and system database.
 				db, ok := is.SchemaByID(info.DBID)
-				if !ok || metadef.IsMemOrSysDB(db.Name.L) {
+				if !ok || util.IsMemOrSysDB(db.Name.L) {
 					return nil
 				}
 				tableCount++
@@ -688,7 +642,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 			verifyTbls := make([]*model.TableInfo, 0, 512)
 			for _, db := range dbs {
 				// Ignore the memory and system database.
-				if metadef.IsMemOrSysDB(db.L) {
+				if util.IsMemOrSysDB(db.L) {
 					continue
 				}
 

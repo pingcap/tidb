@@ -475,7 +475,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 
 	// Rebuild must also skip the locked table.
 	require.NoError(t, pq.Rebuild())
-	l, err = pq.Len()
+	l, err := pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 1, l)
 	job, err = pq.PeekForTest()
@@ -490,7 +490,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	pq.ProcessDMLChanges()
 
 	// Check if the jobs have been updated.
-	l, err := pq.Len()
+	l, err = pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 2, l)
 }
