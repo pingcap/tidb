@@ -78,11 +78,12 @@ impl Session {
     /// The unfiltered rows of one SHOW PLACEMENT form.
     pub(crate) fn placement_rows(
         &mut self,
-        target: &tidb_ast::ShowPlacementTarget,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
-        match target {
-            tidb_ast::ShowPlacementTarget::All => self.all_placement_rows(),
-            tidb_ast::ShowPlacementTarget::Database(database) => {
+        match show.tp {
+            tidb_ast::ShowStmtType::Placement => self.all_placement_rows(),
+            tidb_ast::ShowStmtType::PlacementForDatabase => {
+                let database = &show.db_name;
                 self.require_visible_database(database)?;
                 self.with_catalog_mut(|catalog| {
                     let Some(name) = catalog
@@ -97,7 +98,8 @@ impl Session {
                     Ok(database_rows(catalog, &name)?.into_iter().collect())
                 })
             }
-            tidb_ast::ShowPlacementTarget::Table(path) => {
+            tidb_ast::ShowStmtType::PlacementForTable => {
+                let path = show.table.as_deref().unwrap_or_default();
                 let (database, table_name) = self.placement_table_name(path)?;
                 self.require_show_create_privilege(&database, &table_name)?;
                 self.with_catalog_mut(|catalog| {
@@ -107,7 +109,9 @@ impl Session {
                         .map(|(own, _)| own.into_iter().collect())
                 })
             }
-            tidb_ast::ShowPlacementTarget::Partition { table, partition } => {
+            tidb_ast::ShowStmtType::PlacementForPartition => {
+                let table = show.table.as_deref().unwrap_or_default();
+                let partition = &show.partition;
                 let (database, table_name) = self.placement_table_name(table)?;
                 self.require_show_create_privilege(&database, &table_name)?;
                 self.with_catalog_mut(|catalog| {
@@ -151,12 +155,13 @@ impl Session {
             }
             // Go `fetchShowPlacementLabels`, whose restricted SQL fails with
             // the store-status retriever's plain error.
-            tidb_ast::ShowPlacementTarget::Labels => {
+            tidb_ast::ShowStmtType::PlacementLabels => {
                 let store = self.with_catalog_mut(|catalog| Ok(catalog.region_store()))?;
                 crate::memtable_retrievers::show_placement_labels_rows(store.as_ref()).map_err(
                     |message| DriverError::Mysql(tidb_executor::MysqlError::unknown(message)),
                 )
             }
+            tp => unreachable!("placement_rows called for {tp:?}"),
         }
     }
 

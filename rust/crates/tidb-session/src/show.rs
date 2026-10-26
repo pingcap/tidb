@@ -699,16 +699,9 @@ impl Session {
     /// extractor, matched against the TABLE name.
     fn show_affinity_stmt(
         &mut self,
-        filter: Option<&tidb_ast::ShowInspectionFilter>,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match filter {
-            None => (None, None),
-            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         struct AffinityRow {
             db_lower: String,
             table_id: i64,
@@ -830,6 +823,27 @@ impl Session {
         ];
         let row_like = like_pattern.filter(|pattern| pattern.row_pattern.is_some());
         self.filter_show_output(StmtOutput::Rows { columns, rows }, row_like, where_clause)
+    }
+
+    /// Go `buildShow`'s LIKE / WHERE handling for one `ShowStmt`: the LIKE
+    /// operand is evaluated into the pattern the extractor matches, and the
+    /// WHERE stays an expression over the output rows.
+    pub(crate) fn show_like_or_where<'a>(
+        &mut self,
+        show: &'a tidb_ast::ShowStmt,
+        fold_lowercase: bool,
+    ) -> Result<(Option<ShowLikePattern>, Option<&'a tidb_ast::Expr>), DriverError> {
+        Ok(match show_filter(show) {
+            None => (None, None),
+            Some(ShowFilter::Like(expr)) => {
+                let value = datum_text(&self.eval_value(expr)?);
+                (
+                    Some(ShowLikePattern::from_expr(expr, value, fold_lowercase)),
+                    None,
+                )
+            }
+            Some(ShowFilter::Where(expr)) => (None, Some(expr)),
+        })
     }
 
     pub(crate) fn filter_show_output(
@@ -1165,20 +1179,13 @@ impl Session {
             }
             tidb_ast::AdminStmt::DropBinding(drop) => Ok(Some(self.drop_binding_stmt(drop)?)),
             tidb_ast::AdminStmt::SetBinding(set) => Ok(Some(self.set_binding_stmt(set)?)),
-            tidb_ast::AdminStmt::ShowBindings(show) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Bindings => {
                 let output = self.show_bindings_stmt(show)?;
                 // Measured on real TiDB: `LIKE` filters on `Original_sql`
                 // CASE-SENSITIVELY (`like '%KB%'` over a lowercase binding
                 // answers nothing), so the literal is NOT folded the way
                 // `SHOW DATABASES LIKE` folds -- `has_extractor: false`.
-                let (like_pattern, where_clause) = match &show.filter {
-                    None => (None, None),
-                    Some(tidb_ast::ShowBindingsFilter::Like(expr)) => {
-                        let value = datum_text(&self.eval_value(expr)?);
-                        (Some(ShowLikePattern::from_expr(expr, value, false)), None)
-                    }
-                    Some(tidb_ast::ShowBindingsFilter::Where(expr)) => (None, Some(expr)),
-                };
+                let (like_pattern, where_clause) = self.show_like_or_where(show, false)?;
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
@@ -1370,12 +1377,12 @@ impl Session {
             }
             // go `fetchShowPrivileges` (`pkg/executor/show.go:2036`): the
             // static table then every dynamic privilege.
-            tidb_ast::AdminStmt::ShowPrivileges => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Privileges => {
                 Ok(Some(crate::show_admin::show_privileges_output()))
             }
             // Go `fetchShowOpenTables` answers the empty set; the schema is
             // `buildShowSchema`'s four columns.
-            tidb_ast::AdminStmt::ShowOpenTables(_) => Ok(Some(StmtOutput::Rows {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::OpenTables => Ok(Some(StmtOutput::Rows {
                 columns: vec![
                     (
                         "Database".to_owned(),
@@ -1399,7 +1406,7 @@ impl Session {
             // go `fetchShowImportJobs` over the dist-task framework: this
             // tier runs no IMPORT jobs, so the answer is the empty set (the
             // oracle's own answer on the battery's table).
-            tidb_ast::AdminStmt::ShowImportJobs(_) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::ImportJobs => {
                 use tidb_datatype::{FieldType, FieldTypeCode};
                 // Go `importIntoSchemaNames` / `ImportIntoSchemaFTypes`.
                 let string = || FieldType::new(FieldTypeCode::String);
@@ -1434,7 +1441,7 @@ impl Session {
             }
             // Go `buildShowSchema` for `ShowImportGroups`: the jobs are
             // grouped by key; this tier runs no IMPORT jobs.
-            tidb_ast::AdminStmt::ShowImportGroups(_) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::ImportGroups => {
                 use tidb_datatype::{FieldType, FieldTypeCode};
                 let long = || FieldType::new(FieldTypeCode::LongLong);
                 let timestamp = || FieldType::new(FieldTypeCode::Timestamp);
@@ -1505,8 +1512,17 @@ impl Session {
             ))),
             // Go `fetchShowPlacement` and its FOR DATABASE/TABLE/PARTITION and
             // LABELS forms (`executor/show_placement.go`).
-            tidb_ast::AdminStmt::ShowPlacement(show) => {
-                let columns = if show.target == tidb_ast::ShowPlacementTarget::Labels {
+            tidb_ast::AdminStmt::Show(show)
+                if matches!(
+                    show.tp,
+                    tidb_ast::ShowStmtType::Placement
+                        | tidb_ast::ShowStmtType::PlacementLabels
+                        | tidb_ast::ShowStmtType::PlacementForDatabase
+                        | tidb_ast::ShowStmtType::PlacementForTable
+                        | tidb_ast::ShowStmtType::PlacementForPartition
+                ) =>
+            {
+                let columns = if show.tp == tidb_ast::ShowStmtType::PlacementLabels {
                     vec![
                         (
                             "Key".to_owned(),
@@ -1528,15 +1544,8 @@ impl Session {
                         })
                         .collect()
                 };
-                let rows = self.placement_rows(&show.target)?;
-                let (like_pattern, where_clause) = match show.filter.as_ref() {
-                    None => (None, None),
-                    Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                        let value = datum_text(&self.eval_value(expr)?);
-                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-                    }
-                    Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-                };
+                let rows = self.placement_rows(show)?;
+                let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
                 self.filter_show_output(
                     StmtOutput::Rows { columns, rows },
                     like_pattern,
@@ -1550,20 +1559,24 @@ impl Session {
             }
             tidb_ast::AdminStmt::Grant(grant) => Ok(Some(self.grant_stmt(grant)?)),
             tidb_ast::AdminStmt::Revoke(revoke) => Ok(Some(self.revoke_stmt(revoke)?)),
-            tidb_ast::AdminStmt::ShowGrants(show) => Ok(Some(self.show_grants_stmt(show)?)),
-            tidb_ast::AdminStmt::ShowCreateUser(spec) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Grants => Ok(Some(self.show_grants_stmt(show)?)),
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::CreateUser => {
+                let spec = show
+                    .user
+                    .as_ref()
+                    .ok_or_else(|| DriverError::unsupported("SHOW CREATE USER without a user"))?;
                 Ok(Some(self.show_create_user_stmt(spec)?))
             }
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
-            tidb_ast::AdminStmt::ShowDatabases(show) => {
-                let (like_pattern, where_clause) = match &show.filter {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Databases => {
+                let (like_pattern, where_clause) = match show_filter(show) {
                     None => (None, None),
-                    Some(tidb_ast::ShowDatabasesFilter::Like(expr)) => {
+                    Some(ShowFilter::Like(expr)) => {
                         let value = datum_text(&self.eval_value(expr)?);
                         (Some(ShowLikePattern::from_expr(expr, value, true)), None)
                     }
-                    Some(tidb_ast::ShowDatabasesFilter::Where(expr)) => (None, Some(expr)),
+                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let names = {
                     let catalog = self.shared_catalog();
@@ -1582,22 +1595,22 @@ impl Session {
             // Go `fetchShowTableStatus`: its restricted SQL over
             // `information_schema.tables` for the schema, ordered by table
             // name, so every size and count is the TABLES reader's.
-            tidb_ast::AdminStmt::ShowTableStatus(show) => {
-                let database = match &show.database {
-                    Some(database) => database.clone(),
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::TableStatus => {
+                let database = match show_db_name(show) {
+                    Some(database) => database.to_owned(),
                     None => self.require_current_database()?.into(),
                 };
                 // Go `fetchShowTableStatus` (`executor/show.go` around line
                 // 639) applies the same pre-lookup 1044 gate `SHOW TABLES`
                 // does.
                 self.require_visible_database(&database)?;
-                let (like_pattern, where_clause) = match &show.filter {
+                let (like_pattern, where_clause) = match show_filter(show) {
                     None => (None, None),
-                    Some(tidb_ast::ShowTableStatusFilter::Like(expr)) => {
+                    Some(ShowFilter::Like(expr)) => {
                         let value = datum_text(&self.eval_value(expr)?);
                         (Some(ShowLikePattern::from_expr(expr, value, true)), None)
                     }
-                    Some(tidb_ast::ShowTableStatusFilter::Where(expr)) => (None, Some(expr)),
+                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let zone = self.session_time_zone();
                 let visibility = self.schema_visibility();
@@ -1645,16 +1658,16 @@ impl Session {
             // Comment empty, as Go writes them; Expression is NULL when no
             // expression key part exists; Global is the stored
             // `IndexInfo.Global` flag.
-            tidb_ast::AdminStmt::ShowIndex(show) => {
-                let (like_pattern, where_clause) = match &show.filter {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Index => {
+                let (like_pattern, where_clause) = match show_filter(show) {
                     None => (None, None),
-                    Some(tidb_ast::ShowIndexFilter::Like(expr)) => {
+                    Some(ShowFilter::Like(expr)) => {
                         let value = datum_text(&self.eval_value(expr)?);
                         (Some(ShowLikePattern::from_expr(expr, value, false)), None)
                     }
-                    Some(tidb_ast::ShowIndexFilter::Where(expr)) => (None, Some(expr)),
+                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
                 };
-                let (database, table_name) = match show.table.as_slice() {
+                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
                     // go resolves a QUALIFIED name without consulting the
                     // session database: `SHOW INDEX FROM d3p.t2` answers with
                     // no `USE` in sight. Only the bare form needs one, and go
@@ -1712,25 +1725,25 @@ impl Session {
             // reports SOMETHING for every name `SHOW GLOBAL VARIABLES`
             // lists rather than erroring); `SESSION`/unqualified reads this
             // session's own copy, same as a plain `@@x`.
-            tidb_ast::AdminStmt::ShowVariables(show) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Variables => {
                 // Go `ShowBaseExtractor` lowercases the pattern.
-                let pattern = match &show.like {
+                let pattern = match &show.pattern {
                     Some(tidb_ast::Expr::String(text)) => {
                         Some(tidb_util::stringutil::go_to_lower(text))
                     }
                     _ => None,
                 };
-                let like_predicate = match &show.like {
+                let like_predicate = match &show.pattern {
                     Some(expr) if !matches!(expr, tidb_ast::Expr::String(_)) => {
                         Some(show_like_predicate(expr, SHOW_VARIABLE_COLUMNS)?)
                     }
                     _ => None,
                 };
-                let predicate = show.where_clause.as_ref().or(like_predicate.as_ref());
+                let predicate = show.r#where.as_ref().or(like_predicate.as_ref());
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let rows =
-                    tidb_executor::show::fetch_show_variables(self, show.global, pattern.as_deref());
+                    tidb_executor::show::fetch_show_variables(self, show.global_scope, pattern.as_deref());
                 self.filter_show_output(
                     StmtOutput::Rows {
                         columns: vec![
@@ -1756,23 +1769,23 @@ impl Session {
             // tier; GLOBAL still drops session-only rows, which the Go
             // capture confirms (`SHOW GLOBAL STATUS` omits the
             // `Compression*` family).
-            tidb_ast::AdminStmt::ShowStatus(show) => {
-                let pattern = match &show.filter {
-                    Some(tidb_ast::ShowStatusFilter::Like(tidb_ast::Expr::String(text))) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Status => {
+                let pattern = match show_filter(show) {
+                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
                         Some(text.clone())
                     }
                     _ => None,
                 };
-                let like_predicate = match &show.filter {
-                    Some(tidb_ast::ShowStatusFilter::Like(expr))
+                let like_predicate = match show_filter(show) {
+                    Some(ShowFilter::Like(expr))
                         if !matches!(expr, tidb_ast::Expr::String(_)) =>
                     {
                         Some(show_like_predicate(expr, SHOW_VARIABLE_COLUMNS)?)
                     }
                     _ => None,
                 };
-                let predicate = match &show.filter {
-                    Some(tidb_ast::ShowStatusFilter::Where(expr)) => Some(expr),
+                let predicate = match show_filter(show) {
+                    Some(ShowFilter::Where(expr)) => Some(expr),
                     _ => like_predicate.as_ref(),
                 };
                 let text =
@@ -1854,7 +1867,7 @@ impl Session {
                     if self.sem_hides_status_var(name) {
                         continue;
                     }
-                    if show.global && session_only {
+                    if show.global_scope && session_only {
                         continue;
                     }
                     if let Some(pattern) = &pattern {
@@ -1889,23 +1902,23 @@ impl Session {
             // Go `fetchShowCharset`: one row per charset in the parser's
             // registry, captured from mock TiDB (`Charset | Description |
             // Default collation | Maxlen`).
-            tidb_ast::AdminStmt::ShowCharset(show) => {
-                let pattern = match &show.filter {
-                    Some(tidb_ast::ShowCharsetFilter::Like(tidb_ast::Expr::String(text))) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Charset => {
+                let pattern = match show_filter(show) {
+                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
                         Some(text.clone())
                     }
                     _ => None,
                 };
-                let like_predicate = match &show.filter {
-                    Some(tidb_ast::ShowCharsetFilter::Like(expr))
+                let like_predicate = match show_filter(show) {
+                    Some(ShowFilter::Like(expr))
                         if !matches!(expr, tidb_ast::Expr::String(_)) =>
                     {
                         Some(show_like_predicate(expr, SHOW_CHARSET_COLUMNS)?)
                     }
                     _ => None,
                 };
-                let predicate = match &show.filter {
-                    Some(tidb_ast::ShowCharsetFilter::Where(expr)) => Some(expr),
+                let predicate = match show_filter(show) {
+                    Some(ShowFilter::Where(expr)) => Some(expr),
                     _ => like_predicate.as_ref(),
                 };
                 let text =
@@ -1936,23 +1949,23 @@ impl Session {
             // Go `fetchShowEngines`: this tier is the mock/embedded
             // single-engine server, so the table is always the single
             // `InnoDB` row Go's mock session reports.
-            tidb_ast::AdminStmt::ShowEngines(show) => {
-                let pattern = match &show.filter {
-                    Some(tidb_ast::ShowEnginesFilter::Like(tidb_ast::Expr::String(text))) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Engines => {
+                let pattern = match show_filter(show) {
+                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
                         Some(text.as_str())
                     }
                     _ => None,
                 };
-                let like_predicate = match &show.filter {
-                    Some(tidb_ast::ShowEnginesFilter::Like(expr))
+                let like_predicate = match show_filter(show) {
+                    Some(ShowFilter::Like(expr))
                         if !matches!(expr, tidb_ast::Expr::String(_)) =>
                     {
                         Some(show_like_predicate(expr, SHOW_ENGINES_COLUMNS)?)
                     }
                     _ => None,
                 };
-                let predicate = match &show.filter {
-                    Some(tidb_ast::ShowEnginesFilter::Where(expr)) => Some(expr),
+                let predicate = match show_filter(show) {
+                    Some(ShowFilter::Where(expr)) => Some(expr),
                     _ => like_predicate.as_ref(),
                 };
                 let text =
@@ -1975,16 +1988,16 @@ impl Session {
                 )
                 .map(Some)
             }
-            tidb_ast::AdminStmt::ShowStatsTopN(show) => self.stats_topn_stmt(show).map(Some),
-            tidb_ast::AdminStmt::ShowStatsBuckets(show) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsTopN => self.stats_topn_stmt(show).map(Some),
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsBuckets => {
                 self.require_show_stats_privilege("stats_buckets")?;
                 self.stats_buckets_stmt(show).map(Some)
             }
-            tidb_ast::AdminStmt::ShowStatsHistograms(show) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsHistograms => {
                 self.require_show_stats_privilege("stats_histograms")?;
                 self.stats_histograms_stmt(show).map(Some)
             }
-            tidb_ast::AdminStmt::ShowStatsLocked(show) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::StatsLocked => {
                 self.require_show_stats_privilege("stats_table_locked")?;
                 self.stats_locked_stmt(show).map(Some)
             }
@@ -1997,26 +2010,26 @@ impl Session {
             // COLLATION` capture omits it too, so this table matches the
             // 15 collations Go actually lists rather than this crate's
             // full 16-variant registry.
-            tidb_ast::AdminStmt::ShowCollation(show) => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Collation => {
                 // Go `ShowBaseExtractor` lowercases the pattern
                 // (`strings.ToLower(ptn)`) before matching it against the
                 // lowercase collation names.
-                let pattern = match &show.filter {
-                    Some(tidb_ast::ShowCollationFilter::Like(tidb_ast::Expr::String(text))) => {
+                let pattern = match show_filter(show) {
+                    Some(ShowFilter::Like(tidb_ast::Expr::String(text))) => {
                         Some(tidb_util::stringutil::go_to_lower(text))
                     }
                     _ => None,
                 };
-                let like_predicate = match &show.filter {
-                    Some(tidb_ast::ShowCollationFilter::Like(expr))
+                let like_predicate = match show_filter(show) {
+                    Some(ShowFilter::Like(expr))
                         if !matches!(expr, tidb_ast::Expr::String(_)) =>
                     {
                         Some(show_like_predicate(expr, SHOW_COLLATION_COLUMNS)?)
                     }
                     _ => None,
                 };
-                let predicate = match &show.filter {
-                    Some(tidb_ast::ShowCollationFilter::Where(expr)) => Some(expr),
+                let predicate = match show_filter(show) {
+                    Some(ShowFilter::Where(expr)) => Some(expr),
                     _ => like_predicate.as_ref(),
                 };
                 let text =
@@ -2071,7 +2084,7 @@ impl Session {
                     &self.show_ddl_rows(),
                 )));
             }
-            tidb_ast::AdminStmt::ShowMasterStatus => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::MasterStatus => {
                 // Go `buildShow`: "show master status need start ts".
                 self.activate_statement_txn();
                 return Ok(Some(crate::show_admin::master_status_output(
@@ -2083,42 +2096,66 @@ impl Session {
             // rows; there is no extractor, so a literal pattern is not
             // folded. The rows are read before the operand is evaluated, so
             // the filter cannot disturb the warnings it filters.
-            tidb_ast::AdminStmt::ShowWarnings(show) => {
-                let output = self.warning_output(show.count_only, false);
-                let (like, where_clause) = match &show.filter {
+            tidb_ast::AdminStmt::Show(show)
+                if matches!(
+                    show.tp,
+                    tidb_ast::ShowStmtType::Warnings | tidb_ast::ShowStmtType::Errors
+                ) =>
+            {
+                let output = self.warning_output(
+                    show.count_warnings_or_errors,
+                    show.tp == tidb_ast::ShowStmtType::Errors,
+                );
+                let (like, where_clause) = match show_filter(show) {
                     None => (None, None),
-                    Some(tidb_ast::ShowWarningsFilter::Like(expr)) => (Some(expr), None),
-                    Some(tidb_ast::ShowWarningsFilter::Where(expr)) => (None, Some(expr)),
-                };
-                self.filter_warning_output(output, like, where_clause)
-                    .map(Some)
-            }
-            tidb_ast::AdminStmt::ShowErrors(show) => {
-                let output = self.warning_output(show.count_only, true);
-                let (like, where_clause) = match &show.filter {
-                    None => (None, None),
-                    Some(tidb_ast::ShowErrorsFilter::Like(expr)) => (Some(expr), None),
-                    Some(tidb_ast::ShowErrorsFilter::Where(expr)) => (None, Some(expr)),
+                    Some(ShowFilter::Like(expr)) => (Some(expr), None),
+                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
                 };
                 self.filter_warning_output(output, like, where_clause)
                     .map(Some)
             }
             // Go `ShowExec.fetchShowProcessList`: one row per live
             // connection of this server, read from the session manager.
-            tidb_ast::AdminStmt::ShowInspection(show) => {
-                if show.kind == tidb_ast::ShowInspectionKind::SessionStates {
+            tidb_ast::AdminStmt::Show(show)
+                if matches!(
+                    show.tp,
+                    tidb_ast::ShowStmtType::Triggers
+                        | tidb_ast::ShowStmtType::ProcedureStatus
+                        | tidb_ast::ShowStmtType::FunctionStatus
+                        | tidb_ast::ShowStmtType::Events
+                        | tidb_ast::ShowStmtType::Plugins
+                        | tidb_ast::ShowStmtType::StatsExtended
+                        | tidb_ast::ShowStmtType::StatsMeta
+                        | tidb_ast::ShowStmtType::StatsHealthy
+                        | tidb_ast::ShowStmtType::HistogramsInFlight
+                        | tidb_ast::ShowStmtType::ColumnStatsUsage
+                        | tidb_ast::ShowStmtType::BindingCacheStatus
+                        | tidb_ast::ShowStmtType::AnalyzeStatus
+                        | tidb_ast::ShowStmtType::Backups
+                        | tidb_ast::ShowStmtType::Restores
+                        | tidb_ast::ShowStmtType::Imports
+                        | tidb_ast::ShowStmtType::Config
+                        | tidb_ast::ShowStmtType::ReplicaStatus
+                        | tidb_ast::ShowStmtType::BinlogStatus
+                        | tidb_ast::ShowStmtType::Profiles
+                        | tidb_ast::ShowStmtType::SessionStates
+                        | tidb_ast::ShowStmtType::ProcessList
+                        | tidb_ast::ShowStmtType::Affinity
+                ) =>
+            {
+                if show.tp == tidb_ast::ShowStmtType::SessionStates {
                     return self.show_session_states().map(Some);
                 }
                 // Pinned Go `ShowExec.fetchAll` keeps the grammar entry but
                 // rejects execution because extended statistics was removed.
-                if show.kind == tidb_ast::ShowInspectionKind::StatsExtended {
+                if show.tp == tidb_ast::ShowStmtType::StatsExtended {
                     return Err(DriverError::unsupported(
                         "Extended statistics feature has been removed",
                     ));
                 }
                 // Go `ShowExec.fetchShowBindingCacheStatus`; see
                 // `crate::binding_arm`.
-                if show.kind == tidb_ast::ShowInspectionKind::BindingCacheStatus {
+                if show.tp == tidb_ast::ShowStmtType::BindingCacheStatus {
                     return Ok(Some(self.binding_cache_status_stmt()?));
                 }
                 // Go `ShowExec.fetchShowPlugins` over `plugin.GetAll()`. No
@@ -2130,7 +2167,7 @@ impl Session {
                 // STATUS` (`fetchShowMasterStatus`): the same
                 // `('tidb-binlog', position, '', '', '')` row at the
                 // session's current TSO.
-                if show.kind == tidb_ast::ShowInspectionKind::BinaryLogStatus {
+                if show.tp == tidb_ast::ShowStmtType::BinlogStatus {
                     // Go `buildShow` activates the transaction for both.
                     self.activate_statement_txn();
                     return Ok(Some(crate::show_admin::master_status_output(
@@ -2141,26 +2178,19 @@ impl Session {
                 // `This version of TiDB doesn't yet support 'SHOW {REPLICA |
                 // SLAVE} STATUS'` (1235).
                 if matches!(
-                    show.kind,
-                    tidb_ast::ShowInspectionKind::ReplicaStatus
+                    show.tp,
+                    tidb_ast::ShowStmtType::ReplicaStatus
                 ) {
                     return Err(DriverError::NotSupportedYet(
                         "SHOW {REPLICA | SLAVE} STATUS".into(),
                     ));
                 }
-                if show.kind == tidb_ast::ShowInspectionKind::Config {
+                if show.tp == tidb_ast::ShowStmtType::Config {
                     let rows = self.cluster_config_table_rows(&[Default::default()])?;
                     let StmtOutput::Rows { columns, .. } = text_columns_output(&[
                         "Type", "Instance", "Name", "Value",
                     ]) else { unreachable!() };
-                    let (like_pattern, where_clause) = match show.filter.as_ref() {
-                        None => (None, None),
-                        Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                            let value = datum_text(&self.eval_value(expr)?);
-                            (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-                        }
-                        Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-                    };
+                    let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
                     return self
                         .filter_show_output(
                             StmtOutput::Rows { columns, rows },
@@ -2169,32 +2199,25 @@ impl Session {
                         )
                         .map(Some);
                 }
-                if show.kind == tidb_ast::ShowInspectionKind::Affinity {
-                    return self.show_affinity_stmt(show.filter.as_ref()).map(Some);
+                if show.tp == tidb_ast::ShowStmtType::Affinity {
+                    return self.show_affinity_stmt(show).map(Some);
                 }
-                if let Some(output) = crate::show_admin::inspection_output(show.kind) {
+                if let Some(output) = crate::show_admin::inspection_output(show.tp) {
                     return Ok(Some(output));
                 }
                 // Go `ShowExec.fetchShowStatsMeta` (`executor/show_stats.go:36`).
-                if show.kind == tidb_ast::ShowInspectionKind::StatsMeta {
+                if show.tp == tidb_ast::ShowStmtType::StatsMeta {
                     self.require_show_stats_privilege("stats_meta")?;
-                    return self.stats_meta_stmt(show.filter.as_ref()).map(Some);
+                    return self.stats_meta_stmt(show).map(Some);
                 }
-                if show.kind == tidb_ast::ShowInspectionKind::StatsHealthy {
-                    return self.stats_healthy_stmt(show.filter.as_ref()).map(Some);
+                if show.tp == tidb_ast::ShowStmtType::StatsHealthy {
+                    return self.stats_healthy_stmt(show).map(Some);
                 }
-                if show.kind == tidb_ast::ShowInspectionKind::ColumnStatsUsage {
-                    return self.column_stats_usage_stmt(show.filter.as_ref()).map(Some);
+                if show.tp == tidb_ast::ShowStmtType::ColumnStatsUsage {
+                    return self.column_stats_usage_stmt(show).map(Some);
                 }
-                if show.kind == tidb_ast::ShowInspectionKind::HistogramsInFlight {
-                    let (like_pattern, where_clause) = match show.filter.as_ref() {
-                        None => (None, None),
-                        Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                            let value = datum_text(&self.eval_value(expr)?);
-                            (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-                        }
-                        Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-                    };
+                if show.tp == tidb_ast::ShowStmtType::HistogramsInFlight {
+                    let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
                     let count = self
                         .with_catalog_mut(|catalog| Ok(catalog.clean_needed_statistics_items()))?;
                     let output = StmtOutput::Rows {
@@ -2208,13 +2231,13 @@ impl Session {
                         .filter_show_output(output, like_pattern, where_clause)
                         .map(Some);
                 }
-                if show.kind == tidb_ast::ShowInspectionKind::AnalyzeStatus {
-                    return self.analyze_status_stmt(show.filter.as_ref()).map(Some);
+                if show.tp == tidb_ast::ShowStmtType::AnalyzeStatus {
+                    return self.analyze_status_stmt(show).map(Some);
                 }
-                if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
+                if show.tp != tidb_ast::ShowStmtType::ProcessList {
                     return Ok(None);
                 }
-                if show.filter.is_some() || show.database.is_some() {
+                if show.pattern.is_some() || show.r#where.is_some() || !show.db_name.is_empty() {
                     return Err(DriverError::unsupported(
                         "SHOW PROCESSLIST filters are not supported yet",
                     ));
@@ -2224,7 +2247,7 @@ impl Session {
             // Go `ShowExec.fetchShowBuiltins` (`show.go:2459`) over
             // `expression.GetBuiltinList`, under the single column
             // `planbuilder.go:6084` names.
-            tidb_ast::AdminStmt::ShowBuiltins => {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Builtins => {
                 let text = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 Ok(Some(StmtOutput::Rows {
                     columns: vec![("Supported_builtin_functions".to_owned(), text)],
@@ -2248,15 +2271,20 @@ impl Session {
             tidb_ast::AdminStmt::AdminCleanupIndex(cleanup) => {
                 self.admin_cleanup_index_stmt(cleanup.as_ref()).map(Some)
             }
-            tidb_ast::AdminStmt::ShowCreate {
-                kind,
-                name,
-                if_not_exists,
-            } => {
-                if *kind == tidb_ast::ShowCreateKind::Database {
-                    let [database] = name.as_slice() else {
-                        return Err(DriverError::unsupported("empty database name"));
-                    };
+            tidb_ast::AdminStmt::Show(show)
+                if matches!(
+                    show.tp,
+                    tidb_ast::ShowStmtType::CreateTable
+                        | tidb_ast::ShowStmtType::CreateView
+                        | tidb_ast::ShowStmtType::CreateSequence
+                        | tidb_ast::ShowStmtType::CreateDatabase
+                        | tidb_ast::ShowStmtType::CreatePlacementPolicy
+                        | tidb_ast::ShowStmtType::CreateResourceGroup
+                        | tidb_ast::ShowStmtType::CreateProcedure
+                ) =>
+            {
+                if show.tp == tidb_ast::ShowStmtType::CreateDatabase {
+                    let database = &show.db_name;
                     let (reported, charset, placement) = self.with_catalog_mut(|catalog| {
                         let (reported, charset) =
                             catalog.database_definition(database).ok_or_else(|| {
@@ -2273,7 +2301,7 @@ impl Session {
                         reported,
                         charset,
                         placement.as_deref(),
-                        *if_not_exists,
+                        show.if_not_exists,
                         self.vars.sql_mode().has_ansi_quotes_mode(),
                     )));
                 }
@@ -2281,10 +2309,8 @@ impl Session {
                 // (`ErrResourceGroupNotExists` when absent), reported under
                 // the name as written beside `CREATE RESOURCE GROUP`
                 // followed by its settings.
-                if *kind == tidb_ast::ShowCreateKind::ResourceGroup {
-                    let [group_name] = name.as_slice() else {
-                        return Err(DriverError::unsupported("empty resource group name"));
-                    };
+                if show.tp == tidb_ast::ShowStmtType::CreateResourceGroup {
+                    let group_name = &show.resource_group_name;
                     let text = self.with_catalog_mut(|catalog| {
                         let group = catalog.resource_group(group_name).ok_or_else(|| {
                             crate::resource_group::resource_group_not_exists(group_name)
@@ -2317,10 +2343,8 @@ impl Session {
                 // (8239) for a name that is not there. The row is the policy's
                 // ORIGINAL-cased name beside
                 // `ConstructResultOfShowCreatePlacementPolicy` (`:1742`).
-                if *kind == tidb_ast::ShowCreateKind::PlacementPolicy {
-                    let [policy_name] = name.as_slice() else {
-                        return Err(DriverError::unsupported("empty policy name"));
-                    };
+                if show.tp == tidb_ast::ShowStmtType::CreatePlacementPolicy {
+                    let policy_name = &show.db_name;
                     let (reported, clause) = self.with_catalog_mut(|catalog| {
                         catalog
                             .policy(policy_name)
@@ -2349,13 +2373,15 @@ impl Session {
                 // persistent object, which a local temporary table of the
                 // same name does not shadow, and refuses anything that is not
                 // a sequence (`fetchShowCreateSequence`'s ErrWrongObject).
-                let want_view = match kind {
-                    tidb_ast::ShowCreateKind::Table | tidb_ast::ShowCreateKind::Sequence => false,
-                    tidb_ast::ShowCreateKind::View => true,
+                let want_view = match show.tp {
+                    tidb_ast::ShowStmtType::CreateTable | tidb_ast::ShowStmtType::CreateSequence => {
+                        false
+                    }
+                    tidb_ast::ShowStmtType::CreateView => true,
                     _ => return Ok(None),
                 };
-                let want_sequence = matches!(kind, tidb_ast::ShowCreateKind::Sequence);
-                let (database, table_name) = match name.as_slice() {
+                let want_sequence = show.tp == tidb_ast::ShowStmtType::CreateSequence;
+                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
                     // go resolves a QUALIFIED name without consulting the
                     // session database: `SHOW INDEX FROM d3p.t2` answers with
                     // no `USE` in sight. Only the bare form needs one, and go
@@ -2470,8 +2496,8 @@ impl Session {
                     ]],
                 }))
             }
-            tidb_ast::AdminStmt::ShowTableNextRowId(show) => {
-                let (database, table_name) = match show.table.as_slice() {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::TableNextRowId => {
+                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
                     // go resolves a QUALIFIED name without consulting the
                     // session database: `SHOW INDEX FROM d3p.t2` answers with
                     // no `USE` in sight. Only the bare form needs one, and go
@@ -2525,19 +2551,24 @@ impl Session {
                 }))
             }
             // Go `fetchShowTableRegions` / `fetchShowDistributions`.
-            tidb_ast::AdminStmt::ShowTablePlacement(show) => {
-                let (database, table_name) = match show.table.as_slice() {
+            tidb_ast::AdminStmt::Show(show)
+                if matches!(
+                    show.tp,
+                    tidb_ast::ShowStmtType::Regions | tidb_ast::ShowStmtType::Distributions
+                ) =>
+            {
+                let (database, table_name) = match show.table.as_deref().unwrap_or_default() {
                     [table] => (self.require_current_database()?.to_owned(), table.clone()),
                     [database, table] => (database.clone(), table.clone()),
                     _ => return Err(DriverError::unsupported("empty table name")),
                 };
-                if show.kind == tidb_ast::ShowTablePlacementKind::Distributions {
+                if show.tp == tidb_ast::ShowStmtType::Distributions {
                     self.with_catalog_mut(|catalog| {
                         tidb_executor::show_regions::show_table_distributions(
                             catalog,
                             &database,
                             &table_name,
-                            &show.partitions,
+                            &show.table_partitions,
                         )
                     })?;
                     return Ok(None);
@@ -2547,32 +2578,30 @@ impl Session {
                         catalog,
                         &database,
                         &table_name,
-                        &show.partitions,
-                        show.index.as_deref(),
+                        &show.table_partitions,
+                        (!show.index_name.is_empty()).then_some(show.index_name.as_str()),
                     )
                 })?;
                 let output = StmtOutput::Rows {
                     columns: tidb_executor::show_regions::table_region_columns(),
                     rows,
                 };
-                let where_clause = match &show.filter {
-                    Some(tidb_ast::ShowInspectionFilter::Where(expr)) => Some(expr),
-                    _ => None,
-                };
+                let where_clause = show.r#where.as_ref();
                 self.filter_show_output(output, None, where_clause).map(Some)
             }
             // Go `fetchShowColumns`.
-            tidb_ast::AdminStmt::ShowColumns(show) => {
-                let (like_pattern, where_clause) = match &show.filter {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Columns => {
+                let (like_pattern, where_clause) = match show_filter(show) {
                     None => (None, None),
-                    Some(tidb_ast::ShowColumnsFilter::Like(expr)) => {
+                    Some(ShowFilter::Like(expr)) => {
                         let value = datum_text(&self.eval_value(expr)?);
                         (Some(ShowLikePattern::from_expr(expr, value, true)), None)
                     }
-                    Some(tidb_ast::ShowColumnsFilter::Where(expr)) => (None, Some(expr)),
+                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
                 };
-                let database = self.show_columns_database(show.database.as_deref(), &show.table)?;
-                let output = self.show_columns(&database, &show.table, None, show.full, show.extended)?;
+                let table = show.table.as_deref().unwrap_or_default();
+                let database = self.show_columns_database(show_db_name(show), table)?;
+                let output = self.show_columns(&database, table, None, show.full, show.extended)?;
                 self.filter_show_output(output, like_pattern, where_clause)
                     .map(Some)
             }
@@ -2591,17 +2620,17 @@ impl Session {
                 )
                 .map(Some)
             }
-            tidb_ast::AdminStmt::ShowTables(show) => {
-                let (like_pattern, where_clause) = match &show.filter {
+            tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Tables => {
+                let (like_pattern, where_clause) = match show_filter(show) {
                     None => (None, None),
-                    Some(tidb_ast::ShowTablesFilter::Like(expr)) => {
+                    Some(ShowFilter::Like(expr)) => {
                         let value = datum_text(&self.eval_value(expr)?);
                         (Some(ShowLikePattern::from_expr(expr, value, true)), None)
                     }
-                    Some(tidb_ast::ShowTablesFilter::Where(expr)) => (None, Some(expr)),
+                    Some(ShowFilter::Where(expr)) => (None, Some(expr)),
                 };
-                let database = match &show.database {
-                    Some(name) => name.clone(),
+                let database = match show_db_name(show) {
+                    Some(name) => name.to_owned(),
                     None => self.require_current_database()?.into(),
                 };
                 let full = show.full;
@@ -2772,4 +2801,25 @@ fn admin_needs_super(admin: &tidb_ast::AdminStmt) -> bool {
             | tidb_ast::AdminStmt::ShowBdrRole
             | tidb_ast::AdminStmt::CreateWorkloadSnapshot
     )
+}
+
+/// The LIKE / WHERE of a Go-shaped SHOW (Go's `Pattern` and `Where`, at most
+/// one of which the grammar sets), as the session's SHOW arms read it until
+/// SHOW is planned (Go's Selection over the Show plan).
+enum ShowFilter<'a> {
+    Like(&'a tidb_ast::Expr),
+    Where(&'a tidb_ast::Expr),
+}
+
+/// Go's `ShowStmt.DBName`, where the empty string means "not given".
+fn show_db_name(show: &tidb_ast::ShowStmt) -> Option<&str> {
+    (!show.db_name.is_empty()).then_some(show.db_name.as_str())
+}
+
+fn show_filter(show: &tidb_ast::ShowStmt) -> Option<ShowFilter<'_>> {
+    match (&show.pattern, &show.r#where) {
+        (Some(pattern), _) => Some(ShowFilter::Like(pattern)),
+        (None, Some(r#where)) => Some(ShowFilter::Where(r#where)),
+        (None, None) => None,
+    }
 }

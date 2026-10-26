@@ -164,7 +164,7 @@ fn test_hand_parser_subquery() {
 #[test]
 fn test_hand_parser_show() {
     assert!(
-        matches!(parse("SHOW BUILTINS"), Ok(Stmt::Admin(admin)) if matches!(&*admin, AdminStmt::ShowBuiltins))
+        matches!(parse("SHOW BUILTINS"), Ok(Stmt::Admin(admin)) if matches!(&*admin, AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Builtins))
     );
 }
 

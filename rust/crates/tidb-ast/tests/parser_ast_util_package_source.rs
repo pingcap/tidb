@@ -23,7 +23,7 @@
 use tidb_ast::{
     AdminStmt, DeleteKind, DeleteStmt, DmlStmt, ExplainStmt, ExplainTarget, InsertStmt, LockKind,
     LockWait, NodeBox, QueryStmt, SelectFieldList, SelectLock, SelectStatementKind, SelectStmt,
-    SetOp, SetOprStmt, SetOprTerm, SetOprTermBody, ShowTablesStmt, StatementPriority, Stmt,
+    SetOp, SetOprStmt, SetOprTerm, SetOprTermBody, StatementPriority, Stmt,
     TableRef, TraceStmt, UpdateKind, UpdateStmt,
 };
 
@@ -144,13 +144,7 @@ fn do_stmt() -> Stmt {
 }
 
 fn show_stmt() -> Stmt {
-    Stmt::Admin(NodeBox::new(AdminStmt::ShowTables(Box::new(
-        ShowTablesStmt {
-            full: false,
-            database: None,
-            filter: None,
-        },
-    ))))
+    Stmt::Admin(NodeBox::new(AdminStmt::Show(Box::new(tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::Tables)))))
 }
 
 fn trace(inner: Stmt) -> Stmt {

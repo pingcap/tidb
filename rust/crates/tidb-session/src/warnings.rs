@@ -21,7 +21,7 @@
 
 use std::borrow::Cow;
 
-use tidb_ast::{AdminStmt, ShowInspectionKind, Stmt};
+use tidb_ast::{AdminStmt, Stmt};
 use tidb_datatype::{Datum, FieldType};
 
 use crate::{DriverError, Session, StmtOutput};
@@ -106,18 +106,18 @@ impl WarningLevel {
 /// `ShowWarnings`, `ShowErrors`, and `ShowSessionStates` copies the outgoing
 /// context's entries into it (`pkg/executor/select.go`, `case *ast.ShowStmt`).
 /// This mirrors that set. `SHOW COUNT(*) WARNINGS` parses to `ShowWarnings`
-/// with `count_only`, so it needs no separate spelling.
+/// with `CountWarningsOrErrors`, so it needs no separate spelling.
 pub(crate) fn reports_warnings(stmt: &Stmt) -> bool {
     let Stmt::Admin(admin) = stmt else {
         return false;
     };
     match &**admin {
-        AdminStmt::ShowWarnings(_) | AdminStmt::ShowErrors(_) => true,
-        // Go lists `ShowSessionStates` beside the other two. `SHOW
-        // SESSION_STATES` is refused by `show.rs` today, so this arm is
-        // source fidelity rather than reachable behaviour; it stays here so
-        // admitting the statement later does not silently drop the buffer.
-        AdminStmt::ShowInspection(show) => show.kind == ShowInspectionKind::SessionStates,
+        AdminStmt::Show(show) => matches!(
+            show.tp,
+            tidb_ast::ShowStmtType::Warnings
+                | tidb_ast::ShowStmtType::Errors
+                | tidb_ast::ShowStmtType::SessionStates
+        ),
         _ => false,
     }
 }

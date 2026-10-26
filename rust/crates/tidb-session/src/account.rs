@@ -2215,7 +2215,7 @@ impl Session {
     /// role).
     pub(crate) fn show_grants_stmt(
         &mut self,
-        show: &tidb_ast::ShowGrantsStmt,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
         let is_own = match &show.user {
             None => true,

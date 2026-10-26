@@ -3842,7 +3842,11 @@ fn show(is_stats_meta: bool) -> LogicalShow {
     LogicalShow::new(
         BaseLogicalPlan::with_id(1, LogicalShow::TYPE, 0),
         ShowContents {
-            is_stats_meta,
+            tp: if is_stats_meta {
+                tidb_ast::ShowStmtType::StatsMeta
+            } else {
+                tidb_ast::ShowStmtType::None
+            },
             ..ShowContents::default()
         },
     )

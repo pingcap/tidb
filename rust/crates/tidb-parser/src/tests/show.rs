@@ -41,11 +41,12 @@ fn show_open_tables_restores_complete_source_shape() {
     else {
         panic!("expected administrative statement");
     };
-    let tidb_ast::AdminStmt::ShowOpenTables(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected typed SHOW OPEN TABLES statement");
     };
-    assert_eq!(show.database.as_deref(), Some("executor__show"));
-    assert!(show.filter.is_none());
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::OpenTables);
+    assert_eq!(show.db_name, "executor__show");
+    assert!(show.pattern.is_none() && show.r#where.is_none());
 
     assert!(parse("show open").is_err());
 }
@@ -99,12 +100,13 @@ fn show_variables() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowVariables(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected ShowVariables");
     };
-    assert!(show.global);
-    assert!(show.like.is_none());
-    assert!(show.where_clause.is_some());
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Variables);
+    assert!(show.global_scope);
+    assert!(show.pattern.is_none());
+    assert!(show.r#where.is_some());
 
     for sql in [
         "show variables where",
@@ -140,14 +142,12 @@ fn show_status_preserves_scope_and_filters() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowStatus(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected typed ShowStatus");
     };
-    assert!(show.global);
-    assert!(matches!(
-        &show.filter,
-        Some(tidb_ast::ShowStatusFilter::Where(_))
-    ));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Status);
+    assert!(show.global_scope);
+    assert!(show.r#where.is_some());
 
     for sql in [
         "show status like",
@@ -192,7 +192,8 @@ fn show_warnings_restore_and_scope() {
     };
     assert!(matches!(
         admin.as_ref(),
-        tidb_ast::AdminStmt::ShowErrors(show) if show.count_only
+        tidb_ast::AdminStmt::Show(show)
+            if show.tp == tidb_ast::ShowStmtType::Errors && show.count_warnings_or_errors
     ));
     let warnings = parse("show count(*) warnings").expect("SHOW COUNT(*) WARNINGS parses");
     let tidb_ast::Stmt::Admin(admin) = warnings else {
@@ -200,7 +201,8 @@ fn show_warnings_restore_and_scope() {
     };
     assert!(matches!(
         admin.as_ref(),
-        tidb_ast::AdminStmt::ShowWarnings(show) if show.count_only
+        tidb_ast::AdminStmt::Show(show)
+            if show.tp == tidb_ast::ShowStmtType::Warnings && show.count_warnings_or_errors
     ));
 }
 
@@ -249,13 +251,11 @@ fn show_stats_topn_preserves_its_own_filter_payload() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowStatsTopN(topn) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(topn) = admin.as_ref() else {
         panic!("expected typed ShowStatsTopN");
     };
-    assert!(matches!(
-        &topn.filter,
-        Some(tidb_ast::ShowStatsTopNFilter::Where(_))
-    ));
+    assert_eq!(topn.tp, tidb_ast::ShowStmtType::StatsTopN);
+    assert!(topn.r#where.is_some());
 
     for sql in [
         "show stats_topn where",
@@ -283,13 +283,11 @@ fn show_databases_restore_and_scope() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowDatabases(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected typed ShowDatabases");
     };
-    assert!(matches!(
-        &show.filter,
-        Some(tidb_ast::ShowDatabasesFilter::Where(_))
-    ));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Databases);
+    assert!(show.r#where.is_some());
     assert!(parse("show database").is_err());
 }
 
@@ -333,14 +331,12 @@ fn show_table_status_preserves_its_distinct_go_payload() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowTableStatus(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected typed ShowTableStatus");
     };
-    assert_eq!(show.database.as_deref(), Some("test"));
-    assert!(matches!(
-        &show.filter,
-        Some(tidb_ast::ShowTableStatusFilter::Like(_))
-    ));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::TableStatus);
+    assert_eq!(show.db_name, "test");
+    assert!(show.pattern.is_some());
 
     assert_eq!(r("show table status from"), "SHOW TABLE STATUS");
     for sql in [
@@ -414,25 +410,24 @@ fn show_columns_restore_and_scope() {
     let tidb_ast::Stmt::Admin(admin) = stmt else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowColumns(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected ShowColumns");
     };
-    assert_eq!(show.table, vec!["t".to_string()]);
-    assert!(matches!(
-        &show.filter,
-        Some(tidb_ast::ShowColumnsFilter::Where(_))
-    ));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Columns);
+    assert_eq!(show.table, Some(vec!["t".to_string()]));
+    assert!(show.r#where.is_some());
 
     let stmt = parse("show columns from t from test")
         .expect("SHOW COLUMNS with a separate database parses");
     let tidb_ast::Stmt::Admin(admin) = stmt else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowColumns(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected ShowColumns");
     };
-    assert_eq!(show.table, vec!["t".to_string()]);
-    assert_eq!(show.database.as_deref(), Some("test"));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Columns);
+    assert_eq!(show.table, Some(vec!["t".to_string()]));
+    assert_eq!(show.db_name, "test");
 
     assert!(parse("show columns t").is_err());
 }
@@ -465,14 +460,12 @@ fn show_index_restore_and_scope() {
     let tidb_ast::Stmt::Admin(admin) = stmt else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowIndex(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected ShowIndex");
     };
-    assert_eq!(show.table, vec!["t".to_string()]);
-    assert!(matches!(
-        &show.filter,
-        Some(tidb_ast::ShowIndexFilter::Where(_))
-    ));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Index);
+    assert_eq!(show.table, Some(vec!["t".to_string()]));
+    assert!(show.r#where.is_some());
 
     assert!(parse("show index t").is_err());
 }
@@ -661,7 +654,7 @@ fn show_builtins_restores_the_source_row() {
     let Stmt::Admin(admin) = statement else {
         panic!("expected administrative statement");
     };
-    assert!(matches!(admin.as_ref(), tidb_ast::AdminStmt::ShowBuiltins));
+    assert!(matches!(admin.as_ref(), tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Builtins));
 }
 
 #[test]
@@ -698,15 +691,13 @@ fn show_tables_keeps_full_and_filter_typed() {
     let Stmt::Admin(admin) = statement else {
         panic!("expected administrative statement");
     };
-    let tidb_ast::AdminStmt::ShowTables(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected typed SHOW TABLES");
     };
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Tables);
     assert!(show.full);
-    assert_eq!(show.database.as_deref(), Some("demo"));
-    assert!(matches!(
-        show.filter,
-        Some(tidb_ast::ShowTablesFilter::Where(_))
-    ));
+    assert_eq!(show.db_name, "demo");
+    assert!(show.r#where.is_some());
 }
 
 #[test]
@@ -745,13 +736,11 @@ fn show_character_set_preserves_filter_payload() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowCharset(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected typed SHOW CHARSET");
     };
-    assert!(matches!(
-        &show.filter,
-        Some(tidb_ast::ShowCharsetFilter::Where(_))
-    ));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Charset);
+    assert!(show.r#where.is_some());
 
     for sql in [
         "show character set like",
@@ -784,13 +773,11 @@ fn show_engines_preserves_the_shared_filter_payload() {
     let tidb_ast::Stmt::Admin(admin) = statement else {
         panic!("expected Admin envelope");
     };
-    let tidb_ast::AdminStmt::ShowEngines(show) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(show) = admin.as_ref() else {
         panic!("expected typed SHOW ENGINES");
     };
-    assert!(matches!(
-        &show.filter,
-        Some(tidb_ast::ShowEnginesFilter::Where(_))
-    ));
+    assert_eq!(show.tp, tidb_ast::ShowStmtType::Engines);
+    assert!(show.r#where.is_some());
 
     for sql in [
         "show engines like",
@@ -815,7 +802,7 @@ fn show_master_status_and_privileges_have_distinct_typed_leaves() {
     };
     assert!(matches!(
         master.as_ref(),
-        tidb_ast::AdminStmt::ShowMasterStatus
+        tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::MasterStatus
     ));
 
     let privileges = parse("show privileges").expect("SHOW PRIVILEGES parses");
@@ -824,7 +811,7 @@ fn show_master_status_and_privileges_have_distinct_typed_leaves() {
     };
     assert!(matches!(
         privileges.as_ref(),
-        tidb_ast::AdminStmt::ShowPrivileges
+        tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::Privileges
     ));
 }
 
@@ -860,13 +847,11 @@ fn show_stats_buckets_preserves_its_own_filter_payload() {
     else {
         panic!("expected SHOW administrative envelope");
     };
-    let tidb_ast::AdminStmt::ShowStatsBuckets(buckets) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(buckets) = admin.as_ref() else {
         panic!("expected typed SHOW STATS_BUCKETS");
     };
-    assert!(matches!(
-        &buckets.filter,
-        Some(tidb_ast::ShowStatsBucketsFilter::Where(_))
-    ));
+    assert_eq!(buckets.tp, tidb_ast::ShowStmtType::StatsBuckets);
+    assert!(buckets.r#where.is_some());
     for sql in [
         "show stats_buckets like",
         "show stats_buckets where",
@@ -904,13 +889,11 @@ fn show_stats_locked_preserves_shared_show_filters() {
     else {
         panic!("expected SHOW administrative envelope");
     };
-    let tidb_ast::AdminStmt::ShowStatsLocked(locked) = admin.as_ref() else {
+    let tidb_ast::AdminStmt::Show(locked) = admin.as_ref() else {
         panic!("expected typed SHOW STATS_LOCKED");
     };
-    assert!(matches!(
-        &locked.filter,
-        Some(tidb_ast::ShowStatsLockedFilter::Where(_))
-    ));
+    assert_eq!(locked.tp, tidb_ast::ShowStmtType::StatsLocked);
+    assert!(locked.r#where.is_some());
 
     for sql in [
         "show stats_locked like",

@@ -82,7 +82,7 @@ impl Session {
             {
                 Some(statement)
             }
-            tidb_ast::Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::ShowInspection(show) if show.kind == tidb_ast::ShowInspectionKind::SessionStates) => {
+            tidb_ast::Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::SessionStates) => {
                 Some(statement)
             }
             _ => None,
@@ -522,5 +522,5 @@ fn columns() -> Vec<(String, FieldType)> {
 }
 
 pub(crate) fn prepared_columns(statement: &tidb_ast::Stmt) -> Option<Vec<(String, FieldType)>> {
-    matches!(statement, tidb_ast::Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::ShowInspection(show) if show.kind == tidb_ast::ShowInspectionKind::SessionStates)).then(columns)
+    matches!(statement, tidb_ast::Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::SessionStates)).then(columns)
 }

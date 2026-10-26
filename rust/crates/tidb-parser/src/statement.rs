@@ -557,11 +557,11 @@ impl Parser {
                 SessionStmt::Deallocate(self.parse_name_or_keyword()?),
             )))
         } else if self.is_kw("SHOW") && self.is_kw_at(1, "CREATE") && self.is_kw_at(2, "USER") {
-            Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-                AdminStmt::ShowCreateUser(crate::user::parse_show_create_user(self)?),
-            )))
+            let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::CreateUser);
+            show.user = Some(crate::user::parse_show_create_user(self)?);
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Show(Box::new(show)))))
         } else if self.is_kw("SHOW") && self.ident_like_literal_is_at(1, "GRANTS") {
-            Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::ShowGrants(
+            Ok(Stmt::Admin(tidb_ast::NodeBox::new(AdminStmt::Show(
                 Box::new(self.parse_show_grants()?),
             ))))
         } else if self.is_kw("SHOW")
@@ -570,7 +570,7 @@ impl Parser {
                     && self.token_literal_is_at(2, "BINDINGS")))
         {
             Ok(Stmt::Admin(tidb_ast::NodeBox::new(
-                AdminStmt::ShowBindings(Box::new(self.parse_show_bindings()?)),
+                AdminStmt::Show(Box::new(self.parse_show_bindings()?)),
             )))
         } else if self.is_kw("SHOW")
             && (self.ident_like_literal_is_at(1, "BR")

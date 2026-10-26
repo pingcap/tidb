@@ -21,12 +21,6 @@
 //!
 //! # Narrowings, by name
 //!
-//! * `ShowContents.Tp ast.ShowStmtType`. `pkg/parser/ast`'s show-statement
-//!   enumeration is not transcreated. Exactly ONE of its values is a decision in
-//!   this file — `ast.ShowStatsMeta`, which gates the whole predicate
-//!   extraction — so [`ShowContents::is_stats_meta`] carries that bit and the
-//!   rest of the statement kind stays with the caller as
-//!   [`ShowContents::show_type`], an opaque tag.
 //! * `Table *resolve.TableNameW`, `Column *ast.ColumnName`, `Limit *ast.Limit`,
 //!   `User *auth.UserIdentity`, `Roles []*auth.RoleIdentity`. All are AST or
 //!   resolver handles that no body in this file reads; they are carried as
@@ -68,11 +62,8 @@ pub struct ShowStatsMetaPredicateExtractor {
 /// Go `logicalop.ShowContents` (`logical_show.go:79`).
 #[derive(Clone, Debug, Default)]
 pub struct ShowContents {
-    /// Go `Tp`, as an opaque tag; see this module's header.
-    pub show_type: i64,
-    /// Whether `Tp == ast.ShowStatsMeta`, which is the only value this file
-    /// branches on.
-    pub is_stats_meta: bool,
+    /// Go `Tp`.
+    pub tp: tidb_ast::ShowStmtType,
     /// Go `DBName`.
     pub db_name: String,
     /// Go `Table.Name.O`, for `SHOW COLUMNS`.
@@ -110,10 +101,10 @@ pub struct ShowContents {
 }
 
 impl ShowContents {
-    /// Go `p.Tp == ast.ShowStatsMeta`; see this module's header.
+    /// Go `p.Tp == ast.ShowStatsMeta`.
     #[must_use]
-    pub const fn is_stats_meta(&self) -> bool {
-        self.is_stats_meta
+    pub fn is_stats_meta(&self) -> bool {
+        self.tp == tidb_ast::ShowStmtType::StatsMeta
     }
 }
 

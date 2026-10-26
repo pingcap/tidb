@@ -19,7 +19,7 @@
 
 use tidb_ast::{
     BindingScope, CreateBindingSource, CreateBindingStmt, DropBindingStmt, DropBindingTarget,
-    ShowBindingsStmt, Stmt,
+    Stmt,
 };
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
@@ -651,7 +651,7 @@ impl Session {
 
     pub(crate) fn show_bindings_stmt(
         &mut self,
-        show: &ShowBindingsStmt,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
         let text = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let columns = [
@@ -671,7 +671,7 @@ impl Session {
         .map(|name| (name.to_owned(), text()))
         .collect();
         let global;
-        let listed = if show.scope == BindingScope::Global {
+        let listed = if show.global_scope {
             global = self.load_global_bindings()?;
             global.all_sorted()
         } else {

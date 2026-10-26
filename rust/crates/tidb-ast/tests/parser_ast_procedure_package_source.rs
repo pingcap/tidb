@@ -247,12 +247,10 @@ fn procedure_visitor_cover() {
 /// `pkg/parser/ast/procedure_test.go::TestShowCreateProcedure`.
 #[test]
 fn show_create_procedure() {
-    // SHOW CREATE PROCEDURE proc_2 rides on the typed SHOW CREATE payload.
-    let show = Stmt::Admin(NodeBox::new(AdminStmt::ShowCreate {
-        kind: tidb_ast::ShowCreateKind::Procedure,
-        if_not_exists: false,
-        name: vec!["proc_2".to_string()],
-    }));
+    // Go: `ShowStmt{Tp: ShowCreateProcedure, Procedure: proc_2}`.
+    let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::CreateProcedure);
+    show.procedure = Some(vec!["proc_2".to_string()]);
+    let show = Stmt::Admin(NodeBox::new(AdminStmt::Show(Box::new(show))));
     assert_eq!(show.restore(), "SHOW CREATE PROCEDURE `proc_2`");
 
     // DROP PROCEDURE proc_2 has its own dedicated DDL statement type.

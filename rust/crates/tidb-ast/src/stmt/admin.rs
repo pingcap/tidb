@@ -8,12 +8,7 @@ use crate::{
     CalibrateResourceStmt, CreateBindingStmt, CreateStatisticsStmt, DescribeTableStmt,
     DropBindingStmt, DropQueryWatchStmt, ExplainForStmt, ExplainStmt, Expr, FlushStmt, KillStmt,
     RecommendIndexStmt, RefreshStatsStmt, ServerControlStmt, SetBindingStmt, SetConfigStmt,
-    ShowBindingsStmt, ShowCharsetStmt, ShowCollationStmt, ShowColumnsStmt, ShowCreateKind,
-    ShowDatabasesStmt, ShowDistributionJobsStmt, ShowEnginesStmt, ShowErrorsStmt, ShowIndexStmt,
-    ShowInspectionStmt, ShowMaskingPoliciesStmt, ShowOpenTablesStmt, ShowPlacementStmt,
-    ShowProfileStmt, ShowStatsBucketsStmt, ShowStatsHistogramsStmt, ShowStatsLockedStmt,
-    ShowStatsTopNStmt, ShowStatusStmt, ShowTableNextRowIdStmt, ShowTablePlacementStmt,
-    ShowTableStatusStmt, ShowTablesStmt, ShowVariablesStmt, ShowWarningsStmt, SplitRegionStmt,
+    SplitRegionStmt,
     StatsLockStmt, Stmt, TrafficStmt, UserSpec,
 };
 
@@ -45,15 +40,13 @@ pub use ddl_job_control::{AdminDdlJobControlKind, AdminDdlJobControlStmt};
 pub use flush_plan_cache::AdminPlanCacheScope;
 pub use grant::{
     GrantLevel, GrantObjectType, GrantPrivilege, GrantProxyStmt, GrantStmt, RevokeStmt,
-    ShowGrantsStmt,
-};
+    };
 pub use plan_replayer::{PlanReplayerStmt, PlanReplayerTarget};
 pub use role_grant::{GrantRoleStmt, RevokeRoleStmt};
 pub use show::{
     AdminBindingControlKind, AdminReloadKind, AdminShowDdlJobQueriesStmt, AdminShowDdlJobsStmt,
     AdminShowNextRowIdStmt, AdminShowSlowMode, AdminShowSlowStmt, AdminShowSlowTopScope,
-    ShowImportGroupsStmt, ShowImportJobsStmt,
-};
+    };
 pub use stats::{DropStatsStmt, LoadStatsStmt};
 
 /// Administrative, inspection, and diagnostics statements behind
@@ -83,24 +76,6 @@ pub enum AdminStmt {
     Revoke(Box<RevokeStmt>),
     /// `REVOKE role [, ...] FROM user [, ...]`.
     RevokeRole(Box<RevokeRoleStmt>),
-    /// `SHOW GRANTS [FOR user [USING role, ...]]`.
-    ShowGrants(Box<ShowGrantsStmt>),
-    /// `SHOW MASTER STATUS`.
-    ///
-    /// The result is sourced from the server's binlog position and GTID
-    /// state, which remains an executor boundary in this seed.
-    ShowMasterStatus,
-    /// `SHOW PRIVILEGES`.
-    ///
-    /// The result depends on TiDB's privilege registry and compatibility
-    /// rules, so parsing is kept distinct while execution remains explicit.
-    ShowPrivileges,
-    /// `SHOW BUILTINS`.
-    ///
-    /// Builtin-function metadata is owned by the parser/executor registry,
-    /// which remains outside this seed. Keep this as a distinct Go SHOW kind
-    /// so it cannot be confused with privilege or table inspection.
-    ShowBuiltins,
     /// Backup, restore, and BR job commands.
     Brie(Box<BrieStmt>),
     /// `TRACE ... statement`.
@@ -131,10 +106,6 @@ pub enum AdminStmt {
     DropQueryWatch(Box<DropQueryWatchStmt>),
     /// `CANCEL IMPORT JOB id`.
     CancelImportJob(i64),
-    /// `SHOW [RAW] IMPORT JOB[S] [id | WHERE expression]`.
-    ShowImportJobs(Box<ShowImportJobsStmt>),
-    /// `SHOW IMPORT GROUP[S] ['group-key' | WHERE expression]`.
-    ShowImportGroups(Box<ShowImportGroupsStmt>),
     /// `FLUSH STATUS`, `FLUSH PRIVILEGES`, or
     /// `FLUSH TABLE[S] [table [, ...]] [WITH READ LOCK]`.
     ///
@@ -188,123 +159,15 @@ pub enum AdminStmt {
     AlterDdlJobs(Box<AdminAlterDdlJobsStmt>),
     /// `ADMIN SHOW table NEXT_ROW_ID`.
     ShowNextRowId(Box<AdminShowNextRowIdStmt>),
-    /// `SHOW CREATE {TABLE | VIEW | SEQUENCE | DATABASE} name`.
-    ShowCreate {
-        /// The object kind whose definition is requested.
-        kind: ShowCreateKind,
-        /// Whether `IF NOT EXISTS` was written for a database.
-        if_not_exists: bool,
-        /// The object's name path.
-        name: Vec<String>,
-    },
-    /// `SHOW CREATE USER user[@host]` or `SHOW CREATE USER CURRENT_USER`.
-    ///
-    /// Go stores this target as an account identity rather than a table name,
-    /// so it stays separate from the other `SHOW CREATE` object kinds.
-    ShowCreateUser(UserSpec),
     /// Go `ast.ShowStmt`: every SHOW kind the parser has moved onto Go's
     /// one-node shape.
     Show(Box<crate::ShowStmt>),
-    /// `SHOW [SESSION | GLOBAL] VARIABLES [LIKE <expr> | WHERE <expr>]`.
-    ShowVariables(Box<ShowVariablesStmt>),
-    /// `SHOW [GLOBAL | SESSION] STATUS [LIKE <expr> | WHERE <expr>]`.
-    ///
-    /// Status variables have an independent Go AST kind and session/global
-    /// scope semantics, so they are not collapsed into `SHOW VARIABLES`.
-    ShowStatus(Box<ShowStatusStmt>),
-    /// `SHOW WARNINGS [LIKE <expr> | WHERE <expr>]`.
-    ShowWarnings(Box<ShowWarningsStmt>),
-    /// `SHOW [COUNT(*)] ERRORS [LIKE <expr> | WHERE <expr>]`.
-    ShowErrors(Box<ShowErrorsStmt>),
-    /// `SHOW COLLATION [LIKE <expr> | WHERE <expr>]`.
-    ///
-    /// The catalog is not represented by the seed executor, but the filter
-    /// grammar is kept separate from `SHOW WARNINGS`: Go owns distinct AST
-    /// statement types and the result schemas are unrelated.
-    ShowCollation(Box<ShowCollationStmt>),
-    /// `SHOW ENGINES [LIKE <expr> | WHERE <expr>]`.
-    ///
-    /// The result depends on the server's storage-engine registry, which
-    /// remains an executor boundary in this seed.
-    ShowEngines(Box<ShowEnginesStmt>),
-    /// `SHOW CHARACTER SET` / `SHOW CHARSET` [LIKE <expr> | WHERE <expr>].
-    ///
-    /// Go restores all three spellings (`CHARACTER SET`, `CHAR SET`, and
-    /// `CHARSET`) to canonical `SHOW CHARSET` and carries the shared
-    /// LIKE/WHERE filter payload.
-    ShowCharset(Box<ShowCharsetStmt>),
-    /// `SHOW STATS_HISTOGRAMS [LIKE <simple expression> | WHERE <expression>]`.
-    ///
-    /// TiDB's histogram rows need statistics metadata at execution, but the
-    /// shared Go SHOW filter grammar is still source-visible parser state.
-    ShowStatsHistograms(Box<ShowStatsHistogramsStmt>),
-    /// `SHOW STATS_BUCKETS [LIKE <simple expression> | WHERE <expression>]`.
-    ///
-    /// Its histogram-bucket result rows remain distinct from the sibling
-    /// statistics SHOW payloads and are not synthesized by this seed.
-    ShowStatsBuckets(Box<ShowStatsBucketsStmt>),
-    /// `SHOW STATS_LOCKED [LIKE <simple expression> | WHERE <expression>]`.
-    ///
-    /// Go maps this to `mysql.stats_table_locked`, whose lock metadata and
-    /// privilege filtering remain an execution boundary.
-    ShowStatsLocked(Box<ShowStatsLockedStmt>),
-    /// `SHOW STATS_TOPN [LIKE <simple expression> | WHERE <expression>]`.
-    ///
-    /// Go gives TopN statistics its own SHOW type and result layout, so it is
-    /// distinct from STATS_HISTOGRAMS and STATS_BUCKETS.
-    ShowStatsTopN(Box<ShowStatsTopNStmt>),
-    /// `SHOW DATABASES [LIKE <simple expression> | WHERE <expression>]`.
-    ///
-    /// The result depends on TiDB's schema visibility and privilege model,
-    /// which remains an executor boundary. The filter is nevertheless a
-    /// typed parser/restore payload rather than discarded trailing SQL.
-    ShowDatabases(Box<ShowDatabasesStmt>),
-    /// `SHOW TABLES [LIKE <simple expression>]`.
-    ///
-    /// The full Go grammar additionally carries `FULL`, a schema scope, and
-    /// a `WHERE` predicate. Those need their own typed contract and remain
-    /// intentionally outside this narrow parser/restore slice.
-    ShowTables(Box<ShowTablesStmt>),
-    /// `SHOW OPEN TABLES [IN | FROM schema]`.
-    ///
-    /// Go assigns this an independent statement kind and metadata result
-    /// shape, so it is not folded into plural `SHOW TABLES`.
-    ShowOpenTables(Box<ShowOpenTablesStmt>),
-    /// `SHOW TABLE STATUS [FROM | IN database] [LIKE <expr> | WHERE <expr>]`.
-    ///
-    /// It has a distinct Go AST kind and information-schema result layout, so
-    /// it remains separate from both plural `SHOW TABLES` and singular
-    /// `SHOW TABLE name NEXT_ROW_ID`.
-    ShowTableStatus(Box<ShowTableStatusStmt>),
-    /// `SHOW TABLE name NEXT_ROW_ID`.
-    ShowTableNextRowId(Box<ShowTableNextRowIdStmt>),
-    /// `SHOW COLUMNS {FROM | IN} table [LIKE <expr> | WHERE <expr>]`.
-    ShowColumns(Box<ShowColumnsStmt>),
-    /// `SHOW {INDEX | INDEXES | KEYS} {FROM | IN} table [LIKE <expr> | WHERE <expr>]`.
-    ///
-    /// This retains the parser/restore contract only. The seed executor has
-    /// no index metadata catalog and rejects execution explicitly.
-    ShowIndex(Box<ShowIndexStmt>),
-    /// Ordinary SHOW targets sharing TiDB's common filter payload.
-    ShowInspection(Box<ShowInspectionStmt>),
-    /// `SHOW DISTRIBUTION JOB[S]`.
-    ShowDistributionJobs(Box<ShowDistributionJobsStmt>),
-    /// `SHOW TABLE ... REGIONS|DISTRIBUTIONS`.
-    ShowTablePlacement(Box<ShowTablePlacementStmt>),
-    /// `SHOW PLACEMENT ...`.
-    ShowPlacement(Box<ShowPlacementStmt>),
-    /// `SHOW PROFILE ...`.
-    ShowProfile(Box<ShowProfileStmt>),
-    /// `SHOW MASKING POLICIES FOR ...`.
-    ShowMaskingPolicies(Box<ShowMaskingPoliciesStmt>),
     /// A SQL binding definition.
     CreateBinding(Box<CreateBindingStmt>),
     /// A SQL binding removal.
     DropBinding(Box<DropBindingStmt>),
     /// A SQL binding enable/disable command.
     SetBinding(Box<SetBindingStmt>),
-    /// A SQL binding listing command.
-    ShowBindings(Box<ShowBindingsStmt>),
     /// `ANALYZE TABLE`.
     AnalyzeTable(Box<AnalyzeTableStmt>),
     /// `ANALYZE INCREMENTAL TABLE`.
@@ -379,7 +242,6 @@ impl AdminStmt {
             Self::Revoke(revoke) => revoke.restore_into(out),
             Self::RevokeRole(revoke) => revoke.restore_into(out),
             Self::Show(show) => show.restore_into(out),
-            Self::ShowGrants(show) => show.restore_into(out),
             Self::Flush(flush) => flush.restore_into(out),
             Self::FlushPlanCache(scope) => scope.restore_into(out),
             Self::Do(exprs) => {
@@ -411,35 +273,6 @@ impl AdminStmt {
             Self::DdlJobControl(control) => control.restore_into(out),
             Self::AlterDdlJobs(alter) => alter.restore_into(out),
             Self::ShowNextRowId(show) => show.restore_into(out),
-            Self::ShowTableNextRowId(show) => show.restore_into(out),
-            Self::ShowCreate {
-                kind,
-                if_not_exists,
-                name,
-            } => {
-                out.push_str("SHOW CREATE ");
-                out.push_str(match kind {
-                    ShowCreateKind::Table => "TABLE ",
-                    ShowCreateKind::View => "VIEW ",
-                    ShowCreateKind::Sequence => "SEQUENCE ",
-                    ShowCreateKind::Database => "DATABASE ",
-                    ShowCreateKind::Procedure => "PROCEDURE ",
-                    ShowCreateKind::PlacementPolicy => "PLACEMENT POLICY ",
-                    ShowCreateKind::ResourceGroup => "RESOURCE GROUP ",
-                    ShowCreateKind::Import => "IMPORT ",
-                });
-                if *if_not_exists {
-                    out.push_str("IF NOT EXISTS ");
-                }
-                push_name_path(out, name);
-            }
-            Self::ShowCreateUser(user) => {
-                out.push_str("SHOW CREATE USER ");
-                user.restore_into(out);
-            }
-            Self::ShowMasterStatus => out.push_str("SHOW MASTER STATUS"),
-            Self::ShowPrivileges => out.push_str("SHOW PRIVILEGES"),
-            Self::ShowBuiltins => out.push_str("SHOW BUILTINS"),
             Self::Brie(brie) => brie.restore_into(out),
             Self::Trace(statement) => statement.restore_into(out),
             Self::ExplainFor(statement) => statement.restore_into(out),
@@ -464,35 +297,9 @@ impl AdminStmt {
                 out.push_str("CANCEL IMPORT JOB ");
                 out.push_str(&job_id.to_string());
             }
-            Self::ShowImportJobs(show) => show.restore_into(out),
-            Self::ShowImportGroups(show) => show.restore_into(out),
-            Self::ShowVariables(show) => show.restore_into(out),
-            Self::ShowStatus(show) => show.restore_into(out),
-            Self::ShowWarnings(show) => show.restore_into(out),
-            Self::ShowErrors(show) => show.restore_into(out),
-            Self::ShowCollation(show) => show.restore_into(out),
-            Self::ShowEngines(show) => show.restore_into(out),
-            Self::ShowCharset(show) => show.restore_into(out),
-            Self::ShowStatsHistograms(show) => show.restore_into(out),
-            Self::ShowStatsBuckets(show) => show.restore_into(out),
-            Self::ShowStatsLocked(show) => show.restore_into(out),
-            Self::ShowStatsTopN(show) => show.restore_into(out),
-            Self::ShowDatabases(show) => show.restore_into(out),
-            Self::ShowTables(show) => show.restore_into(out),
-            Self::ShowOpenTables(show) => show.restore_into(out),
-            Self::ShowTableStatus(show) => show.restore_into(out),
-            Self::ShowColumns(show) => show.restore_into(out),
-            Self::ShowIndex(show) => show.restore_into(out),
-            Self::ShowInspection(show) => show.restore_into(out),
-            Self::ShowDistributionJobs(show) => show.restore_into(out),
-            Self::ShowTablePlacement(show) => show.restore_into(out),
-            Self::ShowPlacement(show) => show.restore_into(out),
-            Self::ShowProfile(show) => show.restore_into(out),
-            Self::ShowMaskingPolicies(show) => show.restore_into(out),
             Self::CreateBinding(binding) => binding.restore_into(out),
             Self::DropBinding(binding) => binding.restore_into(out),
             Self::SetBinding(binding) => binding.restore_into(out),
-            Self::ShowBindings(show) => show.restore_into(out),
             Self::AnalyzeTable(analyze) => analyze.restore_into(out),
             Self::AnalyzeIncremental(analyze) => analyze.restore_into(out),
             Self::Traffic(traffic) => traffic.restore_into(out),
@@ -587,15 +394,6 @@ impl crate::Visitable for AdminStmt {
                 }
                 let _ = field_0;
             }
-            Self::ShowGrants(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowMasterStatus => {}
-            Self::ShowPrivileges => {}
-            Self::ShowBuiltins => {}
             Self::Brie(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
@@ -677,18 +475,6 @@ impl crate::Visitable for AdminStmt {
             Self::CancelImportJob(field_0) => {
                 let _ = field_0;
             }
-            Self::ShowImportJobs(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowImportGroups(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
             Self::Flush(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
@@ -760,168 +546,6 @@ impl crate::Visitable for AdminStmt {
                 }
                 let _ = field_0;
             }
-            Self::ShowCreate {
-                kind,
-                if_not_exists,
-                name,
-            } => {
-                if !crate::Visitable::accept(kind, visitor) {
-                    return false;
-                }
-                let _ = kind;
-                let _ = if_not_exists;
-                let _ = name;
-            }
-            Self::ShowCreateUser(field_0) => {
-                if !crate::Visitable::accept(field_0, visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowVariables(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowStatus(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowWarnings(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowErrors(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowCollation(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowEngines(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowCharset(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowStatsHistograms(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowStatsBuckets(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowStatsLocked(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowStatsTopN(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowDatabases(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowTables(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowOpenTables(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowTableStatus(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowTableNextRowId(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowColumns(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowIndex(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowInspection(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowDistributionJobs(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowTablePlacement(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowPlacement(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowProfile(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowMaskingPolicies(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
             Self::CreateBinding(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
@@ -935,12 +559,6 @@ impl crate::Visitable for AdminStmt {
                 let _ = field_0;
             }
             Self::SetBinding(field_0) => {
-                if !crate::Visitable::accept(field_0.as_mut(), visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::ShowBindings(field_0) => {
                 if !crate::Visitable::accept(field_0.as_mut(), visitor) {
                     return false;
                 }

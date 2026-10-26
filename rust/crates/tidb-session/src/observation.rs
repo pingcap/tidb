@@ -1758,42 +1758,7 @@ fn records_last_query_info(stmt: &Stmt) -> bool {
         Stmt::Session(session) => matches!(&**session, tidb_ast::SessionStmt::Execute { .. }),
         Stmt::Admin(admin) => match &**admin {
             tidb_ast::AdminStmt::SplitRegion(_) => true,
-            tidb_ast::AdminStmt::ShowInspection(show) => {
-                show.kind != tidb_ast::ShowInspectionKind::SessionStates
-            }
-            // The `ADMIN SHOW ...` forms are Go `AdminStmt`s, not `ShowStmt`s.
-            tidb_ast::AdminStmt::ShowGrants(_)
-            | tidb_ast::AdminStmt::ShowMasterStatus
-            | tidb_ast::AdminStmt::ShowPrivileges
-            | tidb_ast::AdminStmt::ShowBuiltins
-            | tidb_ast::AdminStmt::ShowImportJobs(_)
-            | tidb_ast::AdminStmt::ShowImportGroups(_)
-            | tidb_ast::AdminStmt::ShowCreate { .. }
-            | tidb_ast::AdminStmt::ShowCreateUser(_)
-            | tidb_ast::AdminStmt::ShowVariables(_)
-            | tidb_ast::AdminStmt::ShowStatus(_)
-            | tidb_ast::AdminStmt::ShowWarnings(_)
-            | tidb_ast::AdminStmt::ShowErrors(_)
-            | tidb_ast::AdminStmt::ShowCollation(_)
-            | tidb_ast::AdminStmt::ShowEngines(_)
-            | tidb_ast::AdminStmt::ShowCharset(_)
-            | tidb_ast::AdminStmt::ShowStatsHistograms(_)
-            | tidb_ast::AdminStmt::ShowStatsBuckets(_)
-            | tidb_ast::AdminStmt::ShowStatsLocked(_)
-            | tidb_ast::AdminStmt::ShowStatsTopN(_)
-            | tidb_ast::AdminStmt::ShowDatabases(_)
-            | tidb_ast::AdminStmt::ShowTables(_)
-            | tidb_ast::AdminStmt::ShowOpenTables(_)
-            | tidb_ast::AdminStmt::ShowTableStatus(_)
-            | tidb_ast::AdminStmt::ShowTableNextRowId(_)
-            | tidb_ast::AdminStmt::ShowColumns(_)
-            | tidb_ast::AdminStmt::ShowIndex(_)
-            | tidb_ast::AdminStmt::ShowDistributionJobs(_)
-            | tidb_ast::AdminStmt::ShowTablePlacement(_)
-            | tidb_ast::AdminStmt::ShowPlacement(_)
-            | tidb_ast::AdminStmt::ShowProfile(_)
-            | tidb_ast::AdminStmt::ShowMaskingPolicies(_)
-            | tidb_ast::AdminStmt::ShowBindings(_) => true,
+            tidb_ast::AdminStmt::Show(show) => show.tp != tidb_ast::ShowStmtType::SessionStates,
             _ => false,
         },
         Stmt::Ddl(_) => false,

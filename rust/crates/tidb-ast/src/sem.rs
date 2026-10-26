@@ -17,8 +17,8 @@
 
 use crate::{
     AdminBindingControlKind, AdminCheckStmt, AdminDdlJobControlKind, AdminReloadKind, AdminStmt,
-    BrieKind, DdlStmt, DmlStmt, QueryStmt, ServerControlStmt, SessionStmt, ShowCreateKind,
-    ShowInspectionKind, ShowPlacementTarget, ShowTablePlacementKind, Stmt,
+    BrieKind, DdlStmt, DmlStmt, QueryStmt, ServerControlStmt, SessionStmt,
+    Stmt,
 };
 
 impl Stmt {
@@ -213,10 +213,6 @@ impl AdminStmt {
             Self::GrantRole(_) => "GRANT ROLE",
             Self::Revoke(_) => "REVOKE",
             Self::RevokeRole(_) => "REVOKE ROLE",
-            Self::ShowGrants(_) => "SHOW GRANTS",
-            Self::ShowMasterStatus => "SHOW MASTER STATUS",
-            Self::ShowPrivileges => "SHOW PRIVILEGES",
-            Self::ShowBuiltins => "SHOW BUILTINS",
             Self::Brie(brie) => brie.kind.sem_command(),
             Self::Trace(_) => "TRACE",
             Self::ExplainFor(_) => "EXPLAIN FOR CONNECTION",
@@ -236,8 +232,6 @@ impl AdminStmt {
             Self::AddQueryWatch(_) => "ADD QUERY WATCH",
             Self::DropQueryWatch(_) => "DROP QUERY WATCH",
             Self::CancelImportJob(_) => "CANCEL IMPORT INTO JOB",
-            Self::ShowImportJobs(_) => "SHOW IMPORT JOBS",
-            Self::ShowImportGroups(_) => "SHOW IMPORT GROUPS",
             Self::Flush(_) => "FLUSH",
             Self::FlushPlanCache(_) => "ADMIN FLUSH PLAN_CACHE",
             Self::Do(_) => "DO",
@@ -262,77 +256,9 @@ impl AdminStmt {
             },
             Self::AlterDdlJobs(_) => "ADMIN ALTER DDL JOBS",
             Self::ShowNextRowId(_) => "ADMIN SHOW NEXT_ROW_ID",
-            Self::ShowTableNextRowId(_) => "SHOW TABLE NEXT_ROW_ID",
-            Self::ShowCreate { kind, .. } => match kind {
-                ShowCreateKind::Table => "SHOW CREATE TABLE",
-                ShowCreateKind::View => "SHOW CREATE VIEW",
-                ShowCreateKind::Sequence => "SHOW CREATE SEQUENCE",
-                ShowCreateKind::Database => "SHOW CREATE DATABASE",
-                ShowCreateKind::Procedure => "SHOW CREATE PROCEDURE",
-                ShowCreateKind::PlacementPolicy => "SHOW CREATE PLACEMENT POLICY",
-                ShowCreateKind::ResourceGroup => "SHOW CREATE RESOURCE GROUP",
-                ShowCreateKind::Import => "SHOW CREATE IMPORT",
-            },
-            Self::ShowCreateUser(_) => "SHOW CREATE USER",
-            Self::ShowVariables(_) => "SHOW VARIABLES",
-            Self::ShowStatus(_) => "SHOW STATUS",
-            Self::ShowWarnings(_) => "SHOW WARNINGS",
-            Self::ShowErrors(_) => "SHOW ERRORS",
-            Self::ShowCollation(_) => "SHOW COLLATION",
-            Self::ShowEngines(_) => "SHOW ENGINES",
-            Self::ShowCharset(_) => "SHOW CHARSET",
-            Self::ShowStatsHistograms(_) => "SHOW STATS_HISTOGRAMS",
-            Self::ShowStatsBuckets(_) => "SHOW STATS_BUCKETS",
-            Self::ShowStatsLocked(_) => "SHOW STATS_LOCKED",
-            Self::ShowStatsTopN(_) => "SHOW STATS_TOPN",
-            Self::ShowDatabases(_) => "SHOW DATABASES",
-            Self::ShowTables(_) => "SHOW TABLE",
-            Self::ShowOpenTables(_) => "SHOW OPEN TABLES",
-            Self::ShowTableStatus(_) => "SHOW TABLE STATUS",
-            Self::ShowColumns(_) => "SHOW COLUMNS",
-            Self::ShowIndex(_) => "SHOW INDEX",
-            Self::ShowInspection(show) => match show.kind {
-                ShowInspectionKind::Triggers => "SHOW TRIGGERS",
-                ShowInspectionKind::ProcedureStatus => "SHOW PROCEDURE STATUS",
-                ShowInspectionKind::FunctionStatus => "SHOW FUNCTION STATUS",
-                ShowInspectionKind::Events => "SHOW EVENTS",
-                ShowInspectionKind::Plugins => "SHOW PLUGINS",
-                ShowInspectionKind::StatsExtended => "SHOW STATS_EXTENDED",
-                ShowInspectionKind::StatsMeta => "SHOW STATS_META",
-                ShowInspectionKind::StatsHealthy => "SHOW STATS_HEALTHY",
-                ShowInspectionKind::HistogramsInFlight => "SHOW HISTOGRAMS_IN_FLIGHT",
-                ShowInspectionKind::ColumnStatsUsage => "SHOW COLUMN_STATS_USAGE",
-                ShowInspectionKind::BindingCacheStatus => "SHOW BINDING_CACHE STATUS",
-                ShowInspectionKind::AnalyzeStatus => "SHOW ANALYZE STATUS",
-                ShowInspectionKind::Backups => "SHOW BACKUPS",
-                ShowInspectionKind::Restores => "SHOW RESTORES",
-                ShowInspectionKind::Imports => "SHOW IMPORTS",
-                ShowInspectionKind::Config => "SHOW CONFIG",
-                ShowInspectionKind::ReplicaStatus => "SHOW",
-                ShowInspectionKind::BinaryLogStatus => "SHOW BINARY LOG STATUS",
-                ShowInspectionKind::Profiles => "SHOW PROFILES",
-                ShowInspectionKind::SessionStates => "SHOW SESSION_STATES",
-                ShowInspectionKind::ProcessList => "SHOW PROCESSLIST",
-                ShowInspectionKind::Affinity => "SHOW AFFINITY",
-            },
-            Self::ShowDistributionJobs(_) => "SHOW DISTRIBUTION JOB",
-            Self::ShowTablePlacement(show) => match show.kind {
-                ShowTablePlacementKind::Regions => "SHOW TABLE REGIONS",
-                ShowTablePlacementKind::Distributions => "SHOW DISTRIBUTIONS",
-            },
-            Self::ShowPlacement(show) => match &show.target {
-                ShowPlacementTarget::All => "SHOW PLACEMENT",
-                ShowPlacementTarget::Database(_) => "SHOW PLACEMENT FOR DATABASE",
-                ShowPlacementTarget::Table(_) => "SHOW PLACEMENT FOR TABLE",
-                ShowPlacementTarget::Partition { .. } => "SHOW PLACEMENT FOR PARTITION",
-                ShowPlacementTarget::Labels => "SHOW PLACEMENT LABELS",
-            },
-            Self::ShowProfile(_) => "SHOW PROFILE",
-            Self::ShowMaskingPolicies(_) => "SHOW MASKING POLICIES",
             Self::CreateBinding(_) => "CREATE BINDING",
             Self::DropBinding(_) => "DROP BINDING",
             Self::SetBinding(_) => "SET BINDING",
-            Self::ShowBindings(_) => "SHOW BINDINGS",
             Self::AnalyzeTable(_) | Self::AnalyzeIncremental(_) => "ANALYZE TABLE",
             Self::Traffic(_) => "TRAFFIC",
             Self::RefreshStats(_) => "REFRESH STATS",
@@ -411,12 +337,13 @@ mod tests {
     /// exhaustive, so adding a SHOW kind without a command fails compilation.
     #[test]
     fn show_command_is_total_over_the_closed_ast() {
+        let show = |tp| AdminStmt::Show(Box::new(crate::ShowStmt::new(tp)));
         assert_eq!(
-            AdminStmt::ShowMasterStatus.sem_command(),
+            show(crate::ShowStmtType::MasterStatus).sem_command(),
             "SHOW MASTER STATUS"
         );
-        assert_eq!(AdminStmt::ShowPrivileges.sem_command(), "SHOW PRIVILEGES");
-        assert_eq!(AdminStmt::ShowBuiltins.sem_command(), "SHOW BUILTINS");
+        assert_eq!(show(crate::ShowStmtType::Privileges).sem_command(), "SHOW PRIVILEGES");
+        assert_eq!(show(crate::ShowStmtType::Builtins).sem_command(), "SHOW BUILTINS");
     }
 
     /// Transcreates `TestAdminCommand` from `pkg/parser/ast/sem_test.go`.

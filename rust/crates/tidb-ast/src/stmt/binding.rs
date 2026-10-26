@@ -16,7 +16,7 @@
 //! `pkg/parser/ast/misc.go`.
 
 use crate::util::{back_quote, escape_string_literal};
-use crate::{Expr, Stmt};
+use crate::Stmt;
 
 /// Binding scope. Go's parser treats an omitted scope as `SESSION`, and its
 /// restore code makes that default explicit.
@@ -221,43 +221,6 @@ impl SetBindingStmt {
     }
 }
 
-/// `SHOW [GLOBAL|SESSION] BINDINGS [LIKE expr | WHERE expr]`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShowBindingsStmt {
-    /// Scope requested by the statement; omitted scope restores as `SESSION`.
-    pub scope: BindingScope,
-    /// Optional filtering clause.
-    pub filter: Option<ShowBindingsFilter>,
-}
-
-/// The two mutually exclusive filters shared by TiDB's SHOW binding grammar.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ShowBindingsFilter {
-    /// `LIKE <simple expression>`.
-    Like(Expr),
-    /// `WHERE <expression>`.
-    Where(Expr),
-}
-
-impl ShowBindingsStmt {
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("SHOW ");
-        self.scope.restore_into(out);
-        out.push_str("BINDINGS");
-        match &self.filter {
-            None => {}
-            Some(ShowBindingsFilter::Like(expr)) => {
-                out.push_str(" LIKE ");
-                expr.restore_into(out);
-            }
-            Some(ShowBindingsFilter::Where(expr)) => {
-                out.push_str(" WHERE ");
-                expr.restore_into(out);
-            }
-        }
-    }
-}
-
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
 
 impl crate::Visitable for BindingScope {
@@ -447,46 +410,4 @@ impl crate::Visitable for SetBindingStmt {
     }
 }
 
-impl crate::Visitable for ShowBindingsStmt {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        let Self { scope, filter } = self;
-        if !crate::Visitable::accept(scope, visitor) {
-            return false;
-        }
-        if let Some(value) = filter.as_mut() {
-            if !crate::Visitable::accept(value, visitor) {
-                return false;
-            }
-        }
-        let _ = scope;
-        let _ = filter;
-        visitor.leave(self)
-    }
-}
-
-impl crate::Visitable for ShowBindingsFilter {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        match self {
-            Self::Like(field_0) => {
-                if !crate::Visitable::accept(field_0, visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-            Self::Where(field_0) => {
-                if !crate::Visitable::accept(field_0, visitor) {
-                    return false;
-                }
-                let _ = field_0;
-            }
-        }
-        visitor.leave(self)
-    }
-}
 // END GENERATED AST VISITOR IMPLEMENTATIONS

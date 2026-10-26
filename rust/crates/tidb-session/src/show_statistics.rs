@@ -24,16 +24,9 @@ impl Session {
     /// partition ID, and column in infoschema order.
     pub(super) fn column_stats_usage_stmt(
         &mut self,
-        filter: Option<&tidb_ast::ShowInspectionFilter>,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match filter {
-            None => (None, None),
-            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         let usage = match self.column_stats_usage.clone() {
             Some(provider) => provider
                 .load_column_stats_usage(&self.session_time_zone(), &self.active_resource_group)
@@ -117,16 +110,9 @@ impl Session {
     /// and calculate progress only for running non-global-merge jobs.
     pub(super) fn analyze_status_stmt(
         &mut self,
-        filter: Option<&tidb_ast::ShowInspectionFilter>,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match filter {
-            None => (None, None),
-            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         let result_rows = self.analyze_status_rows()?;
         let varchar = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let datetime = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Datetime);
@@ -188,16 +174,9 @@ impl Session {
     /// `appendTableForStatsMeta` makes on `IsAnalyzed()`.
     pub(super) fn stats_meta_stmt(
         &mut self,
-        filter: Option<&tidb_ast::ShowInspectionFilter>,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match filter {
-            None => (None, None),
-            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         // Go renders through `oracle.GetTimeFromTS`, which builds the
         // `time.Time` in the process's LOCAL zone -- not the session zone --
         // so both servers on one host render identical strings.
@@ -285,16 +264,9 @@ impl Session {
     /// emit in ascending physical-ID order.
     pub(super) fn stats_locked_stmt(
         &mut self,
-        show: &tidb_ast::ShowStatsLockedStmt,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match show.filter.as_ref() {
-            None => (None, None),
-            Some(tidb_ast::ShowStatsLockedFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowStatsLockedFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -365,16 +337,9 @@ impl Session {
     /// non-pseudo physical statistics object visible under this prune mode.
     pub(super) fn stats_healthy_stmt(
         &mut self,
-        filter: Option<&tidb_ast::ShowInspectionFilter>,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match filter {
-            None => (None, None),
-            Some(tidb_ast::ShowInspectionFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowInspectionFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -450,16 +415,9 @@ impl Session {
     /// statistics cache traversal.
     pub(super) fn stats_histograms_stmt(
         &mut self,
-        show: &tidb_ast::ShowStatsHistogramsStmt,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match show.filter.as_ref() {
-            None => (None, None),
-            Some(tidb_ast::ShowStatsHistogramsFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowStatsHistogramsFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -606,16 +564,9 @@ impl Session {
     /// through the session-aware statistics value decoder.
     pub(super) fn stats_topn_stmt(
         &mut self,
-        show: &tidb_ast::ShowStatsTopNStmt,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match show.filter.as_ref() {
-            None => (None, None),
-            Some(tidb_ast::ShowStatsTopNFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowStatsTopNFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)
@@ -762,16 +713,9 @@ impl Session {
     /// histogram buckets in stable column/index ID order.
     pub(super) fn stats_buckets_stmt(
         &mut self,
-        show: &tidb_ast::ShowStatsBucketsStmt,
+        show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let (like_pattern, where_clause) = match show.filter.as_ref() {
-            None => (None, None),
-            Some(tidb_ast::ShowStatsBucketsFilter::Like(expr)) => {
-                let value = datum_text(&self.eval_value(expr)?);
-                (Some(ShowLikePattern::from_expr(expr, value, true)), None)
-            }
-            Some(tidb_ast::ShowStatsBucketsFilter::Where(expr)) => (None, Some(expr)),
-        };
+        let (like_pattern, where_clause) = self.show_like_or_where(show, true)?;
         let dynamic_partition_prune = !self
             .vars
             .get_system(tidb_vardef::tidb_vars::TIDB_PARTITION_PRUNE_MODE)

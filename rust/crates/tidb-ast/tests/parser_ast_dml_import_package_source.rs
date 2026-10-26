@@ -19,8 +19,7 @@
 use tidb_ast::{
     AdminStmt, Assignment, BinaryOp, ColumnOrUserVar, DmlStmt, Expr, ImportIntoStmt,
     ImportSource, Join, LoadDataOption, NodeBox, QueryStmt, SelectField, SelectStatementKind,
-    SelectStmt, SetOprStmt, SetOprTerm, SetOprTermBody, SetOp, ShowImportGroupsStmt,
-    ShowImportJobsStmt, Stmt, TableRef, WithClause,
+    SelectStmt, SetOprStmt, SetOprTerm, SetOprTermBody, SetOp, Stmt, TableRef, WithClause,
 };
 
 fn int(value: &str) -> Expr {
@@ -167,11 +166,11 @@ fn bare_select_body(from_table: &'static [&'static str]) -> SelectStmt {
 fn import_actions() {
     let jobs =
         |raw: bool, job_id: Option<i64>, filter: Option<Expr>| {
-            admin(AdminStmt::ShowImportJobs(Box::new(ShowImportJobsStmt {
-                raw,
-                job_id,
-                where_clause: filter,
-            })))
+            let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::ImportJobs);
+            show.import_job_raw = raw;
+            show.import_job_id = job_id;
+            show.r#where = filter;
+            admin(AdminStmt::Show(Box::new(show)))
         };
 
     let cases: [(Stmt, &str); 9] = [
@@ -208,16 +207,14 @@ fn import_actions() {
             "SHOW IMPORT JOBS WHERE `aa`>1",
         ),
         (
-            admin(AdminStmt::ShowImportGroups(Box::new(ShowImportGroupsStmt {
-                group_key: None,
-                where_clause: None,
-            }))),
+            admin(AdminStmt::Show(Box::new(tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::ImportGroups)))),
             "SHOW IMPORT GROUPS",
         ),
         (
-            admin(AdminStmt::ShowImportGroups(Box::new(ShowImportGroupsStmt {
-                group_key: Some("123".to_string()),
-                where_clause: None,
+            admin(AdminStmt::Show(Box::new({
+                let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::ImportGroups);
+                show.show_group_key = "123".to_string();
+                show
             }))),
             // A group key restores as a plain quoted string, no _UTF8MB4.
             "SHOW IMPORT GROUP '123'",

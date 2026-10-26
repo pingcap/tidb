@@ -147,3 +147,31 @@ pub fn handle_table_name<N: Visitable>(node: &mut N, current_db: &str) -> Result
     }
     Ok(())
 }
+
+/// Go `preprocessor.resolveShowStmt` (`pkg/planner/core/preprocess.go:2028`):
+/// a SHOW without a database takes its table's schema, else the current
+/// database; one with a database qualifies an unqualified table with it; and
+/// `CURRENT_USER` becomes the session's authenticated account
+/// (`auth_user`), when the session has one.
+pub fn resolve_show_stmt(
+    node: &mut tidb_ast::ShowStmt,
+    current_db: &str,
+    auth_user: Option<(&str, &str)>,
+) {
+    if node.db_name.is_empty() {
+        node.db_name = match node.table.as_deref() {
+            Some([schema, _]) if !schema.is_empty() => schema.clone(),
+            _ => current_db.to_owned(),
+        };
+    } else if let Some(table) = node.table.as_mut() {
+        if let [name] = table.as_slice() {
+            *table = vec![node.db_name.clone(), name.clone()];
+        }
+    }
+    if let (Some(user), Some((auth_username, auth_hostname))) = (node.user.as_mut(), auth_user) {
+        if user.current_user {
+            user.user = auth_username.to_owned();
+            user.host = auth_hostname.to_owned();
+        }
+    }
+}

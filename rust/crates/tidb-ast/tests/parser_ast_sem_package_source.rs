@@ -23,15 +23,8 @@ use tidb_ast::{
     AdminAlterDdlJobsStmt, AdminBindingControlKind, AdminCheckHandleRange, AdminCheckStmt,
     AdminChecksumStmt, AdminDdlJobControlKind, AdminDdlJobControlStmt, AdminPlanCacheScope,
     AdminRecoverIndexStmt, AdminReloadKind, AdminShowDdlJobQueriesStmt, AdminShowDdlJobsStmt,
-    AdminShowNextRowIdStmt, AdminShowSlowMode, AdminShowSlowStmt, AdminStmt, BdrRole, BindingScope,
-    BrieKind, BrieStmt, NodeBox, ShowBindingsStmt, ShowCharsetStmt, ShowCollationStmt,
-    ShowColumnsStmt, ShowCreateKind, ShowDatabasesStmt, ShowDistributionJobsStmt, ShowEnginesStmt,
-    ShowErrorsStmt, ShowGrantsStmt, ShowImportGroupsStmt, ShowImportJobsStmt, ShowIndexStmt,
-    ShowInspectionKind, ShowInspectionStmt, ShowMaskingPoliciesStmt, ShowOpenTablesStmt,
-    ShowPlacementStmt, ShowPlacementTarget, ShowProfileStmt, ShowStatsBucketsStmt,
-    ShowStatsHistogramsStmt, ShowStatsLockedStmt, ShowStatsTopNStmt, ShowStatusStmt,
-    ShowTableNextRowIdStmt, ShowTablePlacementKind, ShowTablePlacementStmt, ShowTableStatusStmt,
-    ShowTablesStmt, ShowVariablesStmt, ShowWarningsStmt, Stmt, UserSpec,
+    AdminShowNextRowIdStmt, AdminShowSlowMode, AdminShowSlowStmt, AdminStmt, BdrRole,
+    BrieKind, BrieStmt, NodeBox, Stmt, UserSpec,
 };
 
 fn unknown_command() -> &'static str {
@@ -50,21 +43,8 @@ fn user() -> UserSpec {
     }
 }
 
-fn empty_inspection(kind: ShowInspectionKind) -> ShowInspectionStmt {
-    ShowInspectionStmt {
-        kind,
-        full: false,
-        database: None,
-        filter: None,
-    }
-}
-
-fn empty_show_create(kind: ShowCreateKind) -> AdminStmt {
-    AdminStmt::ShowCreate {
-        kind,
-        if_not_exists: false,
-        name: vec!["t".to_string()],
-    }
+fn show(tp: tidb_ast::ShowStmtType) -> AdminStmt {
+    AdminStmt::Show(Box::new(tidb_ast::ShowStmt::new(tp)))
 }
 
 /// `pkg/parser/ast/sem_test.go::TestShowCommand`.
@@ -76,355 +56,252 @@ fn empty_show_create(kind: ShowCreateKind) -> AdminStmt {
 fn show_command() {
     let cases: Vec<(AdminStmt, &str)> = vec![
         (
-            AdminStmt::ShowEngines(Box::new(ShowEnginesStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::Engines),
             "SHOW ENGINES",
         ),
         (
-            AdminStmt::ShowDatabases(Box::new(ShowDatabasesStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::Databases),
             "SHOW DATABASES",
         ),
         (
-            AdminStmt::ShowTables(Box::new(ShowTablesStmt {
-                full: false,
-                database: None,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Tables),
             "SHOW TABLE",
         ),
         (
-            AdminStmt::ShowTableStatus(Box::new(ShowTableStatusStmt {
-                database: None,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::TableStatus),
             "SHOW TABLE STATUS",
         ),
         (
-            AdminStmt::ShowColumns(Box::new(ShowColumnsStmt {
-                full: false,
-                extended: false,
-                table: vec!["t".to_string()],
-                database: None,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Columns),
             "SHOW COLUMNS",
         ),
         (
-            AdminStmt::ShowWarnings(Box::new(ShowWarningsStmt {
-                count_only: false,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Warnings),
             "SHOW WARNINGS",
         ),
         (
-            AdminStmt::ShowCharset(Box::new(ShowCharsetStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::Charset),
             "SHOW CHARSET",
         ),
         (
-            AdminStmt::ShowVariables(Box::new(ShowVariablesStmt {
-                global: false,
-                like: None,
-                where_clause: None,
-            })),
+            show(tidb_ast::ShowStmtType::Variables),
             "SHOW VARIABLES",
         ),
         (
-            AdminStmt::ShowStatus(Box::new(ShowStatusStmt {
-                global: false,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Status),
             "SHOW STATUS",
         ),
         (
-            AdminStmt::ShowCollation(Box::new(ShowCollationStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::Collation),
             "SHOW COLLATION",
         ),
         (
-            empty_show_create(ShowCreateKind::Table),
+            show(tidb_ast::ShowStmtType::CreateTable),
             "SHOW CREATE TABLE",
         ),
-        (empty_show_create(ShowCreateKind::View), "SHOW CREATE VIEW"),
-        (AdminStmt::ShowCreateUser(user()), "SHOW CREATE USER"),
+        (show(tidb_ast::ShowStmtType::CreateView), "SHOW CREATE VIEW"),
+        ({
+                let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::CreateUser);
+                show.user = Some(user());
+                AdminStmt::Show(Box::new(show))
+            }, "SHOW CREATE USER"),
         (
-            empty_show_create(ShowCreateKind::Sequence),
+            show(tidb_ast::ShowStmtType::CreateSequence),
             "SHOW CREATE SEQUENCE",
         ),
         (
-            empty_show_create(ShowCreateKind::PlacementPolicy),
+            show(tidb_ast::ShowStmtType::CreatePlacementPolicy),
             "SHOW CREATE PLACEMENT POLICY",
         ),
         (
-            AdminStmt::ShowGrants(Box::new(ShowGrantsStmt {
-                user: None,
-                roles: Vec::new(),
-            })),
+            show(tidb_ast::ShowStmtType::Grants),
             "SHOW GRANTS",
         ),
         (
-            AdminStmt::ShowMaskingPolicies(Box::new(ShowMaskingPoliciesStmt {
-                table: vec!["t".to_string()],
-                where_clause: None,
-            })),
+            show(tidb_ast::ShowStmtType::MaskingPolicies),
             "SHOW MASKING POLICIES",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Triggers))),
+            show(tidb_ast::ShowStmtType::Triggers),
             "SHOW TRIGGERS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::ProcedureStatus,
-            ))),
+            show(tidb_ast::ShowStmtType::ProcedureStatus),
             "SHOW PROCEDURE STATUS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::FunctionStatus,
-            ))),
+            show(tidb_ast::ShowStmtType::FunctionStatus),
             "SHOW FUNCTION STATUS",
         ),
         (
-            AdminStmt::ShowIndex(Box::new(ShowIndexStmt {
-                table: vec!["t".to_string()],
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Index),
             "SHOW INDEX",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::ProcessList))),
+            show(tidb_ast::ShowStmtType::ProcessList),
             "SHOW PROCESSLIST",
         ),
         (
-            empty_show_create(ShowCreateKind::Database),
+            show(tidb_ast::ShowStmtType::CreateDatabase),
             "SHOW CREATE DATABASE",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Config))),
+            show(tidb_ast::ShowStmtType::Config),
             "SHOW CONFIG",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Events))),
+            show(tidb_ast::ShowStmtType::Events),
             "SHOW EVENTS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::StatsExtended,
-            ))),
+            show(tidb_ast::ShowStmtType::StatsExtended),
             "SHOW STATS_EXTENDED",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::StatsMeta))),
+            show(tidb_ast::ShowStmtType::StatsMeta),
             "SHOW STATS_META",
         ),
         (
-            AdminStmt::ShowStatsHistograms(Box::new(ShowStatsHistogramsStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::StatsHistograms),
             "SHOW STATS_HISTOGRAMS",
         ),
         (
-            AdminStmt::ShowStatsTopN(Box::new(ShowStatsTopNStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::StatsTopN),
             "SHOW STATS_TOPN",
         ),
         (
-            AdminStmt::ShowStatsBuckets(Box::new(ShowStatsBucketsStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::StatsBuckets),
             "SHOW STATS_BUCKETS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::StatsHealthy))),
+            show(tidb_ast::ShowStmtType::StatsHealthy),
             "SHOW STATS_HEALTHY",
         ),
         (
-            AdminStmt::ShowStatsLocked(Box::new(ShowStatsLockedStmt { filter: None })),
+            show(tidb_ast::ShowStmtType::StatsLocked),
             "SHOW STATS_LOCKED",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::HistogramsInFlight,
-            ))),
+            show(tidb_ast::ShowStmtType::HistogramsInFlight),
             "SHOW HISTOGRAMS_IN_FLIGHT",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::ColumnStatsUsage,
-            ))),
+            show(tidb_ast::ShowStmtType::ColumnStatsUsage),
             "SHOW COLUMN_STATS_USAGE",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Plugins))),
+            show(tidb_ast::ShowStmtType::Plugins),
             "SHOW PLUGINS",
         ),
         (
-            AdminStmt::ShowProfile(Box::new(ShowProfileStmt {
-                types: Vec::new(),
-                query_id: None,
-                limit: None,
-            })),
+            show(tidb_ast::ShowStmtType::Profile),
             "SHOW PROFILE",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Profiles))),
+            show(tidb_ast::ShowStmtType::Profiles),
             "SHOW PROFILES",
         ),
-        (AdminStmt::ShowMasterStatus, "SHOW MASTER STATUS"),
-        (AdminStmt::ShowPrivileges, "SHOW PRIVILEGES"),
+        (show(tidb_ast::ShowStmtType::MasterStatus), "SHOW MASTER STATUS"),
+        (show(tidb_ast::ShowStmtType::Privileges), "SHOW PRIVILEGES"),
         (
-            AdminStmt::ShowErrors(Box::new(ShowErrorsStmt {
-                count_only: false,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Errors),
             "SHOW ERRORS",
         ),
         (
-            AdminStmt::ShowBindings(Box::new(ShowBindingsStmt {
-                scope: BindingScope::Session,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Bindings),
             "SHOW BINDINGS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::BindingCacheStatus,
-            ))),
+            show(tidb_ast::ShowStmtType::BindingCacheStatus),
             "SHOW BINDING_CACHE STATUS",
         ),
         (
-            AdminStmt::ShowOpenTables(Box::new(ShowOpenTablesStmt {
-                database: None,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::OpenTables),
             "SHOW OPEN TABLES",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::AnalyzeStatus,
-            ))),
+            show(tidb_ast::ShowStmtType::AnalyzeStatus),
             "SHOW ANALYZE STATUS",
         ),
         (
-            AdminStmt::ShowTablePlacement(Box::new(ShowTablePlacementStmt {
-                table: vec!["t".to_string()],
-                partitions: Vec::new(),
-                index: None,
-                kind: ShowTablePlacementKind::Regions,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Regions),
             "SHOW TABLE REGIONS",
         ),
-        (AdminStmt::ShowBuiltins, "SHOW BUILTINS"),
+        (show(tidb_ast::ShowStmtType::Builtins), "SHOW BUILTINS"),
         (
-            AdminStmt::ShowTableNextRowId(Box::new(ShowTableNextRowIdStmt {
-                table: vec!["t".to_string()],
-            })),
+            show(tidb_ast::ShowStmtType::TableNextRowId),
             "SHOW TABLE NEXT_ROW_ID",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Backups))),
+            show(tidb_ast::ShowStmtType::Backups),
             "SHOW BACKUPS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Restores))),
+            show(tidb_ast::ShowStmtType::Restores),
             "SHOW RESTORES",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Imports))),
+            show(tidb_ast::ShowStmtType::Imports),
             "SHOW IMPORTS",
         ),
         (
-            AdminStmt::ShowPlacement(Box::new(ShowPlacementStmt {
-                target: ShowPlacementTarget::All,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Placement),
             "SHOW PLACEMENT",
         ),
         (
-            AdminStmt::ShowPlacement(Box::new(ShowPlacementStmt {
-                target: ShowPlacementTarget::Database("d".to_string()),
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::PlacementForDatabase),
             "SHOW PLACEMENT FOR DATABASE",
         ),
         (
-            AdminStmt::ShowPlacement(Box::new(ShowPlacementStmt {
-                target: ShowPlacementTarget::Table(vec!["t".to_string()]),
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::PlacementForTable),
             "SHOW PLACEMENT FOR TABLE",
         ),
         (
-            AdminStmt::ShowPlacement(Box::new(ShowPlacementStmt {
-                target: ShowPlacementTarget::Partition {
-                    table: vec!["t".to_string()],
-                    partition: "p0".to_string(),
-                },
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::PlacementForPartition),
             "SHOW PLACEMENT FOR PARTITION",
         ),
         (
-            AdminStmt::ShowPlacement(Box::new(ShowPlacementStmt {
-                target: ShowPlacementTarget::Labels,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::PlacementLabels),
             "SHOW PLACEMENT LABELS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::SessionStates,
-            ))),
+            show(tidb_ast::ShowStmtType::SessionStates),
             "SHOW SESSION_STATES",
         ),
         (
-            empty_show_create(ShowCreateKind::ResourceGroup),
+            show(tidb_ast::ShowStmtType::CreateResourceGroup),
             "SHOW CREATE RESOURCE GROUP",
         ),
         (
-            AdminStmt::ShowImportJobs(Box::new(ShowImportJobsStmt {
-                raw: false,
-                job_id: None,
-                where_clause: None,
-            })),
+            show(tidb_ast::ShowStmtType::ImportJobs),
             "SHOW IMPORT JOBS",
         ),
         (
-            AdminStmt::ShowImportGroups(Box::new(ShowImportGroupsStmt {
-                group_key: None,
-                where_clause: None,
-            })),
+            show(tidb_ast::ShowStmtType::ImportGroups),
             "SHOW IMPORT GROUPS",
         ),
         (
-            empty_show_create(ShowCreateKind::Procedure),
+            show(tidb_ast::ShowStmtType::CreateProcedure),
             "SHOW CREATE PROCEDURE",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::BinaryLogStatus,
-            ))),
+            show(tidb_ast::ShowStmtType::BinlogStatus),
             "SHOW BINARY LOG STATUS",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(
-                ShowInspectionKind::ReplicaStatus,
-            ))),
+            show(tidb_ast::ShowStmtType::ReplicaStatus),
             "SHOW",
         ),
         (
-            AdminStmt::ShowTablePlacement(Box::new(ShowTablePlacementStmt {
-                table: vec!["t".to_string()],
-                partitions: Vec::new(),
-                index: None,
-                kind: ShowTablePlacementKind::Distributions,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::Distributions),
             "SHOW DISTRIBUTIONS",
         ),
         (
-            AdminStmt::ShowDistributionJobs(Box::new(ShowDistributionJobsStmt {
-                job_id: None,
-                filter: None,
-            })),
+            show(tidb_ast::ShowStmtType::DistributionJobs),
             "SHOW DISTRIBUTION JOB",
         ),
         (
-            AdminStmt::ShowInspection(Box::new(empty_inspection(ShowInspectionKind::Affinity))),
+            show(tidb_ast::ShowStmtType::Affinity),
             "SHOW AFFINITY",
         ),
     ];
@@ -444,7 +321,7 @@ fn show_command() {
 #[test]
 fn show_command_create_import() {
     assert_eq!(
-        admin(empty_show_create(ShowCreateKind::Import)).sem_command(),
+        admin(show(tidb_ast::ShowStmtType::CreateImport)).sem_command(),
         "SHOW CREATE IMPORT"
     );
 }

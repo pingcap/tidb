@@ -193,11 +193,7 @@ fn dml_visitor_cover() {
     // {&ShowStmt{...}} — Rust owns no generic show node family with embedded
     // expressions; an admin SHOW carries none either way (Go expects 3
     // placeholder visits that never reach its sentinel).
-    let show = crate::AdminStmt::ShowTables(Box::new(crate::ShowTablesStmt {
-        full: false,
-        database: None,
-        filter: None,
-    }));
+    let show = crate::AdminStmt::Show(Box::new(crate::ShowStmt::new(crate::ShowStmtType::Tables)));
     check_row(
         "show",
         Target::Statement(Stmt::Admin(NodeBox::new(show))),

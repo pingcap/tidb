@@ -18,34 +18,6 @@
 
 use super::*;
 
-/// Go's `ShowStmt{Tp: ShowGrants}` payload.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShowGrantsStmt {
-    /// Optional account after `FOR`; absent means the current session user.
-    pub user: Option<crate::UserSpec>,
-    /// Optional active-role override list after `USING`.
-    pub roles: Vec<crate::UserSpec>,
-}
-
-impl ShowGrantsStmt {
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("SHOW GRANTS");
-        if let Some(user) = &self.user {
-            out.push_str(" FOR ");
-            user.restore_into(out);
-        }
-        if !self.roles.is_empty() {
-            out.push_str(" USING ");
-            for (index, role) in self.roles.iter().enumerate() {
-                if index != 0 {
-                    out.push_str(", ");
-                }
-                role.restore_into(out);
-            }
-        }
-    }
-}
-
 /// TiDB's standard privilege-revoke statement, transliterated from Go's
 /// `ast.RevokeStmt` and sharing its privilege/object/level payload types with
 /// [`GrantStmt`].
@@ -254,28 +226,6 @@ impl GrantLevel {
 }
 
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
-
-impl crate::Visitable for ShowGrantsStmt {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        let Self { user, roles } = self;
-        if let Some(value) = user.as_mut() {
-            if !crate::Visitable::accept(value, visitor) {
-                return false;
-            }
-        }
-        for value in roles.iter_mut() {
-            if !crate::Visitable::accept(value, visitor) {
-                return false;
-            }
-        }
-        let _ = user;
-        let _ = roles;
-        visitor.leave(self)
-    }
-}
 
 impl crate::Visitable for RevokeStmt {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {

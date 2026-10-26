@@ -20,7 +20,6 @@ mod role_grant;
 
 use tidb_ast::{
     GrantLevel, GrantObjectType, GrantPrivilege, GrantProxyStmt, GrantStmt, RevokeStmt,
-    ShowGrantsStmt,
 };
 use tidb_lexer::TokenKind;
 
@@ -56,7 +55,7 @@ impl Parser {
 
     /// Direct translation of Go's `parseShowGrants`: the optional `FOR`
     /// account owns an optional `USING` role list.
-    pub(crate) fn parse_show_grants(&mut self) -> PResult<ShowGrantsStmt> {
+    pub(crate) fn parse_show_grants(&mut self) -> PResult<tidb_ast::ShowStmt> {
         self.expect_kw("SHOW")?;
         self.expect_token_literal("GRANTS")?;
         let user = if self.is_kw("FOR") {
@@ -77,7 +76,10 @@ impl Parser {
                 roles.push(self.parse_user_spec()?);
             }
         }
-        Ok(ShowGrantsStmt { user, roles })
+        let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::Grants);
+        show.user = user;
+        show.roles = roles;
+        Ok(show)
     }
 
     /// Direct translation of Go's `parseGrantStmt` privilege branch. It

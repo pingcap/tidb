@@ -18,62 +18,6 @@
 
 use super::*;
 
-/// Go's import-job inspection payload on `ShowStmt`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShowImportJobsStmt {
-    /// Whether `RAW` was written before `IMPORT`.
-    pub raw: bool,
-    /// Singular job ID; absent for the plural listing form.
-    pub job_id: Option<i64>,
-    /// Optional plural-list filter.
-    pub where_clause: Option<Expr>,
-}
-
-impl ShowImportJobsStmt {
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("SHOW ");
-        if self.raw {
-            out.push_str("RAW ");
-        }
-        if let Some(job_id) = self.job_id {
-            out.push_str("IMPORT JOB ");
-            out.push_str(&job_id.to_string());
-        } else {
-            out.push_str("IMPORT JOBS");
-            if let Some(where_clause) = &self.where_clause {
-                out.push_str(" WHERE ");
-                where_clause.restore_into(out);
-            }
-        }
-    }
-}
-
-/// Go's import-group inspection payload on `ShowStmt`.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ShowImportGroupsStmt {
-    /// Singular group key; absent for the plural listing form.
-    pub group_key: Option<String>,
-    /// Optional plural/singular filter.
-    pub where_clause: Option<Expr>,
-}
-
-impl ShowImportGroupsStmt {
-    pub(crate) fn restore_into(&self, out: &mut String) {
-        out.push_str("SHOW IMPORT ");
-        if let Some(group_key) = &self.group_key {
-            out.push_str("GROUP '");
-            out.push_str(&escape_string_literal(group_key));
-            out.push('\'');
-        } else {
-            out.push_str("GROUPS");
-        }
-        if let Some(where_clause) = &self.where_clause {
-            out.push_str(" WHERE ");
-            where_clause.restore_into(out);
-        }
-    }
-}
-
 /// Go's `ADMIN SHOW table NEXT_ROW_ID` payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminShowNextRowIdStmt {
@@ -247,48 +191,6 @@ impl AdminReloadKind {
 }
 
 // BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
-
-impl crate::Visitable for ShowImportJobsStmt {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        let Self {
-            raw,
-            job_id,
-            where_clause,
-        } = self;
-        if let Some(value) = where_clause.as_mut() {
-            if !crate::Visitable::accept(value, visitor) {
-                return false;
-            }
-        }
-        let _ = raw;
-        let _ = job_id;
-        let _ = where_clause;
-        visitor.leave(self)
-    }
-}
-
-impl crate::Visitable for ShowImportGroupsStmt {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        let Self {
-            group_key,
-            where_clause,
-        } = self;
-        if let Some(value) = where_clause.as_mut() {
-            if !crate::Visitable::accept(value, visitor) {
-                return false;
-            }
-        }
-        let _ = group_key;
-        let _ = where_clause;
-        visitor.leave(self)
-    }
-}
 
 impl crate::Visitable for AdminShowNextRowIdStmt {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {

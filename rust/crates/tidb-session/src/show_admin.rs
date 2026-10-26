@@ -112,12 +112,12 @@ pub(crate) fn master_status_output(position: i64) -> StmtOutput {
 /// whose arm in Go is literally `// empty result`.
 ///
 /// `None` means the kind is some other inspection, which the caller handles.
-pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<StmtOutput> {
+pub(crate) fn inspection_output(kind: tidb_ast::ShowStmtType) -> Option<StmtOutput> {
     match kind {
-        tidb_ast::ShowInspectionKind::Plugins => Some(crate::show::text_columns_output(&[
+        tidb_ast::ShowStmtType::Plugins => Some(crate::show::text_columns_output(&[
             "Name", "Status", "Type", "Library", "License", "Version",
         ])),
-        tidb_ast::ShowInspectionKind::Profiles => Some(StmtOutput::Rows {
+        tidb_ast::ShowStmtType::Profiles => Some(StmtOutput::Rows {
             columns: vec![
                 ("Query_ID".to_owned(), FieldType::new(FieldTypeCode::Long)),
                 ("Duration".to_owned(), FieldType::new(FieldTypeCode::Double)),
@@ -131,21 +131,21 @@ pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<St
         // empty result set. Same for the BRIE/import job listings, which read
         // their system tables this build does not populate, and `SHOW REPLICA
         // STATUS`, which answers nothing without replication.
-        tidb_ast::ShowInspectionKind::Triggers => Some(StmtOutput::Rows {
+        tidb_ast::ShowStmtType::Triggers => Some(StmtOutput::Rows {
             columns: crate::show_admin::trigger_columns(),
             rows: Vec::new(),
         }),
-        tidb_ast::ShowInspectionKind::ProcedureStatus | tidb_ast::ShowInspectionKind::FunctionStatus => {
+        tidb_ast::ShowStmtType::ProcedureStatus | tidb_ast::ShowStmtType::FunctionStatus => {
             Some(StmtOutput::Rows {
                 columns: crate::show_admin::routine_columns(),
                 rows: Vec::new(),
             })
         }
-        tidb_ast::ShowInspectionKind::Events => Some(StmtOutput::Rows {
+        tidb_ast::ShowStmtType::Events => Some(StmtOutput::Rows {
             columns: crate::show_admin::event_columns(),
             rows: Vec::new(),
         }),
-        tidb_ast::ShowInspectionKind::Backups | tidb_ast::ShowInspectionKind::Restores => {
+        tidb_ast::ShowStmtType::Backups | tidb_ast::ShowStmtType::Restores => {
             Some(StmtOutput::Rows {
                 // Go `buildShowSchema` for `ShowBackups`/`ShowRestores`.
                 columns: vec![
@@ -162,7 +162,7 @@ pub(crate) fn inspection_output(kind: tidb_ast::ShowInspectionKind) -> Option<St
                 rows: Vec::new(),
             })
         }
-        tidb_ast::ShowInspectionKind::Imports => Some(StmtOutput::Rows {
+        tidb_ast::ShowStmtType::Imports => Some(StmtOutput::Rows {
             columns: vec![
                 ("Job_ID".to_owned(), FieldType::new(FieldTypeCode::LongLong)),
                 ("State".to_owned(), FieldType::new(FieldTypeCode::Varchar)),

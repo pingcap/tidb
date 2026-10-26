@@ -18,11 +18,11 @@
 use tidb_ast::{
     BindingScope, BindingStatementTarget, BindingStatus, BindingValue, CreateBindingSource,
     CreateBindingStmt, DropBindingStmt, DropBindingTarget, SetBindingStmt, SetBindingTarget,
-    ShowBindingsFilter, ShowBindingsStmt, Stmt,
+    Stmt,
 };
 use tidb_lexer::TokenKind;
 
-use crate::{prec, PResult, Parser};
+use crate::{PResult, Parser};
 
 impl Parser {
     /// Consumes the optional scope between a binding command and `BINDING`.
@@ -217,19 +217,12 @@ impl Parser {
 
     /// Direct translation of the `BINDINGS` arm in Go's
     /// `parseShowScopedStmt`, including its shared LIKE/WHERE grammar.
-    pub(crate) fn parse_show_bindings(&mut self) -> PResult<ShowBindingsStmt> {
+    pub(crate) fn parse_show_bindings(&mut self) -> PResult<tidb_ast::ShowStmt> {
         self.expect_kw("SHOW")?;
-        let scope = self.parse_binding_scope();
+        let mut show = tidb_ast::ShowStmt::new(tidb_ast::ShowStmtType::Bindings);
+        show.global_scope = self.parse_binding_scope() == BindingScope::Global;
         self.expect_token_literal("BINDINGS")?;
-        let filter = if self.is_kw("LIKE") {
-            self.bump();
-            Some(ShowBindingsFilter::Like(self.parse_expr(prec::UNARY)?))
-        } else if self.is_kw("WHERE") {
-            self.bump();
-            Some(ShowBindingsFilter::Where(self.parse_expr(prec::NONE)?))
-        } else {
-            None
-        };
-        Ok(ShowBindingsStmt { scope, filter })
+        self.parse_show_like_or_where(&mut show)?;
+        Ok(show)
     }
 }

@@ -280,7 +280,7 @@ impl PreparedStatementRegistry {
             .migration_session()
             .and_then(|session| session.session_migration_statement(stmt).cloned());
         let stmt = effective.as_ref().unwrap_or(stmt);
-        let is_show = matches!(stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::ShowInspection(show) if show.kind == tidb_ast::ShowInspectionKind::SessionStates));
+        let is_show = matches!(stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Show(show) if show.tp == tidb_ast::ShowStmtType::SessionStates));
         if is_show {
             let mut state = ProtocolSessionStates::default();
             for (&id, prepared) in &self.statements {

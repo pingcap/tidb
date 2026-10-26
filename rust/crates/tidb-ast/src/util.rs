@@ -71,45 +71,13 @@ impl AdminStmt {
             }
             Self::Trace(trace) => trace.statement.is_read_only(check_global_vars),
             Self::Do(_)
-            | Self::ShowGrants(_)
-            | Self::ShowMasterStatus
-            | Self::ShowPrivileges
-            | Self::ShowBuiltins
-            | Self::ShowImportJobs(_)
-            | Self::ShowImportGroups(_)
             | Self::ShowBdrRole
             | Self::ShowSlow(_)
             | Self::ShowDdl
             | Self::ShowDdlJobs(_)
             | Self::ShowDdlJobQueries(_)
             | Self::ShowNextRowId(_)
-            | Self::ShowCreate { .. }
-            | Self::ShowCreateUser(_)
-            | Self::ShowVariables(_)
-            | Self::ShowStatus(_)
-            | Self::ShowWarnings(_)
-            | Self::ShowErrors(_)
-            | Self::ShowCollation(_)
-            | Self::ShowEngines(_)
-            | Self::ShowCharset(_)
-            | Self::ShowStatsHistograms(_)
-            | Self::ShowStatsBuckets(_)
-            | Self::ShowStatsLocked(_)
-            | Self::ShowStatsTopN(_)
-            | Self::ShowDatabases(_)
-            | Self::ShowTables(_)
-            | Self::ShowOpenTables(_)
-            | Self::ShowTableStatus(_)
-            | Self::ShowTableNextRowId(_)
-            | Self::ShowColumns(_)
-            | Self::ShowIndex(_)
-            | Self::ShowInspection(_)
-            | Self::ShowDistributionJobs(_)
-            | Self::ShowTablePlacement(_)
-            | Self::ShowPlacement(_)
-            | Self::ShowProfile(_)
-            | Self::ShowMaskingPolicies(_)
-            | Self::ShowBindings(_)
+            | Self::Show(_)
             | Self::DescribeTable(_) => true,
             _ => false,
         }
