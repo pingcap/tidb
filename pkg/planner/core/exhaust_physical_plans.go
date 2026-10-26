@@ -905,7 +905,11 @@ func pruneIndexJoinRangeCondsForAgg(conds []expression.Expression, la *logicalop
 // nested inside expressions are deliberately not treated as grouping keys, so we may
 // reject some valid index join plans (false negatives) to keep correctness.
 // TODO: use FunctionDependency/equivalence reasoning to replace pure UniqueID subset matching.
+<<<<<<< HEAD
 func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinKeys []*expression.Column, dataSourceSchema *expression.Schema) bool {
+=======
+func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, indexJoinProp *property.IndexJoinRuntimeProp) bool {
+>>>>>>> 7a3dacb52ef (planner: treat only direct GROUP BY columns as index join grouping keys (#71767))
 	// Only direct GROUP BY columns count as grouping keys. A column that merely
 	// appears inside a GROUP BY expression (for example GROUP BY c2 % 2) does not
 	// partition the groups by that column, so probing per join-key value would
@@ -914,6 +918,18 @@ func checkIndexJoinInnerTaskWithAgg(la *logicalop.LogicalAggregation, innerJoinK
 	for _, item := range la.GroupByItems {
 		if col, ok := item.(*expression.Column); ok {
 			groupByCols[col.UniqueID] = struct{}{}
+<<<<<<< HEAD
+=======
+		}
+	}
+
+	var dataSourceSchema *expression.Schema
+	var iterChild base.LogicalPlan = la
+	for iterChild != nil {
+		if ds, ok := iterChild.(*logicalop.DataSource); ok {
+			dataSourceSchema = ds.Schema()
+			break
+>>>>>>> 7a3dacb52ef (planner: treat only direct GROUP BY columns as index join grouping keys (#71767))
 		}
 	}
 
