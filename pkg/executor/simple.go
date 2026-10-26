@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -76,7 +75,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -3515,20 +3513,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	if s.ReloadTLS {
 		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.Ctx().GetSessionManager()
-		tlsCfg, _, err := util.LoadTLSCertificates(
-			variable.GetSysVar("ssl_ca").Value,
-			variable.GetSysVar("ssl_key").Value,
-			variable.GetSysVar("ssl_cert").Value,
-			config.GetGlobalConfig().Security.AutoTLS,
-			config.GetGlobalConfig().Security.RSAKeySize,
-		)
-		if err != nil {
-			if !s.NoRollbackOnError || tls.RequireSecureTransport.Load() {
-				return err
-			}
-			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
-		}
-		sm.UpdateTLSConfig(tlsCfg)
+		return sm.ReloadTLS(s.NoRollbackOnError)
 	}
 	return nil
 }
