@@ -995,7 +995,7 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogSessionConnectAttrs, tp: mysql.TypeJSON, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
-	{name: variable.SlowLogUnredactedQueryStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: variable.SlowLogInMemoryOriginalQueryStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 // TableTiDBHotRegionsCols is TiDB hot region mem table columns.

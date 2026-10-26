@@ -69,18 +69,18 @@ const slowLogTimeRangeInternalTolerance = time.Second
 
 // slowQueryRetriever is used to read slow log data.
 type slowQueryRetriever struct {
-	table                 *model.TableInfo
-	outputCols            []*model.ColumnInfo
-	initialized           bool
-	extractor             *plannercore.SlowQueryExtractor
-	limit                 uint64
-	files                 []logFile
-	fileIdx               int
-	fileLine              int
-	checker               *slowLogChecker
-	columnValueFactoryMap map[string]slowQueryColumnValueFactory
-	instanceFactory       func([]types.Datum)
-	unredactedQueryIndex  int
+	table                      *model.TableInfo
+	outputCols                 []*model.ColumnInfo
+	initialized                bool
+	extractor                  *plannercore.SlowQueryExtractor
+	limit                      uint64
+	files                      []logFile
+	fileIdx                    int
+	fileLine                   int
+	checker                    *slowLogChecker
+	columnValueFactoryMap      map[string]slowQueryColumnValueFactory
+	instanceFactory            func([]types.Datum)
+	inMemoryOriginalQueryIndex int
 
 	taskList      chan slowLogTask
 	stats         *slowQueryRuntimeStats
@@ -110,10 +110,10 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	}
 	// initialize column value factories.
 	e.columnValueFactoryMap = make(map[string]slowQueryColumnValueFactory, len(e.outputCols))
-	e.unredactedQueryIndex = -1
+	e.inMemoryOriginalQueryIndex = -1
 	for idx, col := range e.outputCols {
-		if strings.EqualFold(col.Name.O, variable.SlowLogUnredactedQueryStr) {
-			e.unredactedQueryIndex = idx
+		if strings.EqualFold(col.Name.O, variable.SlowLogInMemoryOriginalQueryStr) {
+			e.inMemoryOriginalQueryIndex = idx
 			continue
 		}
 		if col.Name.O == metadef.ClusterTableInstanceColumnName {
@@ -290,16 +290,16 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context, sctx sessionctx
 		// the same number of bytes.
 		accounted := calculateDatumsSize(rows)
 
-		// Diagnostic mode does not read the cache; unredacted_query stays at the
+		// Diagnostic mode does not read the cache; in_memory_original_query stays at the
 		// zero value set while parsing. A successful lookup returns one string per
 		// key, and parseLog keeps keys aligned with rows.
-		if !diagnosticmode.Enabled() && e.unredactedQueryIndex >= 0 && sctx.GetSessionVars().EnableRedactLog != errors.RedactLogDisable {
+		if !diagnosticmode.Enabled() && e.inMemoryOriginalQueryIndex >= 0 && sctx.GetSessionVars().EnableRedactLog != errors.RedactLogDisable {
 			unredactedQueries, err := globalSlowQueryCache.getUnredactedQueries(ctx, result.keys)
 			if err != nil {
 				return nil, err
 			}
 			for i := range rows {
-				rows[i][e.unredactedQueryIndex] = types.NewStringDatum(unredactedQueries[i])
+				rows[i][e.inMemoryOriginalQueryIndex] = types.NewStringDatum(unredactedQueries[i])
 			}
 		}
 

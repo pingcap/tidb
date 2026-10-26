@@ -248,8 +248,8 @@ func TestSlowQueryCacheDiagnosticModeDoesNotStartOrEnqueue(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().EnableRedactLog = errors.RedactLogEnable
 	retriever := &slowQueryRetriever{
-		unredactedQueryIndex: 0,
-		taskList:             make(chan slowLogTask, 1),
+		inMemoryOriginalQueryIndex: 0,
+		taskList:                   make(chan slowLogTask, 1),
 	}
 	resultCh := make(chan parsedSlowLog, 1)
 	resultCh <- parsedSlowLog{rows: [][]types.Datum{row}, keys: []slowQueryKey{key}}

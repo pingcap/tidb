@@ -113,9 +113,9 @@ func TestSlowQueryUnredactedMemoryAccounting(t *testing.T) {
 
 	row := []types.Datum{types.NewStringDatum("")}
 	retriever := &slowQueryRetriever{
-		unredactedQueryIndex: 0,
-		taskList:             make(chan slowLogTask, 1),
-		memTracker:           memory.NewTracker(0, -1),
+		inMemoryOriginalQueryIndex: 0,
+		taskList:                   make(chan slowLogTask, 1),
+		memTracker:                 memory.NewTracker(0, -1),
 	}
 	retriever.memConsume(types.EstimatedMemUsage(row, 1))
 	resultCh := make(chan parsedSlowLog, 1)
@@ -145,7 +145,7 @@ func TestSlowQueryCacheQueuesOnlySelect(t *testing.T) {
 	require.False(t, (&ExecStmt{StmtNode: &ast.ExplainStmt{Stmt: selectStmt}}).isSlowQuerySelect())
 	require.False(t, (&ExecStmt{}).isSlowQuerySelect())
 
-	require.True(t, (&ExecStmt{
+	require.False(t, (&ExecStmt{
 		StmtNode: &ast.ExecuteStmt{},
 		Plan:     &plannercore.Execute{Stmt: selectStmt},
 	}).isSlowQuerySelect())
@@ -153,10 +153,11 @@ func TestSlowQueryCacheQueuesOnlySelect(t *testing.T) {
 		StmtNode: &ast.ExecuteStmt{},
 		Plan:     &plannercore.Execute{Stmt: &ast.UpdateStmt{}},
 	}).isSlowQuerySelect())
-	require.True(t, (&ExecStmt{
+	require.False(t, (&ExecStmt{
 		StmtNode: &ast.ExecuteStmt{},
 		PsStmt:   &plannercore.PlanCacheStmt{PreparedAst: &ast.Prepared{Stmt: selectStmt}},
 	}).isSlowQuerySelect())
+	require.False(t, (&ExecStmt{StmtNode: selectStmt, isPreparedStmt: true}).isSlowQuerySelect())
 }
 
 func TestParseSlowLogPanic(t *testing.T) {

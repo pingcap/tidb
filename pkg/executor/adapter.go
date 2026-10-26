@@ -2537,36 +2537,14 @@ func (a *ExecStmt) GetTextToLog(keepHint bool) string {
 	return sql
 }
 
-// isSlowQuerySelect reports whether the statement recorded in the slow log is a
-// SELECT. EXECUTE is classified by the prepared statement it runs. TABLE and
-// VALUES use the select AST with a different kind and are not SELECT.
+// isSlowQuerySelect only admits directly executed SELECT statements to the
+// plaintext cache. Prepared executions, TABLE, and VALUES are excluded.
 func (a *ExecStmt) isSlowQuerySelect() bool {
-	stmt := a.slowQueryLoggedStmt()
-	sel, ok := stmt.(*ast.SelectStmt)
+	if a.isPreparedStmt {
+		return false
+	}
+	sel, ok := a.StmtNode.(*ast.SelectStmt)
 	return ok && sel.Kind == ast.SelectStmtKindSelect
-}
-
-func (a *ExecStmt) slowQueryLoggedStmt() ast.StmtNode {
-	if a.Plan != nil {
-		if exec, ok := a.Plan.(*plannercore.Execute); ok && exec.Stmt != nil {
-			return exec.Stmt
-		}
-	}
-	execStmt, isExec := a.StmtNode.(*ast.ExecuteStmt)
-	if !isExec {
-		return a.StmtNode
-	}
-	if a.PsStmt != nil && a.PsStmt.PreparedAst != nil && a.PsStmt.PreparedAst.Stmt != nil {
-		return a.PsStmt.PreparedAst.Stmt
-	}
-	if a.Ctx == nil {
-		return nil
-	}
-	prepared, err := plannercore.GetPreparedStmt(execStmt, a.Ctx.GetSessionVars())
-	if err != nil || prepared == nil || prepared.PreparedAst == nil {
-		return nil
-	}
-	return prepared.PreparedAst.Stmt
 }
 
 func (a *ExecStmt) getUnredactedSlowQuerySQL() string {

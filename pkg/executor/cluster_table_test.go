@@ -85,7 +85,7 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 	return srv
 }
 
-func TestClusterTableSlowQueryUnredactedQuery(t *testing.T) {
+func TestClusterTableSlowQueryInMemoryOriginalQuery(t *testing.T) {
 	executor.StartSlowQueryCache()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	srv := createRPCServer(t, dom)
@@ -110,7 +110,7 @@ func TestClusterTableSlowQueryUnredactedQuery(t *testing.T) {
 	// Establish that the SQL was cached locally before exercising the remote
 	// session created by the cluster table's coprocessor request.
 	tk.EventuallyMustQueryAndCheck(
-		"select query, unredacted_query from information_schema.slow_query where query = 'select ?;'",
+		"select query, in_memory_original_query from information_schema.slow_query where query = 'select ?;'",
 		nil, testkit.Rows("select ?; select 7123456789;"), 3*time.Second, 20*time.Millisecond,
 	)
 
@@ -129,7 +129,7 @@ func TestClusterTableSlowQueryUnredactedQuery(t *testing.T) {
 			if mode == vardef.Off {
 				unredacted = ""
 			}
-			tk.MustQuery("select query, unredacted_query from information_schema.cluster_slow_query where query = 'select ?;'").
+			tk.MustQuery("select query, in_memory_original_query from information_schema.cluster_slow_query where query = 'select ?;'").
 				Check(testkit.Rows("select ?; " + unredacted))
 		})
 	}

@@ -145,7 +145,7 @@ func TestSlowQueryNonPrepared(t *testing.T) {
 		`0 0 select * from t where a<3;`))
 }
 
-func TestSlowQueryUnredactedQuery(t *testing.T) {
+func TestSlowQueryInMemoryOriginalQuery(t *testing.T) {
 	executor.StartSlowQueryCache()
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
@@ -169,32 +169,49 @@ func TestSlowQueryUnredactedQuery(t *testing.T) {
 		tk.MustExec("set @@global.tidb_redact_log=off")
 	})
 
-	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and lower(column_name) = 'unredacted_query'").
+	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and lower(column_name) = 'in_memory_original_query'").
 		Check(testkit.Rows("2"))
+	tk.MustQuery("select count(*) from information_schema.columns where table_name in ('slow_query', 'cluster_slow_query') and lower(column_name) = 'unredacted_query'").
+		Check(testkit.Rows("0"))
+
+	tk.MustExec("prepare no_cache from 'select 246813579 + 1'")
+	tk.MustQuery("execute no_cache").Check(testkit.Rows("246813580"))
+	tk.MustExec("deallocate prepare no_cache")
+	stmtID, _, _, err := tk.Session().PrepareStmt("select 246813579 - 1")
+	require.NoError(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.NoError(t, err)
+	tk.ResultSetToResult(rs, "binary prepared SELECT").Check(testkit.Rows("246813578"))
+	require.NoError(t, tk.Session().DropPreparedStmt(stmtID))
+
 	tk.MustExec("select 123456789")
 	// Avoid ORDER BY time DESC LIMIT. That limit is pushed into the slow-log
 	// reader and would hide the target row once newer statements are logged.
 	tk.EventuallyMustQueryAndCheck(
-		"select query, unredacted_query from information_schema.slow_query "+
-			"where unredacted_query = 'select 123456789;'",
+		"select query, in_memory_original_query from information_schema.slow_query "+
+			"where in_memory_original_query = 'select 123456789;'",
 		nil,
 		testkit.Rows("select ?; select 123456789;"),
 		3*time.Second,
 		50*time.Millisecond,
 	)
-	// A slow-log line that was never cached stays empty in unredacted_query.
+	// The direct SELECT above also drains any earlier writes through the FIFO
+	// cache channel, so these misses cannot be caused by pending async writes.
+	tk.MustQuery("select prepared, query, in_memory_original_query from information_schema.slow_query where prepared = 1 order by query").
+		Check(testkit.Rows("1 select ? + ?; ", "1 select ? - ?; "))
+	// A slow-log line that was never cached stays empty in in_memory_original_query.
 	extra, err := os.OpenFile(f.Name(), os.O_APPEND|os.O_WRONLY, 0o644)
 	require.NoError(t, err)
 	_, err = extra.WriteString("\n# Time: 2020-01-01T00:00:00.000000+08:00\nselect disk_only_999;\n")
 	require.NoError(t, err)
 	require.NoError(t, extra.Close())
-	tk.MustQuery("select query, unredacted_query from information_schema.slow_query where query = 'select disk_only_999;'").
+	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query where query = 'select disk_only_999;'").
 		Check(testkit.Rows("select disk_only_999; "))
 
-	// Redact off keeps the plaintext in query and leaves unredacted_query empty.
+	// Redact off keeps the plaintext in query and leaves in_memory_original_query empty.
 	tk.MustExec("set @@global.tidb_redact_log=off")
 	tk.MustExec("select 987654321")
-	tk.MustQuery("select query, unredacted_query from information_schema.slow_query where query = 'select 987654321;'").
+	tk.MustQuery("select query, in_memory_original_query from information_schema.slow_query where query = 'select 987654321;'").
 		Check(testkit.Rows("select 987654321; "))
 }
 
