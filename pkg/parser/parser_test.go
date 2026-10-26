@@ -5551,6 +5551,91 @@ func TestType(t *testing.T) {
 	RunTest(t, table, false, false)
 }
 
+func TestGeometryType(t *testing.T) {
+	table := []testCase{
+		// The nine spellings, case-insensitive. Both collection spellings are one type.
+		{"create table t (a Geometry, b point, c LineString, d POLYGON, e MultiPoint, f multilinestring, g MULTIPOLYGON, h GeometryCollection, i GeomCollection)", true, "CREATE TABLE `t` (`a` GEOMETRY,`b` POINT,`c` LINESTRING,`d` POLYGON,`e` MULTIPOINT,`f` MULTILINESTRING,`g` MULTIPOLYGON,`h` GEOMCOLLECTION,`i` GEOMCOLLECTION)"},
+		{"alter table t add column p point, modify column l linestring, change column a b geomcollection", true, "ALTER TABLE `t` ADD COLUMN `p` POINT, MODIFY COLUMN `l` LINESTRING, CHANGE COLUMN `a` `b` GEOMCOLLECTION"},
+		// No length, charset, sign or BINARY attribute.
+		{"create table t (p point(10))", false, ""},
+		{"create table t (p point unsigned)", false, ""},
+		{"create table t (p point binary)", false, ""},
+		{"create table t (p point character set utf8mb4)", false, ""},
+		{"create table t (p point charset binary)", false, ""},
+
+		// SRID in any position among the column attributes.
+		{"create table t (p point srid 4326)", true, "CREATE TABLE `t` (`p` POINT SRID 4326)"},
+		{"create table t (p point SRID 4326 not null, q point not null srid 0)", true, "CREATE TABLE `t` (`p` POINT SRID 4326 NOT NULL,`q` POINT NOT NULL SRID 0)"},
+		{"create table t (p point default null srid 0 comment 'c' srid 4326)", true, "CREATE TABLE `t` (`p` POINT DEFAULT NULL SRID 0 COMMENT 'c' SRID 4326)"},
+		{"create table t (p point as (point(1, 2)) stored srid 0)", true, "CREATE TABLE `t` (`p` POINT GENERATED ALWAYS AS(POINT(1, 2)) STORED SRID 0)"},
+		{"alter table t add column p point srid 4326, modify column q geometry srid 0, change column r s polygon srid 4326", true, "ALTER TABLE `t` ADD COLUMN `p` POINT SRID 4326, MODIFY COLUMN `q` GEOMETRY SRID 0, CHANGE COLUMN `r` `s` POLYGON SRID 4326"},
+		// Accepted on any column type here; DDL rejects it on a non-geometry column.
+		{"create table t (a int srid 4326)", true, "CREATE TABLE `t` (`a` INT SRID 4326)"},
+		// mysqldump writes the attribute in a version comment.
+		{"create table t (p point not null /*!80003 SRID 4326 */)", true, "CREATE TABLE `t` (`p` POINT NOT NULL SRID 4326)"},
+
+		// SRID takes an unsigned decimal or a hex literal, up to 4294967295.
+		{"create table t (p point srid 04326)", true, "CREATE TABLE `t` (`p` POINT SRID 4326)"},
+		{"create table t (p point srid 4294967295)", true, "CREATE TABLE `t` (`p` POINT SRID 4294967295)"},
+		{"create table t (p point srid 0x10E6, q point srid 0x10e6)", true, "CREATE TABLE `t` (`p` POINT SRID 4326,`q` POINT SRID 4326)"},
+		{"create table t (p point srid X'10E6', q point srid x'10e6')", true, "CREATE TABLE `t` (`p` POINT SRID 4326,`q` POINT SRID 4326)"},
+		{"create table t (p point srid 0x0000000000000000000010E6, q point srid 0xFFFFFFFF)", true, "CREATE TABLE `t` (`p` POINT SRID 4326,`q` POINT SRID 4294967295)"},
+		{"create table t (p point srid X'', q point srid 0x00)", true, "CREATE TABLE `t` (`p` POINT SRID 0,`q` POINT SRID 0)"},
+		{"create table t (p point srid)", false, ""},
+		{"create table t (p point srid 4326.0)", false, ""},
+		{"create table t (p point srid 4.326e3)", false, ""},
+		{"create table t (p point srid 18446744073709551616)", false, ""},
+		{"create table t (p point srid 0X10E6)", false, ""},
+		{"create table t (p point srid b'1000011100110')", false, ""},
+		{"create table t (p point srid 0b1000011100110)", false, ""},
+		{"create table t (p point srid -1)", false, ""},
+		{"create table t (p point srid +4326)", false, ""},
+		{"create table t (p point srid '4326')", false, ""},
+		{"create table t (p point srid (4326))", false, ""},
+		{"create table t (p point srid 0 + 4326)", false, ""},
+		{"create table t (p point srid (0 + 4326))", false, ""},
+		{"create table t (p point srid cast(4326 as unsigned))", false, ""},
+		{"create table t (p point srid @v)", false, ""},
+
+		// Every new keyword is non-reserved.
+		{"create table geometry (geometry geometry, point point, linestring linestring, polygon polygon, multipoint multipoint, multilinestring multilinestring, multipolygon multipolygon, geometrycollection geometrycollection, geomcollection geomcollection, srid int srid 0)", true, "CREATE TABLE `geometry` (`geometry` GEOMETRY,`point` POINT,`linestring` LINESTRING,`polygon` POLYGON,`multipoint` MULTIPOINT,`multilinestring` MULTILINESTRING,`multipolygon` MULTIPOLYGON,`geometrycollection` GEOMCOLLECTION,`geomcollection` GEOMCOLLECTION,`srid` INT SRID 0)"},
+		{"select geometry, srid, geomcollection as geometrycollection from srid as linestring", true, "SELECT `geometry`,`srid`,`geomcollection` AS `geometrycollection` FROM `srid` AS `linestring`"},
+
+		// The constructor names stay callable; GEOMETRY and SRID are not functions.
+		{"select Point(1, 2), LineString(Point(0, 0), Point(1, 1)), Polygon(LineString(Point(0, 0), Point(1, 0), Point(0, 1), Point(0, 0)))", true, "SELECT POINT(1, 2),LINESTRING(POINT(0, 0), POINT(1, 1)),POLYGON(LINESTRING(POINT(0, 0), POINT(1, 0), POINT(0, 1), POINT(0, 0)))"},
+		{"select MultiPoint(p), MultiLineString(l), MultiPolygon(y), GeometryCollection(p, l), GeomCollection(p, l)", true, "SELECT MULTIPOINT(`p`),MULTILINESTRING(`l`),MULTIPOLYGON(`y`),GEOMETRYCOLLECTION(`p`, `l`),GEOMCOLLECTION(`p`, `l`)"},
+		{"select Geometry(p)", false, ""},
+		{"select SRID(p)", false, ""},
+
+		// Spatial indexes as table constraints, as mysqldump writes them.
+		{"create table t (g point not null srid 4326, spatial key sk (g))", true, "CREATE TABLE `t` (`g` POINT NOT NULL SRID 4326,SPATIAL `sk`(`g`))"},
+		{"create table t (g geometry not null, spatial index (g), spatial (g) comment 'c' invisible)", true, "CREATE TABLE `t` (`g` GEOMETRY NOT NULL,SPATIAL(`g`),SPATIAL(`g`) COMMENT 'c' INVISIBLE)"},
+		{"alter table t add spatial index ai (g), add spatial key (g)", true, "ALTER TABLE `t` ADD SPATIAL `ai`(`g`), ADD SPATIAL(`g`)"},
+		{"create spatial index si on t (g)", true, "CREATE SPATIAL INDEX `si` ON `t` (`g`)"},
+		{"create table t (g point not null spatial)", false, ""},
+
+		// Spatial casts take the eight subtype spellings, not GEOMETRY, and no SRID.
+		{"select cast(g as point), cast(g as LineString), convert(g, polygon), cast(g as multipoint), cast(g as multilinestring), cast(g as multipolygon), cast(g as geometrycollection), cast(g as geomcollection) from t", true, "SELECT CAST(`g` AS POINT),CAST(`g` AS LINESTRING),CONVERT(`g`, POLYGON),CAST(`g` AS MULTIPOINT),CAST(`g` AS MULTILINESTRING),CAST(`g` AS MULTIPOLYGON),CAST(`g` AS GEOMCOLLECTION),CAST(`g` AS GEOMCOLLECTION) FROM `t`"},
+		{"select cast(0x00000000010100000000000000000000000000000000000000 as point)", true, "SELECT CAST(x'00000000010100000000000000000000000000000000000000' AS POINT)"},
+		{"select cast(g as point array) from t", true, "SELECT CAST(`g` AS POINT ARRAY) FROM `t`"},
+		{"select cast(g as geometry) from t", false, ""},
+		{"select cast(g as point srid 4326) from t", false, ""},
+	}
+	RunTest(t, table, false, false)
+
+	p := parser.New()
+	for _, src := range []string{
+		"create table t (p point srid 4294967296)",
+		"create table t (p point srid 18446744073709551615)",
+		"create table t (p point srid 0x100000000)",
+		"create table t (p point srid X'010000000000000000')",
+		"alter table t add column p point srid 4294967296",
+	} {
+		_, _, err := p.Parse(src, "", "")
+		require.EqualError(t, err, "[parser:1690]SRID value is out of range in 'SRID'", src)
+	}
+}
+
 func TestPrivilege(t *testing.T) {
 	table := []testCase{
 		// for create user

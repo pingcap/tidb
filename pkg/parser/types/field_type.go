@@ -40,6 +40,46 @@ var (
 	TiDBStrictIntegerDisplayWidth bool
 )
 
+// GeometryType is the subtype of a TypeGeometry field, the kind of geometry a column
+// accepts. The values are the OGC WKB geometry type codes. They are persisted in the
+// table schema, so they must not change.
+type GeometryType uint8
+
+const (
+	// GeomGeometry is GEOMETRY, which accepts any subtype.
+	GeomGeometry GeometryType = iota
+	// GeomPoint is POINT.
+	GeomPoint
+	// GeomLineString is LINESTRING.
+	GeomLineString
+	// GeomPolygon is POLYGON.
+	GeomPolygon
+	// GeomMultiPoint is MULTIPOINT.
+	GeomMultiPoint
+	// GeomMultiLineString is MULTILINESTRING.
+	GeomMultiLineString
+	// GeomMultiPolygon is MULTIPOLYGON.
+	GeomMultiPolygon
+	// GeomGeometryCollection is GEOMETRYCOLLECTION, also spelled GEOMCOLLECTION.
+	GeomGeometryCollection
+)
+
+var geo2Str = map[GeometryType]string{
+	GeomGeometry:           "geometry",
+	GeomPoint:              "point",
+	GeomLineString:         "linestring",
+	GeomPolygon:            "polygon",
+	GeomMultiPoint:         "multipoint",
+	GeomMultiLineString:    "multilinestring",
+	GeomMultiPolygon:       "multipolygon",
+	GeomGeometryCollection: "geomcollection",
+}
+
+// String returns the type name as MySQL prints it.
+func (geo GeometryType) String() string {
+	return geo2Str[geo]
+}
+
 // FieldType records field type information.
 type FieldType struct {
 	// tp is type of the field
@@ -58,6 +98,9 @@ type FieldType struct {
 	elems            []string
 	elemsIsBinaryLit []bool
 	array            bool
+	// subtype is a variant of tp with the same value representation, 0 for none.
+	// For TypeGeometry it is a GeometryType.
+	subtype uint8
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
 }
 
@@ -74,6 +117,7 @@ func (ft *FieldType) DeepCopy() *FieldType {
 		charset: ft.charset,
 		collate: ft.collate,
 		array:   ft.array,
+		subtype: ft.subtype,
 	}
 	if len(ft.elems) > 0 {
 		ret.elems = make([]string, len(ft.elems))
@@ -103,6 +147,7 @@ func (ft *FieldType) Hash64(h util.IHasher) {
 		h.HashBool(elem)
 	}
 	h.HashBool(ft.array)
+	h.HashByte(ft.subtype)
 }
 
 // Equals implements the cascades/base.Hasher.<1th> interface.
@@ -123,7 +168,8 @@ func (ft *FieldType) Equals(other any) bool {
 		ft.decimal == ft2.decimal &&
 		ft.charset == ft2.charset &&
 		ft.collate == ft2.collate &&
-		ft.array == ft2.array
+		ft.array == ft2.array &&
+		ft.subtype == ft2.subtype
 	if !ok {
 		return false
 	}
@@ -216,6 +262,7 @@ func (ft *FieldType) GetElems() []string {
 func (ft *FieldType) SetType(tp byte) {
 	ft.tp = tp
 	ft.array = false
+	ft.subtype = 0
 }
 
 // SetFlag sets the flag of the FieldType.
@@ -329,6 +376,26 @@ func (ft *FieldType) ArrayType() *FieldType {
 	return clone
 }
 
+// SetGeometryType sets the GeometryType of a TypeGeometry FieldType.
+func (ft *FieldType) SetGeometryType(geo GeometryType) {
+	ft.subtype = uint8(geo)
+}
+
+// GetGeometryType returns the GeometryType of a TypeGeometry FieldType.
+func (ft *FieldType) GetGeometryType() GeometryType {
+	return GeometryType(ft.subtype)
+}
+
+// typeStr returns the name of the type without length or attributes, such as
+// varbinary, text or point.
+func (ft *FieldType) typeStr() string {
+	tp := ft.GetType()
+	if tp == mysql.TypeGeometry {
+		return ft.GetGeometryType().String()
+	}
+	return TypeToStr(tp, ft.charset)
+}
+
 // SetElemWithIsBinaryLit sets the element of the FieldType.
 func (ft *FieldType) SetElemWithIsBinaryLit(idx int, element string, isBinaryLit bool) {
 	ft.elems[idx] = element
@@ -381,6 +448,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 		(ignoreDecimal || ft.decimal == other.decimal) &&
 		ft.charset == other.charset &&
 		ft.collate == other.collate &&
+		ft.subtype == other.subtype &&
 		flenEqual &&
 		mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
 	if !partialEqual {
@@ -456,7 +524,7 @@ func (ft *FieldType) Init(tp byte) {
 // CompactStr only considers tp/CharsetBin/flen/Deimal.
 // This is used for showing column type in infoschema.
 func (ft *FieldType) CompactStr() string {
-	ts := TypeToStr(ft.GetType(), ft.charset)
+	ts := ft.typeStr()
 	suffix := ""
 
 	defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
@@ -564,7 +632,7 @@ func (ft *FieldType) String() string {
 
 // Restore implements Node interface.
 func (ft *FieldType) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord(TypeToStr(ft.GetType(), ft.charset))
+	ctx.WriteKeyWord(ft.typeStr())
 
 	precision := UnspecifiedLength
 	scale := UnspecifiedLength
@@ -678,6 +746,8 @@ func (ft *FieldType) RestoreAsCastType(ctx *format.RestoreCtx, explicitCharset b
 		ctx.WriteKeyWord("YEAR")
 	case mysql.TypeTiDBVectorFloat32:
 		ctx.WriteKeyWord("VECTOR")
+	case mysql.TypeGeometry:
+		ctx.WriteKeyWord(ft.GetGeometryType().String())
 	}
 	if ft.array {
 		ctx.WritePlain(" ")
@@ -737,6 +807,7 @@ type jsonFieldType struct {
 	Elems            []string
 	ElemsIsBinaryLit []bool
 	Array            bool
+	Subtype          uint8 `json:",omitempty"`
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
@@ -753,6 +824,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 		ft.elems = r.Elems
 		ft.elemsIsBinaryLit = r.ElemsIsBinaryLit
 		ft.array = r.Array
+		ft.subtype = r.Subtype
 	}
 	return err
 }
@@ -769,6 +841,7 @@ func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	r.Elems = ft.elems
 	r.ElemsIsBinaryLit = ft.elemsIsBinaryLit
 	r.Array = ft.array
+	r.Subtype = ft.subtype
 	return json.Marshal(r)
 }
 

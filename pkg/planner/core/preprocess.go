@@ -430,6 +430,10 @@ func (p *preprocessor) Enter(in ast.Node) bool {
 		p.checkDropSequenceGrammar(node)
 	case *ast.FuncCastExpr:
 		p.checkFuncCastExpr(node)
+	case *ast.JSONSumCrc32Expr:
+		if node.Tp.ArrayType().GetType() == mysql.TypeGeometry {
+			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("spatial type casts")
+		}
 	case *ast.FuncCallExpr:
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
@@ -1352,6 +1356,10 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
+	if stmt.Tp == ast.ConstraintSpatial {
+		p.err = dbterror.ErrUnsupportedIndexType.FastGen("SPATIAL index is not supported")
+		return
+	}
 	// Rewrite VECTOR INDEX into COLUMNAR INDEX
 	if stmt.Tp == ast.ConstraintVector {
 		if stmt.Option.Tp != ast.IndexTypeInvalid && stmt.Option.Tp != ast.IndexTypeHNSW {
@@ -2148,6 +2156,10 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 }
 
 func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
+	if node.Tp.ArrayType().GetType() == mysql.TypeGeometry {
+		p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("spatial type casts")
+		return
+	}
 	if node.Tp.EvalType() == types.ETDecimal {
 		if node.Tp.GetFlen() >= node.Tp.GetDecimal() && node.Tp.GetFlen() <= mysql.MaxDecimalWidth && node.Tp.GetDecimal() <= mysql.MaxDecimalScale {
 			// valid
