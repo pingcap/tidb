@@ -32,11 +32,15 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -475,6 +479,7 @@ func setStatementRUFullReportForTest(owner *statementRUOwner, full bool) {
 }
 
 func TestStatementRUResultValueContracts(t *testing.T) {
+	t.Run("single concrete snapshot projection", testStatementRUSingleSnapshot)
 	t.Run("result terminal agrees with legacy terminal across lifecycle and current plan", func(t *testing.T) {
 		t.Cleanup(config.RestoreFunc())
 		config.UpdateGlobal(func(cfg *config.Config) { cfg.RUV2.StmtWeights = ruv2.DefaultWeights() })
@@ -1429,4 +1434,236 @@ func prepareStatementRUCommitTerminalForBenchmark(b *testing.B, nonempty bool) *
 	require.Zero(b, stmt.finishStatementRU(nil))
 	require.Nil(b, sc.GetFlatPlan())
 	return stmt
+}
+
+// Frozen owner-install-flags collector: independent of the candidate projection.
+func statementRUSingleSnapshotReference(
+	planID int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+) (float64, float64, statementRUOperatorState) {
+	if runtimeStatsColl == nil {
+		return 0, 0, statementRUOperatorComplete
+	}
+	rootStats, exists := runtimeStatsColl.GetRootStatsIfExists(planID)
+	if !exists || rootStats == nil {
+		return 0, 0, statementRUOperatorComplete
+	}
+
+	_, groups := rootStats.MergeStats()
+	var aggregate util.PointResponseStats
+	for _, group := range groups {
+		stats, ok := statementRUPointResponseStatsSnapshot(group)
+		if !ok {
+			continue
+		}
+		if !mergeStatementRUPointResponseStats(&aggregate, stats) {
+			return 0, 0, statementRUOperatorInvalid
+		}
+	}
+	// No provider (an unexecuted point lookup) or a valid zero-value snapshot
+	// (for example a transaction-buffer hit) contributes zero remote work.
+	if !aggregate.PayloadComplete() {
+		if aggregate.PayloadBytes != 0 ||
+			aggregate.ScanDetail.TotalKeys != 0 || aggregate.ScanDetail.ProcessedKeys != 0 ||
+			aggregate.ScanDetail.ProcessedKeysSize != 0 {
+			return 0, 0, statementRUOperatorInvalid
+		}
+		return 0, 0, statementRUOperatorComplete
+	}
+	if !aggregate.ScanDetailComplete() {
+		return 0, 0, statementRUOperatorUnsupported
+	}
+
+	scanEvidence := classifyStatementRUScanEvidence(
+		aggregate.ScanDetail.TotalKeys,
+		aggregate.ScanDetail.ProcessedKeys,
+		aggregate.ScanDetail.ProcessedKeysSize,
+	)
+	switch scanEvidence.state {
+	case statementRUScanEvidenceValid:
+
+	case statementRUScanEvidenceUnavailable:
+		// Complete response coverage does not give protobuf scalar fields
+		// presence bits. Keep the best-effort value and add no scan bytes.
+	default:
+		return 0, 0, statementRUOperatorInvalid
+	}
+	return scanEvidence.scanBytes, float64(aggregate.PayloadBytes), statementRUOperatorComplete
+}
+
+// Obtain a real concrete SnapshotRuntimeStats through the public RPC path. Close
+// the store before returning so its background work is outside benchmark timers.
+func newStatementRUSingleSnapshotFixture(t testing.TB, scan *kvrpcpb.ScanDetailV2, detailsPresent, missingKey bool) *runtimeStatsWithSnapshot {
+	t.Helper()
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			require.NoError(t, store.Close())
+		}
+	})
+	key, value := kv.Key("ru-single-snapshot"), []byte("payload")
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn.Set(key, value))
+	require.NoError(t, txn.Commit(context.Background()))
+	stats := &txnsnapshot.SnapshotRuntimeStats{}
+	snapshot := store.GetSnapshot(kv.MaxVersion)
+	snapshot.SetOption(kv.CollectRuntimeStats, stats)
+	var responses atomic.Int64
+	snapshot.SetOption(kv.RPCInterceptor, interceptor.NewRPCInterceptor("statement-ru-single-snapshot", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
+		return func(target string, request *tikvrpc.Request) (*tikvrpc.Response, error) {
+			response, err := next(target, request)
+			if err == nil && response != nil {
+				if get, ok := response.Resp.(*kvrpcpb.GetResponse); ok {
+					responses.Add(1)
+					get.ExecDetailsV2 = nil
+					if detailsPresent {
+						get.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{ScanDetailV2: scan}
+					}
+				}
+			}
+			return response, err
+		}
+	}))
+	if missingKey {
+		key = kv.Key("ru-single-snapshot-missing")
+	}
+	got, err := snapshot.Get(context.Background(), key)
+	if missingKey {
+		require.ErrorIs(t, err, kv.ErrNotExist)
+	} else {
+		require.NoError(t, err)
+		require.Equal(t, value, got.Value)
+	}
+	require.Equal(t, int64(1), responses.Load())
+	require.NoError(t, store.Close())
+	closed = true
+	return &runtimeStatsWithSnapshot{SnapshotRuntimeStats: stats}
+}
+
+func checkStatementRUSingleSnapshotOracle(t *testing.T, providers []execdetails.RuntimeStats, state statementRUOperatorState, scan, payload float64) {
+	t.Helper()
+	coll := execdetails.NewRuntimeStatsColl(nil)
+	for _, provider := range providers {
+		coll.RegisterStats(1001, provider)
+	}
+	wantScan, wantPayload, wantState := statementRUSingleSnapshotReference(1001, coll)
+	gotScan, gotPayload, gotState := collectStatementRUPointPayload(1001, coll)
+	require.Equal(t, state, wantState)
+	require.Equal(t, math.Float64bits(scan), math.Float64bits(wantScan))
+	require.Equal(t, math.Float64bits(payload), math.Float64bits(wantPayload))
+	require.Equal(t, wantState, gotState)
+	require.Equal(t, math.Float64bits(wantScan), math.Float64bits(gotScan))
+	require.Equal(t, math.Float64bits(wantPayload), math.Float64bits(gotPayload))
+	root, exists := coll.GetRootStatsIfExists(1001)
+	if exists {
+		_, groups := root.MergeStats()
+		if len(groups) == 1 {
+			if stats, ok := groups[0].(*runtimeStatsWithSnapshot); ok && stats != nil && stats.SnapshotRuntimeStats != nil {
+				// Fixture creation, registration and premerging are outside the
+				// measured closure. Guard steady per-call heap allocations, not
+				// the terminal owner allocation or compiler escape diagnostics.
+				allocs := testing.AllocsPerRun(1000, func() {
+					gotScan, gotPayload, gotState = collectStatementRUPointPayload(1001, coll)
+				})
+				require.Zero(t, allocs, "single concrete snapshot collection must not allocate")
+				require.Equal(t, wantState, gotState)
+				require.Equal(t, math.Float64bits(wantScan), math.Float64bits(gotScan))
+				require.Equal(t, math.Float64bits(wantPayload), math.Float64bits(gotPayload))
+			}
+		}
+	}
+	// No retention of a different root's current group.
+	x, y, empty := collectStatementRUPointPayload(1002, coll)
+	require.Equal(t, statementRUOperatorComplete, empty)
+	require.Zero(t, x)
+	require.Zero(t, y)
+}
+
+func testStatementRUSingleSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		scan                  *kvrpcpb.ScanDetailV2
+		details, miss         bool
+		state                 statementRUOperatorState
+		wantScan, wantPayload float64
+	}{
+		{"complete", &kvrpcpb.ScanDetailV2{TotalVersions: 3, ProcessedVersions: 2, ProcessedVersionsSize: 37}, true, false, statementRUOperatorComplete, 55.5, 7},
+		{"known zero miss", &kvrpcpb.ScanDetailV2{}, true, true, statementRUOperatorComplete, 0, 0},
+		{"unavailable scalar", &kvrpcpb.ScanDetailV2{TotalVersions: 3, ProcessedVersions: 2}, true, false, statementRUOperatorComplete, 0, 7},
+		{"contradictory", &kvrpcpb.ScanDetailV2{TotalVersions: 1, ProcessedVersions: 0, ProcessedVersionsSize: 37}, true, false, statementRUOperatorInvalid, 0, 0},
+		{"processed exceeds total stays supported", &kvrpcpb.ScanDetailV2{TotalVersions: 1, ProcessedVersions: 2, ProcessedVersionsSize: 37}, true, false, statementRUOperatorComplete, 18.5, 7},
+		{"missing scan", nil, true, false, statementRUOperatorUnsupported, 0, 0},
+		{"missing details", nil, false, false, statementRUOperatorUnsupported, 0, 0},
+		{"negative total", &kvrpcpb.ScanDetailV2{TotalVersions: math.MaxUint64, ProcessedVersions: 2, ProcessedVersionsSize: 37}, true, false, statementRUOperatorInvalid, 0, 0},
+		{"negative processed", &kvrpcpb.ScanDetailV2{TotalVersions: 3, ProcessedVersions: math.MaxUint64, ProcessedVersionsSize: 37}, true, false, statementRUOperatorInvalid, 0, 0},
+		{"negative bytes", &kvrpcpb.ScanDetailV2{TotalVersions: 3, ProcessedVersions: 2, ProcessedVersionsSize: math.MaxUint64}, true, false, statementRUOperatorInvalid, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := newStatementRUSingleSnapshotFixture(t, tc.scan, tc.details, tc.miss)
+			point := provider.GetPointResponseStats()
+			require.True(t, point.IsValid())
+			require.True(t, point.PayloadComplete())
+			require.Equal(t, tc.details && tc.scan != nil, point.ScanDetailComplete())
+			if tc.scan != nil {
+				require.Equal(t, int64(tc.scan.TotalVersions), point.ScanDetail.TotalKeys)
+				require.Equal(t, int64(tc.scan.ProcessedVersions), point.ScanDetail.ProcessedKeys)
+				require.Equal(t, int64(tc.scan.ProcessedVersionsSize), point.ScanDetail.ProcessedKeysSize)
+			}
+			checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{provider}, tc.state, tc.wantScan, tc.wantPayload)
+		})
+	}
+	t.Run("nil and zero concrete", func(t *testing.T) {
+		checkStatementRUSingleSnapshotOracle(t, nil, statementRUOperatorComplete, 0, 0)
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{(*runtimeStatsWithSnapshot)(nil)}, statementRUOperatorInvalid, 0, 0)
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{&runtimeStatsWithSnapshot{}}, statementRUOperatorInvalid, 0, 0)
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{&runtimeStatsWithSnapshot{SnapshotRuntimeStats: &txnsnapshot.SnapshotRuntimeStats{}}}, statementRUOperatorComplete, 0, 0)
+	})
+	t.Run("current group includes premerged responses", func(t *testing.T) {
+		complete := newStatementRUSingleSnapshotFixture(t, &kvrpcpb.ScanDetailV2{TotalVersions: 3, ProcessedVersions: 2, ProcessedVersionsSize: 37}, true, false)
+		second := complete.Clone()
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{complete, second}, statementRUOperatorComplete, 111, 14)
+		missing := newStatementRUSingleSnapshotFixture(t, nil, true, false)
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{complete.Clone(), missing}, statementRUOperatorUnsupported, 0, 0)
+	})
+	t.Run("premerged and late overflow retain different failure order", func(t *testing.T) {
+		a := newStatementRUSingleSnapshotFixture(t, &kvrpcpb.ScanDetailV2{TotalVersions: math.MaxInt64, ProcessedVersions: 1, ProcessedVersionsSize: 1}, true, false)
+		b := a.Clone().(*runtimeStatsWithSnapshot)
+		b.SnapshotRuntimeStats.Merge(a.SnapshotRuntimeStats)
+		missing := newStatementRUSingleSnapshotFixture(t, nil, true, false)
+		b.SnapshotRuntimeStats.Merge(missing.SnapshotRuntimeStats)
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{b}, statementRUOperatorInvalid, 0, 0)
+		var reads atomic.Int64
+		first := &statementRUPointScalarCountingStats{kind: -4001, stats: a.GetPointResponseStats(), reads: &reads}
+		last := &statementRUPointScalarCountingStats{kind: -4002, stats: a.GetPointResponseStats(), reads: &reads}
+		last.stats.Merge(missing.GetPointResponseStats())
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{first, last}, statementRUOperatorUnsupported, 0, 0)
+		require.Equal(t, int64(4), reads.Load())
+	})
+	t.Run("single custom fallback and panic order", func(t *testing.T) {
+		var reads atomic.Int64
+		point := statementRUPointResponseStatsForTestFromResponse(&kvrpcpb.ScanDetailV2{TotalVersions: 3, ProcessedVersions: 2, ProcessedVersionsSize: 37}, 7)
+		custom := &statementRUPointScalarCountingStats{kind: -5001, stats: point, reads: &reads}
+		checkStatementRUSingleSnapshotOracle(t, []execdetails.RuntimeStats{custom}, statementRUOperatorComplete, 55.5, 7)
+		require.Equal(t, int64(2), reads.Swap(0))
+		bad := point
+		bad.Invalidate()
+		coll := execdetails.NewRuntimeStatsColl(nil)
+		coll.RegisterStats(1001, &statementRUPointScalarCountingStats{kind: -5002, stats: bad, reads: &reads})
+		coll.RegisterStats(1001, &statementRUPointScalarCountingStats{kind: -5003, stats: point, reads: &reads, panicOnRead: true})
+		_, _, want := statementRUSingleSnapshotReference(1001, coll)
+		require.Equal(t, int64(1), reads.Swap(0))
+		_, _, got := collectStatementRUPointPayload(1001, coll)
+		require.Equal(t, statementRUOperatorInvalid, got)
+		require.Equal(t, want, got)
+		require.Equal(t, int64(1), reads.Swap(0))
+		coll = execdetails.NewRuntimeStatsColl(nil)
+		coll.RegisterStats(1001, &statementRUPointScalarCountingStats{kind: -5004, stats: point, reads: &reads, panicOnRead: true})
+		require.PanicsWithValue(t, "point scalar evidence read", func() { statementRUSingleSnapshotReference(1001, coll) })
+		require.Equal(t, int64(1), reads.Swap(0))
+		require.PanicsWithValue(t, "point scalar evidence read", func() { collectStatementRUPointPayload(1001, coll) })
+		require.Equal(t, int64(1), reads.Load())
+	})
 }
