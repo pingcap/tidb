@@ -53,7 +53,7 @@ type extractHelper struct {
 	enableScalarPushDown bool
 	// Statement summary time pruning may resolve execution-bound constants.
 	enableDeferredConst bool
-	// Coarse pruning must not choose one instant for a repeated local time.
+	// Statement summary coarse pruning must preserve all exact SQL matches.
 	conservativeTimeRange bool
 	pushedDownFuncs       map[string]func(string) string
 
@@ -666,9 +666,22 @@ func (helper extractHelper) extractTimeRange(
 				mysqlTime.Microsecond()*1000,
 				timezone,
 			)
-			if helper.conservativeTimeRange && !isUniqueLocalTime(localTime, mysqlTime.CoreTime()) {
-				remained = append(remained, expr)
-				continue
+			if helper.conservativeTimeRange {
+				// SQL datetime bounds can exceed UnixNano's range or identify more
+				// than one instant. Neither conversion is safe for coarse pruning.
+				if localTime.Before(time.Unix(0, math.MinInt64)) || localTime.After(time.Unix(0, math.MaxInt64)) ||
+					!isUniqueLocalTime(localTime, mysqlTime.CoreTime()) {
+					remained = append(remained, expr)
+					continue
+				}
+				// Retained SQL predicates enforce strictness. Inclusive coarse
+				// bounds avoid millisecond adjustments that can invert or overflow.
+				switch fnName {
+				case ast.GT:
+					fnName = ast.GE
+				case ast.LT:
+					fnName = ast.LE
+				}
 			}
 			timestamp := localTime.UnixNano()
 
@@ -1687,8 +1700,9 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 	}
 
 	if tr.StartTime.After(tr.EndTime) {
-		e.SkipRequest = true
-		return nil
+		// These bounds constrain different columns. A window spanning both
+		// bounds can still match, so inversion does not imply an empty result.
+		return remained
 	}
 	e.CoarseTimeRange = tr
 	return remained
