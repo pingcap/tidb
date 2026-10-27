@@ -2418,6 +2418,7 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 	stmtExecInfo.Charset = charset
 	stmtExecInfo.Collation = collation
 	stmtExecInfo.NormalizedSQL = normalizedSQL
+	stmtExecInfo.SampleSQL = sessVars.StmtCtx.OriginalSQL
 	stmtExecInfo.Digest = digest.String()
 	stmtExecInfo.PrevSQL = prevSQL
 	stmtExecInfo.PrevSQLDigest = prevSQLDigest
@@ -2460,16 +2461,6 @@ func (a *ExecStmt) SummaryStmt(succ bool, statementRUTotal ...float64) {
 func (a *ExecStmt) GetOriginalSQL() string {
 	stmt := a.getLazyStmtText()
 	return stmt.String()
-}
-
-// GetUnredactedSQL returns a statement-summary sample before log redaction.
-// Sensitive statements retain their own credential protection.
-func (a *ExecStmt) GetUnredactedSQL() string {
-	if sensitiveStmt, ok := a.StmtNode.(ast.SensitiveStmtNode); ok {
-		return sensitiveStmt.SecureText()
-	}
-	sessVars := a.Ctx.GetSessionVars()
-	return sessVars.StmtCtx.OriginalSQL + sessVars.PlanCacheParams.String()
 }
 
 // GetEncodedPlan implements StmtExecLazyInfo interface.

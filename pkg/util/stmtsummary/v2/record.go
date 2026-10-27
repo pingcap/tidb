@@ -209,12 +209,6 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	bindingSQL, bindingDigest := info.LazyInfo.GetBindingSQLAndDigest()
-	var sampleSQL string
-	if source, ok := info.LazyInfo.(interface{ GetUnredactedSQL() string }); ok {
-		sampleSQL = source.GetUnredactedSQL()
-	} else {
-		sampleSQL = info.LazyInfo.GetOriginalSQL()
-	}
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
@@ -225,7 +219,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
-		SampleSQL:     formatSQL(sampleSQL),
+		SampleSQL:     formatSQL(info.SampleSQL),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
