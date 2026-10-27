@@ -1506,7 +1506,7 @@ func (local *Backend) ImportEngine(
 
 	maxReqInFlight := GetMaxIngestConcurrency()
 	maxReqPerSec := GetMaxIngestPerSec()
-	local.ingestLimiter.Store(newIngestLimiter(ctx, maxReqInFlight, maxReqPerSec))
+	local.ingestLimiter.Store(newIngestLimiter(maxReqInFlight, maxReqPerSec))
 	tidblogutil.Logger(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
 		zap.Int("region ranges", len(splitKeys)-1),
