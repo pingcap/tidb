@@ -8260,10 +8260,8 @@ fn build_create_table_info<S: MetaSnapshot>(
                     existing.name.original()
                 ),
                 vec![crate::real_tikv_ddl::ddl_note(
-                    &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS,
-                    format!(
-                        "Table '{schema}.{}' already exists",
-                        existing.name.original()
+                    tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                        &[format!("{}.{}", schema, existing.name.original()).into()],
                     ),
                 )],
             )));
@@ -8605,8 +8603,8 @@ fn already(detail: String) -> DdlPlan {
 /// go's note for one missing table: `Note | 1051 | Unknown table 'd.t'`.
 fn missing_table_note(schema: &str, table: &str) -> tidb_util::context::SqlWarn {
     crate::real_tikv_ddl::ddl_note(
-        &tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS,
-        format!("Unknown table '{schema}.{table}'"),
+        tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
+            .generate_with_stack_by_args(&[format!("{}.{}", schema, table).into()]),
     )
 }
 

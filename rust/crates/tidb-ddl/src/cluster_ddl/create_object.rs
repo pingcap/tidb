@@ -188,8 +188,13 @@ pub(super) fn build_create_table_with_info_job(
                 return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                     detail: format!("`{schema}`.`{}` already exists", info.name.original()),
                     warnings: vec![crate::real_tikv_ddl::ddl_note(
-                        &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS,
-                        format!("Table '{schema}.{}' already exists", info.name.original()),
+                        tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                            .generate_with_stack_by_args(&[format!(
+                                "{}.{}",
+                                schema,
+                                info.name.original()
+                            )
+                            .into()]),
                     )],
                 }));
             }
@@ -304,10 +309,8 @@ fn build_create_table_like_info(
                     existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS,
-                    format!(
-                        "Table '{schema}.{}' already exists",
-                        existing.name.original()
+                    tidb_error::catalog::infoschema::ERR_TABLE_EXISTS.generate_with_stack_by_args(
+                        &[format!("{}.{}", schema, existing.name.original()).into()],
                     ),
                 )],
             }));
@@ -630,8 +633,8 @@ fn build_alter_sequence_job(
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!("sequence `{schema}`.`{name}` does not exist"),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS,
-                    format!("Table '{schema}.{name}' doesn't exist"),
+                    tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                        .generate_with_stack_by_args(&[schema.into(), name.into()]),
                 )],
             }));
         }

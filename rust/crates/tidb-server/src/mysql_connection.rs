@@ -191,11 +191,7 @@ pub(crate) const RESULT_BATCH_SIZE: usize = 128;
 /// `ER_UNKNOWN_COM_ERROR` (1047), which is Go's errno for a *known* command
 /// such as `COM_FIELD_LIST` that this bounded node has not implemented.
 fn unknown_command_error(code: u8) -> SqlQueryError {
-    SqlQueryError::new(
-        ER_UNKNOWN_ERROR,
-        *b"HY000",
-        format!("command {code} not supported now"),
-    )
+    SqlQueryError::unknown(format!("command {code} not supported now"))
 }
 
 struct ConnectionPreparedStatement {
@@ -325,8 +321,7 @@ impl PreparedStatementRegistry {
         let state = tidb_session::session_states::parse_session_states(&set.session_states)
             .map_err(|error| {
                 let error = error.to_mysql_error();
-                SqlQueryError::new(error.code, error.state, error.message)
-                    .with_identity(error.identity)
+                SqlQueryError::from(error)
             })?;
         for (id, info) in state.prepared_stmts {
             if !info.name.is_empty() {
@@ -564,18 +559,14 @@ impl PreparedStatementRegistry {
         let statement = self.statements.get(&statement_id)?;
         if statement.bound_params_mem_quota_exceeded {
             let error = tidb_executor::mem_quota::memory_exceed_for_query(connection_id);
-            return Some(SqlQueryError::new(
-                error.code,
-                error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
-                error.message,
-            ));
+            return Some(SqlQueryError::from(error));
         }
         if statement.bound_params_too_large {
-            let error = tidb_error::mysql::SqlError::new(1153, &[]);
-            return Some(SqlQueryError::new(
-                error.code,
-                error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
-                error.message,
+            return Some(SqlQueryError::from(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::servererr::ERR_NET_PACKET_TOO_LARGE
+                        .generate_with_stack_by_args(&[]),
+                ),
             ));
         }
         None
@@ -2382,10 +2373,11 @@ fn run_connection_commands<S: QuerySession>(
                                     }
                                     if let Some(path) = engine.take_local_infile_request() {
                                         if capabilities & CLIENT_LOCAL_FILES == 0 {
-                                            let error = SqlQueryError::new(
-                                                1148,
-                                                *b"42000",
-                                                "The used command is not allowed with this MySQL version",
+                                            let error = SqlQueryError::from(
+                                                tidb_error::mysql::MysqlError::from_terror(
+                                                    &tidb_error::catalog::servererr::ERR_NOT_ALLOWED_COMMAND
+                                                        .generate_with_stack_by_args(&[]),
+                                                ),
                                             );
                                             write_query_error_at(
                                                 output,

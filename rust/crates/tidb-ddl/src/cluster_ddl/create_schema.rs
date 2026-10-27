@@ -48,8 +48,8 @@ pub fn prepare_create_schema_job_submission<S: MetaSnapshot>(
                     existing.info.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    &tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS,
-                    format!("Can't create database '{name}'; database exists"),
+                    tidb_error::catalog::infoschema::ERR_DATABASE_EXISTS
+                        .generate_with_stack_by_args(&[name.into()]),
                 )],
             }));
         }

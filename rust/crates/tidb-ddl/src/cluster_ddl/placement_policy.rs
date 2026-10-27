@@ -92,8 +92,8 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
                     return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                         detail: format!("placement policy `{name}` already exists"),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS,
-                            format!("Placement policy '{name}' already exists"),
+                            tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_EXISTS
+                                .generate_with_stack_by_args(&[name.into()]),
                         )],
                     }));
                 }
@@ -152,8 +152,8 @@ pub fn prepare_placement_policy_job_submission<S: MetaSnapshot>(
                     return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                         detail: format!("placement policy `{name}` does not exist"),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS,
-                            format!("Unknown placement policy '{name}'"),
+                            tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                                .generate_with_stack_by_args(&[name.into()]),
                         )],
                     }));
                 }

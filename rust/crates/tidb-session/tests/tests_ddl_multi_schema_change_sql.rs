@@ -1214,7 +1214,7 @@ fn alter_table_algorithm_resolves_per_spec_like_go() {
     tk.must_exec("create table t (a int, b int)");
     tk.must_get_err_msg(
         "alter table t add index i(a), algorithm=instant",
-        "ALGORITHM=INSTANT is not supported. Reason: Cannot alter table by INSTANT. Try ALGORITHM=INPLACE.",
+        "[ddl:1846]ALGORITHM=INSTANT is not supported. Reason: Cannot alter table by INSTANT. Try ALGORITHM=INPLACE.",
     );
     tk.must_exec("alter table t add index i(a), algorithm=copy");
     tk.must_query("show warnings").check([

@@ -274,34 +274,15 @@ pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
     match error {
         ClusterAnalyzeError::Analyze(error) => {
             let error = tidb_executor::DriverError::from(error).to_mysql_error();
-            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
+            SqlQueryError::from(error)
         }
         ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
-        ClusterAnalyzeError::Killed(error) => SqlQueryError::new(
-            error.code,
-            error.state.as_bytes().try_into().unwrap_or(*b"HY000"),
-            error.message,
-        ),
-        ClusterAnalyzeError::MissingPartitionStats(detail) => {
-            SqlQueryError::new(8243, *b"HY000", detail)
-        }
-        ClusterAnalyzeError::MissingPartitionItemStats(detail) => {
-            SqlQueryError::new(8244, *b"HY000", detail)
+        ClusterAnalyzeError::Killed(error) => {
+            SqlQueryError::from(tidb_error::mysql::MysqlError::from_sql_error(error))
         }
         ClusterAnalyzeError::Other(detail) => SqlQueryError::unknown(detail),
-        ClusterAnalyzeError::MissingTable(name) => {
-            SqlQueryError::new(1146, *b"42S02", format!("Table '{name}' doesn't exist"))
-        }
-        ClusterAnalyzeError::MissingIndex(detail) => SqlQueryError::new(8109, *b"HY000", detail),
-        ClusterAnalyzeError::PartitionManagementOnNonpartitioned => {
-            let error = tidb_executor::DriverError::from(
-                tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
-                    .generate_with_stack_by_args(&[]),
-            )
-            .to_mysql_error();
-            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
-        }
+        ClusterAnalyzeError::Mysql(error) => SqlQueryError::from(error),
     }
 }
 
@@ -309,15 +290,9 @@ pub fn cluster_stats_lock_error(error: ClusterStatsLockCommitError) -> SqlQueryE
     match error {
         ClusterStatsLockCommitError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterStatsLockCommitError::Commit(error) => lock_sql_error(&error),
-        ClusterStatsLockCommitError::Plan(ClusterStatsLockError::NoDatabaseSelected) => {
-            SqlQueryError::new(1046, *b"3D000", "No database selected")
+        ClusterStatsLockCommitError::Plan(ClusterStatsLockError::Mysql(error)) => {
+            SqlQueryError::from(error)
         }
-        ClusterStatsLockCommitError::Plan(error @ ClusterStatsLockError::MissingTable { .. }) => {
-            SqlQueryError::new(1146, *b"42S02", error.to_string())
-        }
-        ClusterStatsLockCommitError::Plan(
-            error @ ClusterStatsLockError::UnknownPartition { .. },
-        ) => SqlQueryError::new(1735, *b"HY000", error.to_string()),
         ClusterStatsLockCommitError::Plan(error) => SqlQueryError::unknown(error.to_string()),
         ClusterStatsLockCommitError::Other(detail) => SqlQueryError::unknown(detail),
     }
@@ -1082,10 +1057,11 @@ pub trait QuerySession {
     /// then ignore: a connection that reports success and silently resolves
     /// nothing is worse than one that refuses.
     fn select_database(&mut self, name: &str) -> Result<(), SqlQueryError> {
-        Err(SqlQueryError::new(
-            ER_BAD_DB_ERROR,
-            *b"42000",
-            format!("Unknown database '{name}'"),
+        Err(SqlQueryError::from(
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[name.into()]),
+            ),
         ))
     }
 

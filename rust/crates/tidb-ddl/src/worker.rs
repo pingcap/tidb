@@ -929,15 +929,7 @@ where
 
 fn persisted_job_error(error: &tidb_error::terror::TerrorError) -> SqlQueryError {
     let error = crate::cluster_ddl::ddl_job_error_to_sql_error(error);
-    SqlQueryError::new(
-        error.code,
-        error
-            .state
-            .as_bytes()
-            .try_into()
-            .expect("catalog SQLSTATE has five bytes"),
-        error.message,
-    )
+    SqlQueryError::from(error)
 }
 
 fn local_ddl_owner(owner_id: String, authority_id: u64) -> tidb_owner::MockManager {
@@ -2578,18 +2570,15 @@ where
                 warnings: Vec::new(),
             };
             let mut notes = Vec::new();
-            let missing_code = if object == DropObject::Sequence {
-                tidb_error::tidb::errcode::ErrUnknownSequence
+            // Go `dropTableObject`'s `dropExistErr`.
+            let missing_error: &tidb_error::terror::TerrorError = if object == DropObject::Sequence
+            {
+                &tidb_error::catalog::infoschema::ERR_SEQUENCE_DROP_EXISTS
             } else {
-                1051
+                &tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
             };
-            let missing_message = |names: &str| {
-                if object == DropObject::Sequence {
-                    format!("Unknown SEQUENCE: '{names}'")
-                } else {
-                    format!("Unknown table '{names}'")
-                }
-            };
+            let missing_raised =
+                |names: &str| missing_error.generate_with_stack_by_args(&[names.into()]);
             let missing = drop_objects(names, if_exists, |schema, name| {
                 let target = match object {
                     DropObject::View => DdlStatement::DropView {
@@ -2616,7 +2605,7 @@ where
                         last = report;
                         Ok(true)
                     }
-                    Err(error) if error.code == missing_code => Ok(false),
+                    Err(error) if error.code == missing_error.to_sql_error().code => Ok(false),
                     // Go: a target that is not a sequence is a note under
                     // IF EXISTS, and the list goes on.
                     Err(error)
@@ -2637,28 +2626,19 @@ where
             })
             .map_err(|error| match error {
                 DropObjectsError::Target(error) => error,
-                DropObjectsError::Missing(names) => SqlQueryError::new(
-                    missing_code,
-                    if object == DropObject::Sequence {
-                        *b"HY000"
-                    } else {
-                        *b"42S02"
-                    },
-                    missing_message(&names.join(",")),
+                DropObjectsError::Missing(names) => SqlQueryError::from(
+                    tidb_error::mysql::MysqlError::from_terror(&missing_raised(&names.join(","))),
                 ),
             })?;
             let (ClusterDdlReport::Applied { warnings, .. }
             | ClusterDdlReport::AlreadySatisfied { warnings, .. }) = &mut last;
             warnings.extend(notes);
-            // Go `dropTableObject`'s `dropExistErr`, appended as a note.
-            let missing_error = if object == DropObject::Sequence {
-                &*tidb_error::catalog::infoschema::ERR_SEQUENCE_DROP_EXISTS
-            } else {
-                &*tidb_error::catalog::infoschema::ERR_TABLE_DROP_EXISTS
-            };
-            warnings.extend(missing.into_iter().map(|name| {
-                crate::real_tikv_ddl::ddl_note(missing_error, missing_message(&name))
-            }));
+            // The same error, appended as a note for each name IF EXISTS skipped.
+            warnings.extend(
+                missing
+                    .into_iter()
+                    .map(|name| crate::real_tikv_ddl::ddl_note(missing_raised(&name))),
+            );
             return Ok(last);
         }
         if matches!(

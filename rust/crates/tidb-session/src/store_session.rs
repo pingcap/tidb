@@ -41,9 +41,7 @@ use crate::{Session, StmtResult, TxnManagerOps};
 #[must_use]
 pub fn sql_query_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.clone().to_mysql_error();
-    SqlQueryError::new(mapped.code, mapped.state, mapped.message)
-        .with_identity(mapped.identity)
-        .with_cause(error)
+    SqlQueryError::from(mapped).with_cause(error)
 }
 
 /// Builds what a commit reads off the server, for the schema version the

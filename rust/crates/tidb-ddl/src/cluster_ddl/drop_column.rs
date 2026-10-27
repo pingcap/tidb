@@ -67,8 +67,8 @@ pub(super) fn build_drop_column_job<S: MetaSnapshot>(
         return Ok(Some(AddIndexSubmission::AlreadySatisfied {
             detail: format!("column `{column}` does not exist on `{schema}`.`{table}`"),
             warnings: vec![crate::real_tikv_ddl::ddl_note(
-                &tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
-                format!("Can't DROP '{column}'; check that column/key exists"),
+                tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                    .generate_with_stack_by_args(&[column.into()]),
             )],
         }));
     }

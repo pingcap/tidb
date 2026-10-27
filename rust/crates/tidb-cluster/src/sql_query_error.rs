@@ -64,6 +64,24 @@ impl PartialEq for ErrorCause {
 
 impl Eq for ErrorCause {}
 
+/// A Go error raised as the statement's failure: its code, SQLSTATE,
+/// message and identity.
+impl From<tidb_error::mysql::MysqlError> for SqlQueryError {
+    fn from(error: tidb_error::mysql::MysqlError) -> Self {
+        Self {
+            identity: error.identity,
+            ..Self::new(error.code, error.state, error.message)
+        }
+    }
+}
+
+/// A Go error that reached the wire layer as its SQL triple and identity.
+impl From<tidb_error::mysql::SqlError> for SqlQueryError {
+    fn from(error: tidb_error::mysql::SqlError) -> Self {
+        Self::from(tidb_error::mysql::MysqlError::from_sql_error(error))
+    }
+}
+
 impl SqlQueryError {
     /// Creates one explicit client-visible query failure.
     #[must_use]

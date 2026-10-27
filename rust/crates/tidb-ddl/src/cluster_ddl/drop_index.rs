@@ -102,8 +102,8 @@ pub(super) fn build_drop_index_job<S: MetaSnapshot>(
             return Ok(Some(AddIndexSubmission::AlreadySatisfied {
                 detail: format!("index `{index_name}` does not exist on `{schema}`.`{table}`"),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    &tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY,
-                    format!("index {index_name} doesn't exist"),
+                    tidb_util::dbterror::ERR_CANT_DROP_FIELD_OR_KEY
+                        .generate_with_stack(format!("index {index_name} doesn't exist")),
                 )],
             }));
         }

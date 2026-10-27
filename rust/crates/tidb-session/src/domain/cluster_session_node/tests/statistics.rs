@@ -227,25 +227,27 @@ fn stats_lock_planning_keeps_go_error_identities() {
 
     let cases = [
         (
-            ClusterStatsLockError::NoDatabaseSelected,
+            ClusterStatsLockError::from(
+                tidb_error::plannererrors::ERR_NO_DB.generate_with_stack_by_args(&[]),
+            ),
             1046,
             *b"3D000",
             "No database selected",
         ),
         (
-            ClusterStatsLockError::MissingTable {
-                schema: "app".to_owned(),
-                table: "missing".to_owned(),
-            },
+            ClusterStatsLockError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&["app".into(), "missing".into()]),
+            ),
             1146,
             *b"42S02",
             "Table 'app.missing' doesn't exist",
         ),
         (
-            ClusterStatsLockError::UnknownPartition {
-                partition: "p9".to_owned(),
-                table: "t".to_owned(),
-            },
+            ClusterStatsLockError::from(
+                tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                    .generate_with_stack_by_args(&["p9".into(), "t".into()]),
+            ),
             1735,
             *b"HY000",
             "Unknown partition 'p9' in table 't'",

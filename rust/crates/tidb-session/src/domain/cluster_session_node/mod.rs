@@ -5657,10 +5657,7 @@ impl ClusterServerSession {
                         self.store.session.current_database(),
                         &ddl_context,
                     )
-                    .map_err(|error| {
-                        SqlQueryError::new(error.code, error.sql_state(), error.to_string())
-                            .with_identity(error.identity)
-                    })?
+                    .map_err(|error| SqlQueryError::from(error.to_mysql_error()))?
                     .ok_or_else(|| {
                         SqlQueryError::unknown(
                             "DROP TABLE has no cluster metadata operation",
@@ -5830,10 +5827,7 @@ impl ClusterServerSession {
                     self.store.session.current_database(),
                     stmt,
                 )
-                .map_err(|error| {
-                    SqlQueryError::new(error.code, error.state, error.message)
-                        .with_identity(error.identity)
-                })?;
+                .map_err(|error| SqlQueryError::from(error))?;
                 Err(unplanned_ddl())
             }
             // The refusal carries Go's own errno where it has one
@@ -5851,15 +5845,8 @@ impl ClusterServerSession {
                     self.store.session.current_database(),
                     stmt,
                 )
-                .map_err(|error| {
-                    SqlQueryError::new(error.code, error.state, error.message)
-                        .with_identity(error.identity)
-                })?;
-                Err(SqlQueryError::new(
-                    refusal.code,
-                    refusal.sql_state(),
-                    refusal.to_string(),
-                ))
+                .map_err(|error| SqlQueryError::from(error))?;
+                Err(SqlQueryError::from(refusal.to_mysql_error()))
             }
         }
     }
@@ -6538,11 +6525,7 @@ impl ClusterServerSession {
         match lowered {
             Ok(Some(statement)) => Ok(statement),
             Ok(None) => Err(unplanned_ddl()),
-            Err(refusal) => Err(SqlQueryError::new(
-                refusal.code,
-                refusal.sql_state(),
-                refusal.to_string(),
-            )),
+            Err(refusal) => Err(SqlQueryError::from(refusal.to_mysql_error())),
         }
     }
 
@@ -7687,9 +7670,7 @@ impl ClusterServerSession {
         let Some(mut result) = self.execute_stmt(sql, &stmt)? else {
             return Ok(Vec::new());
         };
-        let to_sql_error = |error: tidb_executor::MysqlError| {
-            SqlQueryError::new(error.code, error.state, error.message).with_identity(error.identity)
-        };
+        let to_sql_error = |error: tidb_executor::MysqlError| SqlQueryError::from(error);
         let source = result.source();
         let mut rows = Vec::new();
         loop {
@@ -8129,9 +8110,7 @@ impl crate::ddl_service::DdlService for ClusterDdlService {
 
 fn map_error(error: tidb_executor::DriverError) -> SqlQueryError {
     let mapped = error.clone().to_mysql_error();
-    SqlQueryError::new(mapped.code, mapped.state, mapped.message)
-        .with_identity(mapped.identity)
-        .with_cause(error)
+    SqlQueryError::from(mapped).with_cause(error)
 }
 
 /// Storage bound to no snapshot, used only to decide which tables a catalog

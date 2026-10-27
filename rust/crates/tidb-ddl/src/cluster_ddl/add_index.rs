@@ -352,8 +352,8 @@ pub(super) fn build_add_index_job<S: MetaSnapshot>(
                     existing.name.original()
                 ),
                 warnings: vec![crate::real_tikv_ddl::ddl_note(
-                    &tidb_util::dbterror::ERR_DUP_KEY_NAME,
-                    format!("Duplicate key name '{name}'"),
+                    tidb_util::dbterror::ERR_DUP_KEY_NAME
+                        .generate_with_stack_by_args(&[name.into()]),
                 )],
             }));
         }

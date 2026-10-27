@@ -81,7 +81,7 @@ fn partial_index_condition_validation_matches_go() {
     let error = tk.must_get_err_code("alter table t add index idx (b) where a = 1", 8200);
     assert_eq!(
         error.error_string(),
-        "Unsupported add partial index: add partial index without fast reorg is not supported"
+        "[ddl:8200]Unsupported add partial index: add partial index without fast reorg is not supported"
     );
     let error = tk.must_get_err_code("alter table t add index bad (b) where a = '1'", 8200);
     assert!(

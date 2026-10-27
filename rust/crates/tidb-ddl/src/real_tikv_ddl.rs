@@ -343,13 +343,10 @@ pub use tidb_util::context::WarningLevel as DdlWarningLevel;
 /// Go `StmtCtx.AppendNote(proto.GenWithStackByArgs(...))`: the note an
 /// `IF [NOT] EXISTS` files, carrying the Go error `proto` it suppressed.
 #[must_use]
-pub fn ddl_note(
-    proto: &tidb_error::terror::TerrorError,
-    message: String,
-) -> tidb_util::context::SqlWarn {
+pub fn ddl_note(error: tidb_error::terror::TerrorError) -> tidb_util::context::SqlWarn {
     tidb_util::context::SqlWarn::new(
         DdlWarningLevel::Note,
-        tidb_util::context::WarnErr::Terror(proto.generate(message)),
+        tidb_util::context::WarnErr::Terror(error),
     )
 }
 
@@ -2285,18 +2282,12 @@ pub fn cluster_ddl_error(error: ClusterDdlError) -> tidb_cluster::sql_query_erro
         ClusterDdlError::Undetermined(_) => tidb_cluster::sql_query_error::SqlQueryError::result_undetermined(),
         ClusterDdlError::Commit(error) => tidb_cluster::sql_query_error::lock_sql_error(&error),
         ClusterDdlError::IndexBackfill(error) => tidb_cluster::sql_query_error::lock_sql_error(&error),
-        ClusterDdlError::Plan(error) => {
-            let error = error.to_sql_error();
-            tidb_cluster::sql_query_error::SqlQueryError::new(
-                error.code,
-                error
-                    .state
-                    .as_bytes()
-                    .try_into()
-                    .expect("catalog SQLSTATE has five bytes"),
-                error.message,
-            )
-        }
+        // The wire triple of the persisted job error, labelled with the Go
+        // identity only when the refusal was a Go error (a plain one has none).
+        ClusterDdlError::Plan(error) => tidb_cluster::sql_query_error::SqlQueryError::from(
+            tidb_error::mysql::MysqlError::from_sql_error(error.to_sql_error()),
+        )
+        .with_identity(error.identity()),
         other => tidb_cluster::sql_query_error::SqlQueryError::unknown(other.to_string()),
     }
 }

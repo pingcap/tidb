@@ -81,7 +81,11 @@ pub fn prepare_cluster_stats_lock_parsed(
         .map(|target| {
             let (schema, table) = match target.name.as_slice() {
                 [table] if !default_schema.is_empty() => (default_schema.to_owned(), table.clone()),
-                [_table] => return Err(ClusterStatsLockError::NoDatabaseSelected),
+                [_table] => {
+                    return Err(tidb_error::plannererrors::ERR_NO_DB
+                        .generate_with_stack_by_args(&[])
+                        .into())
+                }
                 [schema, table] => (schema.clone(), table.clone()),
                 _ => {
                     return Err(ClusterStatsLockError::Invalid(
@@ -109,22 +113,10 @@ pub(crate) enum ClusterStatsLockApplyError<E> {
 /// Why a cluster lock operation could not be planned.
 #[derive(Debug)]
 pub enum ClusterStatsLockError {
-    /// A bare table name was used with no selected schema.
-    NoDatabaseSelected,
-    /// The named table is absent from the statement's infoschema.
-    MissingTable {
-        /// Schema named by or resolved for the statement.
-        schema: String,
-        /// Missing table name.
-        table: String,
-    },
-    /// A partition name is absent from the named table.
-    UnknownPartition {
-        /// Missing partition name.
-        partition: String,
-        /// Table against which the partition was resolved.
-        table: String,
-    },
+    /// The error value Go's `LOCK STATS` / `UNLOCK STATS` planning raises as
+    /// it is: `ErrNoDB` for a bare table name with no selected schema,
+    /// `ErrTableNotExists`, `ErrUnknownPartition`.
+    Mysql(tidb_error::mysql::MysqlError),
     /// Missing table or invalid target.
     Invalid(String),
     /// System-row read failure.
@@ -136,16 +128,7 @@ pub enum ClusterStatsLockError {
 impl std::fmt::Display for ClusterStatsLockError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NoDatabaseSelected => formatter.write_str("No database selected"),
-            Self::MissingTable { schema, table } => {
-                write!(formatter, "Table '{schema}.{table}' doesn't exist")
-            }
-            Self::UnknownPartition { partition, table } => {
-                write!(
-                    formatter,
-                    "Unknown partition '{partition}' in table '{table}'"
-                )
-            }
+            Self::Mysql(error) => formatter.write_str(&error.message),
             Self::Invalid(detail) => formatter.write_str(detail),
             Self::Read(error) => error.fmt(formatter),
             Self::Encode(error) => error.fmt(formatter),
@@ -154,6 +137,13 @@ impl std::fmt::Display for ClusterStatsLockError {
 }
 
 impl std::error::Error for ClusterStatsLockError {}
+
+/// A Go error raised as the statement's failure.
+impl From<tidb_error::terror::TerrorError> for ClusterStatsLockError {
+    fn from(error: tidb_error::terror::TerrorError) -> Self {
+        Self::Mysql(tidb_error::mysql::MysqlError::from_terror(&error))
+    }
+}
 
 impl From<SystemTableError> for ClusterStatsLockError {
     fn from(error: SystemTableError) -> Self {
@@ -211,10 +201,13 @@ pub(crate) fn apply_cluster_stats_lock<T: StatsLockTransaction>(
                 .flatten()
                 .next()
                 .ok_or_else(|| {
-                    ClusterStatsLockApplyError::Plan(ClusterStatsLockError::UnknownPartition {
-                        partition: written.go_to_lower(),
-                        table: table.name.original().to_owned(),
-                    })
+                    ClusterStatsLockApplyError::Plan(ClusterStatsLockError::from(
+                        tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                            .generate_with_stack_by_args(&[
+                                written.go_to_lower().into(),
+                                table.name.original().into(),
+                            ]),
+                    ))
                 })?;
             partitions.insert(definition.0, written.go_to_lower());
         }
@@ -425,9 +418,11 @@ fn user_table<'a>(
                 .iter()
                 .find(|stored| stored.name.lowercase() == table.go_to_lower())
         })
-        .ok_or_else(|| ClusterStatsLockError::MissingTable {
-            schema: schema.to_owned(),
-            table: table.to_owned(),
+        .ok_or_else(|| {
+            ClusterStatsLockError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                    .generate_with_stack_by_args(&[schema.into(), table.into()]),
+            )
         })
 }
 

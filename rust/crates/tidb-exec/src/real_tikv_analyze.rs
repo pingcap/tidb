@@ -64,7 +64,6 @@ use crate::cluster_table_storage::{
     SessionTransaction,
 };
 use crate::mysql_bootstrap::{local_now_datetime6, utc_now_timestamp};
-use crate::mysql_system_tables::SystemTableError;
 use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use tidb_hack::GoToLower;
@@ -786,10 +785,13 @@ fn select_index_tasks(
                         .then(|| index.clone())
                     })
                     .ok_or_else(|| {
-                        ClusterAnalyzeError::MissingIndex(format!(
-                            "Index '{name}' in field list does not exist in table '{}'",
-                            table.name.original()
-                        ))
+                        ClusterAnalyzeError::from(
+                            tidb_error::plannererrors::ERR_ANALYZE_MISS_INDEX
+                                .generate_with_stack_by_args(&[
+                                    name.as_str().into(),
+                                    table.name.original().into(),
+                                ]),
+                        )
                     })
             })
             .collect::<Result<Vec<_>, _>>()?
@@ -862,7 +864,9 @@ fn analyze_partition_ids(
         if requested.is_empty() {
             return Ok(Vec::new());
         }
-        return Err(ClusterAnalyzeError::PartitionManagementOnNonpartitioned);
+        return Err(tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+            .generate_with_stack_by_args(&[])
+            .into());
     };
     let partition = partition.read();
     let definitions = partition.definitions.snapshot();
@@ -999,7 +1003,14 @@ fn find_statement_table<'catalog>(
                 .find(|stored| stored.name.lowercase() == statement.table.go_to_lower().as_str())
         })
         .ok_or_else(|| {
-            ClusterAnalyzeError::MissingTable(format!("{}.{}", statement.schema, statement.table))
+            ClusterAnalyzeError::from(
+                tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.generate_with_stack_by_args(
+                    &[
+                        statement.schema.as_str().into(),
+                        statement.table.as_str().into(),
+                    ],
+                ),
+            )
         })
         .and_then(|table| {
             // Go `buildAnalyzeTable` refuses both by the name as written.
@@ -1030,20 +1041,13 @@ pub enum ClusterAnalyzeError {
     Commit(LockSqlError),
     /// A statement kill retaining its MySQL error identity.
     Killed(SqlError),
-    /// Pinned error 8243, demoted to a statement warning by ANALYZE.
-    MissingPartitionStats(String),
-    /// Pinned error 8244, demoted to a statement warning by ANALYZE.
-    MissingPartitionItemStats(String),
     /// A determinate failure with its existing diagnostic.
     Other(String),
-    /// Go `infoschema.ErrTableNotExists` (1146): the named table is absent.
-    /// The string is the `schema.table` pair.
-    MissingTable(String),
-    /// Go `executor.ErrAnalyzeMissIndex` (8109): the named index is absent.
-    MissingIndex(String),
-    /// Go `dbterror.ErrPartitionMgmtOnNonpartitioned` (1505): a PARTITION
-    /// clause on a table that has none.
-    PartitionManagementOnNonpartitioned,
+    /// The error value Go's ANALYZE raises as it is: `ErrTableNotExists`,
+    /// `ErrAnalyzeMissIndex`, `ErrPartitionMgmtOnNonpartitioned`, and the
+    /// global-stats `ErrPartitionStatsMissing` /
+    /// `ErrPartitionColumnStatsMissing` that ANALYZE demotes to a warning.
+    Mysql(tidb_error::mysql::MysqlError),
 }
 
 impl fmt::Display for ClusterAnalyzeError {
@@ -1055,24 +1059,20 @@ impl fmt::Display for ClusterAnalyzeError {
             }
             Self::Commit(error) => formatter.write_str(&error.message),
             Self::Killed(error) => formatter.write_str(&error.message),
-            Self::MissingPartitionStats(detail) => write!(
-                formatter,
-                "Build global-level stats failed due to missing partition-level stats: {detail}"
-            ),
-            Self::MissingPartitionItemStats(detail) => write!(
-                formatter,
-                "Build global-level stats failed due to missing partition-level column stats: {detail}, please run analyze table to refresh columns of all partitions"
-            ),
             Self::Other(detail) => formatter.write_str(detail),
-            Self::MissingTable(name) => write!(formatter, "Table '{name}' doesn't exist"),
-            Self::MissingIndex(detail) => formatter.write_str(detail),
-            Self::PartitionManagementOnNonpartitioned => formatter
-                .write_str("Partition management on a not partitioned table is not possible"),
+            Self::Mysql(error) => formatter.write_str(&error.message),
         }
     }
 }
 
 impl std::error::Error for ClusterAnalyzeError {}
+
+/// A Go error raised as ANALYZE's failure.
+impl From<tidb_error::terror::TerrorError> for ClusterAnalyzeError {
+    fn from(error: tidb_error::terror::TerrorError) -> Self {
+        Self::Mysql(tidb_error::mysql::MysqlError::from_terror(&error))
+    }
+}
 
 fn global_stats_merge_error(error: GlobalStatsMergeError) -> ClusterAnalyzeError {
     match error {
@@ -1426,14 +1426,15 @@ fn record_global_stats_result(
         return;
     };
     match error {
-        ClusterAnalyzeError::MissingPartitionStats(_) => {
-            warnings.push((8243, error.to_string()));
+        // Go `globalstats`: ANALYZE records the failed merge job and
+        // continues; the missing-stats errors become statement warnings.
+        ClusterAnalyzeError::Mysql(error)
+            if error.equal(&tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING)
+                || error.equal(&tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING) =>
+        {
+            warnings.push((error.code, error.message));
         }
-        ClusterAnalyzeError::MissingPartitionItemStats(_) => {
-            warnings.push((8244, error.to_string()));
-        }
-        // Pinned `AnalyzeExec.handleGlobalStats` records the failed merge job
-        // and continues; the ANALYZE statement itself still succeeds.
+        // The ANALYZE statement itself still succeeds.
         _ => {}
     }
 }
@@ -1880,12 +1881,17 @@ where
                         column_names.get(&id)
                     }
                     .map_or("", String::as_str);
-                    return Err(ClusterAnalyzeError::MissingPartitionItemStats(format!(
-                        "table `{}` partition `{}` {} `{name}`",
-                        statement.table,
-                        partition.name,
-                        if is_index { "index" } else { "column" }
-                    )));
+                    return Err(
+                        tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
+                            .generate_with_stack_by_args(&[format!(
+                                "table `{}` partition `{}` {} `{name}`",
+                                statement.table,
+                                partition.name,
+                                if is_index { "index" } else { "column" }
+                            )
+                            .into()])
+                            .into(),
+                    );
                 }
                 active.push(partition);
             }
@@ -2146,10 +2152,13 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                     if statement.skip_missing_partition_stats {
                         continue;
                     }
-                    return Err(ClusterAnalyzeError::MissingPartitionStats(format!(
-                        "table `{}` partition `{partition_name}`",
-                        statement.table
-                    )));
+                    return Err(tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING
+                        .generate_with_stack_by_args(&[format!(
+                            "table `{}` partition `{partition_name}`",
+                            statement.table
+                        )
+                        .into()])
+                        .into());
                 };
                 if mode == GlobalStatsMergeMode::Async
                     && if is_index {
@@ -2180,11 +2189,12 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                         statement.table,
                         if is_index { "index" } else { "column" }
                     );
-                    return Err(if mode == GlobalStatsMergeMode::Async {
-                        ClusterAnalyzeError::MissingPartitionItemStats(detail)
+                    let proto = if mode == GlobalStatsMergeMode::Async {
+                        &tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
                     } else {
-                        ClusterAnalyzeError::MissingPartitionStats(detail)
-                    });
+                        &tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING
+                    };
+                    return Err(proto.generate_with_stack_by_args(&[detail.into()]).into());
                 };
                 let topn_count = item.topn.as_ref().map_or(0, |topn| topn.total_count());
                 if mode == GlobalStatsMergeMode::Blocking
@@ -2201,11 +2211,16 @@ fn merge_global_items<TZ: TimeZone + Sync>(
                         column_names.get(&id)
                     }
                     .map_or("", String::as_str);
-                    return Err(ClusterAnalyzeError::MissingPartitionItemStats(format!(
-                        "table `{}` partition `{partition_name}` {} `{name}`",
-                        statement.table,
-                        if is_index { "index" } else { "column" }
-                    )));
+                    return Err(
+                        tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
+                            .generate_with_stack_by_args(&[format!(
+                                "table `{}` partition `{partition_name}` {} `{name}`",
+                                statement.table,
+                                if is_index { "index" } else { "column" }
+                            )
+                            .into()])
+                            .into(),
+                    );
                 }
                 inputs.push(PartitionStatsItem {
                     histogram: item.histogram.clone(),
@@ -3776,17 +3791,21 @@ mod tests {
 
         super::record_global_stats_result(
             &mut warnings,
-            Err(ClusterAnalyzeError::MissingPartitionStats("p0".to_owned())),
+            Err(tidb_error::catalog::types::ERR_PARTITION_STATS_MISSING
+                .generate_with_stack_by_args(&["p0".into()])
+                .into()),
         );
         super::record_global_stats_result(
             &mut warnings,
-            Err(ClusterAnalyzeError::MissingPartitionItemStats(
-                "p1 index i".to_owned(),
-            )),
+            Err(
+                tidb_error::catalog::types::ERR_PARTITION_COLUMN_STATS_MISSING
+                    .generate_with_stack_by_args(&["p1 index i".into()])
+                    .into(),
+            ),
         );
         assert_eq!(
             warnings.iter().map(|warning| warning.0).collect::<Vec<_>>(),
-            vec![8243, 8244]
+            vec![8131, 8244]
         );
     }
 }

@@ -48,16 +48,9 @@ impl RealTiKvSessionTimeZone {
 pub fn time_zone_sql_error(
     error: tidb_error::terror::TerrorError,
 ) -> crate::domain::session_api::SqlQueryError {
-    let error = error.to_sql_error();
-    crate::domain::session_api::SqlQueryError::new(
-        error.code,
-        error
-            .state
-            .as_bytes()
-            .try_into()
-            .expect("five-byte SQLSTATE"),
-        error.message,
-    )
+    crate::domain::session_api::SqlQueryError::from(tidb_error::mysql::MysqlError::from_terror(
+        &error,
+    ))
 }
 
 #[cfg(test)]

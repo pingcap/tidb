@@ -138,8 +138,11 @@ pub(super) fn build_modify_column_job<S: MetaSnapshot>(
                             "column `{original_col_name}` does not exist on `{schema}`.`{table}`"
                         ),
                         warnings: vec![crate::real_tikv_ddl::ddl_note(
-                            &tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS,
-                            format!("Unknown column '{original_col_name}' in '{table}'"),
+                            tidb_error::catalog::infoschema::ERR_COLUMN_NOT_EXISTS
+                                .generate_with_stack_by_args(&[
+                                    original_col_name.into(),
+                                    table.into(),
+                                ]),
                         )],
                     }));
                 }

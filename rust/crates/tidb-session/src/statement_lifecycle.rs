@@ -337,16 +337,9 @@ impl StatementLifecycle<'_> {
             // `exeerrors.ErrLazyUniquenessCheckFailure.GenWithStackByArgs(err.Error())`:
             // the inner error's text keeps its `[class:code]` prefix.
             return outcome.map_err(|error| {
-                SqlQueryError::new(
-                    8147,
-                    *b"HY000",
-                    format!(
-                        "transaction aborted because lazy uniqueness check is enabled and an error occurred: {}",
-                        error.error_string()
-                    ),
-                )
-                .with_identity(Some(
-                    tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE.identity(),
+                SqlQueryError::from(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::exeerrors::ERR_LAZY_UNIQUENESS_CHECK_FAILURE
+                        .generate_with_stack_by_args(&[error.error_string().into()]),
                 ))
             });
         }

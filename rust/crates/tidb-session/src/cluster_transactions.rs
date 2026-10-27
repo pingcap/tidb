@@ -88,11 +88,7 @@ use tidb_cluster::sql_query_error::SqlQueryError;
 /// Carries a commit's own client-visible triple onto the wire, so a 9007 stays
 /// a 9007 instead of collapsing into the generic 1105.
 pub fn sql_error(error: LockSqlError) -> SqlQueryError {
-    SqlQueryError {
-        write_conflict: error.write_conflict,
-        identity: error.identity,
-        ..SqlQueryError::new(error.code, error.state, error.message)
-    }
+    tidb_cluster::sql_query_error::lock_sql_error(&error)
 }
 
 /// Go `session.tryReplaceWriteConflictError` (`pkg/session/session.go:913`):
@@ -324,8 +320,7 @@ pub trait ClusterTransactions: Send + Sync {
         options: SessionTransactionOptions,
     ) -> Result<(), SqlQueryError> {
         let buffer = mutation_buffer_from_mutations(mutations).map_err(|error| match error {
-            StorageError::Sql(error) => SqlQueryError::new(error.code, error.state, error.message)
-                .with_identity(error.identity),
+            StorageError::Sql(error) => SqlQueryError::from(error),
             error => SqlQueryError::unknown(error.to_string()),
         })?;
         self.commit(&buffer, Some(read_ts), resource_group, options)
@@ -1898,7 +1893,9 @@ mod write_conflict_rewrite_tests {
         );
         SqlQueryError {
             write_conflict: Some(Box::new(args.clone())),
-            ..SqlQueryError::new(9007, *b"HY000", args.message())
+            ..SqlQueryError::from(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::kv::ERR_WRITE_CONFLICT.generate_with_stack(args.message()),
+            ))
         }
     }
 
