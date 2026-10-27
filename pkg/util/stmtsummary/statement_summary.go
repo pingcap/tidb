@@ -280,6 +280,7 @@ type StmtExecInfo struct {
 	Collation      string
 	NormalizedSQL  string
 	SensitiveStmt  interface{ SecureText() string }
+	SampleParams   fmt.Stringer // valid only during the current statement
 	Digest         string
 	PrevSQL        string
 	PrevSQLDigest  string

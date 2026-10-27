@@ -212,6 +212,8 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	sampleSQL := info.StmtCtx.OriginalSQL
 	if info.SensitiveStmt != nil {
 		sampleSQL = info.SensitiveStmt.SecureText()
+	} else if info.SampleParams != nil {
+		sampleSQL += info.SampleParams.String()
 	}
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
