@@ -712,7 +712,8 @@ func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
 					failpoint.Inject("subscription-handler-loop", func() {})
 					c.WithCheckpoints(func(vsf *spans.ValuedFull) {
 						if vsf == nil {
-							log.Warn("Span tree not found, perhaps stale event of removed tasks.", zap.String("category", "log backup subscription manager"))
+							log.Warn("Span tree not found, perhaps stale event of removed tasks.",
+								zap.String("category", "log backup subscription manager"))
 							return
 						}
 						vsf.Merge(event)
