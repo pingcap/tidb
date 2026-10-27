@@ -4439,6 +4439,10 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if refreshMode == ast.RefreshMaterializedViewModeFast && lockedRefreshInfo.lastSuccessReadTSONull {
 		return errors.New("refresh materialized view fast: LAST_SUCCESS_READ_TSO is NULL")
 	}
+	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedRefreshInfo.lastSuccessReadTSO {
+		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
+		return nil
+	}
 	histSctx, err := e.GetSysSession()
 	if err != nil {
 		return err
@@ -4463,27 +4467,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		if err := checkMVRefreshLogBaseline(currentSources, registeredLogs); err != nil {
 			return err
 		}
-	}
-	// Empty intervals do not read log contents. Validate their snapshot baseline
-	// before returning, without consulting purge watermarks.
-	if refreshMode == ast.RefreshMaterializedViewModeFast && targetRefreshReadTSO > 0 && targetRefreshReadTSO == lockedRefreshInfo.lastSuccessReadTSO {
-		readTSO, err := getRefreshReadTSOForSuccess(sessVars)
-		if err != nil {
-			return err
-		}
-		snapshotIS, err := domain.GetDomain(e.Ctx()).GetSnapshotInfoSchema(readTSO)
-		if err != nil {
-			return err
-		}
-		sources, err := mviewutil.ResolveRefreshSources(kctx, snapshotIS, mviewID)
-		if err != nil {
-			return err
-		}
-		if err := checkMVRefreshLogBaseline(sources, registeredLogs); err != nil {
-			return err
-		}
-		applyMVRefreshStmtResult(e.Ctx().GetSessionVars().StmtCtx, newMVRefreshStmtResultFromWriteCounts(0, 0, 0))
-		return nil
 	}
 
 	boundedFastRefresh := refreshMode == ast.RefreshMaterializedViewModeFast &&
