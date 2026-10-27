@@ -88,8 +88,7 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	return q, err
 }
 
-// encodeImportQueryStates encodes the states of the submitting session for the
-// worker to run the SELECT with.
+// encodeImportQueryStates encodes the states of the submitting session for the worker.
 func encodeImportQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, error) {
 	states := &sessionstates.SessionStates{}
 	if err := sctx.EncodeStates(context.Background(), states); err != nil {
@@ -107,10 +106,7 @@ func encodeImportQueryStates(sctx sessionctx.Context) (*sessionstates.SessionSta
 }
 
 // checkQuerySourceTable rejects a source table that a worker cannot read the
-// same way as the submitter: the data of a temporary table lives only in the
-// submitting session, the rows of a memory table come from the node or the
-// session that reads them and its definition is not stored, and reading a
-// sequence allocates values again on every attempt.
+// same way as the submitter, including temporary tables, seqnences, and memtable.
 func checkQuerySourceTable(dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
 	var kind string
 	switch {
@@ -126,7 +122,7 @@ func checkQuerySourceTable(dbInfo *model.DBInfo, tblInfo *model.TableInfo) error
 	return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(kind + " in IMPORT INTO FROM SELECT")
 }
 
-// collectImportQueryTables records the source tables of a resolved query.
+// collectImportQueryTables collects tables from a resolved query.
 func collectQueryTables(
 	sctx sessionctx.Context, is infoschema.InfoSchema, node ast.StmtNode,
 	q *importer.QueryPlan, seen map[int64]bool,
