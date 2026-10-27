@@ -107,104 +107,9 @@ impl DriverError {
         // Every execution and evaluation failure, one arm each, in `exec`.
         DriverError::Exec(error) => exec::to_mysql_error(error),
 
-        // Go: "function %s has only noop implementation in tidb now, use
-        // tidb_enable_noop_functions to enable these functions" (1235).
-        DriverError::Var(crate::VarError::FunctionsNoopImpl(clause)) => MysqlError::terror(
-            &tidb_error::catalog::expression::ERR_FUNCTIONS_NOOP_IMPL,
-            format!(
-                "function {clause} has only noop implementation in tidb now, use \
-                 tidb_enable_noop_functions to enable these functions"
+            DriverError::MemTableRetrievalNeeded => MysqlError::unknown(
+                "a memory table was read without its rows being retrieved".to_owned(),
             ),
-        ),
-// Go: "Incorrect argument type to variable '%-.64s'".
-        DriverError::Var(crate::VarError::WrongTypeForVar(name)) => {
-            MysqlError::terror(
-                &tidb_error::catalog::variable::ERR_WRONG_TYPE_FOR_VAR,
-                format!("Incorrect argument type to variable '{name}'"),
-            )
-        }
-        // Go: "Variable '%-.64s' can't be set to the value of '%-.200s'".
-        DriverError::Var(crate::VarError::WrongValueForVar(
-            name,
-            value,
-        )) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR,
-            format!("Variable '{name}' can't be set to the value of '{value}'"),
-        ),
-        DriverError::Var(crate::VarError::SqlError(error)) => {
-            MysqlError::from_sql_error(error.clone())
-        }
-        // Go: "Unknown system variable '%-.64s'".
-        DriverError::Var(crate::VarError::UnknownSystemVariable(
-            name,
-        )) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR,
-            format!("Unknown system variable '{name}'"),
-        ),
-        // Go `ErrVariableNoLongerSupported` (8136): a removed option is
-        // accepted by SET for compatibility, but reads explain the removal
-        // instead of returning dummy data.
-        DriverError::Var(crate::VarError::RemovedSystemVariable {
-            name,
-            reason,
-        }) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_VARIABLE_NO_LONGER_SUPPORTED,
-            format!("option '{name}' is no longer supported. Reason: {reason}"),
-        ),
-        // Go: "Variable '%-.192s' is a %s variable".
-        DriverError::Var(crate::VarError::ReadOnlyVariable(name)) => {
-            MysqlError::terror(
-                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE,
-                format!("Variable '{name}' is a read only variable"),
-            )
-        }
-        // Go `ErrLocalVariable` (1228): "Variable '%-.64s' is a SESSION
-        // variable and can't be used with SET GLOBAL".
-        DriverError::Var(crate::VarError::SessionOnlyVariable(name)) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE,
-            format!("Variable '{name}' is a SESSION variable and can't be used with SET GLOBAL"),
-        ),
-        // Go `ErrGlobalVariable` (1229): "Variable '%-.64s' is a GLOBAL
-        // variable and should be set with SET GLOBAL".
-        DriverError::Var(crate::VarError::GlobalOnlyVariable(name)) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE,
-            format!("Variable '{name}' is a GLOBAL variable and should be set with SET GLOBAL"),
-        ),
-        // Go `ErrIncorrectGlobalLocalVar` (1238), read side: "Variable
-        // '%-.192s' is a SESSION variable".
-        DriverError::Var(crate::VarError::NoGlobalCopy(name)) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE,
-            format!("Variable '{name}' is a SESSION variable"),
-        ),
-        // Go `ErrIncorrectScope`: "Variable '%-.192s' is a %s variable".
-        DriverError::Var(crate::VarError::IncorrectScope(name, allowed)) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE,
-            format!("Variable '{name}' is a {allowed} variable"),
-        ),
-        // A Validation closure's own `errors.Errorf`: no code, so 1105.
-        DriverError::Var(crate::VarError::ValidationRefused(message)) => {
-            MysqlError::unknown(message.clone())
-        }
-        // Go `ErrUnsupportedIsolationLevel` (8048).
-        DriverError::Var(crate::VarError::UnsupportedIsolationLevel(level)) => {
-            MysqlError::terror(
-                &tidb_error::catalog::variable::ERR_UNSUPPORTED_ISOLATION_LEVEL,
-                format!(
-                    "The isolation level '{level}' is not supported. Set \
-                     tidb_skip_isolation_level_check=1 to skip this error"
-                ),
-            )
-        }
-        // Go `ErrReadOnly` (1621): "%s variable '%s' is read-only. Use SET %s
-        // to assign the value".
-        DriverError::Var(crate::VarError::SessionScopeIsReadOnly(name)) => MysqlError::terror(
-            &tidb_error::catalog::variable::ERR_READ_ONLY,
-            format!("SESSION variable '{name}' is read-only. Use SET GLOBAL to assign the value"),
-        ),
-
-        DriverError::MemTableRetrievalNeeded => MysqlError::unknown(
-            "a memory table was read without its rows being retrieved".to_owned(),
-        ),
 
 DriverError::CatalogPoisoned => {
             MysqlError::unknown("the shared catalog is unusable after a failed statement")
@@ -263,13 +168,6 @@ mod source_tests {
     fn display_matches_the_mysql_diagnostic() {
         let error = DriverError::unsupported("an unsupported source operation");
         assert_eq!(error.to_string(), error.clone().to_mysql_error().message);
-    }
-}
-
-/// A variable error as the driver error the wire layer renders.
-impl From<tidb_variable::VarError> for DriverError {
-    fn from(error: tidb_variable::VarError) -> Self {
-        DriverError::Var(error)
     }
 }
 

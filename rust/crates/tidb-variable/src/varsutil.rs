@@ -315,9 +315,12 @@ pub fn valid_analyze_skip_column_types(val: &str) -> Result<String, VarError> {
     for item in go_to_lower(val).split(',') {
         let column_type = item.trim();
         if !ANALYZE_SKIP_ALLOWED_TYPES.contains(&column_type) {
-            return Err(VarError::WrongValueForVar(
-                TIDB_ANALYZE_SKIP_COLUMN_TYPES.to_owned(),
-                val.to_owned(),
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+                    .generate_with_stack_by_args(&[
+                        (TIDB_ANALYZE_SKIP_COLUMN_TYPES.to_owned()).into(),
+                        (val.to_owned()).into(),
+                    ]),
             ));
         }
         column_types.push(column_type.to_owned());
@@ -477,9 +480,12 @@ mod tests {
         );
         assert_eq!(
             valid_analyze_skip_column_types("json,int"),
-            Err(VarError::WrongValueForVar(
-                TIDB_ANALYZE_SKIP_COLUMN_TYPES.to_owned(),
-                "json,int".to_owned()
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+                    .generate_with_stack_by_args(&[
+                        (TIDB_ANALYZE_SKIP_COLUMN_TYPES.to_owned()).into(),
+                        ("json,int".to_owned()).into()
+                    ])
             ))
         );
 

@@ -51,8 +51,6 @@ pub enum DriverError {
     /// The shared catalog is unusable because a statement panicked while
     /// holding it, so its schema state may be half-written.
     CatalogPoisoned,
-    /// A session-variable statement failed.
-    Var(VarError),
     /// A memory-table scan needs the session to retrieve its rows
     /// (`StmtContext::mem_table_retrieval`). Internal: the session answers
     /// the request and rebuilds, so a client sees it only when a statement

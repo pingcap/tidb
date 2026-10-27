@@ -668,13 +668,17 @@ impl Session {
                     Some(def) => def,
                     None => {
                         if let Some(reason) = sysvar::removed_sys_var_reason(name) {
-                            return Err(var_error(VarError::RemovedSystemVariable {
-                                name: name.to_ascii_lowercase(),
-                                reason: reason.to_owned(),
-                            }));
+                            return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_error::catalog::variable::ERR_VARIABLE_NO_LONGER_SUPPORTED
+                                    .generate_with_stack_by_args(&[
+                                        (name.to_ascii_lowercase()).into(),
+                                        (reason.to_owned()).into(),
+                                    ]),
+                            )));
                         }
-                        return Err(var_error(VarError::UnknownSystemVariable(
-                            name.to_ascii_lowercase(),
+                        return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                                .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
                     }
                 };
@@ -694,16 +698,20 @@ impl Session {
                         _ => None,
                     };
                     if let Some(allowed) = incorrect_scope {
-                        return Err(var_error(VarError::IncorrectScope(
-                            name.to_ascii_lowercase(),
-                            allowed,
+                        return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE
+                                .generate_with_stack_by_args(&[
+                                    (name.to_ascii_lowercase()).into(),
+                                    (allowed).into(),
+                                ]),
                         )));
                     }
                     if *scope == Some(tidb_ast::SysVarScope::Session)
                         && def.is_internal_session_variable()
                     {
-                        return Err(var_error(VarError::UnknownSystemVariable(
-                            name.to_ascii_lowercase(),
+                        return Err(var_error(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                                .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
                         )));
                     }
                 }
@@ -945,14 +953,21 @@ impl Session {
                         }
                     }
                 }
-                Err(VarError::WrongValueForVar(name, value)) if !is_fix_control => {
+                Err(error)
+                    if !is_fix_control
+                        && error.equal(&tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR) =>
+                {
                     // go's SET_VAR application validates the hint's variables
                     // TWICE (the plan build and the execute pass), and each
                     // pass's refusal lands in the warning buffer through the
                     // statement error door (oracle m21/g-hint:
                     // SET_VAR(sql_mode=STRICT) carries the 1231 row twice).
+                    // Go `mysql.SQLError.Error()`: `ERROR %d (%s): %s`.
                     let message = format!(
-                        "ERROR 1231 (42000): Variable '{name}' can't be set to the value of '{value}'"
+                        "ERROR {} ({}): {}",
+                        error.code,
+                        String::from_utf8_lossy(&error.state),
+                        error.message
                     );
                     for _ in 0..2 {
                         self.append_warning(

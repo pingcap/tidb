@@ -134,8 +134,12 @@ impl MockGlobalAccessor {
     }
 
     fn value(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         Ok(self
             .vals
             .lock()
@@ -146,8 +150,12 @@ impl MockGlobalAccessor {
     }
 
     fn store(&self, name: &str, value: String) -> Result<bool, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         let mut vals = self
             .vals
             .lock()
@@ -170,10 +178,19 @@ impl GlobalVarAccessor for MockGlobalAccessor {
     }
 
     fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
-            return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    (name.to_ascii_lowercase()).into(),
+                    "SESSION".into(),
+                ]),
+            ));
         }
         self.value(name)
     }
@@ -188,8 +205,12 @@ impl GlobalVarAccessor for MockGlobalAccessor {
         value: String,
         _zone: &tidb_datatype::SessionTimeZone,
     ) -> Result<bool, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         let value = def
             .validate_in_scope(&value, crate::sysvar::SCOPE_GLOBAL)
             .map(|validated| validated.value)
@@ -198,20 +219,33 @@ impl GlobalVarAccessor for MockGlobalAccessor {
     }
 
     fn set_instance(&self, name: &str, _value: String) -> Result<bool, VarError> {
-        get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         Ok(false)
     }
 
     fn reset(&self, name: &str) -> Result<(), VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
-        self.store(name, crate::sysvar::effective_default(def)).map(|_| ())
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
+        self.store(name, crate::sysvar::effective_default(def))
+            .map(|_| ())
     }
 
     fn reset_instance(&self, name: &str) -> Result<(), VarError> {
-        get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         Ok(())
     }
 

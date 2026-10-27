@@ -4239,7 +4239,10 @@ impl ClusterStatsSessionContext {
         let value = value.into();
         self.with_session(
             |session| match session.store.session.set_internal_system_var(name, value) {
-                Ok(()) | Err(crate::VarError::GlobalOnlyVariable(_)) => Ok(()),
+                Ok(()) => Ok(()),
+                Err(error) if error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE) => {
+                    Ok(())
+                }
                 Err(error) => Err(stats_session_error(format!("{error:?}"))),
             },
         )
@@ -4377,7 +4380,10 @@ impl tidb_stats_handle_util::StatsSessionContext for ClusterStatsSessionContext 
                 tidb_vardef::tidb_vars::TIDB_ANALYZE_STORE_BATCH_SIZE,
                 value,
             ) {
-                Ok(()) | Err(crate::VarError::GlobalOnlyVariable(_)) => Ok(()),
+                Ok(()) => Ok(()),
+                Err(error) if error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE) => {
+                    Ok(())
+                }
                 Err(error) => Err(stats_session_error(format!("{error:?}"))),
             }
         })
@@ -7216,7 +7222,15 @@ impl QuerySession for ClusterServerSession {
         let bound_probe = prepared_ast.bind(&probe).map_err(map_error)?;
         let result_columns = match self.store.session.plan_bound_prepared_columns(bound_probe) {
             Ok(columns) => crate::domain::pipeline_session::select_columns(&columns),
-            Err(error @ tidb_executor::DriverError::Var(_)) => return Err(map_error(error)),
+            // A variable error (Go's `variable` package) is the statement's
+            // own failure and is reported at prepare time.
+            Err(error)
+                if error.clone().to_mysql_error().identity.is_some_and(|identity| {
+                    identity.class() == tidb_error::terror::TerrorClass::Variable
+                }) =>
+            {
+                return Err(map_error(error))
+            }
             // A query whose metadata cannot be resolved without real values
             // reports none at prepare time, matching the existing wire
             // fallback. Such shapes remain on the ordinary execute path.

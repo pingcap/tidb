@@ -159,9 +159,6 @@ mod session_vars {
                     "ON".to_owned(),
                 )
                 .expect_err("nextgen rejects fair-locking ON");
-            let VarError::SqlError(error) = error else {
-                panic!("nextgen fair-locking refusal should retain MySQL error 1235");
-            };
             assert_eq!(error.code, 1235);
             assert!(!vars.pessimistic_transaction_fair_locking_enabled());
         } else {
@@ -188,9 +185,6 @@ mod session_vars {
             let error = vars
                 .set_system(tidb_vardef::tidb_vars::TIDB_DML_TYPE, "bulk".to_owned())
                 .expect_err("nextgen rejects bulk DML");
-            let VarError::SqlError(error) = error else {
-                panic!("nextgen bulk-DML refusal should retain MySQL error 1235");
-            };
             assert_eq!(error.code, 1235);
             assert!(!vars.bulk_dml_enabled());
         } else {
@@ -218,9 +212,6 @@ mod session_vars {
                 let error = vars
                     .set_system(tidb_vardef::tidb_vars::TIDB_REPLICA_READ, name.to_owned())
                     .expect_err("nextgen rejects non-leader replica reads");
-                let VarError::SqlError(error) = error else {
-                    panic!("nextgen replica-read refusal should retain MySQL error 1235");
-                };
                 assert_eq!(error.code, 1235);
                 assert_eq!(vars.replica_read(), tidb_txnkv::ReplicaReadType::Leader);
             } else {
@@ -354,10 +345,11 @@ mod session_vars {
                 .unwrap(),
             (String::new(), false)
         );
-        assert!(matches!(
-            vars.get_session_states_system_var("not_a_sysvar"),
-            Err(VarError::UnknownSystemVariable(_))
-        ));
+        assert!(vars
+            .get_session_states_system_var("not_a_sysvar")
+            .is_err_and(
+                |error| error.equal(&tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR)
+            ));
     }
 
     #[test]
@@ -376,11 +368,12 @@ mod session_vars {
             .unwrap_err();
         // go's sql_mode Validation wraps the catalogued 1231 rendering in an
         // uncatalogued error, so the SET surfaces 1105 with the client text.
-        let VarError::ValidationRefused(message) = error else {
-            panic!("expected the uncatalogued validation refusal");
-        };
         assert_eq!(
-            message,
+            error.identity, None,
+            "expected the uncatalogued validation refusal"
+        );
+        assert_eq!(
+            error.message,
             "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of 'NONSENSE_OPTION'"
         );
         assert!(vars.sql_mode().has_strict_mode());
@@ -632,7 +625,9 @@ mod session_vars {
         // Go returns `time.Parse`'s range error verbatim.
         assert_eq!(
             error,
-            VarError::ValidationRefused(r#"parsing time "25:00": hour out of range"#.to_owned())
+            tidb_error::mysql::MysqlError::unknown(
+                r#"parsing time "25:00": hour out of range"#.to_owned()
+            )
         );
 
         let truncated = vars
@@ -687,11 +682,17 @@ mod session_vars {
         let mut vars = session_vars();
         assert_eq!(
             vars.get_system("nope"),
-            Err(VarError::UnknownSystemVariable("nope".to_owned()))
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[("nope".to_owned()).into()])
+            ))
         );
         assert_eq!(
             vars.set_system("nope", "1".to_owned()),
-            Err(VarError::UnknownSystemVariable("nope".to_owned()))
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[("nope".to_owned()).into()])
+            ))
         );
     }
 
@@ -725,8 +726,9 @@ mod session_vars {
         ]);
         assert_eq!(
             globals.get("not_a_real_variable"),
-            Err(VarError::UnknownSystemVariable(
-                "not_a_real_variable".to_owned()
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[("not_a_real_variable".to_owned()).into()])
             ))
         );
         assert_eq!(globals.get("autocommit").unwrap(), "OFF");
@@ -738,7 +740,12 @@ mod session_vars {
         assert!(vars.get_system("version").unwrap().starts_with("8.0.11-"));
         assert_eq!(
             vars.set_system("version", "9".to_owned()),
-            Err(VarError::ReadOnlyVariable("version".to_owned()))
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    ("version".to_owned()).into(),
+                    "read only".into()
+                ])
+            ))
         );
     }
 
@@ -814,14 +821,13 @@ mod session_vars {
         vars.set_system("character_set_results", String::new())
             .unwrap();
         assert_eq!(vars.get_system("character_set_results").unwrap(), "");
-        assert!(matches!(
-            vars.set_system("character_set_connection", "not-a-charset".to_owned()),
-            Err(VarError::ValidationRefused(message)) if message == "Unknown charset not-a-charset"
-        ));
-        assert!(matches!(
-            vars.set_system("collation_connection", "not-a-collation".to_owned()),
-            Err(VarError::SqlError(error)) if error.code == 1273
-        ));
+        assert!(vars
+            .set_system("character_set_connection", "not-a-charset".to_owned())
+            .is_err_and(|error| error.identity.is_none()
+                && error.message == "Unknown charset not-a-charset"));
+        assert!(vars
+            .set_system("collation_connection", "not-a-collation".to_owned())
+            .is_err_and(|error| error.code == 1273));
     }
 
     /// Go's `tidb_enforce_mpp` Validation only permits ON after the
@@ -833,9 +839,14 @@ mod session_vars {
         assert_eq!(vars.get_system("tidb_enforce_mpp").unwrap(), "OFF");
         assert_eq!(
             vars.set_system("tidb_enforce_mpp", "ON".to_owned()),
-            Err(VarError::WrongValueForVar(
-                "tidb_enforce_mpp".to_owned(),
-                "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+                    .generate_with_stack_by_args(&[
+                        ("tidb_enforce_mpp".to_owned()).into(),
+                        ("1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
+                            .to_owned())
+                        .into()
+                    ])
             ))
         );
 
@@ -892,18 +903,19 @@ mod session_vars {
     #[test]
     fn internal_session_variable_rejects_explicit_set_like_go() {
         let mut vars = session_vars();
-        assert!(matches!(
-            vars.set_system("tidb_redact_log", "ON".to_owned()),
-            Err(VarError::UnknownSystemVariable(name)) if name == "tidb_redact_log"
-        ));
+        assert!(vars
+            .set_system("tidb_redact_log", "ON".to_owned())
+            .is_err_and(|error| error
+                .equal(&tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR)
+                && error.message == "Unknown system variable 'tidb_redact_log'"));
         let instance_error = vars
             .set_system("tidb_instance_plan_cache_max_size", "1".to_owned())
             .expect_err("instance plan cache max size is GLOBAL-only");
-        assert!(matches!(
-            instance_error,
-            VarError::GlobalOnlyVariable(name)
-                if name == "tidb_instance_plan_cache_max_size"
-        ));
+        assert!(instance_error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE));
+        assert_eq!(
+            instance_error.message,
+            "Variable 'tidb_instance_plan_cache_max_size' is a GLOBAL variable and should be set with SET GLOBAL"
+        );
     }
 
     /// Go `TestInstanceScope`: instance-scoped variables have no SESSION
@@ -926,10 +938,12 @@ mod session_vars {
         vars.set_instance("tidb_general_log", "oN".to_owned())
             .unwrap();
         assert_eq!(vars.get_system("tidb_general_log").unwrap(), "ON");
-        assert!(matches!(
-            vars.set_system("tidb_general_log", "OFF".to_owned()),
-            Err(VarError::GlobalOnlyVariable(name)) if name == "tidb_general_log"
-        ));
+        assert!(vars
+            .set_system("tidb_general_log", "OFF".to_owned())
+            .is_err_and(
+                |error| error.equal(&tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE)
+                    && error.message.starts_with("Variable 'tidb_general_log' ")
+            ));
     }
 
     #[test]
@@ -1004,7 +1018,10 @@ mod session_vars {
         // `error_count` is SESSION-only (scope 2): Go's `ErrLocalVariable`.
         assert_eq!(
             vars.set_global("debug_sync", "x".to_owned()),
-            Err(VarError::SessionOnlyVariable("debug_sync".to_owned()))
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                    .generate_with_stack_by_args(&[("debug_sync".to_owned()).into()])
+            ))
         );
     }
 
@@ -1039,8 +1056,10 @@ mod session_vars {
         // `ErrGlobalVariable`.
         assert_eq!(
             vars.set_system("default_password_lifetime", "5".to_owned()),
-            Err(VarError::GlobalOnlyVariable(
-                "default_password_lifetime".to_owned()
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE.generate_with_stack_by_args(&[
+                    ("default_password_lifetime".to_owned()).into()
+                ])
             ))
         );
     }
@@ -1050,7 +1069,12 @@ mod session_vars {
         let vars = session_vars();
         assert_eq!(
             vars.get_global("debug_sync"),
-            Err(VarError::NoGlobalCopy("debug_sync".to_owned()))
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    ("debug_sync".to_owned()).into(),
+                    "SESSION".into()
+                ])
+            ))
         );
     }
 

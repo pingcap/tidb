@@ -551,11 +551,14 @@ impl GlobalSysvars {
                 return provider
                     .get()
                     .map(|ts| ts.to_string())
-                    .map_err(VarError::ValidationRefused);
+                    .map_err(VarError::unknown);
             }
         }
         let Some(index) = tidb_variable::sysvar::sys_var_index_lookup(name) else {
-            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         };
         let def = &tidb_variable::sysvar::SYS_VARS[index];
         // Go's retired partition-statistics concurrency variable has fixed
@@ -642,10 +645,19 @@ impl GlobalSysvars {
     /// accessors. INSTANCE and NONE scopes have one node value; only a
     /// SESSION-only variable has no global copy (Go error 1238).
     pub fn get_for_global_scope(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         if !def.has_global_scope() && !def.has_instance_scope() && def.has_session_scope() {
-            return Err(VarError::NoGlobalCopy(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    (name.to_ascii_lowercase()).into(),
+                    "SESSION".into(),
+                ]),
+            ));
         }
         self.get(name).map(|value| global_get_hook(def.name, value))
     }
@@ -854,16 +866,18 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case("tidb_external_ts") {
             if let Some(provider) = self.external_timestamp_provider() {
                 if value.is_empty() {
-                    return Err(VarError::SqlError(tidb_error::mysql::SqlError::new_f(
-                        tidb_error::mysql::errcode::ErrTruncatedWrongValue,
-                        "Incorrect datetime value: '%s'",
-                        &[],
-                        &[tidb_error::mysql::FormatArg::from(value.as_str())],
-                    )));
+                    return Err(tidb_error::mysql::MysqlError::from_sql_error(
+                        tidb_error::mysql::SqlError::new_f(
+                            tidb_error::mysql::errcode::ErrTruncatedWrongValue,
+                            "Incorrect datetime value: '%s'",
+                            &[],
+                            &[tidb_error::mysql::FormatArg::from(value.as_str())],
+                        ),
+                    ));
                 }
                 provider
                     .set(parse_read_timestamp(&value, zone, true)?)
-                    .map_err(VarError::ValidationRefused)?;
+                    .map_err(VarError::unknown)?;
             }
         }
         let value = match get_sys_var(name) {
@@ -883,10 +897,17 @@ impl GlobalSysvars {
     /// is `errLocalVariable` (1228), the same error a `SET GLOBAL` on a
     /// session-only variable gets.
     pub fn set_instance(&self, name: &str, value: String) -> Result<bool, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         if !def.is_read_only() && !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         }
         self.write(name, value, SCOPE_INSTANCE)
     }
@@ -1186,13 +1207,25 @@ impl GlobalSysvars {
     }
 
     fn write(&self, name: &str, value: String, scope: u8) -> Result<bool, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    (name.to_ascii_lowercase()).into(),
+                    "read only".into(),
+                ]),
+            ));
         }
         if !def.has_global_scope() && !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         }
         let lookup = |sibling: &str| self.get(sibling).ok();
         let validated = def
@@ -1204,12 +1237,12 @@ impl GlobalSysvars {
                 .map(|(bytes, _)| bytes)
                 .or_else(|| validated.value.parse::<u64>().ok());
             let Some(bytes) = bytes else {
-                return Err(VarError::ValidationRefused(format!(
+                return Err(tidb_error::mysql::MysqlError::unknown(format!(
                     "invalid tidb_instance_plan_cache_max_mem_size value {value}"
                 )));
             };
             if bytes < 100 * 1024 * 1024 {
-                return Err(VarError::ValidationRefused(
+                return Err(tidb_error::mysql::MysqlError::unknown(
                     "tidb_instance_plan_cache_max_mem_size should be at least 100MiB".to_owned(),
                 ));
             }
@@ -1229,7 +1262,7 @@ impl GlobalSysvars {
                 tidb_vardef::defaults::DEF_TIDB_ENABLE_AUTO_ANALYZE_PRIORITY_QUEUE,
             );
             if !run_auto_analyze || !enable_auto_analyze_priority_queue {
-                return Err(VarError::ValidationRefused(format!(
+                return Err(tidb_error::mysql::MysqlError::unknown(format!(
                     "cannot set {}: requires both tidb_enable_auto_analyze and tidb_enable_auto_analyze_priority_queue to be true. Current values: tidb_enable_auto_analyze={}, tidb_enable_auto_analyze_priority_queue={}",
                     tidb_vardef::tidb_vars::TIDB_AUTO_ANALYZE_CONCURRENCY,
                     run_auto_analyze,
@@ -1245,14 +1278,12 @@ impl GlobalSysvars {
             && validated.value == "ON"
             && !self.global_bool_value("tidb_enable_historical_stats", false)
         {
-            return Err(VarError::ValidationRefused(
-                "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
-                    .to_owned(),
-            ));
+            return Err(tidb_error::mysql::MysqlError::unknown("tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
+                    .to_owned()));
         }
         if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             OptimizerFixControl::parse(&validated.value)
-                .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
+                .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?;
         }
         let stored_value = validated.value;
         // Go's GOGC tuner bounds are cross-validated against the current
@@ -1267,7 +1298,7 @@ impl GlobalSysvars {
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MIN_VALUE);
             if stored_value.parse::<i64>().unwrap_or_default() <= min_value {
-                return Err(VarError::ValidationRefused(
+                return Err(tidb_error::mysql::MysqlError::unknown(
                     "tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value"
                         .to_owned(),
                 ));
@@ -1280,7 +1311,7 @@ impl GlobalSysvars {
                 .and_then(|value| value.parse::<i64>().ok())
                 .unwrap_or(tidb_vardef::defaults::DEF_TIDB_GOGC_MAX_VALUE);
             if stored_value.parse::<i64>().unwrap_or_default() >= max_value {
-                return Err(VarError::ValidationRefused(
+                return Err(tidb_error::mysql::MysqlError::unknown(
                     "tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value"
                         .to_owned(),
                 ));
@@ -1293,14 +1324,14 @@ impl GlobalSysvars {
             && stored_value == "OFF"
             && self.get("tidb_restricted_read_only").ok().as_deref() == Some("ON")
         {
-            return Err(VarError::ValidationRefused(
+            return Err(tidb_error::mysql::MysqlError::unknown(
                 "can't turn off tidb_super_read_only when tidb_restricted_read_only is on"
                     .to_owned(),
             ));
         }
         if self.publishes_runtime_settings && Self::is_memory_arbitration_setting(&key) {
             tidb_util::memory::validate_process_memory_setting(&key, &stored_value)
-                .map_err(VarError::ValidationRefused)?;
+                .map_err(VarError::unknown)?;
         }
         // Go's `tidb_trace_event` GLOBAL hook owns the process-wide flight
         // recorder. A JSON configuration starts/replaces the recorder, while
@@ -1316,9 +1347,9 @@ impl GlobalSysvars {
                 let config = serde_json::from_str::<tidb_util::traceevent::FlightRecorderConfig>(
                     &stored_value,
                 )
-                .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
+                .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?;
                 tidb_util::traceevent::start_log_flight_recorder(config)
-                    .map_err(VarError::ValidationRefused)?;
+                    .map_err(VarError::unknown)?;
             }
         }
         // Go's `validate_password.*` Validation closures (`sysvar.go:717-790`)
@@ -1477,13 +1508,25 @@ impl GlobalSysvars {
     /// Restores the registry default (`SET GLOBAL x = DEFAULT` against a
     /// table whose row the default replaces).
     pub fn reset(&self, name: &str) -> Result<(), VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    (name.to_ascii_lowercase()).into(),
+                    "read only".into(),
+                ]),
+            ));
         }
         if !def.has_global_scope() && !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         }
         if !def.has_global_scope() {
             return self.reset_instance(name);
@@ -1501,13 +1544,25 @@ impl GlobalSysvars {
     /// Restores an INSTANCE-scoped value to its registry default, after the
     /// same scope validation as [`Self::set_instance`].
     pub fn reset_instance(&self, name: &str) -> Result<(), VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    (name.to_ascii_lowercase()).into(),
+                    "read only".into(),
+                ]),
+            ));
         }
         if !def.has_instance_scope() {
-            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_LOCAL_VARIABLE
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         }
         if def.has_global_scope() {
             // A `ScopeGlobal|ScopeInstance` variable's one value is its row.

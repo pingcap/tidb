@@ -58,12 +58,18 @@ use crate::sysvar::{alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_SES
 /// value has to name the same error whichever tier was being written.
 pub fn validation_var_error(name: &str, value: &str, error: ValidationError) -> VarError {
     match error {
-        ValidationError::WrongType => VarError::WrongTypeForVar(name.to_ascii_lowercase()),
-        ValidationError::WrongValue => {
-            VarError::WrongValueForVar(name.to_ascii_lowercase(), value.to_owned())
-        }
-        ValidationError::SqlError(error) => VarError::SqlError(error),
-        ValidationError::Refused(message) => VarError::ValidationRefused(message),
+        ValidationError::WrongType => tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::variable::ERR_WRONG_TYPE_FOR_VAR
+                .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+        ),
+        ValidationError::WrongValue => tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR.generate_with_stack_by_args(&[
+                (name.to_ascii_lowercase()).into(),
+                (value.to_owned()).into(),
+            ]),
+        ),
+        ValidationError::SqlError(error) => tidb_error::mysql::MysqlError::from_sql_error(error),
+        ValidationError::Refused(message) => tidb_error::mysql::MysqlError::unknown(message),
     }
 }
 
@@ -718,11 +724,11 @@ impl SessionVars {
                     .map_or_else(String::new, |def| def.value.to_owned())
             });
         let optimizer_fix_control = OptimizerFixControl::parse(&raw)
-            .map_err(|error| VarError::ValidationRefused(error.to_string()))?
+            .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?
             .0;
         let autocommit = Self::autocommit_from_systems(&systems);
         let sql_mode = Self::sql_mode_from_systems(&systems)
-            .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
+            .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?;
         let max_allowed_packet = Self::max_allowed_packet_from_systems(&systems)?;
         let max_keys_read = Self::max_keys_read_from_systems(&systems);
         let max_execution_time = Self::max_execution_time_from_systems(&systems);
@@ -805,7 +811,7 @@ impl SessionVars {
             .get("max_allowed_packet")
             .map_or("67108864", String::as_str)
             .parse::<u64>()
-            .map_err(|error| VarError::ValidationRefused(error.to_string()))
+            .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))
     }
 
     fn max_keys_read_from_systems(systems: &HashMap<String, String>) -> u64 {
@@ -1232,7 +1238,10 @@ impl SessionVars {
     /// equivalent of Go copying a string header out of `SessionVars.systems`.
     pub fn system_value(&self, name: &str) -> Result<Cow<'_, str>, VarError> {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
-            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         };
         self.system_value_at(index)
     }
@@ -1348,7 +1357,10 @@ impl SessionVars {
     /// the last-insert-id/identity hooks are explicitly never migrated.
     pub fn get_session_states_system_var(&self, name: &str) -> Result<(String, bool), VarError> {
         let Some(index) = crate::sysvar::sys_var_index_lookup(name) else {
-            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         };
         let definition = &crate::sysvar::SYS_VARS[index];
         let key = crate::sysvar::lowered_if_needed(name);
@@ -1622,19 +1634,34 @@ impl SessionVars {
     /// `ErrTruncatedWrongValue` (1292) to it, so the caller with the statement
     /// context in hand is the one that can report it.
     pub fn set_system(&mut self, name: &str, value: String) -> Result<bool, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         if def.is_read_only() {
-            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_INCORRECT_SCOPE.generate_with_stack_by_args(&[
+                    (name.to_ascii_lowercase()).into(),
+                    "read only".into(),
+                ]),
+            ));
         }
         // Go's `InternalSessionVariable` marker hides this name from explicit
         // `SET SESSION` while retaining its unqualified/internal read path.
         // Keep the SQL setter from bypassing that visibility rule.
         if def.is_internal_session_variable() {
-            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         }
         if !def.has_session_scope() {
-            return Err(VarError::GlobalOnlyVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_GLOBAL_VARIABLE
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         }
         // Go validates siblings through typed SessionVars fields. The textual
         // snapshot value can differ after SetExecutor rolls back a failed SET.
@@ -1660,9 +1687,14 @@ impl SessionVars {
                 .get_system("tidb_allow_mpp")
                 .map_or(true, |allow| allow != "ON")
         {
-            return Err(VarError::WrongValueForVar(
-                "tidb_enforce_mpp".to_owned(),
-                "1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.".to_owned(),
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_WRONG_VALUE_FOR_VAR
+                    .generate_with_stack_by_args(&[
+                        ("tidb_enforce_mpp".to_owned()).into(),
+                        ("1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first."
+                            .to_owned())
+                        .into(),
+                    ]),
             ));
         }
         // The session Validation uses the same GLOBAL historical-stats
@@ -1673,10 +1705,8 @@ impl SessionVars {
                 .get_system("tidb_enable_historical_stats")
                 .map_or(true, |value| value != "ON")
         {
-            return Err(VarError::ValidationRefused(
-                "tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
-                    .to_owned(),
-            ));
+            return Err(tidb_error::mysql::MysqlError::unknown("tidb_enable_historical_stats should be enabled before enabling tidb_enable_plan_replayer_continuous_capture"
+                    .to_owned()));
         }
         self.set_session_from_hook(key, validated.value)?;
         Ok(validated.truncated)
@@ -1693,7 +1723,10 @@ impl SessionVars {
         value: String,
     ) -> Result<(), VarError> {
         if get_sys_var(name).is_none() {
-            return Err(VarError::UnknownSystemVariable(name.to_ascii_lowercase()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            ));
         }
         self.set_session_from_hook(name.to_ascii_lowercase(), value)
     }
@@ -1707,7 +1740,7 @@ impl SessionVars {
         let parsed_fix_control = if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
             Some(
                 OptimizerFixControl::parse(&value)
-                    .map_err(|error| VarError::ValidationRefused(error.to_string()))?
+                    .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?
                     .0,
             )
         } else {
@@ -1716,7 +1749,7 @@ impl SessionVars {
         let parsed_sql_mode = if key == "sql_mode" {
             Some(
                 tidb_mysql::get_sql_mode(&value)
-                    .map_err(|error| VarError::ValidationRefused(error.to_string()))?,
+                    .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?,
             )
         } else {
             None
@@ -1734,7 +1767,7 @@ impl SessionVars {
             && !value.eq_ignore_ascii_case("standard")
             && !value.eq_ignore_ascii_case("bulk")
         {
-            return Err(VarError::ValidationRefused(format!(
+            return Err(tidb_error::mysql::MysqlError::unknown(format!(
                 "unsupport DML type: {}",
                 value
             )));
@@ -1964,8 +1997,12 @@ impl SessionVars {
     /// (`globalSystemVariableInitialValue`). A variable without a global scope
     /// answers its compiled default.
     pub fn global_value_for_session_default(&self, name: &str) -> Result<String, VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         let default = crate::sysvar::effective_default(def);
         if !def.has_global_scope() {
             return Ok(default);
@@ -1977,8 +2014,12 @@ impl SessionVars {
     }
 
     pub fn reset_system(&mut self, name: &str) -> Result<(), VarError> {
-        let def = get_sys_var(name)
-            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let def = get_sys_var(name).ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                    .generate_with_stack_by_args(&[(name.to_ascii_lowercase()).into()]),
+            )
+        })?;
         let value = global_system_variable_initial_value(def);
         self.set_system(name, value).map(|_truncated| ())
     }
@@ -2007,25 +2048,29 @@ impl SessionVars {
         // defers that check here, which is what makes `SET NAMES anyword` a
         // runtime error.
         let Ok(charset_info) = tidb_datatype::get_charset_info(charset) else {
-            return Err(VarError::SqlError(tidb_error::mysql::SqlError::new(
-                tidb_error::mysql::errcode::ErrUnknownCharacterSet,
-                &[tidb_error::mysql::FormatArg::from(charset)],
-            )));
+            return Err(tidb_error::mysql::MysqlError::from_sql_error(
+                tidb_error::mysql::SqlError::new(
+                    tidb_error::mysql::errcode::ErrUnknownCharacterSet,
+                    &[tidb_error::mysql::FormatArg::from(charset)],
+                ),
+            ));
         };
         let collation = match collation {
             None if charset == "utf8mb4" => self.get_system("default_collation_for_utf8mb4")?,
             None => charset_info.default_collation,
             Some(name) => {
-                let collation =
-                    crate::sysvar::supported_collation(name, name).map_err(VarError::SqlError)?;
+                let collation = crate::sysvar::supported_collation(name, name)
+                    .map_err(VarError::from_sql_error)?;
                 if collation.charset_name != charset {
-                    return Err(VarError::SqlError(tidb_error::mysql::SqlError::new(
-                        tidb_error::mysql::errcode::ErrCollationCharsetMismatch,
-                        &[
-                            tidb_error::mysql::FormatArg::from(collation.name.as_str()),
-                            tidb_error::mysql::FormatArg::from(charset),
-                        ],
-                    )));
+                    return Err(tidb_error::mysql::MysqlError::from_sql_error(
+                        tidb_error::mysql::SqlError::new(
+                            tidb_error::mysql::errcode::ErrCollationCharsetMismatch,
+                            &[
+                                tidb_error::mysql::FormatArg::from(collation.name.as_str()),
+                                tidb_error::mysql::FormatArg::from(charset),
+                            ],
+                        ),
+                    ));
                 }
                 name.to_owned()
             }
@@ -2092,7 +2137,7 @@ pub fn parse_read_timestamp(
         }
     }
     let invalid = || {
-        VarError::SqlError(tidb_error::mysql::SqlError::new_f(
+        tidb_error::mysql::MysqlError::from_sql_error(tidb_error::mysql::SqlError::new_f(
             tidb_error::mysql::errcode::ErrTruncatedWrongValue,
             "Incorrect datetime value: '%s'",
             &[],

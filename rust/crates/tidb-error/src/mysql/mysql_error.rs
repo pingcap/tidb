@@ -82,6 +82,13 @@ impl MysqlError {
         }
     }
 
+    /// Go `ErrX.Equal(err)` / `terror.ErrorEqual(err, ErrX)`: whether this
+    /// failure was raised as Go's `proto` (same class and code).
+    #[must_use]
+    pub fn equal(&self, proto: &TerrorError) -> bool {
+        self.identity == Some(proto.identity())
+    }
+
     /// [`Self::terror`] with the prototype's own message, for an error Go
     /// raises with no arguments (`return ErrFoo`).
     pub fn from_terror(error: &TerrorError) -> Self {

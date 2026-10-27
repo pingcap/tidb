@@ -81,7 +81,11 @@ fn set_sys_variable(
             // Removed vars permit parse-but-ignore.
             return Ok(());
         }
-        return Err(VarError::UnknownSystemVariable(name.to_owned()).into());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::variable::ERR_UNKNOWN_SYSTEM_VAR
+                .generate_with_stack_by_args(&[(name.to_owned()).into()]),
+        )
+        .into());
     };
     // Go `pkg/executor/set.go:124`.
     if let Some(require_dynamic_privileges) = sys_var.require_dynamic_privileges() {

@@ -465,16 +465,19 @@ fn sql_mode_is_normalized_when_it_is_set() {
         // the whole token invalid.
         (" STRICT_TRANS_TABLES", " STRICT_TRANS_TABLES"),
     ] {
-        match session.apply_set(&format!("SET sql_mode = '{value}'")) {
-            Err(DriverError::Var(tidb_executor::VarError::ValidationRefused(message))) => {
-                assert_eq!(
-                    message,
-                    format!("ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of '{token}'"),
-                    "for {value}"
-                );
-            }
-            other => panic!("{value} should be rejected, got {other:?}"),
-        }
+        // A `Validation` closure's own `errors.Errorf`: unclassed, 1105.
+        let error = session
+            .apply_set(&format!("SET sql_mode = '{value}'"))
+            .expect_err("the value must be rejected")
+            .to_mysql_error();
+        assert_eq!(error.identity, None, "for {value}");
+        assert_eq!(
+            error.message,
+            format!(
+                "ERROR 1231 (42000): Variable 'sql_mode' can't be set to the value of '{token}'"
+            ),
+            "for {value}"
+        );
     }
     // A rejected SET left the previous value in place.
     assert_eq!(
