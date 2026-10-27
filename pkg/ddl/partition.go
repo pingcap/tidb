@@ -2486,7 +2486,8 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 			return ver, err
 		}
 
-		bundles, err := buildDropPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
+		var bundles []*placement.Bundle
+		bundles, err = buildDropPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err

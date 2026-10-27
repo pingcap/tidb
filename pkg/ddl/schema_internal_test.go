@@ -15,15 +15,60 @@
 package ddl
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 )
+
+func TestDropPartitionPropagatesMetadataUpdateError(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", "return(1)")
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		metaMut := meta.NewMutator(txn)
+		require.NoError(t, metaMut.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")}))
+		definitions := []model.PartitionDefinition{
+			{ID: 3, Name: ast.NewCIStr("p0"), LessThan: []string{"10"}},
+			{ID: 4, Name: ast.NewCIStr("p1"), LessThan: []string{"20"}},
+		}
+		tblInfo := &model.TableInfo{
+			ID: 2, Name: ast.NewCIStr("t"), State: model.StatePublic,
+			Partition: &model.PartitionInfo{
+				Type: ast.PartitionTypeRange, Enable: true, Num: 2,
+				Definitions: definitions, DroppingDefinitions: definitions[:1],
+				DDLState: model.StateWriteOnly, DDLAction: model.ActionDropTablePartition,
+			},
+		}
+		require.NoError(t, metaMut.CreateTableOrView(1, tblInfo))
+		job := &model.Job{
+			Version: model.GetJobVerInUse(), Type: model.ActionDropTablePartition,
+			SchemaID: 1, SchemaName: "test", TableID: 2, TableName: "t",
+			State: model.JobStateRunning, SchemaState: model.StateWriteOnly,
+		}
+		job.FillArgs(&model.TablePartitionArgs{PartNames: []string{"p0"}})
+		_, err := job.Encode(true)
+		require.NoError(t, err)
+		jobCtx := &jobContext{metaMut: metaMut, store: store, stepCtx: ctx}
+
+		_, err = (&worker{}).onDropTablePartition(jobCtx, job)
+		require.ErrorContains(t, err, "mock update version and tableInfo error")
+		return nil
+	})
+	require.NoError(t, err)
+}
 
 func TestAppendPhysicalTableIDs(t *testing.T) {
 	table := &model.TableInfo{
