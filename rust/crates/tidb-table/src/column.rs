@@ -72,33 +72,20 @@ pub enum ColumnError {
     Parse(String),
 }
 
-/// Go `table.ErrColumnCantNull` (1048) for `column`.
-#[must_use]
-pub fn err_column_cant_null(column: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::table::ERR_COLUMN_CANT_NULL,
-        format!("Column '{column}' cannot be null"),
-    )
-}
-
-/// Go `table.ErrNoDefaultValue` (1364) for `field`:
-/// "Field '%-.192s' doesn't have a default value".
-#[must_use]
-pub fn err_no_default_value(field: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE,
-        format!("Field '{field}' doesn't have a default value"),
-    )
-}
-
 /// A column failure raised while reading a stored row (the checksum's
 /// origin default): Go's error with its identity, or the row decode
 /// failure a stored definition this layer cannot read is.
 impl From<ColumnError> for crate::kv_table::KvTableError {
     fn from(error: ColumnError) -> Self {
         match error {
-            ColumnError::ColumnCannotBeNull(column) => Self::Mysql(err_column_cant_null(&column)),
-            ColumnError::NoDefaultForField(field) => Self::Mysql(err_no_default_value(&field)),
+            ColumnError::ColumnCannotBeNull(column) => Self::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+                    .generate_with_stack_by_args(&[(&column).into()]),
+            )),
+            ColumnError::NoDefaultForField(field) => Self::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[(&field).into()]),
+            )),
             ColumnError::Mysql(error) => Self::Mysql(error),
             ColumnError::Eval(error) => Self::Mysql(error.to_mysql_error()),
             ColumnError::Parse(message) => Self::Decode(message),
@@ -183,21 +170,46 @@ impl From<CastFailure> for CastError {
                 value,
                 column,
                 row,
-            } => incorrect_temporal_value(&type_name, &value, &column, row),
-            CastFailure::DataOutOfRange { column, row } => data_out_of_range(&column, row),
-            CastFailure::DataTooLong { column, row } => data_too_long(&column, row),
-            CastFailure::DataTruncatedAtRow { column, row } => data_truncated_at_row(&column, row),
-            CastFailure::TruncatedIncorrectValue { kind, value } => {
-                truncated_incorrect_value(&kind, &value)
-            }
-            CastFailure::IncorrectValueRaw { type_name, value } => {
-                incorrect_value_raw(&type_name, &value)
-            }
+            } => MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
+                    .generate_with_stack_by_args(&[
+                        (&type_name).into(),
+                        (&value).into(),
+                        (&column).into(),
+                        row.into(),
+                    ]),
+            ),
+            CastFailure::DataOutOfRange { column, row } => MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE
+                    .generate_with_stack_by_args(&[(&column).into(), row.into()]),
+            ),
+            CastFailure::DataTooLong { column, row } => MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_DATA_TOO_LONG
+                    .generate_with_stack_by_args(&[(&column).into(), row.into()]),
+            ),
+            CastFailure::DataTruncatedAtRow { column, row } => MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_TRUNCATED
+                    .generate_with_stack_by_args(&[(&column).into(), row.into()]),
+            ),
+            CastFailure::TruncatedIncorrectValue { kind, value } => MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+                    .generate_with_stack_by_args(&[(&kind).into(), (&value).into()]),
+            ),
+            CastFailure::IncorrectValueRaw { type_name, value } => MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_WRONG_VALUE
+                    .generate_with_stack_by_args(&[(&type_name).into(), (&value).into()]),
+            ),
             CastFailure::DataTooLongRaw {
                 field_len,
                 data_len,
-            } => data_too_long_raw(field_len, data_len),
-            CastFailure::DataTruncatedUnformatted => data_truncated_unformatted(),
+            } => MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_DATA_TOO_LONG.generate_with_stack(format!(
+                    "Data Too Long, field len {field_len}, data len {data_len}"
+                )),
+            ),
+            CastFailure::DataTruncatedUnformatted => {
+                MysqlError::from_terror(&tidb_error::catalog::types::ERR_TRUNCATED)
+            }
             CastFailure::Mysql(error) => error,
             CastFailure::Eval(error) => return Self::Eval(error),
         })
@@ -218,95 +230,9 @@ pub fn incorrect_value(type_name: &str, value: &str, column: &str, row: usize) -
     } else {
         format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}")
     };
-    MysqlError::terror(
-        &tidb_error::catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD,
-        message,
-    )
-}
-
-/// Go `types.ErrWrongValue` completed by `completeInsertErr`
-/// (`exeerrors.ErrTruncateWrongInsertValue`, 1292).
-#[must_use]
-pub fn incorrect_temporal_value(
-    type_name: &str,
-    value: &str,
-    column: &str,
-    row: usize,
-) -> MysqlError {
-    MysqlError::terror(
-        &tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE,
-        format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}"),
-    )
-}
-
-/// Go `types.ErrWarnDataOutOfRange` (1264): "Out of range value for column
-/// '%s' at row %d".
-#[must_use]
-pub fn data_out_of_range(column: &str, row: usize) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE,
-        format!("Out of range value for column '{column}' at row {row}"),
-    )
-}
-
-/// Go `types.ErrDataTooLong` (1406): "Data too long for column '%s' at row
-/// %d".
-#[must_use]
-pub fn data_too_long(column: &str, row: usize) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::types::ERR_DATA_TOO_LONG,
-        format!("Data too long for column '{column}' at row {row}"),
-    )
-}
-
-/// Go `types.ErrTruncated` (1265): "Data truncated for column '%s' at row
-/// %d".
-#[must_use]
-pub fn data_truncated_at_row(column: &str, row: usize) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::types::ERR_TRUNCATED,
-        format!("Data truncated for column '{column}' at row {row}"),
-    )
-}
-
-/// Go `types.ErrTruncatedWrongVal` (1292): "Truncated incorrect %-.32s
-/// value: '%-.128s'".
-#[must_use]
-pub fn truncated_incorrect_value(kind: &str, value: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL,
-        format!("Truncated incorrect {kind} value: '{value}'"),
-    )
-}
-
-/// Go `types.ErrWrongValue` (1292) as `table.CastValue` raises it:
-/// "Incorrect %-.32s value: '%-.128s'".
-#[must_use]
-pub fn incorrect_value_raw(type_name: &str, value: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::types::ERR_WRONG_VALUE,
-        format!("Incorrect {type_name} value: '{value}'"),
-    )
-}
-
-/// Go `types.ErrDataTooLong` (1406) as `ProduceStrWithSpecifiedTp` raises
-/// it: "Data Too Long, field len %d, data len %d".
-#[must_use]
-pub fn data_too_long_raw(field_len: u64, data_len: u64) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::types::ERR_DATA_TOO_LONG,
-        format!("Data Too Long, field len {field_len}, data len {data_len}"),
-    )
-}
-
-/// Go `types.ErrTruncated` (1265) raised bare: its message TEMPLATE,
-/// unformatted, which is what an `ON DUPLICATE KEY UPDATE` assignment of an
-/// unknown ENUM/SET label reports.
-#[must_use]
-pub fn data_truncated_unformatted() -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::types::ERR_TRUNCATED,
-        "Data truncated for column '%s' at row %d".to_owned(),
+    MysqlError::from_terror(
+        &tidb_error::catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
+            .generate_with_stack(message),
     )
 }
 

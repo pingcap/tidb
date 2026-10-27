@@ -1642,18 +1642,17 @@ impl Session {
         // Go `preprocessor.Enter`'s `*ast.ColumnName` arm: the commit-TS
         // pseudo column is not yet usable by SELECT, UPDATE or DELETE.
         if scan.names_commit_ts {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                &tidb_error::plannererrors::ERR_INTERNAL,
-                format!(
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_INTERNAL.generate_with_stack(format!(
                     "Usage of column name '{}' is not supported for now",
                     tidb_planner::plan_builder::EXTRA_COMMIT_TS_NAME
-                ),
+                )),
             )));
         }
         if let Some(function) = &scan.qualified_function {
-            return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                &tidb_error::catalog::expression::ERR_FUNCTION_NOT_EXISTS,
-                format!("FUNCTION {function} does not exist"),
+            return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+                &tidb_error::catalog::expression::ERR_FUNCTION_NOT_EXISTS
+                    .generate_with_stack(format!("FUNCTION {function} does not exist")),
             )));
         }
         self.validate_statement_read_only_in_staleness(&stmt)?;

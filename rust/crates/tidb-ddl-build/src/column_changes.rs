@@ -49,14 +49,13 @@ fn check_column_qualifier_part(
         return Ok(());
     }
     Err(if schema {
-        MysqlError::terror(
-            &tidb_util::dbterror::ERR_WRONG_DB_NAME,
-            format!("Incorrect database name '{written}'"),
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_DB_NAME.generate_with_stack_by_args(&[written.into()]),
         )
     } else {
-        MysqlError::terror(
-            &tidb_util::dbterror::ERR_WRONG_TABLE_NAME,
-            format!("Incorrect table name '{written}'"),
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
+                .generate_with_stack_by_args(&[written.into()]),
         )
     })
 }

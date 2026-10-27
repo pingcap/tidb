@@ -28,10 +28,6 @@ use tidb_error::mysql::MysqlError;
 /// `mysql.PartitionCountLimit`.
 const PARTITION_COUNT_LIMIT: usize = 8192;
 
-/// Go `ErrGeneralUnsupportedDDL` ("Unsupported %s").
-fn unsupported(message: impl std::fmt::Display) -> MysqlError {
-    MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, format!("Unsupported {message}"))
-}
 
 fn parse(text: &str) -> Result<Expr, MysqlError> {
     tidb_model::generated_expr::parse_expression(text).map_err(|error| {
@@ -102,9 +98,10 @@ fn time_unit(unit: Option<&str>) -> Result<Option<&'static str>, MysqlError> {
         .find(|candidate| candidate.eq_ignore_ascii_case(unit))
         .map(|unit| Some(*unit))
         .ok_or_else(|| {
-            unsupported(
-                "INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit",
-            )
+            MysqlError::from_terror(
+        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+            .generate_with_stack_by_args(&["INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit".into()]),
+    )
         })
 }
 
@@ -144,7 +141,10 @@ pub fn generate_from_interval(
     ))
     .into_owned();
     if !step_value.starts_with(|first: char| ('1'..='9').contains(&first)) {
-        return Err(unsupported("INTERVAL, should be a positive number"));
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                .generate_with_stack_by_args(&["INTERVAL, should be a positive number".into()]),
+        ));
     }
     let unit = time_unit(interval.unit)?;
     let (start, last, skip_start) = match statement {
@@ -182,12 +182,17 @@ pub fn generate_from_interval(
                 message.push_str(unit);
             }
             message.push(')');
-            return Err(unsupported(message));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                    .generate_with_stack_by_args(&[message.to_string().into()]),
+            ));
         }
         let text = value_string(&value)?;
         if text.is_empty() || text.starts_with('\'') {
-            return Err(unsupported(
-                "INTERVAL partitioning: Error when generating partition values",
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                    "INTERVAL partitioning: Error when generating partition values".into(),
+                ]),
             ));
         }
         let bound = if unit.is_some() {
@@ -249,25 +254,35 @@ pub fn expand_interval(
         .as_deref()
         .expect("the caller dispatched on INTERVAL");
     if method.kind != tidb_ast::PartitionType::RANGE {
-        return Err(unsupported(
-            "INTERVAL partitioning, only allowed on RANGE partitioning",
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                "INTERVAL partitioning, only allowed on RANGE partitioning".into(),
+            ]),
         ));
     }
     if method.columns.len() > 1 {
-        return Err(unsupported(
-            "INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column",
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                "INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column"
+                    .into(),
+            ]),
         ));
     }
     if let Some(column) = column {
         if !matches!(column.eval_type(), EvalType::Int | EvalType::Datetime) {
-            return Err(unsupported(
-                "INTERVAL partitioning, only supports Date, Datetime and INT types",
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                    "INTERVAL partitioning, only supports Date, Datetime and INT types".into(),
+                ]),
             ));
         }
     }
     let (Some(first), Some(last)) = (&interval.first_range_end, &interval.last_range_end) else {
-        return Err(unsupported(
-            "INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined",
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                "INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined"
+                    .into(),
+            ]),
         ));
     };
     let unit = time_unit(interval.unit.as_deref())?;
@@ -344,28 +359,43 @@ fn compare_partition_definitions(
 ) -> Result<(), MysqlError> {
     if generated.len() != defined.len() {
         // Go passes the counts as extra arguments to a one-verb format.
-        return Err(unsupported(format!(
+        return Err(MysqlError::from_terror(
+        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+            .generate_with_stack_by_args(&[(format!(
             "number of partitions generated != partition defined (%d != %d)%!(EXTRA int={}, int={})",
             generated.len(),
             defined.len()
-        )));
+        )).to_string().into()]),
+    ));
     }
     for (generated, defined) in generated.iter().zip(defined) {
         let name = &defined.name;
         if !defined.sub_partitions.is_empty() {
-            return Err(unsupported(format!(
-                "partition {name} does have unsupported subpartitions"
-            )));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                    (format!("partition {name} does have unsupported subpartitions"))
+                        .to_string()
+                        .into(),
+                ]),
+            ));
         }
         if !defined.options.is_empty() {
-            return Err(unsupported(format!(
-                "partition {name} does have unsupported options"
-            )));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                    (format!("partition {name} does have unsupported options"))
+                        .to_string()
+                        .into(),
+                ]),
+            ));
         }
         let PartitionDefinitionClause::LessThan(defined_values) = &defined.clause else {
-            return Err(unsupported(format!(
-                "partition {name} does not have the right type for LESS THAN"
-            )));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                    (format!("partition {name} does not have the right type for LESS THAN"))
+                        .to_string()
+                        .into(),
+                ]),
+            ));
         };
         let PartitionDefinitionClause::LessThan(generated_values) = &generated.clause else {
             unreachable!("INTERVAL generates LESS THAN definitions")
@@ -373,9 +403,15 @@ fn compare_partition_definitions(
         match (&defined_values[0], &generated_values[0]) {
             (PartitionValue::MaxValue, PartitionValue::MaxValue) => continue,
             (PartitionValue::MaxValue, _) | (_, PartitionValue::MaxValue) => {
-                return Err(unsupported(format!(
-                    "partition {name} differs between generated and defined for MAXVALUE"
-                )))
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(
+                        &[(format!(
+                            "partition {name} differs between generated and defined for MAXVALUE"
+                        ))
+                        .to_string()
+                        .into()],
+                    ),
+                ))
             }
             (PartitionValue::Expr(defined), PartitionValue::Expr(generated)) => {
                 let equal = eval(
@@ -387,15 +423,26 @@ fn compare_partition_definitions(
                     ctx,
                 )?;
                 if !matches!(equal, Datum::Int(1)) {
-                    return Err(unsupported(format!(
+                    return Err(MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                            .generate_with_stack_by_args(&[(format!(
                         "partition {name} differs between generated and defined for expression"
-                    )));
+                    ))
+                            .to_string()
+                            .into()]),
+                    ));
                 }
             }
             _ => {
-                return Err(unsupported(format!(
-                    "partition {name} differs between generated and defined for expression"
-                )))
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(
+                        &[(format!(
+                            "partition {name} differs between generated and defined for expression"
+                        ))
+                        .to_string()
+                        .into()],
+                    ),
+                ))
             }
         }
     }

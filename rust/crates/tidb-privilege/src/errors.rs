@@ -18,26 +18,6 @@
 
 use tidb_error::mysql::MysqlError;
 
-/// Go `exeerrors.ErrPasswordFormat` (1827).
-#[must_use]
-pub fn password_format() -> MysqlError {
-    MysqlError::terror(
-        &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT,
-        "The password hash doesn't have the expected format. Check if the correct \
-         password algorithm is being used with the PASSWORD() function."
-            .to_owned(),
-    )
-}
-
-/// Go `exeerrors.ErrPluginIsNotLoaded` (1524).
-#[must_use]
-pub fn plugin_is_not_loaded(plugin: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_util::dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED,
-        format!("Plugin '{plugin}' is not loaded"),
-    )
-}
-
 /// Go `exeerrors.ErrExistsInHistoryPassword` (3638).
 #[must_use]
 pub fn exists_in_history_password(user: &str, host: &str) -> MysqlError {
@@ -51,17 +31,8 @@ pub fn exists_in_history_password(user: &str, host: &str) -> MysqlError {
             tidb_error::mysql::FormatArg::from(host),
         ],
     );
-    MysqlError::terror(
-        &tidb_util::dbterror::exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD,
-        error.message,
-    )
-}
-
-/// Go `kv.ErrKeyExists` (1062).
-#[must_use]
-pub fn duplicate_entry(value: &str, key: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::catalog::kv::ERR_KEY_EXISTS,
-        format!("Duplicate entry '{value}' for key '{key}'"),
+    MysqlError::from_terror(
+        &tidb_util::dbterror::exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD
+            .generate_with_stack(error.message),
     )
 }

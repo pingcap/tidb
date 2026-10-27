@@ -379,7 +379,7 @@ impl Session {
             if self.is_local_temporary_table(db, table) {
                 return Err(DriverError::from(
                     tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
-                        .generate_with_stack_by_args(&[("LOCK TABLES").into()]),
+                        .generate_with_stack_by_args(&["LOCK TABLES".into()]),
                 ));
             }
         }
@@ -582,7 +582,7 @@ impl Session {
             if self.is_local_temporary_table(db, table) {
                 return Err(DriverError::from(
                     tidb_util::dbterror::ERR_UNSUPPORTED_LOCAL_TEMP_TABLE_DDL
-                        .generate_with_stack_by_args(&[("ADMIN CLEANUP TABLE LOCK").into()]),
+                        .generate_with_stack_by_args(&["ADMIN CLEANUP TABLE LOCK".into()]),
                 ));
             }
         }
@@ -710,8 +710,9 @@ fn throw_err_if_in_mem_or_sys_db(
     }
     let (user, host) = login.map_or(("", ""), |(user, host)| (user.as_str(), host.as_str()));
     // Go passes two of the message's three verbs.
-    Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-        &tidb_error::catalog::privileges::ERR_ACCESS_DENIED,
-        format!("Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"),
+    Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+        &tidb_error::catalog::privileges::ERR_ACCESS_DENIED.generate_with_stack(format!(
+            "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
+        )),
     )))
 }

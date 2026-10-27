@@ -7490,9 +7490,9 @@ use std::collections::HashMap;
 
     #[test]
     fn index_join_reader_failures_preserve_sql_errors_without_replaying_probes() {
-        let expected = crate::MysqlError::terror(
-            &tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO,
-            "injected inner-reader division by zero",
+        let expected = crate::MysqlError::from_terror(
+            &tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO
+                .generate_with_stack("injected inner-reader division by zero"),
         );
         let mut failures = Vec::new();
         let drain = |source: &mut IndexJoinLookupExec| -> Result<usize, ExecError> {

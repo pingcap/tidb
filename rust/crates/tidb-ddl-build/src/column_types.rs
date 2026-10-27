@@ -41,7 +41,12 @@ use tidb_error::mysql::MysqlError;
 /// Go `charset.GetCharsetInfo` as a DDL statement reaches it: a name Go's
 /// parser would have refused is `ErrUnknownCharacterSet` (1115).
 fn get_charset_info(name: &str) -> Result<CharsetInfo, MysqlError> {
-    tidb_datatype::get_charset_info(name).map_err(|_| MysqlError::terror(&tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET, format!("Unknown character set: '{name}'")))
+    tidb_datatype::get_charset_info(name).map_err(|_| {
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET
+                .generate_with_stack_by_args(&[name.into()]),
+        )
+    })
 }
 
 /// Go `collate.GetCollationByName`: an unknown name is `ErrUnknownCollation`
@@ -49,14 +54,14 @@ fn get_charset_info(name: &str) -> Result<CharsetInfo, MysqlError> {
 /// its own implementation is `ErrUnsupportedCollation` (1273).
 pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, MysqlError> {
     tidb_datatype::get_supported_collation_by_name(name).map_err(|error| match error {
-        tidb_datatype::CollationError::UnsupportedCollation(name) => MysqlError::terror(&tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION, format!("Unsupported collation when new collation is enabled: '{name}'")),
-        tidb_datatype::CollationError::Registry(_) => MysqlError::terror(&tidb_util::dbterror::ERR_UNKNOWN_COLLATION, format!("Unknown collation: '{name}'")),
+        tidb_datatype::CollationError::UnsupportedCollation(name) => MysqlError::from_terror(
+            &tidb_error::catalog::collate::ERR_UNSUPPORTED_COLLATION
+                .generate_with_stack_by_args(&[name.into()]),
+        ),
+        tidb_datatype::CollationError::Registry(_) => MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNKNOWN_COLLATION.generate_with_stack_by_args(&[name.into()]),
+        ),
     })
-}
-
-/// Go `dbterror.ErrCollationCharsetMismatch` (1253).
-fn collation_charset_mismatch(collation: &str, charset: &str) -> MysqlError {
-    MysqlError::terror(&tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH, format!("COLLATION '{collation}' is not valid for CHARACTER SET '{charset}'"))
 }
 
 /// Go `getDefaultCollationForUTF8MB4`: `@@default_collation_for_utf8mb4` for
@@ -105,7 +110,10 @@ pub fn resolve_charset_collation(
             let written_charset = tidb_datatype::get_charset_info(chs)
                 .map_or_else(|_| (*chs).to_owned(), |info| info.name);
             if !chs.is_empty() && collation.charset_name != written_charset {
-                return Err(collation_charset_mismatch(col, chs));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH
+                        .generate_with_stack_by_args(&[col.into(), chs.into()]),
+                ));
             }
             return Ok((collation.charset_name, collation.name));
         }
@@ -150,10 +158,10 @@ pub fn get_charset_and_collate_in_table_option(
                 if chs.is_empty() {
                     chs.clone_from(&info.name);
                 } else if chs != info.name {
-                    return Err(MysqlError::terror(&tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS, format!(
-                            "Conflicting declarations: 'CHARACTER SET {chs}' and 'CHARACTER SET {}'",
-                            info.name
-                        )));
+                    return Err(MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_CONFLICTING_DECLARATIONS
+                            .generate_with_stack_by_args(&[chs.into(), info.name.into()]),
+                    ));
                 }
                 if coll.is_empty() {
                     let default_coll = get_default_collation_for_utf8mb4(&chs, default_utf8mb4_coll);
@@ -169,7 +177,10 @@ pub fn get_charset_and_collate_in_table_option(
                 if chs.is_empty() {
                     chs.clone_from(&info.charset_name);
                 } else if chs != info.charset_name {
-                    return Err(collation_charset_mismatch(&info.name, &chs));
+                    return Err(MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH
+                            .generate_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
+                    ));
                 }
                 coll = info.name;
             }
@@ -204,7 +215,10 @@ pub fn get_charset_and_collate_in_column_def(
             if chs.is_empty() {
                 chs.clone_from(&info.charset_name);
             } else if chs != info.charset_name {
-                return Err(collation_charset_mismatch(&info.name, &chs));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_COLLATION_CHARSET_MISMATCH
+                        .generate_with_stack_by_args(&[(&info.name).into(), (&chs).into()]),
+                ));
             }
             coll = info.name;
         }

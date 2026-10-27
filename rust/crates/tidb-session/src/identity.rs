@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use tidb_ast::{SessionStmt, Stmt};
 
-use crate::{privilege, process, vars, DriverError, Session};
+use crate::{privilege, process, DriverError, Session};
 use tidb_util::stringutil::go_to_lower;
 
 /// Distinct prepared texts whose privilege requests one session keeps.
@@ -1339,9 +1339,8 @@ impl Session {
 
 /// Go `plannererrors.ErrViewNoExplain` (1345).
 fn view_no_explain() -> DriverError {
-    DriverError::Mysql(tidb_executor::MysqlError::terror(
-        &tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN,
-        "EXPLAIN/SHOW can not be issued; lacking privileges for underlying table",
+    DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+        &tidb_error::plannererrors::ERR_VIEW_NO_EXPLAIN.generate_with_stack_by_args(&[]),
     ))
 }
 

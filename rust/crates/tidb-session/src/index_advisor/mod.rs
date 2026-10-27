@@ -627,9 +627,9 @@ impl SessionOptimizer<'_> {
                         tidb_ast::DmlStmt::Update(_) => ("UPDATE", first_table_name(statement)),
                         _ => ("DELETE", first_table_name(statement)),
                     };
-                    Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                        &tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE,
-                        format!("The target table {table} of the {verb} is not updatable"),
+                    Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_NON_UPDATABLE_TABLE
+                            .generate_with_stack_by_args(&[table.into(), verb.into()]),
                     )))
                 }
                 _ => Err(advisor_error("plan is not a physical plan: *core.Simple")),

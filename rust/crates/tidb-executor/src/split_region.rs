@@ -183,9 +183,10 @@ fn plan_index_split<'a>(
 ) -> Result<(&'a KvIndex, SplitValues), DriverError> {
     let clustered = table.pk_handle_offset().is_some() || !table.common_handle_offsets().is_empty();
     if index_name.go_lower_eq("primary") && clustered {
-        return Err(DriverError::Mysql(MysqlError::terror(
-            &tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST,
-            "unable to split clustered index, please split table instead.",
+        return Err(DriverError::Mysql(MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_KEY_DOES_NOT_EXIST.generate_with_stack(
+                "unable to split clustered index, please split table instead.",
+            ),
         )));
     }
     let index = table
@@ -428,11 +429,15 @@ fn index_split_keys(
             let lower_key = index_key(lower)?;
             let upper_key = index_key(upper)?;
             if lower_key >= upper_key {
-                return Err(invalid_ranges(format!(
+                return Err(DriverError::Mysql(MysqlError::from_terror(
+                    &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+                        .generate_with_stack_by_args(&[(format!(
                     "Split index `{}` region lower value {} should less than the upper value {}",
                     index.name,
                     datums_text(lower),
                     datums_text(upper)
+                ))
+                        .into()]),
                 )));
             }
             values_list(&lower_key, &upper_key, *num, keys);
@@ -483,11 +488,14 @@ fn table_split_keys(
             let lower_handle = build_handle(table, true, lower, &zone)?;
             let upper_handle = build_handle(table, true, upper, &zone)?;
             if handle_bytes(&lower_handle) >= handle_bytes(&upper_handle) {
-                return Err(invalid_ranges(format!(
+                return Err(DriverError::Mysql(MysqlError::from_terror(
+        &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+            .generate_with_stack_by_args(&[(format!(
                     "Split table `{table_name}` region lower value {} should less than the upper value {}",
                     datums_text(lower),
                     datums_text(upper)
-                )));
+                )).into()]),
+    )));
             }
             let low = encode_record_key(&record_prefix, &lower_handle);
             let up = encode_record_key(&record_prefix, &upper_handle);
@@ -538,8 +546,12 @@ fn int_bound_and_step(
     let upper_bits = upper.first().map_or(0, int64_bits);
     let (low, step) = if table.unsigned_pk_handle() {
         if upper_bits <= lower_bits {
-            return Err(invalid_ranges(format!(
-                "lower value {lower_bits} should less than the upper value {upper_bits}"
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+                    .generate_with_stack_by_args(&[(format!(
+                        "lower value {lower_bits} should less than the upper value {upper_bits}"
+                    ))
+                    .into()]),
             )));
         }
         (
@@ -549,16 +561,23 @@ fn int_bound_and_step(
     } else {
         let (low, up) = (lower_bits as i64, upper_bits as i64);
         if up <= low {
-            return Err(invalid_ranges(format!(
-                "lower value {low} should less than the upper value {up}"
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+                    .generate_with_stack_by_args(&[(format!(
+                        "lower value {low} should less than the upper value {up}"
+                    ))
+                    .into()]),
             )));
         }
         (low, (up.wrapping_sub(low) as u64 / num as u64) as i64)
     };
     if step < MIN_REGION_STEP_VALUE {
-        return Err(invalid_ranges(format!(
+        return Err(DriverError::Mysql(MysqlError::from_terror(
+        &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+            .generate_with_stack_by_args(&[(format!(
             "the region size is too small, expected at least {MIN_REGION_STEP_VALUE}, but got {step}"
-        )));
+        )).into()]),
+    )));
     }
     Ok((low, step))
 }
@@ -668,13 +687,12 @@ impl ValueConverter<'_> {
         let Ok(text) = value.sql_string() else {
             return Err(DriverError::Mysql(MysqlError::from_sql_error(reported)));
         };
-        Err(DriverError::Mysql(MysqlError::terror(
-            &tidb_error::catalog::types::ERR_TRUNCATED,
-            format!(
+        Err(DriverError::Mysql(MysqlError::from_terror(
+            &tidb_error::catalog::types::ERR_TRUNCATED.generate_with_stack(format!(
                 "Incorrect value: '{}' for column '{}'",
                 truncate_chars(&text, 128),
                 truncate_chars(column_name, 192)
-            ),
+            )),
         )))
     }
 }
@@ -703,14 +721,6 @@ impl tidb_datatype::ConversionWarningAppender for StatementWarnings<'_> {
 /// Go `errors.Errorf`: an unclassified error, 1105 on the wire.
 fn unknown(message: String) -> DriverError {
     DriverError::Mysql(MysqlError::unknown(message))
-}
-
-/// Go `exeerrors.ErrInvalidSplitRegionRanges` (8212).
-fn invalid_ranges(message: String) -> DriverError {
-    DriverError::Mysql(MysqlError::terror(
-        &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES,
-        format!("Failed to split region ranges: {message}"),
-    ))
 }
 
 #[cfg(test)]

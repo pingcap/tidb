@@ -33,14 +33,6 @@ pub struct ProtocolSessionStates {
     pub cannot_migrate: Option<&'static str>,
 }
 
-/// Go's nonportable-session diagnostic (8146).
-pub fn cannot_migrate(reason: impl std::fmt::Display) -> DriverError {
-    DriverError::Mysql(MysqlError::terror(
-        &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION,
-        format!("cannot migrate the current session: {reason}"),
-    ))
-}
-
 fn invalid_state(error: impl std::fmt::Display) -> DriverError {
     DriverError::Mysql(MysqlError::unknown(error.to_string()))
 }
@@ -92,24 +84,42 @@ impl Session {
     /// Exports the state owned by this SQL session and its connection handlers.
     pub fn encode_session_states(&self) -> Result<SessionStates, DriverError> {
         if self.in_transaction() {
-            return Err(cannot_migrate("session has an active transaction"));
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                    .generate_with_stack_by_args(&["session has an active transaction".into()]),
+            )));
         }
         if !self.local_temporary_tables.is_empty() {
-            return Err(cannot_migrate("session has local temporary tables"));
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                    .generate_with_stack_by_args(&["session has local temporary tables".into()]),
+            )));
         }
         if self.advisory_locks.has_locks() {
-            return Err(cannot_migrate("session has advisory locks"));
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                    .generate_with_stack_by_args(&["session has advisory locks".into()]),
+            )));
         }
         // The `TableLockTpInfo` names this session and server, so the locks
         // cannot move with it.
         if self.has_locked_tables() {
-            return Err(cannot_migrate("session has locked tables"));
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                    .generate_with_stack_by_args(&["session has locked tables".into()]),
+            )));
         }
         if self.vars.sandbox_mode {
-            return Err(cannot_migrate("session is in sandbox mode"));
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                    .generate_with_stack_by_args(&["session is in sandbox mode".into()]),
+            )));
         }
         if let Some(reason) = self.protocol_session_states.cannot_migrate {
-            return Err(cannot_migrate(reason));
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                    .generate_with_stack_by_args(&[reason.to_string().into()]),
+            )));
         }
         let mut system_vars = BTreeMap::new();
         for definition in crate::sysvar::SYS_VARS.iter() {
@@ -132,9 +142,14 @@ impl Session {
                     definition.value.to_owned()
                 };
                 if value != default {
-                    return Err(cannot_migrate(format!(
-                        "session has set invisible variable '{}'",
-                        definition.name
+                    return Err(DriverError::Mysql(MysqlError::from_terror(
+                        &tidb_error::catalog::sessionstates::ERR_CANNOT_MIGRATE_SESSION
+                            .generate_with_stack_by_args(&[(format!(
+                                "session has set invisible variable '{}'",
+                                definition.name
+                            ))
+                            .to_string()
+                            .into()]),
                     )));
                 }
                 continue;

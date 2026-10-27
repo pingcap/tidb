@@ -56,7 +56,7 @@ pub use tidb_autoid::{
 };
 
 pub use tidb_autoid::{AutoIdCall, AutoIdService};
-pub use auto_increment::{autoinc_read_failed, AutoIncrement, TableAutoId};
+pub use auto_increment::{AutoIncrement, TableAutoId};
 pub use auto_random::{AutoRandom, AutoRandomError, AutoRandomSpec};
 
 pub use row_decoder::{
@@ -3589,10 +3589,12 @@ impl KvTable {
             if i64::try_from(self.store.size_bytes()).unwrap_or(i64::MAX)
                 > statement.tmp_table_max_size()
             {
-                return Err(KvTableError::Mysql(tidb_error::mysql::MysqlError::terror(
-                    &tidb_error::catalog::table::ERR_TEMP_TABLE_FULL,
-                    format!("The table '{}' is full", self.name()),
-                )));
+                return Err(KvTableError::Mysql(
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::table::ERR_TEMP_TABLE_FULL
+                            .generate_with_stack_by_args(&[self.name().into()]),
+                    ),
+                ));
             }
         }
         // Go AddRecord receives a row completed by the mutation executor.

@@ -549,10 +549,7 @@ use tidb_txnkv::Key;
             for error in [
                 StorageError::Backend("index unavailable".to_owned()),
                 StorageError::Retryable("region changed".to_owned()),
-                StorageError::Sql(crate::MysqlError::terror(
-                    &tidb_error::catalog::kv::ERR_WRITE_CONFLICT,
-                    "write conflict",
-                )),
+                StorageError::Sql(crate::MysqlError::from_terror(&tidb_error::catalog::kv::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"))),
             ] {
                 let (store, snapshot, buffer) = storage(&[]);
                 let mut table = KvTable::with_storage(

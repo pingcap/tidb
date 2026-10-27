@@ -1018,7 +1018,11 @@ pub fn get_col_default_value_from_nil(
         ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
             tidb_util::context::WarningLevel::Warning,
             &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE,
-            crate::column::err_no_default_value(name).message,
+            MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[name.into()]),
+            )
+            .message,
         ));
         return Ok(crate::bad_null::zero_value(field_type));
     }

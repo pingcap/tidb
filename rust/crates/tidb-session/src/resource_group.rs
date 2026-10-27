@@ -47,31 +47,14 @@ fn plain_error(message: &str) -> DriverError {
     DriverError::Mysql(MysqlError::unknown(message))
 }
 
-/// Go `infoschema.ErrResourceGroupExists` (8248).
-fn resource_group_exists(name: &str) -> DriverError {
-    DriverError::Mysql(MysqlError::terror(
-        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_EXISTS,
-        format!("Resource group '{name}' already exists"),
-    ))
-}
-
-/// Go `infoschema.ErrResourceGroupNotExists` (8249).
-pub(crate) fn resource_group_not_exists(name: &str) -> DriverError {
-    DriverError::Mysql(MysqlError::terror(
-        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS,
-        format!("Unknown resource group '{name}'"),
-    ))
-}
-
 /// Go `DDLExec`'s gate: `infoschema.ErrResourceGroupSupportDisabled` (8250)
 /// unless `tidb_enable_resource_control` is on.
 pub(crate) fn check_resource_control_enabled() -> Result<(), DriverError> {
     if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
         return Ok(());
     }
-    Err(DriverError::Mysql(MysqlError::terror(
+    Err(DriverError::Mysql(MysqlError::from_terror(
         &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_SUPPORT_DISABLED,
-        tidb_error::tidb::errname::ErrResourceGroupSupportDisabled.raw,
     )))
 }
 
@@ -205,10 +188,7 @@ fn set_direct_resource_group_background_option(
                     continue;
                 }
                 if !EXPLICIT_TYPE_LIST.contains(&job_type.as_str()) {
-                    return Err(DriverError::Mysql(MysqlError::terror(
-                        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME,
-                        format!("Unknown background task name '{job_type}'"),
-                    )));
+                    return Err(DriverError::Mysql(MysqlError::from_terror(&tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_BACKGROUND_TASK_NAME.generate_with_stack_by_args(&[job_type.into()]))));
                 }
                 job_types.push(job_type);
             }
@@ -281,9 +261,8 @@ impl Session {
     ) -> Result<String, DriverError> {
         check_resource_control_enabled()?;
         if is_role {
-            return Err(DriverError::Mysql(MysqlError::terror(
+            return Err(DriverError::Mysql(MysqlError::from_terror(
                 &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_INVALID_FOR_ROLE,
-                tidb_error::tidb::errname::ErrResourceGroupInvalidForRole.raw,
             )));
         }
         let lower = name.go_to_lower();
@@ -291,7 +270,10 @@ impl Session {
             && !lower.is_empty()
             && self.lock_catalog()?.resource_group(&lower).is_none()
         {
-            return Err(resource_group_not_exists(&lower));
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(&lower).into()]),
+            )));
         }
         Ok(lower)
     }
@@ -311,7 +293,10 @@ impl Session {
         let group = build_resource_group(&fresh, &stmt.options)?;
         let exists = self.lock_catalog()?.resource_group(&stmt.name).is_some();
         if exists {
-            let error = resource_group_exists(&stmt.name);
+            let error = DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_EXISTS
+                    .generate_with_stack_by_args(&[(&stmt.name).into()]),
+            ));
             if stmt.if_not_exists {
                 self.append_suppressed(error);
                 return Ok(None);
@@ -330,7 +315,10 @@ impl Session {
         check_resource_control_enabled()?;
         let existing = self.lock_catalog()?.resource_group(&stmt.name).cloned();
         let Some(existing) = existing else {
-            let error = resource_group_not_exists(&stmt.name);
+            let error = DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(&stmt.name).into()]),
+            ));
             if stmt.if_exists {
                 self.append_suppressed(error);
                 return Ok(None);
@@ -353,7 +341,10 @@ impl Session {
         }
         let existing = self.lock_catalog()?.resource_group(&stmt.name).cloned();
         let Some(existing) = existing else {
-            let error = resource_group_not_exists(&stmt.name);
+            let error = DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+                    .generate_with_stack_by_args(&[(&stmt.name).into()]),
+            ));
             if stmt.if_exists {
                 self.append_suppressed(error);
                 return Ok(None);

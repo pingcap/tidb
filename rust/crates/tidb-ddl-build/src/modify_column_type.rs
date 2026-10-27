@@ -325,9 +325,8 @@ pub fn check_modify_types(
     let can_reorganize = modify_type_needs_reorganization(origin, to);
     if can_reorganize && origin.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
         return Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
-                ("this column has primary key flag").to_string().into(),
-            ]),
+            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN
+                .generate_with_stack_by_args(&["this column has primary key flag".into()]),
         ));
     }
     check_modify_types_charset_and_collation(origin, to, can_reorganize, column_name, indexed)
@@ -535,17 +534,16 @@ impl CharsetChangeRefusal {
     /// The error, with the indexed-collation message worded by the caller.
     pub fn into_error(self, collation_message: impl FnOnce() -> String) -> MysqlError {
         match self {
-            Self::UnknownCharset(message) => MysqlError::terror(
-                &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET,
-                message,
+            Self::UnknownCharset(message) => MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNKNOWN_CHARACTER_SET.generate_with_stack(message),
             ),
-            Self::Collation => MysqlError::terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLLATION,
-                collation_message(),
+            Self::Collation => MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLLATION
+                    .generate_with_stack(collation_message()),
             ),
-            Self::Charset(reason) => MysqlError::terror(
-                &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_CHARSET,
-                format!("Unsupported modify {reason}"),
+            Self::Charset(reason) => MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_CHARSET
+                    .generate_with_stack_by_args(&[reason.into()]),
             ),
         }
     }

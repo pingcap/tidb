@@ -555,14 +555,20 @@ mod tests {
                 "mysql_native_password",
                 &PluginCredential::As(&"A".repeat(41))
             )
-                .unwrap_err(),
-            crate::errors::password_format()
+            .unwrap_err(),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                    .generate_with_stack_by_args(&[])
+            )
         );
         // Wrong length.
         assert_eq!(
             encode_password_for_plugin("mysql_native_password", &PluginCredential::As("*short"))
                 .unwrap_err(),
-            crate::errors::password_format()
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                    .generate_with_stack_by_args(&[])
+            )
         );
         // `AS ''` (or no clause at all) is always a passwordless account,
         // regardless of plugin.
@@ -589,8 +595,11 @@ mod tests {
                 "caching_sha2_password",
                 &PluginCredential::As(&"x".repeat(69))
             )
-                .unwrap_err(),
-            crate::errors::password_format()
+            .unwrap_err(),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                    .generate_with_stack_by_args(&[])
+            )
         );
     }
 
@@ -603,7 +612,10 @@ mod tests {
         assert_eq!(
             encode_password_for_plugin("tidb_auth_token", &PluginCredential::As("anything"))
                 .unwrap_err(),
-            crate::errors::password_format()
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                    .generate_with_stack_by_args(&[])
+            )
         );
         assert_eq!(
             encode_password_for_plugin("tidb_auth_token", &PluginCredential::None).unwrap(),

@@ -556,10 +556,16 @@ pub fn apply_update_indexes(
                             .into()]),
                 ));
             }
-            return Err(MysqlError::terror(&tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX, format!("Incorrect index name '{}'", update.name)));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX
+                    .generate_with_stack_by_args(&[update.name.clone().into()]),
+            ));
         };
         if !seen.insert(go_to_lower(&update.name)) {
-            return Err(MysqlError::terror(&tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX, format!("Incorrect index name '{}'", update.name)));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX
+                    .generate_with_stack_by_args(&[update.name.clone().into()]),
+            ));
         }
         index.global = update.global;
     }

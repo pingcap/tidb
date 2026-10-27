@@ -132,45 +132,51 @@ mod tests {
             rendered(ExecError::Eval(EvalError::Sequence(
                 SequenceEvalError::RunOut("test.s1".to_owned())
             ))),
-            MysqlError::terror(
-                &tidb_error::catalog::table::ERR_SEQUENCE_HAS_RUN_OUT,
-                "Sequence 'test.s1' has run out",
-            ).from_evaluation()
+            MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_SEQUENCE_HAS_RUN_OUT
+                    .generate_with_stack("Sequence 'test.s1' has run out")
+            )
+            .from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
-            MysqlError::terror(
-                &tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO,
-                "Division by 0",
-            ).from_evaluation()
+            MysqlError::from_terror(
+                &tidb_error::catalog::expression::ERR_DIVISION_BY_ZERO
+                    .generate_with_stack_by_args(&[])
+            )
+            .from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::WrongParameterCount(
                 "aes_encrypt"
             ))),
-            MysqlError::terror(
-                &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT,
-                "Incorrect parameter count in the call to native function 'aes_encrypt'"
-            ).from_evaluation()
+            MysqlError::from_terror(
+                &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    .generate_with_stack_by_args(&["aes_encrypt".into()])
+            )
+            .from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::IncorrectArguments(
                 "The initialization vector supplied to aes_encrypt is too short".to_owned()
             ))),
-            MysqlError::terror(
-                &tidb_error::catalog::expression::ERR_INCORRECT_ARGS,
-                "The initialization vector supplied to aes_encrypt is too short"
-            ).from_evaluation()
+            MysqlError::from_terror(
+                &tidb_error::catalog::expression::ERR_INCORRECT_ARGS.generate_with_stack(
+                    "The initialization vector supplied to aes_encrypt is too short"
+                )
+            )
+            .from_evaluation()
         );
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DataOutOfRange {
                 value: "length",
                 expression: "random_bytes".to_string(),
             })),
-            MysqlError::terror(
-                &tidb_error::catalog::types::ERR_OVERFLOW,
-                "length value is out of range in 'random_bytes'",
-            ).from_evaluation()
+            MysqlError::from_terror(
+                &tidb_error::catalog::types::ERR_OVERFLOW
+                    .generate_with_stack("length value is out of range in 'random_bytes'")
+            )
+            .from_evaluation()
         );
     }
 

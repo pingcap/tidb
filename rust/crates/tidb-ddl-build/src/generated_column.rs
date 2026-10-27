@@ -210,12 +210,18 @@ pub fn find_depended_column_names(
         };
         if let Some(db) = db.filter(|db| !db.is_empty() && !schema.is_empty()) {
             if tidb_hack::go_to_lower(db) != schema {
-                return Err(MysqlError::terror(&tidb_util::dbterror::ERR_WRONG_DB_NAME, format!("Incorrect database name '{db}'")));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_DB_NAME
+                        .generate_with_stack_by_args(&[db.into()]),
+                ));
             }
         }
         if let Some(tbl) = tbl.filter(|tbl| !tbl.is_empty() && !table.is_empty()) {
             if tidb_hack::go_to_lower(tbl) != table {
-                return Err(MysqlError::terror(&tidb_util::dbterror::ERR_WRONG_TABLE_NAME, format!("Incorrect table name '{tbl}'")));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
+                        .generate_with_stack_by_args(&[tbl.into()]),
+                ));
             }
         }
         let column = tidb_hack::go_to_lower(column);

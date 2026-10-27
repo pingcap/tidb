@@ -280,7 +280,10 @@ impl PrivilegeRegistry {
                         | tidb_mysql::consts::AuthCachingSha2Password
                         | tidb_mysql::consts::AuthTiDBSM3Password
                 ) {
-                    return Err(crate::errors::plugin_is_not_loaded(plugin));
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
+                            .generate_with_stack_by_args(&[plugin.into()]),
+                    ));
                 }
                 for (index, row) in account.iter().enumerate() {
                     let recent = count > 0 && index >= account.len().saturating_sub(count as usize);
@@ -306,7 +309,10 @@ impl PrivilegeRegistry {
                             }
                         }
                         _ => {
-                            return Err(crate::errors::plugin_is_not_loaded(plugin))
+                            return Err(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_util::dbterror::exeerrors::ERR_PLUGIN_IS_NOT_LOADED
+                                    .generate_with_stack_by_args(&[plugin.into()]),
+                            ))
                         }
                     };
                     if matches {
@@ -327,7 +333,12 @@ impl PrivilegeRegistry {
             }
             if count > 0 || days > 0 {
                 if account.iter().any(|row| row.timestamp == timestamp) {
-                    return Err(crate::errors::duplicate_entry(&format!("{host}-{user}-{timestamp}"), "mysql.password_history.PRIMARY"));
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::kv::ERR_KEY_EXISTS.generate_with_stack_by_args(&[
+                            format!("{host}-{user}-{timestamp}").into(),
+                            "mysql.password_history.PRIMARY".into(),
+                        ]),
+                    ));
                 }
                 account.push(LoadedPasswordHistory {
                     host: host.into(),

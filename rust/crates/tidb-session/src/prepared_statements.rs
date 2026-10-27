@@ -468,9 +468,10 @@ impl Session {
                 let table_gone = inner.identity
                     == Some(tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS.identity());
                 if table_gone {
-                    Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                        &tidb_error::plannererrors::ERR_SCHEMA_CHANGED,
-                        format!("Schema change caused error: {}", inner.error_string()),
+                    Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_SCHEMA_CHANGED.generate_with_stack(
+                            format!("Schema change caused error: {}", inner.error_string()),
+                        ),
                     )))
                 } else {
                     Err(error)

@@ -191,7 +191,10 @@ impl KvTable {
     #[must_use]
     pub fn auto_id_exhausted_error(&self) -> tidb_error::mysql::MysqlError {
         if self.auto_id_cache() != 1 {
-            return autoinc_read_failed();
+            return tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                    .generate_with_stack_by_args(&[]),
+            );
         }
         let unsigned = self
             .auto_increment_offset
@@ -590,14 +593,4 @@ mod tests {
             .unwrap();
         assert_eq!(row[0], Datum::Int(1));
     }
-}
-
-/// Go `autoid.ErrAutoincReadFailed` (1467) raised by the allocator itself:
-/// "Failed to read auto-increment value from storage engine".
-#[must_use]
-pub fn autoinc_read_failed() -> tidb_error::mysql::MysqlError {
-    tidb_error::mysql::MysqlError::terror(
-        &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED,
-        "Failed to read auto-increment value from storage engine".to_owned(),
-    )
 }

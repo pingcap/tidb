@@ -18,7 +18,6 @@
 use tidb_hack::go_to_lower;
 use tidb_planner::common_plans::{Set, VarAssignment};
 use tidb_variable::sysvar::{self, SysVarDef};
-use tidb_variable::VarError;
 
 use crate::sessionctx::SessionContext;
 use crate::{DriverError, ExecError, MysqlError, StmtContext};
@@ -165,7 +164,10 @@ fn set_sys_variable(
             || is_txn_read_ts
             || (is_snapshot && ctx.txn_is_staleness()))
     {
-        return Err(cant_change_tx_characteristics());
+        return Err(DriverError::Mysql(MysqlError::from_terror(
+            &tidb_util::dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS
+                .generate_with_stack_by_args(&[]),
+        )));
     }
     ctx.set_system_var(name, val_str)?;
     // Go `ValidateSnapshotReadTS`, `gcutil.ValidateSnapshot` and
@@ -183,14 +185,6 @@ fn enable_legacy_instance_scope(ctx: &dyn SessionContext) -> bool {
     ctx.session_vars()
         .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_LEGACY_INSTANCE_SCOPE)
         .is_ok_and(|value| value.eq_ignore_ascii_case("ON"))
-}
-
-/// Go `exeerrors.ErrCantChangeTxCharacteristics`.
-fn cant_change_tx_characteristics() -> DriverError {
-    DriverError::Mysql(MysqlError::terror(
-        &tidb_util::dbterror::exeerrors::ERR_CANT_CHANGE_TX_CHARACTERISTICS,
-        "Transaction characteristics can't be changed while a transaction is in progress",
-    ))
 }
 
 /// Go `SetExecutor.getVarValue`.

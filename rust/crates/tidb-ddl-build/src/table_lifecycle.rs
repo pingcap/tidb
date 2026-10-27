@@ -45,9 +45,12 @@ pub fn check_drop_object(
                 "tidb" | "gc_delete_range" | "gc_delete_range_done"
             ))
     {
-        return Err(MysqlError::terror(
-            &tidb_util::dbterror::ERR_FORBIDDEN_DDL,
-            format!("Drop tidb system table '{schema_key}.{name_key}' is forbidden"),
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[format!(
+                "Drop tidb system table '{}.{}'",
+                schema_key, name_key
+            )
+            .into()]),
         ));
     }
     match expected {
@@ -150,9 +153,9 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         return Ok(false);
     }
     if source_is_view && from_db != to_db {
-        return Err(MysqlError::terror(
-            &tidb_error::catalog::infoschema::ERR_FORBID_SCHEMA_CHANGE,
-            format!("Changing schema from '{from_db}' to '{to_db}' is not allowed."),
+        return Err(MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_FORBID_SCHEMA_CHANGE
+                .generate_with_stack_by_args(&[from_db.into(), to_db.into()]),
         ));
     }
     if !target_schema_exists {

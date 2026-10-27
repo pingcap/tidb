@@ -54,7 +54,11 @@ pub fn normalize_split_policy(
         }
     };
     if tb_info.has_clustered_index() && primary_key {
-        return Err(forbidden("SPLIT PRIMARY is only for non-clustered table"));
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
+                "SPLIT PRIMARY is only for non-clustered table".into(),
+            ]),
+        ));
     }
     let (lower, upper, regions) = match option {
         tidb_ast::SplitOption::Between {
@@ -66,8 +70,10 @@ pub fn normalize_split_policy(
         tidb_ast::SplitOption::By(_) => (&[][..], &[][..], 0),
     };
     if regions < 1 {
-        return Err(forbidden(
-            "SPLIT REGION number must not be zero or negative",
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_FORBIDDEN_DDL.generate_with_stack_by_args(&[
+                "SPLIT REGION number must not be zero or negative".into(),
+            ]),
         ));
     }
     // Go: the common handle's primary index for `SPLIT PRIMARY KEY` on a
@@ -92,13 +98,20 @@ pub fn normalize_split_policy(
             .find(|index| index.read().name.lowercase() == index_name)
             .map(|index| index.read().columns.len())
         else {
-            return Err(MysqlError::terror(&tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX, format!("Incorrect index name '{index_name}'")));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_NAME_FOR_INDEX
+                    .generate_with_stack_by_args(&[index_name.into()]),
+            ));
         };
         count
     };
     if column_count != upper.len() || column_count != lower.len() {
-        return Err(MysqlError::terror(&tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES, "Failed to split region ranges: length of index columns and split values differ"
-                    .to_owned()));
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::exeerrors::ERR_INVALID_SPLIT_REGION_RANGES
+                .generate_with_stack_by_args(&[
+                    "length of index columns and split values differ".into()
+                ]),
+        ));
     }
     let policy = RegionSplitPolicy {
         lower: tidb_model::GoSharedSlice::from_vec(restored_bounds(lower)?),
@@ -106,11 +119,6 @@ pub fn normalize_split_policy(
         regions,
     };
     Ok((index_name, policy))
-}
-
-/// Go `ErrForbiddenDDL` (8267, `%s is forbidden`).
-fn forbidden(what: &str) -> MysqlError {
-    MysqlError::terror(&tidb_util::dbterror::ERR_FORBIDDEN_DDL, format!("{what} is forbidden"))
 }
 
 /// Builds and evaluates each bound (`BuildSimpleExpr` + `Eval`), then keeps

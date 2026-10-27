@@ -143,10 +143,11 @@ pub fn handle_bad_null_in_load_data(
         "Column set to default value; NULL supplied to NOT NULL column '{column}' at row {row}"
     );
     if level == NullLevel::Error {
-        return Err(ColumnError::Mysql(tidb_error::mysql::MysqlError::terror(
-            &tidb_error::catalog::table::ERR_WARN_NULL_TO_NOTNULL,
-            message,
-        )));
+        return Err(ColumnError::Mysql(
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_WARN_NULL_TO_NOTNULL.generate_with_stack(message),
+            ),
+        ));
     }
     ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
         tidb_util::context::WarningLevel::Warning,

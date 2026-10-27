@@ -966,7 +966,9 @@ pub(crate) fn check_too_many_columns(column_count: usize) -> Refusal<()> {
 pub fn check_too_many_indexes(index_count: usize) -> Result<(), MysqlError> {
     let limit = tidb_config::config_tree::config::get_global_config().index_limit;
     if i64::try_from(index_count).unwrap_or(i64::MAX) > limit {
-        return Err(MysqlError::terror(&tidb_util::dbterror::ERR_TOO_MANY_KEYS, format!("Too many keys specified; max {limit} keys allowed")));
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_TOO_MANY_KEYS.generate_with_stack_by_args(&[limit.into()]),
+        ));
     }
     Ok(())
 }

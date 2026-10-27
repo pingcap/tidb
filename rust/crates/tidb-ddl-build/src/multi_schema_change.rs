@@ -37,7 +37,9 @@ pub fn check_multi_schema_names(info: &tidb_model::MultiSchemaInfo) -> Result<()
                 } else {
                     &tidb_util::dbterror::ERR_OPERATE_SAME_COLUMN
                 };
-                return Err(MysqlError::terror(proto, format!("Unsupported operate same {kind} '{canonical}'")));
+                return Err(MysqlError::from_terror(&proto.generate_with_stack(
+                    format!("Unsupported operate same {kind} '{canonical}'"),
+                )));
             }
             if add_to_seen {
                 seen.insert(canonical);

@@ -622,7 +622,10 @@ impl Session {
             let group_name = &contents.resource_group_name;
             let text = self.with_catalog_mut(|catalog| {
                 let group = catalog.resource_group(group_name).ok_or_else(|| {
-                    crate::resource_group::resource_group_not_exists(group_name)
+                    DriverError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+                            .generate_with_stack_by_args(&[group_name.into()]),
+                    ))
                 })?;
                 let settings = group
                     .settings
@@ -719,7 +722,7 @@ impl Session {
                 )),
                 _ if want_view => Err(DriverError::from(
                     tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
-                        &[(&database).into(), (&table_name).into(), ("VIEW").into()],
+                        &[(&database).into(), (&table_name).into(), "VIEW".into()],
                     ),
                 )),
                 tidb_executor::TableEntry::Sequence(sequence) => Ok((
@@ -729,11 +732,7 @@ impl Session {
                 )),
                 _ if want_sequence => Err(DriverError::from(
                     tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(
-                        &[
-                            (&database).into(),
-                            (&table_name).into(),
-                            ("SEQUENCE").into(),
-                        ],
+                        &[(&database).into(), (&table_name).into(), "SEQUENCE".into()],
                     ),
                 )),
                 tidb_executor::TableEntry::Kv(table) => {
@@ -1040,7 +1039,7 @@ impl Session {
                 if catalog.table_names(&database).is_none() {
                     return Err(DriverError::from(
                         tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
-                            .generate_with_stack_by_args(&[(database).into()]),
+                            .generate_with_stack_by_args(&[database.into()]),
                     ));
                 }
                 crate::infoschema::show_table_status_rows(&catalog, &visibility, &zone, &database)
@@ -1389,12 +1388,9 @@ impl Session {
                     if user != target_row.user
                         && !self.has_scoped_privilege("", "", tidb_mysql::SuperPriv)
                     {
-                        return Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                            &tidb_error::catalog::privileges::ERR_ACCESS_DENIED,
-                            format!(
+                        return Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(&tidb_error::catalog::privileges::ERR_ACCESS_DENIED.generate_with_stack(format!(
                                 "Access denied for user '{user}'@'{host}' (using password: %!s(MISSING))"
-                            ),
-                        )));
+                            )))));
                     }
                 }
                 let format = explain_for.format.to_lowercase();

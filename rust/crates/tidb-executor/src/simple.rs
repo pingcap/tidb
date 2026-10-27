@@ -83,9 +83,9 @@ pub fn execute_set_resource_group_name(
         "default".to_owned()
     } else {
         if is.resource_group(&stmt.name).is_none() {
-            return Err(DriverError::Mysql(crate::MysqlError::terror(
-                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS,
-                format!("Unknown resource group '{}'", stmt.name),
+            return Err(DriverError::Mysql(crate::MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_RESOURCE_GROUP_NOT_EXISTS
+                    .generate_with_stack_by_args(&[stmt.name.clone().into()]),
             )));
         }
         stmt.name.go_to_lower()

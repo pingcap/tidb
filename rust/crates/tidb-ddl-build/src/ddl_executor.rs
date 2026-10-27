@@ -74,31 +74,30 @@ pub fn is_table_tiflash_supported(
     use tidb_error::mysql::MysqlError;
     use tidb_hack::GoToLower;
     if tidb_metadef::db::is_mem_or_sys_db(&db_name.go_to_lower()) {
-        return Err(MysqlError::terror(
-            &dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE,
-            "Unsupported `set TiFlash replica` settings for system table and memory table",
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_SYS_OR_MEM_TABLE
+                .generate_with_stack_by_args(&[]),
         ));
     }
     if table.temp_table_type != tidb_model::TempTableType::NONE {
-        return Err(MysqlError::terror(
-            &dbterror::ERR_OPT_ON_TEMPORARY_TABLE,
-            "`set TiFlash replica` is unsupported on temporary tables.",
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&["set TiFlash replica".into()]),
         ));
     }
     if table.is_view() || table.is_sequence() {
-        return Err(MysqlError::terror(
-            &dbterror::ERR_WRONG_OBJECT,
-            format!("'{db_name}.{}' is not BASE TABLE", table.name.original()),
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_OBJECT.generate_with_stack(format!(
+                "'{db_name}.{}' is not BASE TABLE",
+                table.name.original()
+            )),
         ));
     }
     for column in table.cols().iter_deref() {
         let column = column.read();
         let charset = column.field_type.charset_name();
         if !tidb_datatype::TIFLASH_SUPPORTED_CHARSETS.contains(&charset) {
-            return Err(MysqlError::terror(
-                &dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_UNSUPPORTED_CHARSET_TABLE,
-                format!("Unsupported `set TiFlash replica` settings for table contains {charset} charset"),
-            ));
+            return Err(MysqlError::from_terror(&tidb_util::dbterror::ERR_UNSUPPORTED_TI_FLASH_OPERATION_FOR_UNSUPPORTED_CHARSET_TABLE.generate_with_stack_by_args(&[charset.into()])));
         }
     }
     Ok(())

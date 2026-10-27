@@ -194,9 +194,9 @@ impl StatementRecordSet {
     pub fn next(&mut self, session: &mut Session, req: &mut Chunk) -> Result<(), DriverError> {
         let retained = self.retained.is_some();
         let result = if self.finished {
-            Err(DriverError::Mysql(tidb_executor::MysqlError::terror(
-                &tidb_util::dbterror::exeerrors::ERR_QUERY_INTERRUPTED,
-                "Query execution was interrupted",
+            Err(DriverError::Mysql(tidb_executor::MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_QUERY_INTERRUPTED
+                    .generate_with_stack_by_args(&[]),
             )))
         } else if let Some(chunks) = &mut self.retained {
             req.reset();

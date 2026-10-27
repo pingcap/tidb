@@ -482,12 +482,12 @@ fn check_update_list(
                     || other.partition_col_updated
                     || partition_col_updated
                 {
-                    return Err(DriverError::Mysql(MysqlError::terror(
-                        &tidb_error::plannererrors::ERR_MULTI_UPDATE_KEY_CONFLICT,
-                        format!(
-                            "Primary key/partition key update is not allowed since the table is updated both as '{}' and '{}'.",
-                            other.name, table.visible
-                        ),
+                    return Err(DriverError::Mysql(MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_MULTI_UPDATE_KEY_CONFLICT
+                            .generate_with_stack_by_args(&[
+                                other.name.clone().into(),
+                                table.visible.clone().into(),
+                            ]),
                     )));
                 }
             }

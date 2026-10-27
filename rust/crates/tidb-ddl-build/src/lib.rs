@@ -92,7 +92,7 @@ pub fn validate_comment_length(
     };
     let message = format!("Comment for {owner} '{shown}' is too long (max = {max_len})");
     if ctx.get_sql_mode().has_strict_mode() {
-        return Err(MysqlError::terror(proto, message));
+        return Err(MysqlError::from_terror(&proto.generate_with_stack(message)));
     }
     ctx.append_warning(tidb_util::context::WarnErr::Terror(proto.generate(message)));
     let mut end = max_len;
@@ -105,7 +105,12 @@ pub fn validate_comment_length(
 /// Go `model.NewTableAffinityInfoWithLevel` with `ErrInvalidTableAffinity`
 /// (8266) for a level it does not know.
 pub fn table_affinity(level: &str) -> Result<Option<tidb_model::TableAffinityInfo>, MysqlError> {
-    tidb_model::new_table_affinity_info_with_level(level).map_err(|_| MysqlError::terror(&tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE, format!("Invalid AFFINITY '{level}'")))
+    tidb_model::new_table_affinity_info_with_level(level).map_err(|_| {
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
+                .generate_with_stack(format!("Invalid AFFINITY '{level}'")),
+        )
+    })
 }
 
 /// Go `validateTableAffinity`: no affinity on a temporary table, `table`
@@ -119,7 +124,12 @@ pub fn validate_table_affinity(
     let Some(affinity) = affinity else {
         return Ok(());
     };
-    let refuse = |what: String, kind: &str| MysqlError::terror(&tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE, format!("Can not set {what} on a {kind}."));
+    let refuse = |what: String, kind: &str| {
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_CANNOT_SET_AFFINITY_ON_TABLE
+                .generate_with_stack_by_args(&[what.into(), kind.into()]),
+        )
+    };
     if temporary {
         return Err(refuse("AFFINITY".to_owned(), "temporary table"));
     }
@@ -254,9 +264,8 @@ pub fn check_create_table_like_source(
         ));
     }
     if source.partition.is_some() {
-        return Err(MysqlError::terror(
+        return Err(MysqlError::from_terror(
             &tidb_error::plannererrors::ERR_PARTITION_NO_TEMPORARY,
-            tidb_error::tidb::errname::ErrPartitionNoTemporary.raw,
         ));
     }
     if source.shard_row_id_bits != 0 {

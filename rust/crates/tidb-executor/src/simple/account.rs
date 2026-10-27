@@ -346,7 +346,9 @@ pub fn max_user_connections_option(
 /// column's `Invalid JSON text` (3140).
 pub fn invalid_user_attribute_json() -> DriverError {
     let error = tidb_expr::JsonError::InvalidText;
-    DriverError::Mysql(crate::MysqlError::terror(error.proto(), error.message()))
+    DriverError::Mysql(crate::MysqlError::from_terror(
+        &error.proto().generate_with_stack(error.message()),
+    ))
 }
 
 /// Go's executor arms, over the session [`super::account_tables::AccountSession`] gives them.
@@ -1414,10 +1416,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                     } else {
                         DriverError::from(
                             tidb_util::dbterror::exeerrors::ERR_CANNOT_USER
-                                .generate_with_stack_by_args(&[
-                                    "DROP USER".into(),
-                                    (account).into(),
-                                ]),
+                                .generate_with_stack_by_args(&["DROP USER".into(), account.into()]),
                         )
                     });
                 }
@@ -1935,7 +1934,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                             tidb_util::dbterror::exeerrors::ERR_WRONG_USAGE
                                 .generate_with_stack_by_args(&[
                                     "COLUMN GRANT".into(),
-                                    ("NON-COLUMN PRIVILEGES").into(),
+                                    "NON-COLUMN PRIVILEGES".into(),
                                 ]),
                         ))?;
                     priv_.bit()
@@ -2052,7 +2051,7 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                         tidb_util::dbterror::exeerrors::ERR_WRONG_USAGE
                             .generate_with_stack_by_args(&[
                                 "DB GRANT".into(),
-                                ("GLOBAL PRIVILEGES").into(),
+                                "GLOBAL PRIVILEGES".into(),
                             ]),
                     ),
                     ScopeKind::Table => DriverError::from(

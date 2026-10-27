@@ -143,7 +143,7 @@ pub enum PluginCredential<'a> {
 /// `encodePasswordWithPlugin` always falls to this path.
 ///
 /// Returns the `authentication_string` to store, or
-/// Go `ErrPasswordFormat` ([`crate::errors::password_format`]) for an `AS` hash that does not match the
+/// Go `ErrPasswordFormat` (`ErrPasswordFormat`) for an `AS` hash that does not match the
 /// plugin's expected shape (Go's `ErrPasswordFormat`, 1827).
 ///
 /// Every plugin's `BY`/`AS` form is captured and implemented exactly,
@@ -193,7 +193,10 @@ pub fn encode_password_for_plugin(
             if shaped {
                 Ok((*hash).to_owned())
             } else {
-                Err(crate::errors::password_format())
+                Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::exeerrors::ERR_PASSWORD_FORMAT
+                        .generate_with_stack_by_args(&[]),
+                ))
             }
         }
         PluginCredential::None => Ok(String::new()),

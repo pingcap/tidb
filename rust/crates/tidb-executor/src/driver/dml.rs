@@ -318,9 +318,8 @@ fn physical_dml_plan_with_cache_mode(
             catalog.get_in(&spec.database, &spec.table),
             Some(TableEntry::Mem(_))
         ) {
-            return Err(DriverError::Mysql(MysqlError::terror(
-                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP,
-                "operation not supported",
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
             )));
         }
     }
@@ -658,9 +657,8 @@ fn resolve_insert_target(
         )));
     }
     let TableEntry::Kv(_) = table else {
-        return Err(DriverError::Mysql(MysqlError::terror(
-            &tidb_error::catalog::table::ERR_UNSUPPORTED_OP,
-            "operation not supported",
+        return Err(DriverError::Mysql(MysqlError::from_terror(
+            &tidb_error::catalog::table::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
         )));
     };
     // Go `getAffectCols` (`buildInsert`): the columns the statement writes,
@@ -3985,9 +3983,8 @@ impl PhysicalWriteShape {
             )
         })?;
         let TableEntry::Kv(table) = table else {
-            return Err(DriverError::Mysql(MysqlError::terror(
-                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP,
-                "operation not supported",
+            return Err(DriverError::Mysql(MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_UNSUPPORTED_OP.generate_with_stack_by_args(&[]),
             )));
         };
         let stored_width = table.columns().len();

@@ -220,9 +220,8 @@ fn ignore_uses_the_original_unique_conflict_without_reading_it_again() {
 fn storage_failures_keep_sql_identity_through_read_and_write_adapters() {
     use crate::storage::StorageError;
     for storage in [
-        StorageError::Sql(crate::MysqlError::terror(
-            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT,
-            "write conflict",
+        StorageError::Sql(crate::MysqlError::from_terror(
+            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT.generate_with_stack("write conflict"),
         )),
         StorageError::Backend("backend unavailable".to_owned()),
         StorageError::Backend("Retryable(backend diagnostic text)".to_owned()),

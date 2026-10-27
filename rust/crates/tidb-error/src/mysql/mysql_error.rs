@@ -69,7 +69,7 @@ impl MysqlError {
     /// the only `state` source. Naming the Go error rather than a number is
     /// also what keeps the class: `1146` is `infoschema.ErrTableNotExists`
     /// (`schema`) and `plannererrors.ErrNoSuchTable` (`planner`).
-    pub fn terror(proto: &TerrorError, message: impl Into<String>) -> Self {
+    fn terror(proto: &TerrorError, message: impl Into<String>) -> Self {
         let sql = proto.to_sql_error();
         let mut state = [0u8; 5];
         state.copy_from_slice(sql.state.as_bytes());

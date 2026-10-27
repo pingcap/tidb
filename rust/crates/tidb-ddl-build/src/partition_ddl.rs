@@ -86,7 +86,11 @@ impl<'a> PartitionedTable<'a> {
 /// (`ErrGeneralUnsupportedDDL`, 8200).
 pub fn refuse_affinity(table: &PartitionedTable<'_>, operation: &str) -> Result<(), MysqlError> {
     if table.meta.affinity.is_some() {
-        return Err(MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, format!("Unsupported {operation} of a table with AFFINITY option")));
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                format!("{} of a table with AFFINITY option", operation).into(),
+            ]),
+        ));
     }
     Ok(())
 }
@@ -662,9 +666,10 @@ pub fn plan_add_partitions(
         if definitions.iter().any(|definition| {
             matches!(definition.clause, tidb_ast::PartitionDefinitionClause::None)
         }) {
-            return Err(MysqlError::terror(&tidb_error::catalog::ast::ERR_PARTITION_REQUIRES_VALUES, format!(
-                    "Syntax : {method} PARTITIONING requires definition of VALUES {clause} for each partition"
-                )));
+            return Err(MysqlError::from_terror(
+                &tidb_error::catalog::ast::ERR_PARTITION_REQUIRES_VALUES
+                    .generate_with_stack_by_args(&[method.into(), clause.into()]),
+            ));
         }
     }
     // Go reads a definition's comment and placement policy and ignores its
@@ -739,7 +744,7 @@ pub fn plan_add_partitions(
                 if default_partition.is_some() {
                     // Go `dbterror.ErrGeneralUnsupportedDDL` (8200,
                     // "Unsupported %s"), `pkg/ddl/executor.go:2315`.
-                    return Err(MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".to_owned()));
+                    return Err(MysqlError::from_terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&["ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".into()])));
                 }
                 // On the ALTER path the added definitions are checked on
                 // their own, so a collision among them is raised here rather
@@ -796,7 +801,7 @@ pub fn plan_add_partitions(
                 if default_partition.is_some() {
                     // Go `dbterror.ErrGeneralUnsupportedDDL` (8200,
                     // "Unsupported %s"), `pkg/ddl/executor.go:2315`.
-                    return Err(MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, "Unsupported ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".to_owned()));
+                    return Err(MysqlError::from_terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&["ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead".into()])));
                 }
                 let columns = partition
                     .dependencies
@@ -1065,7 +1070,12 @@ pub fn plan_first_partition_less_than(
                 .generate_with_stack_by_args(&[]),
         ));
     };
-    let unsupported = |message: &str| MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, format!("Unsupported {message}"));
+    let unsupported = |message: &str| {
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                .generate_with_stack_by_args(&[message.into()]),
+        )
+    };
     let Some(interval) = crate::partition_interval::interval_from_table(partition, ctx) else {
         return Err(unsupported(
             "FIRST PARTITION, does not seem like an INTERVAL partitioned table",
@@ -1132,7 +1142,12 @@ pub fn plan_last_partition_less_than(
         ));
     };
     refuse_affinity(table, "ADD PARTITION")?;
-    let unsupported = |message: &str| MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, format!("Unsupported {message}"));
+    let unsupported = |message: &str| {
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL
+                .generate_with_stack_by_args(&[message.into()]),
+        )
+    };
     match partition.kind {
         PartitionKind::Hash | PartitionKind::Key => {
             return Err(unsupported("LAST PARTITION of HASH/KEY partitioned table"))
@@ -1367,11 +1382,15 @@ fn replaced_partitions(
             .iter()
             .position(|definition| table_partition::partition_names_equal(&definition.name, name))
         else {
-            return Err(MysqlError::terror(&tidb_util::dbterror::ERR_WRONG_PARTITION_NAME, "Incorrect partition name".to_owned()));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_PARTITION_NAME.generate_with_stack_by_args(&[]),
+            ));
         };
         if ordinals.contains(&ordinal) {
             // Go returns the bare error, so the name slot stays unformatted.
-            return Err(MysqlError::terror(&tidb_util::dbterror::ERR_SAME_NAME_PARTITION, "Duplicate partition name %-.192s".to_owned()));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION,
+            ));
         }
         ordinals.push(ordinal);
     }
@@ -1382,8 +1401,11 @@ fn replaced_partitions(
         PartitionKind::Range { .. } | PartitionKind::RangeColumns { .. }
     ) && ordinals.len() != last - first + 1
     {
-        return Err(MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, "Unsupported REORGANIZE PARTITION of RANGE; not adjacent partitions"
-                .to_owned()));
+        return Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL.generate_with_stack_by_args(&[
+                "REORGANIZE PARTITION of RANGE; not adjacent partitions".into(),
+            ]),
+        ));
     }
     ordinals.sort_unstable();
     Ok((first, last, ordinals))
@@ -1413,7 +1435,10 @@ pub fn plan_reorganize_partition(
                 | PartitionKind::List { .. }
                 | PartitionKind::ListColumns { .. }
         ) {
-            return Err(MysqlError::terror(&tidb_util::dbterror::ERR_UNSUPPORTED_REORGANIZE_PARTITION, "Unsupported reorganize partition".to_owned()));
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_REORGANIZE_PARTITION
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         let (_, last, dropped) = replaced_partitions(partition, names)?;
         // Go `BuildAddedPartitionInfo`: RANGE and LIST need written
@@ -1627,8 +1652,11 @@ pub fn plan_alter_table_partitioning(
             .iter_deref()
             .any(|index| index.read().has_condition())
         {
-            return Err(crate::index::unsupported_partial_index(
-                "partial index is not supported on partitioned table",
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_ADD_PARTIAL_INDEX
+                    .generate_with_stack_by_args(&[
+                        "partial index is not supported on partitioned table".into(),
+                    ]),
             )
             .into());
         }

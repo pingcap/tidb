@@ -251,4 +251,4 @@ impl From<KillStop> for DriverError {
 }
 
 #[cfg(test)]
-mod lower_layer_parity_tests;
+mod go_error_identity_tests;
