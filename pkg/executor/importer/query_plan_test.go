@@ -12,14 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package importer_test
 
 import (
 	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -52,7 +51,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		defer tk.MustExec("set cte_max_recursion_depth = default, tidb_mem_quota_query = default")
 		tk.MustExec("begin")
 		defer tk.MustExec("rollback")
-		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select i from query_src")
+		q, err := importer.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select i from query_src")
 		require.NoError(t, err)
 		require.Equal(t, "5", q.SessionStates.SystemVars[vardef.CTEMaxRecursionDepth])
 		require.NotEmpty(t, q.SessionStates.SystemVars[vardef.Timestamp])
@@ -62,7 +61,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		tk.MustExec("create table query_other(i int)")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
-		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
+		q, err := importer.GenerateImportQueryPlan(tk.Session(), "import into unused_target from (select i from query_src union all select i from query_other)")
 		require.NoError(t, err)
 		require.Equal(t, "rg1", q.SessionStates.ResourceGroupName)
 		tables := sourceTables(q)
@@ -72,7 +71,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		tk.MustExec("create temporary table query_tmp(i int)")
 		tk.MustExec("create global temporary table query_gtmp(i int) on commit delete rows")
 		for _, tbl := range []string{"query_tmp", "query_gtmp"} {
-			_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select * from "+tbl)
+			_, err = importer.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select * from "+tbl)
 			require.ErrorContains(t, err, "temporary source tables in IMPORT INTO FROM SELECT")
 		}
 		tk.MustExec("create sequence query_seq")
@@ -83,10 +82,10 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 			"select * from performance_schema.session_variables":                                "memory source tables in IMPORT INTO FROM SELECT",
 			"select i from query_src where i in (select 1 from information_schema.processlist)": "memory source tables in IMPORT INTO FROM SELECT",
 		} {
-			_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from "+sql)
+			_, err = importer.GenerateImportQueryPlan(tk.Session(), "import into unused_target from "+sql)
 			require.ErrorContains(t, err, msg, sql)
 		}
-		_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select ? from query_src")
+		_, err = importer.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select ? from query_src")
 		require.ErrorContains(t, err, "unexpected '?'")
 	})
 	t.Run("views and cached tables", func(t *testing.T) {
@@ -99,7 +98,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create view outer_v as select i from query_view_db.inner_v union all select i from query_cached")
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
-		q, err := executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select * from outer_v")
+		q, err := importer.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select * from outer_v")
 		require.NoError(t, err)
 		tables := sourceTables(q)
 		require.Len(t, tables, 4)
@@ -143,7 +142,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		latest, err := queryTK.Session().GetLatestInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("query_capture_schema"))
 		require.NoError(t, err)
 		require.Len(t, latest.Columns, 2)
-		q, err := executor.GenerateImportQueryPlan(queryTK.Session(), "import into unused_target from select * from query_capture_schema")
+		q, err := importer.GenerateImportQueryPlan(queryTK.Session(), "import into unused_target from select * from query_capture_schema")
 		require.NoError(t, err)
 		require.Equal(t, []importer.SourceTable{{DBID: tbl.Meta().DBID, ID: tbl.Meta().ID, Revision: tbl.Meta().Revision}}, q.Tables)
 		require.Less(t, tbl.Meta().Revision, latest.Revision)
@@ -160,7 +159,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		submitTK.MustExec("begin")
 		defer submitTK.MustExec("rollback")
 		submitTK.Session().GetSessionVars().StmtCtx.AppendWarning(errors.New("warning of the statement before"))
-		q, err := executor.GenerateImportQueryPlan(submitTK.Session(), "import into unused_target from select i from query_src")
+		q, err := importer.GenerateImportQueryPlan(submitTK.Session(), "import into unused_target from select i from query_src")
 		require.NoError(t, err)
 
 		workerTK := testkit.NewTestKit(t, store)
