@@ -15,10 +15,14 @@
 package mviewutil
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -73,4 +77,50 @@ func DeleteRefreshSourceInfo(ctx context.Context, exec sqlexec.SQLExecutor, mvie
 		}
 	}
 	return nil
+}
+
+// ResolveRefreshSources resolves source table IDs and their recorded MLog IDs in the supplied schema.
+// MLogID is zero when a source has no materialized view log.
+func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewID int64) ([]model.MViewRefreshSource, error) {
+	mv, ok := is.TableByID(ctx, mviewID)
+	if !ok || mv.Meta().MaterializedView == nil {
+		return nil, errors.Errorf("refresh materialized view: target %d is missing from the computation schema", mviewID)
+	}
+	sources := make([]model.MViewRefreshSource, 0, len(mv.Meta().MaterializedView.BaseTableIDs))
+	for _, id := range mv.Meta().MaterializedView.BaseTableIDs {
+		tbl, ok := is.TableByID(ctx, id)
+		if !ok {
+			return nil, errors.Errorf("refresh materialized view: source %d is missing from the computation schema", id)
+		}
+		source := tbl.Meta()
+		binding := model.MViewRefreshSource{TableID: source.ID}
+		if source.MaterializedViewBase != nil {
+			binding.MLogID = source.MaterializedViewBase.MLogID
+		}
+		sources = append(sources, binding)
+	}
+	slices.SortFunc(sources, func(a, b model.MViewRefreshSource) int { return cmp.Compare(a.TableID, b.TableID) })
+	if len(sources) == 0 {
+		return nil, errors.New("refresh materialized view: source set is empty")
+	}
+	return sources, nil
+}
+
+// RefreshSourceLogIDs returns the sorted, distinct whole log set, including a
+// single zero placeholder if any source has no log.
+func RefreshSourceLogIDs(sources []model.MViewRefreshSource) []int64 {
+	ids := make([]int64, 0, len(sources))
+	for _, source := range sources {
+		ids = append(ids, source.MLogID)
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
+}
+
+// ReplaceRefreshSourceIDs atomically replaces a baseline in the caller's transaction.
+func ReplaceRefreshSourceIDs(ctx context.Context, exec sqlexec.SQLExecutor, mviewID int64, mlogIDs []int64) error {
+	if err := DeleteRefreshSourceInfo(ctx, exec, []int64{mviewID}); err != nil {
+		return err
+	}
+	return InsertRefreshSourceIDs(ctx, exec, mviewID, mlogIDs)
 }

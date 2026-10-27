@@ -16,10 +16,12 @@ package ddl
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
@@ -53,7 +55,7 @@ func (w *worker) deleteMViewRefreshSourceInfos(jobCtx *jobContext, mviewIDs []in
 	return errors.Trace(err)
 }
 
-func (w *worker) migrateMViewRefreshSourceInfo(jobCtx *jobContext, oldMViewID, newMViewID int64) error {
+func (w *worker) migrateMViewRefreshSourceInfo(jobCtx *jobContext, oldMViewID, newMViewID int64, buildSources []model.MViewRefreshSource) error {
 	ctx := w.mviewRefreshSourceInfoContext(jobCtx)
 	// Keep this migration within the DDL step's full-transaction error handling.
 	jobCtx.mustRollbackTxnOnError = true
@@ -71,8 +73,15 @@ func (w *worker) migrateMViewRefreshSourceInfo(jobCtx *jobContext, oldMViewID, n
 	if len(newIDs) != 0 {
 		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("refresh materialized view complete OUT OF PLACE cutover: shadow already has input log records")
 	}
-	_, err = w.sess.Execute(ctx,
-		"UPDATE mysql.tidb_mview_fast_refresh_source_info SET MVIEW_ID = %? WHERE MVIEW_ID = %?",
-		"mview-refresh-cutover-migrate-source-info", newMViewID, oldMViewID)
-	return errors.Trace(err)
+	buildLogIDs := mviewutil.RefreshSourceLogIDs(buildSources)
+	if slices.Equal(mlogIDs, buildLogIDs) {
+		_, err = w.sess.Execute(ctx,
+			"UPDATE mysql.tidb_mview_fast_refresh_source_info SET MVIEW_ID = %? WHERE MVIEW_ID = %?",
+			"mview-refresh-cutover-migrate-source-info", newMViewID, oldMViewID)
+		return errors.Trace(err)
+	}
+	if err := mviewutil.DeleteRefreshSourceInfo(ctx, w.sess.GetSQLExecutor(), []int64{oldMViewID}); err != nil {
+		return err
+	}
+	return mviewutil.InsertRefreshSourceIDs(ctx, w.sess.GetSQLExecutor(), newMViewID, buildLogIDs)
 }

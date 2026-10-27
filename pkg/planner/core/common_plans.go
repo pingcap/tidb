@@ -609,6 +609,8 @@ type MViewDeltaMerge struct {
 	MVTableID   int64
 	BaseTableID int64
 	MLogTableID int64
+	// RegisteredMLogIDs is the immutable FAST input-log baseline captured before execution.
+	RegisteredMLogIDs []int64 `plan-cache-clone:"shallow"`
 
 	MVColumnCount    int
 	DeltaColumnCount int
@@ -700,7 +702,8 @@ func (p *MViewDeltaMerge) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*5
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*4 + size.SizeOfInt64*3 + size.SizeOfPointer + size.SizeOfInt*4 + size.SizeOfSlice*6
+	sum += int64(cap(p.RegisteredMLogIDs)) * size.SizeOfInt64
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.AggInfos)) * size.SizeOfInterface
 	sum += int64(cap(p.FullUpdateKeyOff2IdxOff)) * size.SizeOfInt
@@ -731,6 +734,11 @@ type MViewCompleteDeltaApply struct {
 
 	MVTableID     int64
 	MVColumnCount int
+
+	// RefreshReadTSO and RefreshSources capture the computation snapshot for refresh bookkeeping.
+	// Executor construction overwrites them on every statement retry.
+	RefreshReadTSO uint64
+	RefreshSources []model.MViewRefreshSource `plan-cache-clone:"shallow"`
 
 	// OpColID is the child column index of diff_op.
 	OpColID int
@@ -799,7 +807,8 @@ func (p *MViewCompleteDeltaApply) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfInt*3 + size.SizeOfSlice*3
+	sum = p.baseSchemaProducer.MemoryUsage() + size.SizeOfInterface*2 + size.SizeOfInt64 + size.SizeOfUint64 + size.SizeOfInt*3 + size.SizeOfSlice*4
+	sum += int64(cap(p.RefreshSources)) * size.SizeOfInt64 * 2
 	sum += int64(cap(p.GroupKeyMVOffsets)) * size.SizeOfInt
 	sum += int64(cap(p.CurrentRowInputColIDs)) * size.SizeOfInt
 	sum += int64(cap(p.RecomputedRowInputColIDs)) * size.SizeOfInt

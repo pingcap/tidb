@@ -111,6 +111,7 @@ func TestRefreshMaterializedViewImplementStmtRestore(t *testing.T) {
 		LastSuccessfulRefreshReadTSO: 4242,
 		TargetRefreshReadTSO:         5252,
 		MLogRetainedLowerTSO:         3131,
+		RegisteredMLogIDs:            []int64{1234},
 	}
 
 	var sb strings.Builder

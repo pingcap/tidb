@@ -1417,6 +1417,13 @@ func (b *executorBuilder) buildMViewCompleteDeltaApply(v *plannercore.MViewCompl
 	if b.err = b.updateForUpdateTS(); b.err != nil {
 		return nil
 	}
+	readTSO := b.ctx.GetSessionVars().TxnCtx.GetForUpdateTS()
+	sources, err := resolveMVCompleteRefreshSources(context.Background(), b.ctx, v.MVTableID, readTSO)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	v.RefreshReadTSO, v.RefreshSources = readTSO, sources
 
 	sourceExec := b.build(v.Source)
 	if b.err != nil {

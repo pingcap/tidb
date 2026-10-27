@@ -847,6 +847,15 @@ func TestMaterializedViewRefreshFastAsOfTimestampNoOpStatementResult(t *testing.
 		"select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d",
 		mvID,
 	)).Check(testkit.Rows("0"))
+	// An empty interval does not read input logs or advance the watermark.
+	tk.MustExec(fmt.Sprintf("insert into mysql.tidb_mview_fast_refresh_source_info values (%d, 0)", mvID))
+	tk.MustExec(fmt.Sprintf(
+		"refresh materialized view mv_refresh_result_noop fast as of timestamp '%s'",
+		targetTime.Format("2006-01-02 15:04:05.000"),
+	))
+	requireRefreshMVStatementResult(t, tk, 0, 0, 0)
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprint(targetTSO)))
 }
 
 func TestMaterializedViewRefreshCompleteDeltaApplyStatementResult(t *testing.T) {
@@ -1044,6 +1053,8 @@ func TestFastDryRunMaterializedViewRefreshRejectsHazardousPurgeInfo(t *testing.T
 	err = tk.QueryToErr("refresh materialized view mv_fast_dry_run_purge_guard fast dry run")
 	require.Error(t, err)
 	require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
+	err = tk.ExecToErr("refresh materialized view mv_fast_dry_run_purge_guard fast")
+	require.ErrorContains(t, err, "materialized view log may have been purged beyond LAST_SUCCESS_READ_TSO")
 }
 
 func TestFastDryRunMaterializedViewRefreshNoopSkipsHazardousPurgeInfo(t *testing.T) {
@@ -1083,6 +1094,11 @@ func TestFastDryRunMaterializedViewRefreshNoopSkipsHazardousPurgeInfo(t *testing
 		"refresh materialized view mv_fast_dry_run_noop_purge_guard fast as of timestamp '%s'",
 		targetTime.Format("2006-01-02 15:04:05.000"),
 	))
+	tk.MustQuery("select * from mv_fast_dry_run_noop_purge_guard order by a").Check(testkit.Rows("1 10 1", "2 20 1"))
+	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprint(targetTSO)))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where MVIEW_ID = %d", mvID)).
+		Check(testkit.Rows("0"))
 }
 
 func TestMaterializedViewRefreshOutOfPlaceObserveLoadShadowPlanUsesBuildSQL(t *testing.T) {
@@ -4118,9 +4134,9 @@ func TestMaterializedViewRefreshCompleteOutOfPlaceCutoverWithUnsignedBuildReadTS
 	require.NoError(t, err)
 	oldMViewID := mvTable.Meta().ID
 
-	// Keep buildReadTSO above MaxInt64 to guard against any signed-int conversion in cutover path.
+	// Exercise unsigned SQL persistence without using the synthetic TSO as a storage snapshot.
 	buildReadTSO := (uint64(1) << 63) + 12345
-	const overrideBuildTSFailpoint = "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildReadTSO"
+	const overrideBuildTSFailpoint = "github.com/pingcap/tidb/pkg/ddl/mockMViewRefreshOutOfPlacePersistReadTSO"
 	require.NoError(t, failpoint.Enable(overrideBuildTSFailpoint, fmt.Sprintf(`return("%d")`, buildReadTSO)))
 	defer func() {
 		require.NoError(t, failpoint.Disable(overrideBuildTSFailpoint))
