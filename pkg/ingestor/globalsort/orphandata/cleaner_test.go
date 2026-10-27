@@ -30,20 +30,22 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 )
 
-type monitorWalkEntry struct {
+type cleanerWalkEntry struct {
 	path string
 	size int64
 }
 
-type monitorStorage struct {
+type cleanerStorage struct {
 	storeapi.Storage
-	entries    []monitorWalkEntry
-	walkErr    error
-	walkFn     func(context.Context) error
-	closeCount int
+	entries     []cleanerWalkEntry
+	walkErr     error
+	walkFn      func(context.Context) error
+	closeCount  int
+	deleteCalls int
+	deleteFn    func(context.Context, []string) error
 }
 
-func (s *monitorStorage) WalkDir(
+func (s *cleanerStorage) WalkDir(
 	ctx context.Context,
 	_ *storeapi.WalkOption,
 	fn func(path string, size int64) error,
@@ -53,7 +55,10 @@ func (s *monitorStorage) WalkDir(
 			return err
 		}
 	}
-	if s.walkErr != nil {
+	if s.entries == nil {
+		if err := s.Storage.WalkDir(ctx, &storeapi.WalkOption{}, fn); err != nil {
+			return err
+		}
 		return s.walkErr
 	}
 	for _, entry := range s.entries {
@@ -61,15 +66,27 @@ func (s *monitorStorage) WalkDir(
 			return err
 		}
 	}
-	return nil
+	return s.walkErr
 }
 
-func (s *monitorStorage) Close() {
+func (s *cleanerStorage) DeleteFiles(ctx context.Context, keys []string) error {
+	s.deleteCalls++
+	if s.deleteFn != nil {
+		return s.deleteFn(ctx, keys)
+	}
+	// Synthetic listing entries are used by the existing statistics tests.
+	if s.entries != nil {
+		return nil
+	}
+	return s.Storage.DeleteFiles(ctx, keys)
+}
+
+func (s *cleanerStorage) Close() {
 	s.closeCount++
 }
 
-type testMonitor struct {
-	*Monitor
+type testCleaner struct {
+	*Cleaner
 	logs *observer.ObservedLogs
 }
 
@@ -83,22 +100,22 @@ func staticURI(uri string) func() string {
 	return func() string { return uri }
 }
 
-func newTestMonitor(t *testing.T, cfg Config) *testMonitor {
+func newTestCleaner(t *testing.T, cfg Config) *testCleaner {
 	t.Helper()
 	if cfg.Logger == nil {
 		core, logs := observer.New(zap.DebugLevel)
 		cfg.Logger = zap.New(core)
-		return &testMonitor{
-			Monitor: NewMonitor(cfg),
+		return &testCleaner{
+			Cleaner: NewCleaner(cfg),
 			logs:    logs,
 		}
 	}
-	return &testMonitor{
-		Monitor: NewMonitor(cfg),
+	return &testCleaner{
+		Cleaner: NewCleaner(cfg),
 	}
 }
 
-// orphanDataMetricName is the name of the metric the monitor publishes to.
+// orphanDataMetricName is the name of the metric the cleaner publishes to.
 const orphanDataMetricName = "tidb_global_sort_orphan_data_size_bytes"
 
 // requireGauge asserts the orphan data size is the expected value.
@@ -132,14 +149,196 @@ func requireNoCandidate(t *testing.T, logs *observer.ObservedLogs, candidate str
 	}
 }
 
-func TestMonitor(t *testing.T) {
+func TestCleaner(t *testing.T) {
 	t.Cleanup(func() {
 		metrics.GlobalSortOrphanDataSize.Reset()
 	})
 
+	t.Run("cleanup deletes only scanned keys and retains conflict data", func(t *testing.T) {
+		ctx := context.Background()
+		store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+		const oldKey = "123/old-file"
+		const newKey = "123/new-file"
+		retainedKey := conflictpath.StoragePrefix + "9/3-uuid/0_1"
+		require.NoError(t, store.WriteFile(ctx, oldKey, []byte("old")))
+		require.NoError(t, store.WriteFile(ctx, retainedKey, []byte("retained")))
+		checks := 0
+		m := newTestCleaner(t, Config{
+			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
+				checks++
+				if checks == 2 {
+					require.NoError(t, store.WriteFile(ctx, newKey, []byte("new")))
+				}
+				return false, nil
+			}),
+			GetStorageURI:    staticURI("memstore:///orphandata"),
+			RetainedPrefixes: []string{conflictpath.StoragePrefix},
+		})
+		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) { return store, nil }
+
+		m.Trigger(ctx)
+
+		exists, err := store.FileExists(ctx, oldKey)
+		require.NoError(t, err)
+		require.False(t, exists)
+		for _, key := range []string{newKey, retainedKey} {
+			data, err := store.ReadFile(ctx, key)
+			require.NoError(t, err)
+			require.NotEmpty(t, data)
+		}
+		require.Equal(t, 1, store.deleteCalls)
+		requireGauge(t, 3)
+		m.Trigger(ctx)
+		require.Equal(t, 2, store.deleteCalls)
+		m.Trigger(ctx)
+		require.Equal(t, 2, store.deleteCalls)
+		requireGauge(t, 0)
+		data, err := store.ReadFile(ctx, retainedKey)
+		require.NoError(t, err)
+		require.Equal(t, []byte("retained"), data)
+	})
+
+	t.Run("cleanup fails closed without a producer checker", func(t *testing.T) {
+		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
+		factoryCalls := 0
+		m := newTestCleaner(t, Config{GetStorageURI: staticURI("memstore:///orphandata")})
+		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
+			factoryCalls++
+			return &cleanerStorage{Storage: objstore.NewMemStorage()}, nil
+		}
+
+		m.Trigger(context.Background())
+
+		require.Zero(t, factoryCalls)
+		requireGauge(t, 37)
+	})
+
+	t.Run("cleanup bounds each sweep and measures the full scan", func(t *testing.T) {
+		ctx := context.Background()
+		store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+		for i := range 1001 {
+			require.NoError(t, store.WriteFile(ctx, fmt.Sprintf("123/file-%04d", i), []byte("x")))
+		}
+		m := newTestCleaner(t, Config{
+			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			GetStorageURI:         staticURI("memstore:///orphandata"),
+		})
+		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) { return store, nil }
+
+		m.Trigger(ctx)
+
+		remaining := 0
+		require.NoError(t, store.WalkDir(ctx, &storeapi.WalkOption{}, func(string, int64) error { remaining++; return nil }))
+		require.Equal(t, 1, remaining)
+		require.Equal(t, 1, store.deleteCalls)
+		requireGauge(t, 1001)
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.EqualValues(t, 1001, summaryLogs[0].ContextMap()["object-count"])
+		require.EqualValues(t, 1000, summaryLogs[0].ContextMap()["deletion-candidate-count"])
+		m.Trigger(ctx)
+		requireGauge(t, 1)
+		require.Equal(t, 2, store.deleteCalls)
+	})
+
+	t.Run("cleanup retries remaining objects after a partial deletion failure", func(t *testing.T) {
+		ctx := context.Background()
+		store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+		for _, key := range []string{"123/a", "123/b"} {
+			require.NoError(t, store.WriteFile(ctx, key, []byte("data")))
+		}
+		const secret = "delete-secret-fragment"
+		const uri = "s3://bucket/prefix?secret-access-key=" + secret
+		store.deleteFn = func(ctx context.Context, keys []string) error {
+			requireGauge(t, 8)
+			require.Len(t, keys, 2)
+			require.NoError(t, store.Storage.DeleteFile(ctx, keys[0]))
+			return errors.New(uri)
+		}
+		m := newTestCleaner(t, Config{
+			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
+			GetStorageURI:         staticURI(uri),
+		})
+		m.storeFactory = func(context.Context, string) (storeapi.Storage, error) { return store, nil }
+
+		m.Trigger(ctx)
+
+		requireGauge(t, 8)
+		warnings := m.logs.FilterLevelExact(zap.WarnLevel).All()
+		require.Len(t, warnings, 1)
+		require.EqualValues(t, 2, warnings[0].ContextMap()["deletion-candidate-count"])
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.EqualValues(t, 8, summaryLogs[0].ContextMap()["size-bytes"])
+		require.EqualValues(t, 2, summaryLogs[0].ContextMap()["object-count"])
+		require.Equal(t, zap.WarnLevel, m.logs.All()[0].Level)
+		require.Equal(t, zap.InfoLevel, m.logs.All()[1].Level)
+		requireNoCredentials(t, m.logs, uri, secret)
+		store.deleteFn = nil
+		m.Trigger(ctx)
+		requireGauge(t, 4)
+		for _, key := range []string{"123/a", "123/b"} {
+			exists, err := store.FileExists(ctx, key)
+			require.NoError(t, err)
+			require.False(t, exists)
+		}
+		require.Equal(t, 2, store.deleteCalls)
+	})
+
+	t.Run("cleanup preserves objects when a gate or scan fails", func(t *testing.T) {
+		for _, scenario := range []string{"first active", "first error", "second active", "second error", "walk error", "walk canceled", "first canceled without error"} {
+			t.Run(scenario, func(t *testing.T) {
+				metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+				require.NoError(t, store.WriteFile(ctx, "123/file", []byte("data")))
+				checks := 0
+				factoryCalls := 0
+				m := newTestCleaner(t, Config{
+					ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
+						checks++
+						if (checks == 1 && scenario == "first active") || (checks == 2 && scenario == "second active") {
+							return true, nil
+						}
+						if (checks == 1 && scenario == "first error") || (checks == 2 && scenario == "second error") {
+							return false, errors.New("query failed")
+						}
+						if checks == 1 && scenario == "first canceled without error" {
+							cancel()
+						}
+						return false, nil
+					}),
+					GetStorageURI: staticURI("memstore:///orphandata"),
+				})
+				if scenario == "walk error" {
+					store.walkErr = errors.New("scan failed")
+				}
+				if scenario == "walk canceled" {
+					store.walkFn = func(context.Context) error { cancel(); return context.Canceled }
+				}
+				m.storeFactory = func(context.Context, string) (storeapi.Storage, error) {
+					factoryCalls++
+					return store, nil
+				}
+
+				m.Trigger(ctx)
+
+				exists, err := store.FileExists(context.Background(), "123/file")
+				require.NoError(t, err)
+				require.True(t, exists)
+				require.Zero(t, store.deleteCalls)
+				requireGauge(t, 37)
+				if scenario == "first canceled without error" {
+					require.Equal(t, 1, factoryCalls)
+				}
+			})
+		}
+	})
+
 	t.Run("config dependencies", func(t *testing.T) {
 		checks := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
 				checks++
 				return false, nil
@@ -148,7 +347,7 @@ func TestMonitor(t *testing.T) {
 		})
 		m.storeFactory = func(_ context.Context, uri string) (storeapi.Storage, error) {
 			require.Equal(t, "memstore:///orphandata", uri)
-			return &monitorStorage{Storage: objstore.NewMemStorage()}, nil
+			return &cleanerStorage{Storage: objstore.NewMemStorage()}, nil
 		}
 
 		m.Trigger(context.Background())
@@ -159,7 +358,7 @@ func TestMonitor(t *testing.T) {
 	t.Run("reads the latest storage URI on every trigger", func(t *testing.T) {
 		uris := []string{"memstore:///first", "memstore:///second"}
 		index := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI: func() string {
 				return uris[index]
@@ -169,7 +368,7 @@ func TestMonitor(t *testing.T) {
 		m.storeFactory = func(_ context.Context, uri string) (storeapi.Storage, error) {
 			scannedURIs = append(scannedURIs, uri)
 			index++
-			return &monitorStorage{Storage: objstore.NewMemStorage()}, nil
+			return &cleanerStorage{Storage: objstore.NewMemStorage()}, nil
 		}
 
 		m.Trigger(context.Background())
@@ -181,7 +380,7 @@ func TestMonitor(t *testing.T) {
 	t.Run("first gate has tasks", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		factoryCalls := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return true, nil }),
 			GetStorageURI:         staticURI("s3://bucket/prefix"),
 		})
@@ -201,7 +400,7 @@ func TestMonitor(t *testing.T) {
 	t.Run("first gate query error", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		factoryCalls := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, errors.New("first gate failed") }),
 			GetStorageURI:         staticURI("s3://bucket/prefix"),
 		})
@@ -222,7 +421,7 @@ func TestMonitor(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		factoryCalls := 0
 		calls := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				return false, nil
@@ -245,7 +444,7 @@ func TestMonitor(t *testing.T) {
 	t.Run("invalid URI uses the default factory", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const uri = "s3:///missing-bucket?access-key=invalid-ak&secret-access-key=invalid-sk&session-token=invalid-token"
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI(uri),
 		})
@@ -266,7 +465,7 @@ func TestMonitor(t *testing.T) {
 			sessionToken = "create-token-fragment"
 			uri          = "s3://bucket/prefix?AcCeSs_KeY=" + accessKey + "&SeCrEt_AcCeSs_KeY=create%2Bsk-fragment&SeSsIoN_ToKeN=" + sessionToken
 		)
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI(uri),
 		})
@@ -288,7 +487,7 @@ func TestMonitor(t *testing.T) {
 			secret = "malformed-secret"
 			uri    = "s3://bucket/%zz?secret-access-key=" + secret
 		)
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI(uri),
 		})
@@ -307,8 +506,8 @@ func TestMonitor(t *testing.T) {
 
 	t.Run("configured empty store", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
-		store := &monitorStorage{Storage: objstore.NewMemStorage()}
-		m := newTestMonitor(t, Config{
+		store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI("memstore:///orphandata"),
 		})
@@ -320,7 +519,7 @@ func TestMonitor(t *testing.T) {
 
 		require.Equal(t, 1, store.closeCount)
 		requireGauge(t, 0)
-		require.Len(t, m.logs.FilterMessage("global sort orphan data monitor success").All(), 1)
+		require.Len(t, m.logs.FilterMessage("global sort orphan data cleaner finished").All(), 1)
 	})
 
 	t.Run("configured nonempty store", func(t *testing.T) {
@@ -330,18 +529,18 @@ func TestMonitor(t *testing.T) {
 			sessionToken = "success-token"
 			uri          = "s3://bucket/prefix?AcCeSs_KeY=" + accessKey + "&SeCrEt_AcCeSs_KeY=success%2Bsk&SeSsIoN_ToKeN=" + sessionToken
 		)
-		entries := make([]monitorWalkEntry, 0, 11)
+		entries := make([]cleanerWalkEntry, 0, 11)
 		for i := 10; i >= 0; i-- {
-			entries = append(entries, monitorWalkEntry{
+			entries = append(entries, cleanerWalkEntry{
 				path: fmt.Sprintf("prefix-%02d/file", i),
 				size: int64(i + 1),
 			})
 		}
-		store := &monitorStorage{
+		store := &cleanerStorage{
 			Storage: objstore.NewMemStorage(),
 			entries: entries,
 		}
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI(uri),
 		})
@@ -353,9 +552,9 @@ func TestMonitor(t *testing.T) {
 
 		require.Equal(t, 1, store.closeCount)
 		requireGauge(t, 66)
-		successLogs := m.logs.FilterMessage("global sort orphan data monitor success").All()
-		require.Len(t, successLogs, 1)
-		fields := successLogs[0].ContextMap()
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		fields := summaryLogs[0].ContextMap()
 		require.NotContains(t, fields, "storage-uri")
 		require.EqualValues(t, 66, fields["size-bytes"])
 		require.EqualValues(t, 11, fields["object-count"])
@@ -369,14 +568,14 @@ func TestMonitor(t *testing.T) {
 
 	t.Run("retained prefixes are not orphan data", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
-		store := &monitorStorage{
+		store := &cleanerStorage{
 			Storage: objstore.NewMemStorage(),
-			entries: []monitorWalkEntry{
+			entries: []cleanerWalkEntry{
 				{path: "123/meta.json", size: 5},
 				{path: conflictpath.StoragePrefix + "9/3-uuid/0_1", size: 41},
 			},
 		}
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI("memstore:///orphandata"),
 			RetainedPrefixes:      []string{conflictpath.StoragePrefix},
@@ -388,9 +587,9 @@ func TestMonitor(t *testing.T) {
 		m.Trigger(context.Background())
 
 		requireGauge(t, 5)
-		successLogs := m.logs.FilterMessage("global sort orphan data monitor success").All()
-		require.Len(t, successLogs, 1)
-		require.EqualValues(t, 1, successLogs[0].ContextMap()["object-count"])
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.EqualValues(t, 1, summaryLogs[0].ContextMap()["object-count"])
 	})
 
 	t.Run("configured Azure URI is omitted", func(t *testing.T) {
@@ -400,8 +599,8 @@ func TestMonitor(t *testing.T) {
 			encryptionKey = "azure-encryption"
 			uri           = "azure://container/prefix?AcCoUnT_KeY=" + accountKey + "&SaS-ToKeN=azure%2Bsas&EnCrYpTiOn-KeY=" + encryptionKey
 		)
-		store := &monitorStorage{Storage: objstore.NewMemStorage()}
-		m := newTestMonitor(t, Config{
+		store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI(uri),
 		})
@@ -413,21 +612,21 @@ func TestMonitor(t *testing.T) {
 
 		require.Equal(t, 1, store.closeCount)
 		requireGauge(t, 0)
-		successLogs := m.logs.FilterMessage("global sort orphan data monitor success").All()
-		require.Len(t, successLogs, 1)
-		require.NotContains(t, successLogs[0].ContextMap(), "storage-uri")
+		summaryLogs := m.logs.FilterMessage("global sort orphan data cleaner finished").All()
+		require.Len(t, summaryLogs, 1)
+		require.NotContains(t, summaryLogs[0].ContextMap(), "storage-uri")
 		requireNoCredentials(t, m.logs, accountKey, sasToken, encryptionKey, "azure%2Bsas")
 	})
 
 	t.Run("task appears at the second gate", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const candidate = "candidate-prefix/"
-		store := &monitorStorage{
+		store := &cleanerStorage{
 			Storage: objstore.NewMemStorage(),
-			entries: []monitorWalkEntry{{path: candidate + "file", size: 41}},
+			entries: []cleanerWalkEntry{{path: candidate + "file", size: 41}},
 		}
 		calls := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
@@ -446,8 +645,8 @@ func TestMonitor(t *testing.T) {
 		require.Equal(t, 1, store.closeCount)
 		// the previous value is kept while producers are active.
 		requireGauge(t, 37)
-		require.Empty(t, m.logs.FilterMessage("global sort orphan data monitor success").All())
-		discardLogs := m.logs.FilterMessage("global sort orphan data monitor discarded scan because tasks appeared").All()
+		require.Empty(t, m.logs.FilterMessage("global sort orphan data cleaner finished").All())
+		discardLogs := m.logs.FilterMessage("global sort orphan data cleaner discarded scan because tasks appeared").All()
 		require.Len(t, discardLogs, 1)
 		require.Len(t, m.logs.FilterLevelExact(zap.InfoLevel).All(), 1)
 		fields := discardLogs[0].ContextMap()
@@ -466,12 +665,12 @@ func TestMonitor(t *testing.T) {
 
 	t.Run("second gate query error", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
-		store := &monitorStorage{
+		store := &cleanerStorage{
 			Storage: objstore.NewMemStorage(),
-			entries: []monitorWalkEntry{{path: "candidate-prefix/file", size: 41}},
+			entries: []cleanerWalkEntry{{path: "candidate-prefix/file", size: 41}},
 		}
 		calls := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
@@ -496,13 +695,13 @@ func TestMonitor(t *testing.T) {
 	t.Run("walk error", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		const uri = "azure://container/prefix?account-key=walk-account&sas-token=walk%2Bsas&encryption-key=walk-encryption"
-		store := &monitorStorage{
+		store := &cleanerStorage{
 			Storage: objstore.NewMemStorage(),
 			walkErr: errors.New(
 				"walk leaked fragments walk-account walk+sas walk-encryption",
 			),
 		}
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI(uri),
 		})
@@ -525,7 +724,7 @@ func TestMonitor(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		checks := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(c context.Context) (bool, error) {
 				checks++
 				return false, c.Err()
@@ -544,8 +743,8 @@ func TestMonitor(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
-		store := &monitorStorage{Storage: objstore.NewMemStorage()}
-		m := newTestMonitor(t, Config{
+		store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) { return false, nil }),
 			GetStorageURI:         staticURI("memstore:///orphandata"),
 		})
@@ -569,12 +768,12 @@ func TestMonitor(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
-		store := &monitorStorage{
+		store := &cleanerStorage{
 			Storage: objstore.NewMemStorage(),
-			entries: []monitorWalkEntry{{path: "candidate-prefix/file", size: 41}},
+			entries: []cleanerWalkEntry{{path: "candidate-prefix/file", size: 41}},
 		}
 		calls := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
@@ -597,16 +796,14 @@ func TestMonitor(t *testing.T) {
 		requireNoCandidate(t, m.logs, "candidate-prefix/")
 	})
 
-	t.Run("cancellation after the final gate still publishes", func(t *testing.T) {
+	t.Run("cancellation after the final gate is handled by storage", func(t *testing.T) {
 		metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
-		store := &monitorStorage{
-			Storage: objstore.NewMemStorage(),
-			entries: []monitorWalkEntry{{path: "candidate-prefix/file", size: 41}},
-		}
+		store := &cleanerStorage{Storage: objstore.NewMemStorage()}
+		require.NoError(t, store.WriteFile(ctx, "candidate-prefix/file", []byte("data")))
 		calls := 0
-		m := newTestMonitor(t, Config{
+		m := newTestCleaner(t, Config{
 			ActiveProducerChecker: activeProducerCheckerFunc(func(context.Context) (bool, error) {
 				calls++
 				if calls == 1 {
@@ -624,16 +821,20 @@ func TestMonitor(t *testing.T) {
 		m.Trigger(ctx)
 
 		require.Equal(t, 1, store.closeCount)
-		requireGauge(t, 41)
-		require.Len(t, m.logs.FilterMessage("global sort orphan data monitor success").All(), 1)
+		requireGauge(t, 4)
+		require.Equal(t, 1, store.deleteCalls)
+		exists, err := store.FileExists(context.Background(), "candidate-prefix/file")
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Len(t, m.logs.FilterMessage("global sort orphan data cleaner finished").All(), 1)
 		require.Empty(t, m.logs.FilterLevelExact(zap.WarnLevel).All())
 	})
 }
 
-func TestMonitorResetDeletesPublishedSize(t *testing.T) {
+func TestCleanerResetDeletesPublishedSize(t *testing.T) {
 	t.Cleanup(func() { metrics.GlobalSortOrphanDataSize.Reset() })
 
-	m := newTestMonitor(t, Config{})
+	m := newTestCleaner(t, Config{})
 	metrics.GlobalSortOrphanDataSize.WithLabelValues().Set(37)
 	requireGauge(t, 37)
 
