@@ -36,13 +36,6 @@ pub enum ExecError {
     /// refusal and reaches the client as the same 1105 message. Build one
     /// with [`ExecError::unsupported`].
     Unsupported(Cow<'static, str>),
-    /// Go `ErrSubqueryMoreThan1Row` (1242), raised by the max-one-row check a
-    /// scalar subquery's plan carries. It is an executor error because it is
-    /// only known per outer row, once the inner query has run.
-    SubqueryReturnsMoreThanOneRow,
-    /// Go `exeerrors.ErrCTEMaxRecursionDepth` (3636). The payload is the
-    /// first recursive iteration beyond `@@cte_max_recursion_depth`.
-    CteMaxRecursionDepth(u64),
     /// Go `exeerrors.ErrMemoryExceedForQuery` (8175): the statement's memory
     /// consumption crossed `tidb_mem_quota_query` while
     /// `tidb_mem_oom_action` was `CANCEL`. See [`crate::StatementMemory`].
@@ -54,19 +47,6 @@ pub enum ExecError {
     /// A canonical SQL-killer failure transported through Rust's typed
     /// executor boundary instead of Go's panic/recover mechanism.
     Killed(tidb_error::mysql::SqlError),
-    /// Go `types.ErrJSONDocumentNULLKey` (3158): `JSON_OBJECTAGG` evaluated a
-    /// NULL member name. It is an executor error because Go raises it while
-    /// folding the group, after the result columns are already on the wire.
-    JsonDocumentNullKey,
-    /// Go `types.ErrInvalidJSONCharset` (3144): `JSON_OBJECTAGG` evaluated a
-    /// BINARY-charset key. Like `JsonDocumentNullKey`, this surfaces only
-    /// once the group is folded, not at plan time.
-    InvalidJsonCharset {
-        /// The rejected key argument's charset name (always `binary`; Go's
-        /// message is parameterized on it, so it travels with the error
-        /// rather than being hard-coded at the wire boundary).
-        charset: String,
-    },
     /// A memory-table retriever's failure when its scan is first read (Go
     /// `MemTableReaderExec.Next`), carried whole so the statement reports the
     /// driver error the retriever raised (a missing privilege, an
@@ -91,6 +71,14 @@ impl ExecError {
     #[must_use]
     pub fn unsupported(reason: impl Into<Cow<'static, str>>) -> Self {
         ExecError::Unsupported(reason.into())
+    }
+}
+
+/// A Go `*terror.Error` the executor raises (`return ErrX`,
+/// `ErrX.GenWithStackByArgs(...)`).
+impl From<tidb_error::terror::TerrorError> for ExecError {
+    fn from(error: tidb_error::terror::TerrorError) -> Self {
+        ExecError::Mysql(crate::MysqlError::from_terror(&error))
     }
 }
 

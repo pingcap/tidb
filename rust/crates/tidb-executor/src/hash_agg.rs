@@ -1989,7 +1989,15 @@ impl Partial {
                 entries.push(json_value(&input, value_type)?)
             }
             (Partial::JsonObjectAgg(..), None | Some(Datum::Null)) => {
-                return Err(ExecError::JsonDocumentNullKey);
+                // Evaluation-origin: Go's warning buffer stays EMPTY beside
+                // the fatal 3158 (oracle g-group: `JSON_OBJECTAGG(NULL, 1)`).
+                return Err(ExecError::Mysql(
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::types::ERR_JSON_DOCUMENT_NULL_KEY
+                            .generate_with_stack_by_args(&[]),
+                    )
+                    .from_evaluation(),
+                ));
             }
             // A BINARY-charset key (Go: `e.args[0].GetType(sctx).GetCharset()
             // == charset.CharsetBin`) fails the statement with 3144 before
@@ -1999,9 +2007,12 @@ impl Partial {
             // for why the datum kind alone cannot tell this apart from an
             // ordinary string literal).
             (Partial::JsonObjectAgg(_, _, true), Some(_)) => {
-                return Err(ExecError::InvalidJsonCharset {
-                    charset: "binary".to_owned(),
-                });
+                return Err(ExecError::Mysql(
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::types::ERR_INVALID_JSON_CHARSET
+                            .generate_with_stack_by_args(&[("binary".to_owned()).into()]),
+                    ),
+                ));
             }
             (Partial::JsonObjectAgg(entries, value_type, false), Some(key)) => {
                 let value = extra.first().cloned().unwrap_or(Datum::Null);
@@ -5595,7 +5606,9 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(
                 err,
-                ExecError::InvalidJsonCharset { charset } if charset == "binary"
+                ExecError::Mysql(ref error)
+                    if error.equal(&tidb_error::catalog::types::ERR_INVALID_JSON_CHARSET)
+                        && error.message.contains("'binary'")
             ));
         }
     }

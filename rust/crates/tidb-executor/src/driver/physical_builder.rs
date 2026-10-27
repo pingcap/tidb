@@ -890,10 +890,14 @@ impl Executor for MaxOneRowExec {
                 if extra.num_rows() == 0 {
                     Ok(())
                 } else {
-                    Err(crate::ExecError::SubqueryReturnsMoreThanOneRow)
+                    Err(tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                        .generate_with_stack_by_args(&[])
+                        .into())
                 }
             }
-            _ => Err(crate::ExecError::SubqueryReturnsMoreThanOneRow),
+            _ => Err(tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
+                .generate_with_stack_by_args(&[])
+                .into()),
         }
     }
 
@@ -8574,7 +8578,8 @@ use super::*;
             .expect_err("two union rows violate MaxOneRow");
         assert!(matches!(
             error,
-            crate::ExecError::SubqueryReturnsMoreThanOneRow
+            crate::ExecError::Mysql(ref error)
+                if error.equal(&tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW)
         ));
     }
 

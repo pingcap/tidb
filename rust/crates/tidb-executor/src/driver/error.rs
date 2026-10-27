@@ -59,23 +59,11 @@ impl From<tidb_error::terror::TerrorError> for DriverError {
 impl From<ExecError> for DriverError {
     fn from(err: ExecError) -> Self {
         match err {
-            // The same statement-level error whichever layer raised it, so
-            // callers match one variant.
-            ExecError::SubqueryReturnsMoreThanOneRow => DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_SUBQUERY_MORE_THAN1_ROW
-                    .generate_with_stack_by_args(&[]),
-            ),
-            ExecError::CteMaxRecursionDepth(rounds) => DriverError::from(
-                tidb_util::dbterror::exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
-                    .generate_with_stack_by_args(&[rounds.into()]),
-            ),
+            // Go's error, raised by the executor, reported unchanged.
+            ExecError::Mysql(error) => DriverError::Mysql(error),
             ExecError::MemoryExceedForQuery { conn_id } => {
                 DriverError::from(tidb_util::dbterror::exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY.generate_with_stack_by_args(&[(conn_id).into()]))
             }
-            ExecError::JsonDocumentNullKey => DriverError::from(
-                tidb_error::catalog::types::ERR_JSON_DOCUMENT_NULL_KEY
-                    .generate_with_stack_by_args(&[]),
-            ),
             ExecError::Retrieval(error) => *error,
             // go's charFunctionClass.getFunction BUILD failure: a statement-
             // level build error, not an evaluation event -- the warning buffer
@@ -86,10 +74,6 @@ impl From<ExecError> for DriverError {
             {
                 DriverError::Unsupported(message.into())
             }
-            ExecError::InvalidJsonCharset { charset } => DriverError::from(
-                tidb_error::catalog::types::ERR_INVALID_JSON_CHARSET
-                    .generate_with_stack_by_args(&[charset.into()]),
-            ),
             other => DriverError::Exec(other),
         }
     }

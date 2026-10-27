@@ -48,16 +48,9 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         // caller wrapped by hand. Rendering through the twin keeps ONE
         // spelling of each message instead of a second copy. Named one by one
         // rather than with `_` so a new executor failure has to be placed.
-        ExecError::JsonDocumentNullKey => {
-            // Evaluation-origin: go's warning buffer stays EMPTY beside the
-            // fatal 3158 (oracle g-group: `JSON_OBJECTAGG(NULL, 1)`).
-            DriverError::from(error).to_mysql_error().from_evaluation()
+        error @ (ExecError::MemoryExceedForQuery { .. } | ExecError::Retrieval(_)) => {
+            DriverError::from(error).to_mysql_error()
         }
-        error @ (ExecError::SubqueryReturnsMoreThanOneRow
-        | ExecError::CteMaxRecursionDepth(_)
-        | ExecError::MemoryExceedForQuery { .. }
-        | ExecError::Retrieval(_)
-        | ExecError::InvalidJsonCharset { .. }) => DriverError::from(error).to_mysql_error(),
     }
 }
 
