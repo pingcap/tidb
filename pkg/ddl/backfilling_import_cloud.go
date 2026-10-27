@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type cloudImportExecutor struct {
@@ -120,12 +121,10 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		meterRec: meterRec,
 	})
 
-	currentIdx, idxID, err := getIndexInfoAndID(sm.EleIDs, e.indexes)
+	currentIdx, _, err := getIndexInfoAndID(sm.EleIDs, e.indexes)
 	if err != nil {
 		return err
 	}
-
-	_, engineUUID := backend.MakeUUID(e.ptbl.Meta().Name.L, idxID)
 
 	all := globalsort.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -137,35 +136,32 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
-		External: &backend.ExternalEngineConfig{
-			ExtStore:      objStore,
-			DataFiles:     sm.DataFiles,
-			StatFiles:     sm.StatFiles,
-			StartKey:      all.StartKey,
-			EndKey:        all.EndKey,
-			JobKeys:       jobKeys,
-			SplitKeys:     sm.RangeSplitKeys,
-			TotalFileSize: int64(all.TotalKVSize),
-			TotalKVCount:  0,
-			CheckHotspot:  true,
-			MemCapacity:   e.GetResource().Mem.Capacity(),
-			OnDup:         engineapi.OnDuplicateKeyError,
-		},
-		TS: sm.TS,
-	}, engineUUID)
+	eng, err := localBackend.NewExternalEngine(ctx, &backend.ExternalEngineConfig{
+		ExtStore:      objStore,
+		DataFiles:     sm.DataFiles,
+		StatFiles:     sm.StatFiles,
+		StartKey:      all.StartKey,
+		EndKey:        all.EndKey,
+		JobKeys:       jobKeys,
+		SplitKeys:     sm.RangeSplitKeys,
+		TotalFileSize: int64(all.TotalKVSize),
+		TotalKVCount:  0,
+		CheckHotspot:  true,
+		MemCapacity:   e.GetResource().Mem.Capacity(),
+		OnDup:         engineapi.OnDuplicateKeyError,
+	}, sm.TS)
 	if err != nil {
 		return err
 	}
-
-	eng := localBackend.GetExternalEngine(engineUUID)
-	if eng == nil {
-		return errors.Errorf("external engine %s not found", engineUUID)
-	}
+	defer func() {
+		if err := eng.Close(); err != nil {
+			logutil.Logger(ctx).Warn("close external engine failed", zap.Error(err))
+		}
+	}()
 	e.engine.Store(eng)
 	defer e.engine.Store(nil)
 
-	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})

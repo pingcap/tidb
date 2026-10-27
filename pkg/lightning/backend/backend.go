@@ -95,16 +95,12 @@ type EngineConfig struct {
 	TableInfo *importdef.TableInfo
 	// local backend specified configuration
 	Local LocalEngineConfig
-	// local backend external engine specified configuration
-	External *ExternalEngineConfig
 	// KeepSortDir indicates whether to keep the temporary sort directory
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
 	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
 	// will be set lazily. This is used by local backend. This field will be written
-	// to engineMeta.TS and take effect in below cases:
-	// - engineManager.openEngine
-	// - engineManager.closeEngine only for an external engine
+	// to engineMeta.TS in engineManager.openEngine.
 	TS uint64
 }
 
@@ -121,7 +117,8 @@ type LocalEngineConfig struct {
 	BlockSize int
 }
 
-// ExternalEngineConfig is the configuration used for local backend external engine.
+// ExternalEngineConfig is the configuration used to create an external engine
+// that reads globally sorted KV files, see ingestctrl.Backend.NewExternalEngine.
 type ExternalEngineConfig struct {
 	ExtStore  storeapi.Storage
 	DataFiles []string

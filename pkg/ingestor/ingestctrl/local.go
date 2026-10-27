@@ -1364,19 +1364,41 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	return nil
 }
 
-// GetExternalEngine returns the external engine by uuid.
-// If the engine is not found or not an external engine, it returns nil.
-// It's used to dynamically update the resource used by the external engine
-func (local *Backend) GetExternalEngine(engineUUID uuid.UUID) *globalsort.Engine {
-	e, ok := local.engineMgr.getExternalEngine(engineUUID)
-	if !ok {
-		return nil
+// NewExternalEngine creates an external engine that reads the globally sorted
+// KV files described by cfg, to be imported by ImportExternalEngine. The caller
+// owns the returned engine and must close it. If ts is 0, a new TS is allocated.
+func (local *Backend) NewExternalEngine(
+	ctx context.Context,
+	cfg *backend.ExternalEngineConfig,
+	ts uint64,
+) (*globalsort.Engine, error) {
+	if ts == 0 {
+		physical, logical, err := local.engineMgr.GetTS(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ts = oracle.ComposeTS(physical, logical)
 	}
-	ext, ok := e.(*globalsort.Engine)
-	if !ok {
-		return nil
-	}
-	return ext
+	return globalsort.NewExternalEngine(
+		ctx,
+		cfg.ExtStore,
+		cfg.DataFiles,
+		cfg.StatFiles,
+		cfg.StartKey,
+		cfg.EndKey,
+		cfg.JobKeys,
+		cfg.SplitKeys,
+		// engineMgr keeps the worker concurrency from when the Backend was
+		// created, SetWorkerConcurrency doesn't change it.
+		int(local.engineMgr.WorkerConcurrency.Load()),
+		ts,
+		cfg.TotalFileSize,
+		cfg.TotalKVCount,
+		cfg.CheckHotspot,
+		cfg.MemCapacity,
+		cfg.OnDup,
+		cfg.FilePrefix,
+	), nil
 }
 
 // verifyImportedStatistics verifies the imported statistics for external engines.
@@ -1402,12 +1424,41 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 	return nil
 }
 
-// ImportEngine imports an engine to TiKV.
+// ImportEngine imports a local engine to TiKV.
 func (local *Backend) ImportEngine(
 	ctx context.Context,
 	engineUUID uuid.UUID,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
+	regionSplitSize, regionSplitKeys = local.adjustRegionSplitSizeKeys(ctx, regionSplitSize, regionSplitKeys)
+	localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
+	if localEngine == nil {
+		// skip if engine not exist. See the comment of `CloseEngine` for more detail.
+		return nil
+	}
+	defer localEngine.unlock()
+	localEngine.regionSplitSize = regionSplitSize
+	localEngine.regionSplitKeyCnt = regionSplitKeys
+	return local.importEngine(ctx, localEngine, regionSplitSize, regionSplitKeys)
+}
+
+// ImportExternalEngine imports an external engine created by NewExternalEngine
+// to TiKV.
+func (local *Backend) ImportExternalEngine(
+	ctx context.Context,
+	e *globalsort.Engine,
+	regionSplitSize, regionSplitKeys int64,
+) error {
+	regionSplitSize, regionSplitKeys = local.adjustRegionSplitSizeKeys(ctx, regionSplitSize, regionSplitKeys)
+	return local.importEngine(ctx, e, regionSplitSize, regionSplitKeys)
+}
+
+// adjustRegionSplitSizeKeys raises the given region split size and keys to the
+// ones configured in TiKV if they are larger.
+func (local *Backend) adjustRegionSplitSizeKeys(
+	ctx context.Context,
+	regionSplitSize, regionSplitKeys int64,
+) (adjustedSize, adjustedKeys int64) {
 	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
@@ -1419,25 +1470,20 @@ func (local *Backend) ImportEngine(
 	} else {
 		tidblogutil.Logger(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
+	return regionSplitSize, regionSplitKeys
+}
 
-	var e engineapi.Engine
-	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
-		e = externalEngine
-	} else {
-		localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateImport)
-		if localEngine == nil {
-			// skip if engine not exist. See the comment of `CloseEngine` for more detail.
-			return nil
-		}
-		defer localEngine.unlock()
-		localEngine.regionSplitSize = regionSplitSize
-		localEngine.regionSplitKeyCnt = regionSplitKeys
-		e = localEngine
-	}
+// importEngine splits and scatters regions for the engine, then writes and
+// ingests its data to TiKV. It doesn't depend on how the engine is managed.
+func (local *Backend) importEngine(
+	ctx context.Context,
+	e engineapi.Engine,
+	regionSplitSize, regionSplitKeys int64,
+) error {
 	lfTotalSize, lfLength := e.KVStatistics()
 	if lfTotalSize == 0 {
 		// engine is empty, this is likes because it's a index engine but the table contains no index
-		tidblogutil.Logger(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
+		tidblogutil.Logger(ctx).Info("engine contains no kv, skip import", zap.String("engine", e.ID()))
 		return nil
 	}
 
@@ -1508,7 +1554,7 @@ func (local *Backend) ImportEngine(
 	maxReqPerSec := GetMaxIngestPerSec()
 	local.ingestLimiter.Store(newIngestLimiter(ctx, maxReqInFlight, maxReqPerSec))
 	tidblogutil.Logger(ctx).Info("start import engine",
-		zap.Stringer("uuid", engineUUID),
+		zap.String("engine", e.ID()),
 		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize),
@@ -1527,7 +1573,7 @@ func (local *Backend) ImportEngine(
 		}
 
 		tidblogutil.Logger(ctx).Info("import engine success",
-			zap.Stringer("uuid", engineUUID),
+			zap.String("engine", e.ID()),
 			zap.Int64("size", lfTotalSize),
 			zap.Int64("kvs", lfLength),
 			zap.Int64("importedSize", importedSize),
@@ -1775,17 +1821,6 @@ func (local *Backend) newRegionJobWorker(
 // GetImportedKVCount returns the number of imported KV pairs of some engine.
 func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 	return local.engineMgr.getImportedKVCount(engineUUID)
-}
-
-// GetExternalEngineKVStatistics returns kv statistics of some engine.
-func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
-	totalKVSize int64, totalKVCount int64) {
-	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
-}
-
-// GetExternalEngineConflictInfo returns conflict info of some engine.
-func (local *Backend) GetExternalEngineConflictInfo(engineUUID uuid.UUID) engineapi.ConflictInfo {
-	return local.engineMgr.getExternalEngineConflictInfo(engineUUID)
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is

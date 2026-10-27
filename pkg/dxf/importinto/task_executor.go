@@ -710,7 +710,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
-	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
@@ -733,32 +732,34 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}
 	localBackend.SetCollector(collector)
 
-	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
-		External: &backend.ExternalEngineConfig{
-			ExtStore:      objStore,
-			DataFiles:     sm.DataFiles,
-			StatFiles:     sm.StatFiles,
-			StartKey:      sm.StartKey,
-			EndKey:        sm.EndKey,
-			JobKeys:       jobKeys,
-			SplitKeys:     sm.RangeSplitKeys,
-			TotalFileSize: int64(sm.TotalKVSize),
-			TotalKVCount:  0,
-			CheckHotspot:  false,
-			MemCapacity:   e.GetResource().Mem.Capacity(),
-			OnDup:         onDup,
-			FilePrefix:    subtaskPrefix(e.taskID, subtask.ID),
-		},
-		TS: sm.TS,
-	}, engineUUID)
+	eng, err := localBackend.NewExternalEngine(ctx, &backend.ExternalEngineConfig{
+		ExtStore:      objStore,
+		DataFiles:     sm.DataFiles,
+		StatFiles:     sm.StatFiles,
+		StartKey:      sm.StartKey,
+		EndKey:        sm.EndKey,
+		JobKeys:       jobKeys,
+		SplitKeys:     sm.RangeSplitKeys,
+		TotalFileSize: int64(sm.TotalKVSize),
+		TotalKVCount:  0,
+		CheckHotspot:  false,
+		MemCapacity:   e.GetResource().Mem.Capacity(),
+		OnDup:         onDup,
+		FilePrefix:    subtaskPrefix(e.taskID, subtask.ID),
+	}, sm.TS)
 	if err != nil {
 		return err
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	defer func() {
+		if err := eng.Close(); err != nil {
+			e.logger.Warn("failed to close engine", zap.Error(err))
+		}
+	}()
+	err = localBackend.ImportExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return e.onFinished(ctx, subtask, objStore)
+	return e.onFinished(ctx, subtask, objStore, eng.ConflictInfo())
 }
 
 func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -770,19 +771,15 @@ func (e *writeAndIngestStepExecutor) ResetSummary() {
 	e.summary.Reset()
 }
 
-func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, objStore storeapi.Storage) error {
+func (e *writeAndIngestStepExecutor) onFinished(
+	ctx context.Context,
+	subtask *proto.Subtask,
+	objStore storeapi.Storage,
+	conflictInfo engineapi.ConflictInfo,
+) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
-	}
-
-	// only data kv group has loaded row count
-	_, engineUUID := backend.MakeUUID("", subtask.ID)
-	localBackend := e.tableImporter.Backend()
-	conflictInfo := localBackend.GetExternalEngineConflictInfo(engineUUID)
-	err := localBackend.CleanupEngine(ctx, engineUUID)
-	if err != nil {
-		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
 
 	// If no conflict KV is recorded, we skip rewriting the external subtask meta

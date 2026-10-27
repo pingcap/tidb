@@ -2630,7 +2630,6 @@ func TestExternalEngine(t *testing.T) {
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 		MemCapacity:   8 * units.GiB,
 	}
-	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
@@ -2657,14 +2656,11 @@ func TestExternalEngine(t *testing.T) {
 		}
 	}()
 	go func() {
-		err2 := local.CloseEngine(
-			ctx,
-			&backend.EngineConfig{External: externalCfg},
-			engineUUID,
-		)
+		eng, err2 := local.NewExternalEngine(ctx, externalCfg, 0)
 		require.NoError(t, err2)
-		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		err2 = local.ImportExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
+		require.NoError(t, eng.Close())
 		close(done)
 	}()
 
@@ -2752,7 +2748,6 @@ func TestBackendCloseWithoutTiKVClient(t *testing.T) {
 			BackendConfig: BackendConfig{
 				LocalStoreDir: localStoreDir,
 			},
-			externalEngine: map[uuid.UUID]engineapi.Engine{},
 			bufferPool:     membuf.NewPool(),
 			logger:         log.L(),
 		},
