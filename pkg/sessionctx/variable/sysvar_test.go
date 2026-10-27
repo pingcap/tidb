@@ -1618,7 +1618,7 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			On,
 			Off,
 		},
-		{TiDBAnalyzeSampledNDVThreshold, "0", "500000000"},
+		{TiDBAnalyzeSampledNDVThreshold, "0", "100000000"},
 		{
 			TiDBRowFormatVersion,
 			strconv.Itoa(DefTiDBRowFormatV1),
