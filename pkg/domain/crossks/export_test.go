@@ -44,7 +44,10 @@ func (m *SessionManager) ServerInfoID() string {
 // GlobalVarRefreshStarted returns whether the global variable cache started to
 // refresh in tests.
 func (m *SessionManager) GlobalVarRefreshStarted() bool {
-	m.globalVarCache.refreshMu.Lock()
-	defer m.globalVarCache.refreshMu.Unlock()
-	return m.globalVarCache.refreshStarted
+	select {
+	case <-m.globalVarCache.firstLoaded:
+		return true
+	default:
+		return false
+	}
 }

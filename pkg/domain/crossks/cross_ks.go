@@ -338,7 +338,8 @@ func (*Manager) createSessionManager(
 		ddlClient:         ddlClient,
 	}
 
-	mgr.globalVarCache = newGlobalVarCache(ctx, ks, sessPool, &mgr.wg, etcdCli)
+	mgr.globalVarCache = newGlobalVarCache(ctx, ks, sessPool, etcdCli)
+	mgr.wg.RunWithLog(mgr.globalVarCache.refreshLoop)
 	mgr.wg.RunWithLog(func() {
 		svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
 	})
@@ -535,9 +536,6 @@ func (m *SessionManager) close() {
 	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
 	logger.Info("close cross keyspace session manager")
 	m.sessPool.Close()
-	if m.globalVarCache != nil {
-		m.globalVarCache.close()
-	}
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()
