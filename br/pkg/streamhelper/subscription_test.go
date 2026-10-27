@@ -41,7 +41,7 @@ func minimumCheckpoint(s *spans.ValuedFull) uint64 {
 	return minimum
 }
 
-// Consume while producers are running: a single-message batch queue applies
+// Consume while producers are running: a bounded batch queue applies
 // backpressure, so waiting for producers to finish before receiving would stall.
 func collectPendingEvents(t *testing.T, sub *streamhelper.FlushSubscriber) *spans.ValuedFull {
 	t.Helper()
@@ -332,8 +332,10 @@ func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
 func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	req := require.New(t)
 	ctx := context.Background()
-	c := createFakeCluster(t, 4, true)
-	c.splitAndScatter(manyRegions(0, 1500)...)
+	// The output queue is bounded by batches, not regions. A single region
+	// avoids expensive fixture updates timing out an idle Recv before the
+	// sender has filled the queue.
+	c := createFakeCluster(t, 1, true)
 	installSubscribeSupport(c)
 
 	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
@@ -343,9 +345,11 @@ func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
 	// Fill the batch queue without consuming it, so a sender remains blocked
 	// until the idle watcher cancels the subscription.
 	for i := 0; i <= cap(sub.Events()); i++ {
-		c.advanceCheckpoints()
 		c.flushAll()
 	}
+	req.Eventually(func() bool {
+		return len(sub.Events()) == cap(sub.Events())
+	}, 3*time.Second, 10*time.Millisecond)
 
 	req.Eventually(func() bool {
 		err := sub.PendingErrors()
