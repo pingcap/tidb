@@ -279,7 +279,7 @@ type StmtExecInfo struct {
 	Charset        string
 	Collation      string
 	NormalizedSQL  string
-	SampleSQL      string // the original statement text with sensitive statements sanitized
+	SensitiveStmt  interface{ SecureText() string }
 	Digest         string
 	PrevSQL        string
 	PrevSQLDigest  string
