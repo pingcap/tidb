@@ -272,7 +272,10 @@ func (is *mviewRefreshSourceSnapshot) TableByID(ctx context.Context, id int64) (
 
 func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 	for _, method := range []string{"fast", "complete delta apply", "complete in place", "complete out of place"} {
-		for _, change := range []string{"source replaced", "eliminated source replaced", "log replaced", "missing log", "planned input replaced"} {
+		for _, change := range []string{"source replaced", "eliminated source replaced", "log replaced", "missing log", "planned input replaced", "snapshot and plan log replaced"} {
+			if method != "fast" && (change == "source replaced" || change == "planned input replaced" || change == "snapshot and plan log replaced") {
+				continue
+			}
 			t.Run(method+"/"+change, func(t *testing.T) {
 				_, tk, mviewID, mlogID := newMViewRefreshSourceFixture(t)
 				if change == "eliminated source replaced" {
@@ -287,7 +290,7 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 				beforeData := tk.MustQuery("select * from mv_source_init order by a").Rows()
 				tk.MustExec("insert into t_source_init values (1, 5)")
 				var checked bool
-				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", func(_ uint64, plan base.Plan, snapshot *infoschema.InfoSchema) {
+				replaceSnapshot := func(plan base.Plan, snapshot *infoschema.InfoSchema) {
 					checked = true
 					mv, ok := (*snapshot).TableByID(context.Background(), mviewID)
 					require.True(t, ok)
@@ -303,34 +306,33 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 						newLog.MaterializedViewLog.BaseTableID = newSource.ID
 						newMV.MaterializedView.BaseTableIDs = []int64{newSource.ID}
 						replacements[source.Meta().ID] = nil
-					case "log replaced":
+					case "log replaced", "snapshot and plan log replaced":
 						newLog.ID += 10000
 						newSource.MaterializedViewBase.MLogID = newLog.ID
 						replacements[mlogID] = nil
+						if change == "snapshot and plan log replaced" {
+							plan.(*plannercore.MViewDeltaMerge).MLogTableID = newLog.ID
+						}
 					case "missing log":
 						newSource.MaterializedViewBase.MLogID = 0
 					case "planned input replaced":
-						if method == "fast" {
-							plan.(*plannercore.MViewDeltaMerge).MLogTableID += 10000
-							return
-						}
-						flat := plannercore.FlattenPhysicalPlan(plan, false)
-						var changed bool
-						for _, op := range flat.Main {
-							if scan, ok := op.Origin.(*plannercore.PhysicalTableScan); ok && scan.Table.ID != mviewID {
-								scan.Table = scan.Table.Clone()
-								scan.Table.ID += 10000
-								changed = true
-							}
-						}
-						require.True(t, changed)
+						plan.(*plannercore.MViewDeltaMerge).MLogTableID += 10000
 						return
 					}
 					replacements[newMV.ID] = tables.MockTableFromMeta(newMV)
 					replacements[newSource.ID] = tables.MockTableFromMeta(newSource)
 					replacements[newLog.ID] = tables.MockTableFromMeta(newLog)
 					*snapshot = &mviewRefreshSourceSnapshot{InfoSchema: *snapshot, replaced: replacements}
-				})
+				}
+				if method == "fast" {
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", func(_ uint64, plan base.Plan, snapshot *infoschema.InfoSchema) {
+						replaceSnapshot(plan, snapshot)
+					})
+				} else {
+					testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshResolveInputSnapshot", func(_ uint64, _ int64, snapshot *infoschema.InfoSchema) {
+						replaceSnapshot(nil, snapshot)
+					})
+				}
 				err := tk.ExecToErr("refresh materialized view mv_source_init " + method)
 				if (change == "eliminated source replaced" || change == "log replaced" || change == "missing log") && method != "fast" {
 					require.NoError(t, err)
@@ -360,39 +362,53 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 }
 
 func TestMViewRefreshSourceInfoReadTSAfterRetry(t *testing.T) {
-	_, tk, mviewID, _ := newMViewRefreshSourceFixture(t)
-	tk.MustExec("insert into t_source_init values (1, 5)")
-	var computationTS, metadataTS uint64
-	var refreshSession sessionctx.Context
-	var computationPlan base.Plan
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshInputCaptured", func(sctx sessionctx.Context, ts uint64) {
-		refreshSession, computationTS = sctx, ts
-		computationPlan, _ = sctx.GetSessionVars().StmtCtx.GetPlan().(base.Plan)
-		require.NotNil(t, computationPlan)
-	})
-	var retries int
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforePessimisticStmtErrorForNextAction", func() { retries++ })
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInsertRefreshHistRunning", func() {
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", "1*return(true)")
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges", func() {
-		require.NotNil(t, refreshSession)
-		_, err := refreshSession.GetSQLExecutor().ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance),
-			"UPDATE mysql.tidb_mview_fast_refresh_source_info SET MLOG_ID = MLOG_ID WHERE MVIEW_ID = %?", mviewID)
-		require.NoError(t, err)
-		metadataTS = refreshSession.GetSessionVars().TxnCtx.GetForUpdateTS()
-	})
-	var validated bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", func(ts uint64, plan base.Plan, _ *infoschema.InfoSchema) {
-		validated = true
-		require.Equal(t, computationTS, ts)
-		require.Same(t, computationPlan, plan)
-		require.NotSame(t, computationPlan, refreshSession.GetSessionVars().StmtCtx.GetPlan())
-	})
-	tk.MustExec("refresh materialized view mv_source_init fast")
-	require.True(t, validated)
-	require.Positive(t, retries)
-	require.Greater(t, metadataTS, computationTS)
-	tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Check(testkit.Rows(fmt.Sprint(computationTS)))
-	tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
+	for _, method := range []string{"fast", "complete delta apply"} {
+		t.Run(method, func(t *testing.T) {
+			_, tk, mviewID, _ := newMViewRefreshSourceFixture(t)
+			tk.MustExec("insert into t_source_init values (1, 5)")
+			var computationTS, metadataTS uint64
+			var refreshSession sessionctx.Context
+			var computationPlan base.Plan
+			var validatedTS []uint64
+			var validatedPlans []base.Plan
+			var capturedValidationCount int
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshInputCaptured", func(sctx sessionctx.Context, ts uint64) {
+				refreshSession, computationTS = sctx, ts
+				computationPlan, _ = sctx.GetSessionVars().StmtCtx.GetPlan().(base.Plan)
+				require.NotNil(t, computationPlan)
+				require.NotEmpty(t, validatedTS)
+				capturedValidationCount = len(validatedTS)
+				require.Equal(t, computationTS, validatedTS[capturedValidationCount-1])
+				if method == "fast" {
+					require.Same(t, computationPlan, validatedPlans[capturedValidationCount-1])
+				}
+			})
+			var retries int
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/beforePessimisticStmtErrorForNextAction", func() { retries++ })
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterInsertRefreshHistRunning", func() {
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnWriteConflict", "1*return(true)")
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/refreshMaterializedViewAfterDataChanges", func() {
+				require.NotNil(t, refreshSession)
+				_, err := refreshSession.GetSQLExecutor().ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMVMaintenance),
+					"UPDATE mysql.tidb_mview_fast_refresh_source_info SET MLOG_ID = MLOG_ID WHERE MVIEW_ID = %?", mviewID)
+				require.NoError(t, err)
+				metadataTS = refreshSession.GetSessionVars().TxnCtx.GetForUpdateTS()
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshValidateInputSnapshot", func(ts uint64, plan base.Plan, _ *infoschema.InfoSchema) {
+				validatedTS = append(validatedTS, ts)
+				validatedPlans = append(validatedPlans, plan)
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/mvRefreshResolveInputSnapshot", func(ts uint64, _ int64, _ *infoschema.InfoSchema) {
+				validatedTS = append(validatedTS, ts)
+			})
+			tk.MustExec("refresh materialized view mv_source_init " + method)
+			require.Greater(t, capturedValidationCount, 1)
+			require.Len(t, validatedTS, capturedValidationCount)
+			require.Positive(t, retries)
+			require.Greater(t, metadataTS, computationTS)
+			tk.MustQuery(fmt.Sprintf("select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID = %d", mviewID)).Check(testkit.Rows(fmt.Sprint(computationTS)))
+			tk.MustQuery("select * from mv_source_init order by a").Check(testkit.Rows("1 15 2", "2 20 1"))
+		})
+	}
 }

@@ -542,6 +542,8 @@ type RefreshMaterializedViewImplementStmt struct {
 	// MLogRetainedLowerTSO is the effective lower bound of retained mlog data read from purge metadata.
 	// If it is zero, the planner may use the mlog TableInfo.UpdateTS schema-update timestamp as a heuristic.
 	MLogRetainedLowerTSO uint64
+	// RegisteredMLogIDs is the FAST input-log baseline read under the refresh-info row lock.
+	RegisteredMLogIDs []int64
 }
 
 // Restore implements Node interface.

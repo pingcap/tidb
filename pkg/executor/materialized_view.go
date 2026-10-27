@@ -4640,6 +4640,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 			lastSuccessfulRefreshReadTSO: lastSuccessfulRefreshReadTSO,
 			targetRefreshReadTSO:         targetRefreshReadTSO,
 			mlogRetainedLowerTSO:         mlogRetainedLowerTSO,
+			registeredMLogIDs:            registeredLogs,
 		},
 		stepSet,
 		e.stepObserver,
@@ -4649,12 +4650,18 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return finalizeFailure(err)
 	}
 	executeDataChangesDur = time.Since(executeDataChangesStart)
-	// Retries update StmtCtx with the final plan. Retain it and the read TSO
-	// before any follow-up SQL can replace the statement context.
-	refreshPlan, _ := sessVars.StmtCtx.GetPlan().(plannercorebase.Plan)
-	actualRefreshReadTSO, err := getRefreshReadTSOForSuccess(sessVars)
-	if err != nil {
-		return finalizeFailure(err)
+	// Retain the successful attempt's snapshot before follow-up SQL can replace
+	// the statement context or advance the transaction's for-update timestamp.
+	var actualRefreshReadTSO uint64
+	var confirmedSources []model.MViewRefreshSource
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteDeltaApply {
+		refreshPlan := sessVars.StmtCtx.GetPlan().(*plannercore.MViewCompleteDeltaApply)
+		actualRefreshReadTSO, confirmedSources = refreshPlan.RefreshReadTSO, refreshPlan.RefreshSources
+	} else {
+		actualRefreshReadTSO, err = getRefreshReadTSOForSuccess(sessVars)
+		if err != nil {
+			return finalizeFailure(err)
+		}
 	}
 	refreshStmtResult := captureMVRefreshStmtResult(sessVars)
 	failpoint.InjectCall("mvRefreshInputCaptured", refreshSctx, actualRefreshReadTSO)
@@ -4665,13 +4672,8 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		failpoint.Return(finalizeFailure(errors.New("mock refresh materialized view error after data changes")))
 	})
-	var confirmedSources []model.MViewRefreshSource
-	if refreshMode == ast.RefreshMaterializedViewModeFast {
-		if err := validateMVFastRefreshInput(kctx, refreshSctx, mviewID, refreshPlan.(*plannercore.MViewDeltaMerge), actualRefreshReadTSO, registeredLogs); err != nil {
-			return finalizeFailure(err)
-		}
-	} else {
-		confirmedSources, err = validateMVCompleteRefreshInput(kctx, refreshSctx, mviewID, refreshPlan, actualRefreshReadTSO)
+	if refreshMode == ast.RefreshMaterializedViewModeCompleteInPlace {
+		confirmedSources, err = resolveMVCompleteRefreshSources(kctx, refreshSctx, mviewID, actualRefreshReadTSO)
 		if err != nil {
 			return finalizeFailure(err)
 		}
@@ -4888,7 +4890,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 
 	failpoint.InjectCall("refreshMaterializedViewOutOfPlaceAfterCreateShadow")
 	failpoint.Inject("pauseRefreshMaterializedViewOutOfPlaceAfterCreateShadow", func() {})
-	var buildPlan plannercorebase.Plan
 	storeName := e.Ctx().GetStore().Name()
 	if err := observeMVRefreshStep(e.stepObserver, stepSet.dataChangeOutOfPlaceLoadShadow, func() error {
 		expectedStoreName := mvRefreshImportIntoStoreName
@@ -4922,7 +4923,6 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		if buildErr = executeRefreshMaterializedViewInternalSQL(kctx, buildSQLExec, buildSQL); buildErr != nil {
 			return buildErr
 		}
-		buildPlan, _ = buildSessVars.StmtCtx.GetPlan().(plannercorebase.Plan)
 		shadowLoadStmtResult = newMVRefreshStmtResultFromWriteCounts(int64(buildSessVars.StmtCtx.AffectedRows()), 0, 0)
 		// Capture profile rows for the real shadow-load statement before any follow-up SQL (for example read tso query)
 		// overwrites session statement context.
@@ -4938,7 +4938,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		}
 		failpoint.Return(uint64(0), errors.New("mock refresh materialized view out-of-place build error after load shadow"))
 	})
-	confirmedSources, err := validateMVCompleteRefreshInput(kctx, buildSctx, tblInfo.ID, buildPlan, buildReadTSO)
+	confirmedSources, err := resolveMVCompleteRefreshSources(kctx, buildSctx, tblInfo.ID, buildReadTSO)
 	if err != nil {
 		return 0, err
 	}
@@ -5823,6 +5823,7 @@ type refreshImplementOptions struct {
 	lastSuccessfulRefreshReadTSO uint64
 	targetRefreshReadTSO         uint64
 	mlogRetainedLowerTSO         uint64
+	registeredMLogIDs            []int64
 }
 
 func executeRefreshMaterializedViewDataChanges(
@@ -5992,6 +5993,7 @@ func executeRefreshMaterializedViewImplement(
 		LastSuccessfulRefreshReadTSO: implementOpts.lastSuccessfulRefreshReadTSO,
 		TargetRefreshReadTSO:         implementOpts.targetRefreshReadTSO,
 		MLogRetainedLowerTSO:         implementOpts.mlogRetainedLowerTSO,
+		RegisteredMLogIDs:            implementOpts.registeredMLogIDs,
 	}
 
 	if internalExec, ok := sqlExec.(interface {
