@@ -164,13 +164,18 @@ High-level flow:
 
 Partition DDL often needs PD side effects:
 
-- Placement bundle updates: `pkg/ddl/partition.go:alterTablePartitionBundles`, `pkg/ddl/partition.go:droppedPartitionBundles`
+- Placement bundle updates: `pkg/ddl/partition.go:alterTablePartitionBundles`, `pkg/ddl/partition.go:partitionBundlesForDroppedDefinitions`
 - Label rule updates: `pkg/ddl/partition.go:alterTableLabelRule` / `dropLabelRules`
 - TiFlash partition placement + replica status:
   - `infosync.ConfigureTiFlashPDForPartitions`
   - Replica check loop: `checkPartitionReplica`
 
-These should generally happen **before** the state that starts writing to the new partitions, so a retry/rollback doesn’t leave partial placement state.
+These should generally happen **before** the state that starts writing to the new
+partitions. Reorganize-family rollback records the new physical IDs for
+delete-range cleanup, which removes placement bundles and attempts to remove
+TiFlash rules. ADD PARTITION rollback does not currently enqueue those IDs, so
+its placement and TiFlash rules may remain even after its partition metadata and
+label rules are removed.
 
 ## Practical debugging anchors
 

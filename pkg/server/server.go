@@ -211,7 +211,7 @@ func (s *Server) BitwiseOrAssignCapability(capability uint32) {
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-	if !s.cfg.Status.ReportStatus {
+	if !s.fullStatusServerEnabled() {
 		return false, ""
 	}
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
@@ -525,7 +525,8 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
-	if s.cfg.Status.ReportStatus {
+	// The diagnostic HTTP allowlist does not expose /info for this identity check.
+	if s.fullStatusServerEnabled() {
 		endpointCheckCtx, cancelEndpointCheck := context.WithCancel(context.Background())
 		defer cancelEndpointCheck()
 		advertisedstatus.Start(endpointCheckCtx, advertisedstatus.Options{
@@ -833,13 +834,14 @@ func (s *Server) onConn(conn *clientConn) {
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
-	if err := conn.increaseUserConnectionsCount(); err != nil {
+	releaseUserConnection, err := conn.increaseUserConnectionsCount()
+	if err != nil {
 		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 			Warn("failed to increase the count of connections", zap.Error(err),
 				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		return
 	}
-	defer conn.decreaseUserConnectionCount()
+	defer releaseUserConnection()
 
 	if !s.registerConn(conn) {
 		return

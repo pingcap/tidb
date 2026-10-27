@@ -8,7 +8,7 @@ go_test(
         "materialized_view_purge_test.go",
     ],
     flaky = True,
-    shard_count = 41,
+    shard_count = 42,
     deps = [
         "//pkg/config",
         "//pkg/errno",
@@ -27,9 +27,12 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/util/dbterror",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )

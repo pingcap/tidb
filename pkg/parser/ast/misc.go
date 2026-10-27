@@ -15,8 +15,10 @@ package ast
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -61,6 +63,7 @@ var (
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &PurgeMaterializedViewLogStmt{}
 	_ StmtNode = &CancelMaterializedViewJobStmt{}
+	_ StmtNode = &CompareMaterializedViewStmt{}
 	_ StmtNode = &RefreshMaterializedViewStmt{}
 	_ StmtNode = &RefreshMaterializedViewImplementStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
@@ -2517,6 +2520,20 @@ type RecommendIndexOption struct {
 	Value  ValueExpr
 }
 
+// RecommendIndex actions.
+const (
+	RecommendIndexActionRun    = "run"
+	RecommendIndexActionReturn = "return"
+	RecommendIndexActionSet    = "set"
+	RecommendIndexActionShow   = "show"
+	RecommendIndexActionApply  = "apply"
+	RecommendIndexActionIgnore = "ignore"
+)
+
+// RecommendIndexStmtLabel is the statement label used while analyzing a
+// RECOMMEND INDEX workload.
+const RecommendIndexStmtLabel = "RecommendIndex"
+
 // RecommendIndexStmt is a statement to recommend index.
 type RecommendIndexStmt struct {
 	stmtNode
@@ -2530,9 +2547,13 @@ type RecommendIndexStmt struct {
 func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RECOMMEND INDEX")
 	switch n.Action {
-	case "run":
-		ctx.WriteKeyWord(" RUN")
-		if n.SQL != "" {
+	case RecommendIndexActionRun, RecommendIndexActionReturn:
+		if n.Action == RecommendIndexActionReturn {
+			ctx.WriteKeyWord(" RETURN RESULT")
+		} else {
+			ctx.WriteKeyWord(" RUN")
+		}
+		if n.SQL != "" || n.Action == RecommendIndexActionReturn {
 			ctx.WriteKeyWord(" FOR ")
 			ctx.WriteString(n.SQL)
 		}
@@ -2549,15 +2570,15 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 				}
 			}
 		}
-	case "show":
+	case RecommendIndexActionShow:
 		ctx.WriteKeyWord(" SHOW OPTION")
-	case "apply":
+	case RecommendIndexActionApply:
 		ctx.WriteKeyWord(" APPLY ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
-	case "ignore":
+	case RecommendIndexActionIgnore:
 		ctx.WriteKeyWord(" IGNORE ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
-	case "set":
+	case RecommendIndexActionSet:
 		ctx.WriteKeyWord(" SET ")
 		for i, opt := range n.Options {
 			if i != 0 {
@@ -4226,14 +4247,23 @@ func (n *BRIEStmt) Restore(ctx *format.RestoreCtx) error {
 // RedactedValue replaces a secret in redacted output.
 const RedactedValue = "xxxxxx"
 
-// RedactURL redacts sensitive query parameters in supported storage URLs.
-// If the URL is not valid, it returns the original string.
+// InvalidURLPlaceholder replaces a value that cannot be parsed as a URL in
+// redacted output, because such a value cannot be reliably masked. The value
+// is not necessarily a storage URL; it may also be an endpoint or a local path.
+const InvalidURLPlaceholder = "(invalid URL)"
+
+// RedactURL removes userinfo, and in supported storage URLs redacts sensitive query parameters and removes fragments.
+// Plain local paths are unchanged; an invalid URL is replaced by InvalidURLPlaceholder.
 func RedactURL(str string) string {
 	// FIXME: this solution is not scalable, and duplicates some logic from BR.
-	u, err := url.Parse(str)
-	if err != nil {
+	if !strings.Contains(str, "://") && !strings.Contains(str, "?") {
 		return str
 	}
+	u, err := url.Parse(str)
+	if err != nil {
+		return InvalidURLPlaceholder
+	}
+	u.User = nil
 	scheme := u.Scheme
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
@@ -4246,6 +4276,7 @@ func RedactURL(str string) string {
 			"access-key":        {},
 			"secret-access-key": {},
 			"session-token":     {},
+			"sse-kms-context":   {},
 		}
 	case "azure", "azblob":
 		redactKeys = map[string]struct{}{
@@ -4259,12 +4290,28 @@ func RedactURL(str string) string {
 	}
 
 	if len(redactKeys) > 0 {
-		values := u.Query()
-		for k := range values {
+		// An unescaped '#' in a secret query value starts a fragment.
+		u.Fragment = ""
+		u.RawFragment = ""
+		// URL.Query skips undecodable pairs, which may hide a split context.
+		values, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			u.RawQuery = ""
+			return u.String()
+		}
+		for k, vs := range values {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
 			if _, ok := redactKeys[normalizedKey]; ok {
+				// An unescaped '&' in a raw JSON context splits it, and the rest
+				// becomes a parameter that cannot be identified as secret.
+				if normalizedKey == "sse-kms-context" && slices.ContainsFunc(vs, func(v string) bool {
+					return !json.Valid([]byte(v))
+				}) {
+					u.RawQuery = ""
+					return u.String()
+				}
 				values[k] = []string{RedactedValue}
 			}
 		}
@@ -4573,6 +4620,12 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 				ctx.WritePlain(", ")
 			}
 			ctx.WriteName(index.String())
+		}
+	case "tiflash_lm_filter":
+		n.Tables[0].Restore(ctx)
+		for _, column := range n.Indexes {
+			ctx.WritePlain(", ")
+			ctx.WriteName(column.String())
 		}
 	case "qb_name":
 		if len(n.Tables) > 0 {
@@ -4995,6 +5048,66 @@ func (n *QueryWatchTextOption) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.PatternExpr = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
+// CompareMaterializedViewStmt is a statement to compare a materialized view with its source query snapshot.
+type CompareMaterializedViewStmt struct {
+	stmtNode
+	ViewName    *TableName
+	AsOf        *AsOfClause
+	OutputTable *TableName
+}
+
+// Restore implements Node interface.
+func (n *CompareMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("COMPARE MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.ViewName")
+	}
+	if n.AsOf != nil {
+		ctx.WritePlain(" ")
+		if err := n.AsOf.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.AsOf")
+		}
+	}
+	if n.OutputTable != nil {
+		ctx.WriteKeyWord(" OUTPUT INTO TABLE ")
+		if err := n.OutputTable.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CompareMaterializedViewStmt.OutputTable")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CompareMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CompareMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	if n.AsOf != nil {
+		node, ok := n.AsOf.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.AsOf = node.(*AsOfClause)
+	}
+	if n.OutputTable != nil {
+		node, ok := n.OutputTable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.OutputTable = node.(*TableName)
 	}
 	return v.Leave(n)
 }

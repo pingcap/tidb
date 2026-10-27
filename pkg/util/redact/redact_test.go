@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -196,4 +197,23 @@ func TestRedactRegionError(t *testing.T) {
 	require.Equal(t, "?", RegionError(&errorpb.Error{}))
 	var nilErr *errorpb.Error
 	require.Equal(t, nilErr.String(), RegionError(nilErr))
+}
+
+func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
+	s3 := &backup.S3{
+		Bucket:                  "backup-bucket",
+		SessionToken:            "session-token-value",
+		SseKmsEncryptionContext: "eyJ0ZW5hbnQiOiJjb250ZXh0LXZhbHVlIn0=",
+	}
+	info := &backup.StreamBackupTaskInfo{
+		Name:    "backup-task",
+		Storage: &backup.StorageBackend{Backend: &backup.StorageBackend_S3{S3: s3}},
+	}
+	original := info.String()
+	redacted := (TaskInfoRedacted{Info: info}).String()
+	require.NotContains(t, redacted, s3.SessionToken)
+	require.NotContains(t, redacted, s3.SseKmsEncryptionContext)
+	require.Contains(t, redacted, s3.Bucket)
+	require.Contains(t, redacted, info.Name)
+	require.Equal(t, original, info.String())
 }

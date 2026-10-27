@@ -402,6 +402,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	commit                     "COMMIT"
 	committed                  "COMMITTED"
 	compact                    "COMPACT"
+	compare                    "COMPARE"
 	complete                   "COMPLETE"
 	compressed                 "COMPRESSED"
 	compression                "COMPRESSION"
@@ -572,6 +573,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	open                       "OPEN"
 	operate                    "OPERATE"
 	optional                   "OPTIONAL"
+	output                     "OUTPUT"
 	packKeys                   "PACK_KEYS"
 	pageSym                    "PAGE"
 	pageChecksum               "PAGE_CHECKSUM"
@@ -627,8 +629,10 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	restart                    "RESTART"
 	restore                    "RESTORE"
 	restores                   "RESTORES"
+	result                     "RESULT"
 	resume                     "RESUME"
 	retain                     "RETAIN"
+	returnKwd                  "RETURN"
 	returning                  "RETURNING"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
@@ -739,6 +743,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	variables                  "VARIABLES"
 	vectorType                 "VECTOR"
 	view                       "VIEW"
+	views                      "VIEWS"
 	visible                    "VISIBLE"
 	wait                       "WAIT"
 	waitTiflashReady           "WAIT_TIFLASH_READY"
@@ -1046,6 +1051,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	BRIEStmt                      "BACKUP or RESTORE statement"
 	CalibrateResourceStmt         "CALIBRATE RESOURCE statement"
 	CancelDistributionJobStmt     "CANCEL DISTRIBUTION JOB statement"
+	CompareMaterializedViewStmt   "COMPARE MATERIALIZED VIEW statement"
 	CommitStmt                    "COMMIT statement"
 	CreateTableStmt               "CREATE TABLE statement"
 	CreateViewStmt                "CREATE VIEW  statement"
@@ -1543,6 +1549,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	RefreshWithAsyncModeOpt                "REFRESH MATERIALIZED VIEW WITH ASYNC MODE option"
 	RefreshMaterializedViewObserveOpt      "REFRESH MATERIALIZED VIEW DRY RUN/WITH PROFILE option"
 	RefreshCompleteMode                    "REFRESH MATERIALIZED VIEW COMPLETE mode option"
+	CompareMaterializedViewOutputOpt       "COMPARE MATERIALIZED VIEW OUTPUT INTO TABLE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -6012,6 +6019,26 @@ CancelMaterializedViewJobStmt:
 		}
 	}
 
+CompareMaterializedViewStmt:
+	"COMPARE" "MATERIALIZED" "VIEW" TableName AsOfClause CompareMaterializedViewOutputOpt
+	{
+		$$ = &ast.CompareMaterializedViewStmt{
+			ViewName:    $4.(*ast.TableName),
+			AsOf:        $5.(*ast.AsOfClause),
+			OutputTable: $6.(*ast.TableName),
+		}
+	}
+
+CompareMaterializedViewOutputOpt:
+	%prec empty
+	{
+		$$ = (*ast.TableName)(nil)
+	}
+|	"OUTPUT" "INTO" "TABLE" TableName
+	{
+		$$ = $4.(*ast.TableName)
+	}
+
 RefreshMaterializedViewStmt:
 	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithAsyncModeOpt "COMPLETE" RefreshCompleteMode RefreshMaterializedViewObserveOpt
 	{
@@ -6994,7 +7021,7 @@ Int64Num:
 	{
 		v, rangeErrMsg := getInt64FromNUM($1)
 		if len(rangeErrMsg) != 0 {
-			yylex.AppendError(yylex.Errorf(rangeErrMsg))
+			yylex.AppendError(yylex.Errorf("%s", rangeErrMsg))
 			return 1
 		}
 		$$ = v
@@ -7835,6 +7862,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPARE"
 |	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
@@ -7986,6 +8014,7 @@ UnReservedKeyword:
 |	"BINLOG"
 |	"FUNCTION"
 |	"VIEW"
+|	"VIEWS"
 |	"BINDING"
 |	"BINDINGS"
 |	"MODIFY"
@@ -8163,9 +8192,12 @@ UnReservedKeyword:
 |	"PERCENT"
 |	"PAUSE"
 |	"RESUME"
+|	"RESULT"
+|	"RETURN"
 |	"RETURNING"
 |	"OFF"
 |	"OPTIONAL"
+|	"OUTPUT"
 |	"REQUIRED"
 |	"PURGE"
 |	"SKIP"
@@ -12766,6 +12798,54 @@ ShowStmt:
 		}
 		$$ = stmt
 	}
+|	"SHOW" "MATERIALIZED" "VIEWS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViews}
+		stmt.DBName = $4
+		if $5 != nil {
+			if x, ok := $5.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $5.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOGS" ShowDatabaseNameOpt ShowLikeOrWhereOpt
+	{
+		stmt := &ast.ShowStmt{Tp: ast.ShowMaterializedViewLogs}
+		stmt.DBName = $5
+		if $6 != nil {
+			if x, ok := $6.(*ast.PatternLikeOrIlikeExpr); ok && x.Expr == nil {
+				stmt.Pattern = x
+			} else {
+				stmt.Where = $6.(ast.ExprNode)
+			}
+		}
+		$$ = stmt
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" TableName identifier
+	{
+		if !strings.EqualFold($5, "remain_logs") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected REMAIN_LOGS"))
+			return 1
+		}
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedViewRemainLogs,
+			Table: $4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "MATERIALIZED" "VIEW" "LOG" "ON" TableName identifier
+	{
+		if !strings.EqualFold($7, "wait_purge") {
+			yylex.AppendError(yylex.Errorf("syntax error: expected WAIT_PURGE"))
+			return 1
+		}
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowMaterializedViewLogWaitPurge,
+			Table: $6.(*ast.TableName),
+		}
+	}
 |	"SHOW" "CREATE" "TABLE" TableName
 	{
 		$$ = &ast.ShowStmt{
@@ -12778,6 +12858,20 @@ ShowStmt:
 		$$ = &ast.ShowStmt{
 			Tp:    ast.ShowCreateView,
 			Table: $4.(*ast.TableName),
+		}
+	}
+|	"SHOW" "CREATE" "MATERIALIZED" "VIEW" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowCreateMaterializedView,
+			Table: $5.(*ast.TableName),
+		}
+	}
+|	"SHOW" "CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	{
+		$$ = &ast.ShowStmt{
+			Tp:    ast.ShowCreateMaterializedViewLog,
+			Table: $7.(*ast.TableName),
 		}
 	}
 |	"SHOW" "CREATE" "DATABASE" IfNotExists DBName
@@ -13617,6 +13711,7 @@ Statement:
 |	DropMaterializedViewLogStmt
 |	PurgeMaterializedViewLogStmt
 |	CancelMaterializedViewJobStmt
+|	CompareMaterializedViewStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
@@ -15905,10 +16000,20 @@ SetBindingStmt:
 	}
 
 RecommendIndexStmt:
-	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
+	"RECOMMEND" "INDEX" "RETURN" "RESULT" "FOR" stringLit RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "run",
+			Action:  ast.RecommendIndexActionReturn,
+			SQL:     $6,
+			Options: $7.([]ast.RecommendIndexOption),
+		}
+
+		$$ = x
+	}
+|	"RECOMMEND" "INDEX" "RUN" "FOR" stringLit RecommendIndexOptionListOpt
+	{
+		x := &ast.RecommendIndexStmt{
+			Action:  ast.RecommendIndexActionRun,
 			SQL:     $5,
 			Options: $6.([]ast.RecommendIndexOption),
 		}
@@ -15918,7 +16023,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "RUN" RecommendIndexOptionListOpt
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "run",
+			Action:  ast.RecommendIndexActionRun,
 			Options: $4.([]ast.RecommendIndexOption),
 		}
 
@@ -15927,7 +16032,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "SHOW" "OPTION"
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "show",
+			Action: ast.RecommendIndexActionShow,
 		}
 
 		$$ = x
@@ -15935,7 +16040,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "APPLY" NUM
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "apply",
+			Action: ast.RecommendIndexActionApply,
 			ID:     $4.(int64),
 		}
 
@@ -15944,7 +16049,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "IGNORE" NUM
 	{
 		x := &ast.RecommendIndexStmt{
-			Action: "ignore",
+			Action: ast.RecommendIndexActionIgnore,
 			ID:     $4.(int64),
 		}
 
@@ -15953,7 +16058,7 @@ RecommendIndexStmt:
 |	"RECOMMEND" "INDEX" "SET" RecommendIndexOptionList
 	{
 		x := &ast.RecommendIndexStmt{
-			Action:  "set",
+			Action:  ast.RecommendIndexActionSet,
 			Options: $4.([]ast.RecommendIndexOption),
 		}
 

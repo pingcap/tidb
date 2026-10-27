@@ -80,9 +80,8 @@ type TiDBStatement struct {
 	boundLongDataBytes int64
 	paramsType         []byte
 	ctx                *TiDBContext
-	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
-	// not moved out to reuse the logic inside functions `writeResultSet...`
-	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
+	// Eager cursors keep a reader over rowContainer after their result set is closed;
+	// lazy cursors keep a detached result set alive until their iterator is closed.
 	rs resultset.CursorResultSet
 	// the `rowContainer` should contain all pre-fetched results of the statement in `EXECUTE` command.
 	// it's stored here to be closed in RESET and CLOSE command
@@ -207,8 +206,7 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 
 // StoreResultSet stores ResultSet for stmt fetching
 func (ts *TiDBStatement) StoreResultSet(rs resultset.CursorResultSet) {
-	// the original reset set should have been closed, and it's only used to store the iterator through the rowContainer
-	// so it's fine to just overwrite it.
+	// The caller must release any previous cursor before replacing it.
 	ts.rs = rs
 }
 
@@ -220,47 +218,32 @@ func (ts *TiDBStatement) GetResultSet() resultset.CursorResultSet {
 // Reset implements PreparedStatement Reset method.
 func (ts *TiDBStatement) Reset() error {
 	ts.releaseBoundLongData()
+	return ts.CloseCursor()
+}
+
+// CloseCursor releases each owned cursor resource once, including after an error.
+func (ts *TiDBStatement) CloseCursor() error {
+	rs, rowContainer := ts.rs, ts.rowContainer
+	ts.rs = nil
+	ts.rowContainer = nil
 	ts.hasActiveCursor = false
 
-	resultset.ReportCursorRUV2Delta(ts.rs)
-	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
-		ts.rs.GetRowIterator().Close()
-	}
-	ts.rs = nil
-
-	if ts.rowContainer != nil {
-		ts.rowContainer.GetMemTracker().Detach()
-		ts.rowContainer.GetDiskTracker().Detach()
-
-		rc := ts.rowContainer
-		ts.rowContainer = nil
-
-		err := rc.Close()
-		if err != nil {
-			return err
-		}
+	resultset.ReportCursorRUV2Delta(rs)
+	if rs != nil && rs.GetRowIterator() != nil {
+		rs.GetRowIterator().Close()
 	}
 
+	if rowContainer != nil {
+		return rowContainer.Close()
+	}
 	return nil
 }
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
 	ts.releaseBoundLongData()
-
-	resultset.ReportCursorRUV2Delta(ts.rs)
-	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
-		ts.rs.GetRowIterator().Close()
-	}
-
-	if ts.rowContainer != nil {
-		ts.rowContainer.GetMemTracker().Detach()
-		ts.rowContainer.GetDiskTracker().Detach()
-
-		err := ts.rowContainer.Close()
-		if err != nil {
-			return err
-		}
+	if err := ts.CloseCursor(); err != nil {
+		return err
 	}
 
 	// TODO close at tidb level
