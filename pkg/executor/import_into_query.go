@@ -81,7 +81,7 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 		return nil, err
 	}
 
-	sessionStates, err := encodeImportQueryStates(sctx)
+	sessionStates, err := storeQueryStates(sctx)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +103,8 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*importer.Que
 	return q, err
 }
 
-// encodeImportQueryStates encodes the states of the submitting session for the worker.
-func encodeImportQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, error) {
+// storeQueryStates encodes the states of the submitting session for the worker.
+func storeQueryStates(sctx sessionctx.Context) (*sessionstates.SessionStates, error) {
 	states := &sessionstates.SessionStates{}
 	if err := sctx.EncodeStates(context.Background(), states); err != nil {
 		return nil, err
@@ -195,10 +195,9 @@ var importQueryWorkerVars = map[string]struct{}{
 	vardef.TiDBMemQuotaQuery:        {},
 }
 
-// restoreImportQueryStates restores the states that encodeImportQueryStates
-// captured into the worker session sctx, except the variables in
-// importQueryWorkerVars.
-func restoreImportQueryStates(ctx context.Context, sctx sessionctx.Context, q *importer.QueryPlan) error {
+// restoreQueryStates restores the states that storeQueryStates captured into
+// the worker session sctx, except the variables in importQueryWorkerVars.
+func restoreQueryStates(ctx context.Context, sctx sessionctx.Context, q *importer.QueryPlan) error {
 	vars := sctx.GetSessionVars()
 	states := *q.SessionStates
 	states.SystemVars = make(map[string]string, len(q.SessionStates.SystemVars))
@@ -220,9 +219,10 @@ func restoreImportQueryStates(ctx context.Context, sctx sessionctx.Context, q *i
 	return sctx.DecodeStates(ctx, &states)
 }
 
-// buildQueryInfoSchema builds an info schema of the source tables of q at
-// q.ReadTS, and fails if a table changed after the submitter resolved the query.
-func buildQueryInfoSchema(
+// buildMinimalInfoSchema builds an info schema that holds only the source
+// tables of q at q.ReadTS, and fails if a table changed after the submitter
+// resolved the query.
+func buildMinimalInfoSchema(
 	store kv.Storage, q *importer.QueryPlan, parent infoschema.InfoSchema,
 ) (infoschema.InfoSchema, error) {
 	m := meta.NewReader(store.GetSnapshot(kv.NewVersion(q.ReadTS)))

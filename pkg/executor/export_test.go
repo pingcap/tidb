@@ -15,8 +15,8 @@
 package executor
 
 var (
-	// RestoreImportQueryStates is exported for tests.
-	RestoreImportQueryStates = restoreImportQueryStates
-	// BuildQueryInfoSchema is exported for tests.
-	BuildQueryInfoSchema = buildQueryInfoSchema
+	// RestoreQueryStates is exported for tests.
+	RestoreQueryStates = restoreQueryStates
+	// BuildMinimalInfoSchema is exported for tests.
+	BuildMinimalInfoSchema = buildMinimalInfoSchema
 )
