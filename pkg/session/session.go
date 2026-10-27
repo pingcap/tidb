@@ -5009,18 +5009,17 @@ func createCrossKSSession(currKSStore kv.Storage, targetKS string, validator val
 	if err != nil {
 		return nil, err
 	}
+	globalVars, err := dom.GetKSGlobalVarAccessor(targetKS)
+	if err != nil {
+		return nil, err
+	}
 	// TODO: use the schema validator of the target keyspace when we implement
 	// the info schema syncer for cross keyspace access.
 	s, err := createSessionWithOpt(store, nil, validator, infoCache, nil)
 	if err != nil {
 		return nil, err
 	}
-	accessor, err := dom.GetKSGlobalVarAccessor(targetKS, s.sessionVars)
-	if err != nil {
-		s.Close()
-		return nil, err
-	}
-	s.sessionVars.GlobalVarsAccessor = accessor
+	s.sessionVars.GlobalVarsAccessor = globalVars
 	return s, nil
 }
 

@@ -515,6 +515,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.TiDBGCLifetime)
 		require.NoError(t, err)
 		require.Equal(t, "10m0s", value)
+		require.ErrorContains(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.CTEMaxRecursionDepth, "8"), "cannot set")
 	})
 	t.Run("info schema has an auto-ID client", func(t *testing.T) {
 		mgr := storage.NewTaskManager(handle.SysSessionPool())

@@ -520,10 +520,10 @@ func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 	return m.infoCache
 }
 
-// GlobalVarAccessor returns the accessor of a session of the runtime, which
-// reads global variables of the keyspace from the cache of the runtime.
-func (m *SessionManager) GlobalVarAccessor(vars *variable.SessionVars) variable.GlobalVarAccessor {
-	return &keyspaceGlobalVars{GlobalVarAccessor: vars.GlobalVarsAccessor, vars: vars, cache: m.globalVars}
+// GlobalVarAccessor returns the global variable accessor of the sessions of
+// the runtime.
+func (m *SessionManager) GlobalVarAccessor() variable.GlobalVarAccessor {
+	return m.globalVars
 }
 
 // SysSessionPool returns the session pool used by the session manager.

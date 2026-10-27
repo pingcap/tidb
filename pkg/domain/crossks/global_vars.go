@@ -37,11 +37,11 @@ import (
 // globalVarCacheRefreshInterval is the same as the sysvar cache of a Domain.
 const globalVarCacheRefreshInterval = 30 * time.Second
 
-// globalVarCache caches the global variables of a keyspace for the sessions of
-// its runtime, which have no Domain to cache them. Like the sysvar cache of a
-// Domain, it loads them through a session of the pool, and reloads them
-// periodically and when a TiDB of the keyspace notifies a change, but it never
-// applies them to this instance.
+// globalVarCache is the global variable accessor of the sessions of a runtime,
+// which have no Domain to read global variables, and only read them. Like the
+// sysvar cache of a Domain, it loads the variables through a session of the
+// pool, and reloads them periodically and when a TiDB of the keyspace notifies
+// a change, but it never applies them to this instance.
 type globalVarCache struct {
 	ctx  context.Context
 	ks   string
@@ -52,6 +52,8 @@ type globalVarCache struct {
 	mu     sync.RWMutex
 	global map[string]string
 }
+
+var _ variable.GlobalVarAccessor = (*globalVarCache)(nil)
 
 func newGlobalVarCache(ctx context.Context, ks string, pool util.SessionPool) *globalVarCache {
 	return &globalVarCache{ctx: ctx, ks: ks, pool: pool}
@@ -86,6 +88,17 @@ func (c *globalVarCache) load() error {
 		tableContents[row.GetString(0)] = row.GetString(1)
 	}
 	_, global := variable.SysVarCacheValues(tableContents)
+	vars := variable.NewSessionVars(nil)
+	for name, value := range global {
+		sv := variable.GetSysVar(name)
+		if sv == nil {
+			continue
+		}
+		// A value written by an earlier version may not fit the variable.
+		if global[name], err = sv.ValidateFromType(vars, value, vardef.ScopeGlobal); err != nil {
+			global[name] = sv.Value
+		}
+	}
 	c.mu.Lock()
 	c.global = global
 	c.mu.Unlock()
@@ -144,23 +157,14 @@ func (c *globalVarCache) refreshLoop(etcdCli *clientv3.Client) {
 	}
 }
 
-// keyspaceGlobalVars reads global variables of the keyspace from the cache and
-// mysql.tidb, and leaves the other methods to the session.
-type keyspaceGlobalVars struct {
-	variable.GlobalVarAccessor
-	vars  *variable.SessionVars
-	cache *globalVarCache
-}
-
-// GetGlobalSysVar implements variable.GlobalVarAccessor. Like
-// session.GetGlobalSysVar, it returns the default when the value does not fit
-// the variable, but returns an error when the cache fails to load.
-func (g *keyspaceGlobalVars) GetGlobalSysVar(name string) (string, error) {
+// GetGlobalSysVar implements variable.GlobalVarAccessor. It returns an error
+// when the cache fails to load.
+func (c *globalVarCache) GetGlobalSysVar(name string) (string, error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	value, found, err := g.cache.get(name)
+	value, found, err := c.get(name)
 	if err != nil {
 		return "", err
 	}
@@ -168,16 +172,12 @@ func (g *keyspaceGlobalVars) GetGlobalSysVar(name string) (string, error) {
 	if !found {
 		return sv.Value, nil
 	}
-	// A value written by an earlier version may not fit the variable.
-	if value, err = sv.ValidateFromType(g.vars, value, vardef.ScopeGlobal); err != nil {
-		return sv.Value, nil
-	}
 	return value, nil
 }
 
 // GetTiDBTableValue implements variable.GlobalVarAccessor.
-func (g *keyspaceGlobalVars) GetTiDBTableValue(name string) (string, error) {
-	rows, err := g.cache.query("SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, mysql.TiDBTable, name)
+func (c *globalVarCache) GetTiDBTableValue(name string) (string, error) {
+	rows, err := c.query("SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, mysql.TiDBTable, name)
 	if err != nil {
 		return "", err
 	}
@@ -185,4 +185,28 @@ func (g *keyspaceGlobalVars) GetTiDBTableValue(name string) (string, error) {
 		return "", errors.Errorf("%s not found in %s.%s", name, mysql.SystemDB, mysql.TiDBTable)
 	}
 	return rows[0].GetString(0), nil
+}
+
+// SetGlobalSysVar implements variable.GlobalVarAccessor.
+func (c *globalVarCache) SetGlobalSysVar(_ context.Context, name string, _ string) error {
+	return c.errReadOnly(name)
+}
+
+// SetInstanceSysVar implements variable.GlobalVarAccessor.
+func (c *globalVarCache) SetInstanceSysVar(_ context.Context, name string, _ string) error {
+	return c.errReadOnly(name)
+}
+
+// SetGlobalSysVarOnly implements variable.GlobalVarAccessor.
+func (c *globalVarCache) SetGlobalSysVarOnly(_ context.Context, name string, _ string, _ bool) error {
+	return c.errReadOnly(name)
+}
+
+// SetTiDBTableValue implements variable.GlobalVarAccessor.
+func (c *globalVarCache) SetTiDBTableValue(name, _, _ string) error {
+	return c.errReadOnly(name)
+}
+
+func (c *globalVarCache) errReadOnly(name string) error {
+	return errors.Errorf("cannot set %s from a session of the runtime of keyspace %s", name, c.ks)
 }
