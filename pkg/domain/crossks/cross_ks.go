@@ -223,28 +223,34 @@ func (*Manager) createSessionManager(
 
 	coordinator := newSchemaCoordinator()
 	isValidator := isvalidator.New(vardef.GetSchemaLease())
-	var sessPool util.DestroyableSessionPool
-	factory := withKeyspaceGlobalVars(ksSessFactoryGetter(ks, isValidator), func() util.SessionPool { return sessPool })
-	sessPool = util.NewSessionPool(
-		crossKSSessPoolSize, factory,
-		func(r pools.Resource) {
-			_, ok := r.(sessionctx.Context)
-			intest.Assert(ok)
-			coordinator.StoreInternalSession(r)
-		},
-		func(r pools.Resource) {
-			sctx, ok := r.(sessionctx.Context)
-			intest.Assert(ok)
-			intest.AssertFunc(func() bool {
-				txn, _ := sctx.Txn(false)
-				return txn == nil || !txn.Valid()
-			})
-			coordinator.DeleteInternalSession(r)
-		},
-		func(r pools.Resource) {
-			intest.Assert(r != nil)
-			coordinator.DeleteInternalSession(r)
-		},
+	getCallback := func(r pools.Resource) {
+		_, ok := r.(sessionctx.Context)
+		intest.Assert(ok)
+		coordinator.StoreInternalSession(r)
+	}
+	putCallback := func(r pools.Resource) {
+		sctx, ok := r.(sessionctx.Context)
+		intest.Assert(ok)
+		intest.AssertFunc(func() bool {
+			txn, _ := sctx.Txn(false)
+			return txn == nil || !txn.Valid()
+		})
+		coordinator.DeleteInternalSession(r)
+	}
+	destroyCallback := func(r pools.Resource) {
+		intest.Assert(r != nil)
+		coordinator.DeleteInternalSession(r)
+	}
+	factory := ksSessFactoryGetter(ks, isValidator)
+	globalVars := newGlobalVarReader(factory, getCallback, putCallback, destroyCallback)
+	defer func() {
+		if err != nil {
+			globalVars.close()
+		}
+	}()
+	sessPool := util.NewSessionPool(
+		crossKSSessPoolSize, globalVars.wrap(factory),
+		getCallback, putCallback, destroyCallback,
 	)
 
 	var etcdCli *clientv3.Client
@@ -338,6 +344,7 @@ func (*Manager) createSessionManager(
 		infoCache:         infoCache,
 		isSyncer:          isSyncer,
 		sessPool:          sessPool,
+		globalVars:        globalVars,
 		coordinator:       coordinator,
 		isValidator:       isValidator,
 		svrInfoSyncer:     svrInfoSyncer,
@@ -499,6 +506,7 @@ type SessionManager struct {
 	infoCache         *infoschema.InfoCache
 	isSyncer          *issyncer.Syncer
 	sessPool          util.DestroyableSessionPool
+	globalVars        *globalVarReader
 	coordinator       *schemaCoordinator
 	isValidator       validatorapi.Validator
 	svrInfoSyncer     *serverinfo.Syncer
@@ -534,6 +542,9 @@ func (m *SessionManager) close() {
 	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
 	logger.Info("close cross keyspace session manager")
 	m.sessPool.Close()
+	if m.globalVars != nil {
+		m.globalVars.close()
+	}
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()

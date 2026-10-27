@@ -487,13 +487,20 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		tk.MustExec("set global cte_max_recursion_depth = 7")
 		defer tk.MustExec("set global cte_max_recursion_depth = default")
 		pool := handle.SysSessionPool()
-		resource, err := pool.Get()
-		require.NoError(t, err)
-		defer pool.Put(resource)
-		vars := resource.(sessionctx.Context).GetSessionVars()
-		value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), vardef.CTEMaxRecursionDepth)
-		require.NoError(t, err)
-		require.Equal(t, "7", value)
+		getVar := func(name string) string {
+			resource, err := pool.Get()
+			require.NoError(t, err)
+			defer pool.Put(resource)
+			vars := resource.(sessionctx.Context).GetSessionVars()
+			value, err := vars.GetSessionOrGlobalSystemVar(context.Background(), name)
+			require.NoError(t, err)
+			return value
+		}
+		require.Equal(t, "7", getVar(vardef.CTEMaxRecursionDepth))
+		require.Equal(t, "10m0s", getVar(vardef.TiDBGCLifetime))
+		tk.MustExec("update mysql.global_variables set variable_value = 'abc' where variable_name = 'group_concat_max_len'")
+		defer tk.MustExec("set global group_concat_max_len = default")
+		require.Equal(t, "1024", getVar(vardef.GroupConcatMaxLen))
 	})
 	t.Run("info schema has an auto-ID client", func(t *testing.T) {
 		mgr := storage.NewTaskManager(handle.SysSessionPool())

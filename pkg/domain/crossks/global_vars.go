@@ -16,6 +16,7 @@ package crossks
 
 import (
 	"context"
+	"sync"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -28,22 +29,70 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-// keyspaceGlobalVars reads the global variables of the keyspace for a session
-// of the runtime, which has no Domain to cache them. It reads them from the
-// table of the keyspace through another session of the pool, and leaves the
-// other methods to the session.
-type keyspaceGlobalVars struct {
-	variable.GlobalVarAccessor
-	vars *variable.SessionVars
-	pool util.SessionPool
-	// reading is set while the session reads for another one, so that its own
-	// lookups take the defaults instead of reading again.
-	reading bool
+// globalVarReader reads the global variables of a keyspace for the sessions of
+// its runtime, which have no Domain to cache them. It reads through a session
+// of its own, which takes the defaults for its own lookups, so a read never
+// reads again.
+type globalVarReader struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	// pool holds the reading session.
+	pool util.DestroyableSessionPool
 }
 
-// withKeyspaceGlobalVars makes the sessions that factory creates read the
-// global variables of the keyspace through pool.
-func withKeyspaceGlobalVars(factory pools.Factory, pool func() util.SessionPool) pools.Factory {
+func newGlobalVarReader(factory pools.Factory, getCallback, putCallback, destroyCallback func(pools.Resource)) *globalVarReader {
+	ctx, cancel := context.WithCancel(context.Background())
+	factory = withGlobalVars(factory, func(vars *variable.SessionVars) variable.GlobalVarAccessor {
+		return defaultGlobalVars{vars.GlobalVarsAccessor}
+	})
+	return &globalVarReader{
+		ctx:    ctx,
+		cancel: cancel,
+		pool:   util.NewSessionPool(1, factory, getCallback, putCallback, destroyCallback),
+	}
+}
+
+// wrap makes the sessions that factory creates read global variables through r.
+func (r *globalVarReader) wrap(factory pools.Factory) pools.Factory {
+	return withGlobalVars(factory, func(vars *variable.SessionVars) variable.GlobalVarAccessor {
+		return &keyspaceGlobalVars{GlobalVarAccessor: vars.GlobalVarsAccessor, vars: vars, reader: r}
+	})
+}
+
+func (r *globalVarReader) read(table, name string) (value string, found bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	resource, err := r.pool.Get()
+	if err != nil {
+		return "", false, errors.Trace(err)
+	}
+	defer r.pool.Put(resource)
+	sctx, ok := resource.(sessionctx.Context)
+	if !ok {
+		return "", false, errors.Errorf("unexpected session type %T", resource)
+	}
+	ctx := kv.WithInternalSourceType(r.ctx, kv.InternalTxnSysVar)
+	rows, fields, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		"SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, table, name)
+	if err != nil {
+		return "", false, err
+	}
+	if len(rows) == 0 {
+		return "", false, nil
+	}
+	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
+	value, err = d.ToString()
+	return value, true, err
+}
+
+func (r *globalVarReader) close() {
+	r.cancel()
+	r.pool.Close()
+}
+
+func withGlobalVars(factory pools.Factory, accessor func(*variable.SessionVars) variable.GlobalVarAccessor) pools.Factory {
 	return func() (pools.Resource, error) {
 		r, err := factory()
 		if err != nil {
@@ -51,27 +100,30 @@ func withKeyspaceGlobalVars(factory pools.Factory, pool func() util.SessionPool)
 		}
 		if sctx, ok := r.(sessionctx.Context); ok {
 			vars := sctx.GetSessionVars() //nolint:forbidigo
-			vars.GlobalVarsAccessor = &keyspaceGlobalVars{
-				GlobalVarAccessor: vars.GlobalVarsAccessor,
-				vars:              vars,
-				pool:              pool(),
-			}
+			vars.GlobalVarsAccessor = accessor(vars)
 		}
 		return r, nil
 	}
 }
 
-// GetGlobalSysVar implements variable.GlobalVarAccessor. A failed read returns
-// an error instead of the default value.
+// keyspaceGlobalVars reads global variables from the tables of the keyspace,
+// and leaves the other methods to the session.
+type keyspaceGlobalVars struct {
+	variable.GlobalVarAccessor
+	vars   *variable.SessionVars
+	reader *globalVarReader
+}
+
+// GetGlobalSysVar implements variable.GlobalVarAccessor. Like
+// session.GetGlobalSysVar, it returns the default when the keyspace has no
+// value or the value does not fit the variable, but returns an error when the
+// read fails.
 func (g *keyspaceGlobalVars) GetGlobalSysVar(name string) (string, error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if g.reading {
-		return sv.Value, nil
-	}
-	value, found, err := g.read(name)
+	value, found, err := g.reader.read(mysql.GlobalVariablesTable, name)
 	if err != nil {
 		return "", err
 	}
@@ -85,33 +137,33 @@ func (g *keyspaceGlobalVars) GetGlobalSysVar(name string) (string, error) {
 	return value, nil
 }
 
-func (g *keyspaceGlobalVars) read(name string) (value string, found bool, err error) {
-	resource, err := g.pool.Get()
+// GetTiDBTableValue implements variable.GlobalVarAccessor.
+func (g *keyspaceGlobalVars) GetTiDBTableValue(name string) (string, error) {
+	value, found, err := g.reader.read(mysql.TiDBTable, name)
 	if err != nil {
-		return "", false, errors.Trace(err)
+		return "", err
 	}
-	defer g.pool.Put(resource)
-	sctx, ok := resource.(sessionctx.Context)
-	if !ok {
-		return "", false, errors.Errorf("unexpected session type %T", resource)
+	if !found {
+		return "", errors.Errorf("%s not found in %s.%s", name, mysql.SystemDB, mysql.TiDBTable)
 	}
-	reader, ok := sctx.GetSessionVars().GlobalVarsAccessor.(*keyspaceGlobalVars) //nolint:forbidigo
-	if !ok {
-		return "", false, errors.Errorf("unexpected global variable accessor %T", sctx.GetSessionVars().GlobalVarsAccessor) //nolint:forbidigo
+	return value, nil
+}
+
+// defaultGlobalVars is the accessor of the reading session.
+type defaultGlobalVars struct {
+	variable.GlobalVarAccessor
+}
+
+// GetGlobalSysVar implements variable.GlobalVarAccessor.
+func (defaultGlobalVars) GetGlobalSysVar(name string) (string, error) {
+	sv := variable.GetSysVar(name)
+	if sv == nil {
+		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	reader.reading = true
-	defer func() { reader.reading = false }()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
-	rows, fields, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx,
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		"SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, mysql.GlobalVariablesTable, name)
-	if err != nil {
-		return "", false, err
-	}
-	if len(rows) == 0 {
-		return "", false, nil
-	}
-	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
-	value, err = d.ToString()
-	return value, true, err
+	return sv.Value, nil
+}
+
+// GetTiDBTableValue implements variable.GlobalVarAccessor.
+func (defaultGlobalVars) GetTiDBTableValue(name string) (string, error) {
+	return "", errors.Errorf("%s is not read by the global variable reader", name)
 }
