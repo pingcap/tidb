@@ -13,6 +13,7 @@ go_library(
         "http_handler.go",
         "http_status.go",
         "mock_conn.go",
+        "pkdb_connection_admission.go",
         "pkdb_login_history.go",
         "pkdb_user_connections.go",
         "rpc_server.go",

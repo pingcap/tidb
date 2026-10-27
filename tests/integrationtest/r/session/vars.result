@@ -328,6 +328,16 @@ select @@session.max_connections;
 Error 1238 (HY000): Variable 'max_connections' is a GLOBAL variable
 select @@local.max_connections;
 Error 1238 (HY000): Variable 'max_connections' is a GLOBAL variable
+select @@reserved_admin_connections;
+@@reserved_admin_connections
+3
+select @@global.reserved_admin_connections;
+@@global.reserved_admin_connections
+3
+select @@session.reserved_admin_connections;
+Error 1238 (HY000): Variable 'reserved_admin_connections' is a GLOBAL variable
+select @@local.reserved_admin_connections;
+Error 1238 (HY000): Variable 'reserved_admin_connections' is a GLOBAL variable
 select @@performance_schema_max_mutex_classes;
 @@performance_schema_max_mutex_classes
 200

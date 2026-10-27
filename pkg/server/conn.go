@@ -727,6 +727,9 @@ func (cc *clientConn) readOptionalSecureRequestAndHandshakeResponse(ctx context.
 	}
 
 	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
+	if err == nil {
+		err = cc.server.checkReservedAdminConnection(cc)
+	}
 	if err != nil {
 		logutil.Logger(ctx).Warn("open new session or authentication failure", zap.Error(err))
 	}

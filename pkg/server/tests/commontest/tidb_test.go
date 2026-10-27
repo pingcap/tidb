@@ -3290,6 +3290,86 @@ func TestConnectionCount(t *testing.T) {
 	ts.RunTestConnectionCount(t)
 }
 
+func TestReservedAdminConnections(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	cfg.Instance.MaxConnections = 1
+	cfg.Instance.ReservedAdminConnections = 1
+	ts := servertestkit.CreateTidbTestSuiteWithCfg(t, cfg)
+	ts.WaitUntilServerCanConnect()
+
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = testutil.GetPortFromTCPAddr(ts.Server.ListenAddr())
+	rootDSN := cli.GetDSN(func(config *mysql.Config) {
+		config.User = "root"
+	})
+	rootDB, err := sql.Open("mysql", rootDSN)
+	require.NoError(t, err)
+	_, err = rootDB.Exec("CREATE USER 'reserved_admin'@'%' IDENTIFIED BY 'password'")
+	require.NoError(t, err)
+	_, err = rootDB.Exec("CREATE USER 'ordinary_user'@'%' IDENTIFIED BY 'password'")
+	require.NoError(t, err)
+	_, err = rootDB.Exec("CREATE USER 'super_user'@'%' IDENTIFIED BY 'password'")
+	require.NoError(t, err)
+	_, err = rootDB.Exec("GRANT CONNECTION_ADMIN ON *.* TO 'reserved_admin'@'%'")
+	require.NoError(t, err)
+	_, err = rootDB.Exec("GRANT SUPER ON *.* TO 'super_user'@'%'")
+	require.NoError(t, err)
+	require.NoError(t, rootDB.Close())
+	require.Eventually(t, func() bool {
+		return ts.Server.ConnectionCount() == 0
+	}, 5*time.Second, 10*time.Millisecond)
+
+	openDB := func(user string) *sql.DB {
+		dsn := cli.GetDSN(func(config *mysql.Config) {
+			config.User = user
+			if user != "root" {
+				config.Passwd = "password"
+			}
+			config.DBName = ""
+		})
+		db, err := sql.Open("mysql", dsn)
+		require.NoError(t, err)
+		db.SetMaxOpenConns(2)
+		db.SetMaxIdleConns(0)
+		return db
+	}
+
+	ordinaryDB := openDB("ordinary_user")
+	defer ordinaryDB.Close()
+	ordinaryConn, err := ordinaryDB.Conn(context.Background())
+	require.NoError(t, err)
+	defer ordinaryConn.Close()
+	require.NoError(t, ordinaryConn.PingContext(context.Background()))
+
+	_, err = ordinaryDB.Conn(context.Background())
+	require.EqualError(t, err, "Error 1040 (08004): Too many connections")
+
+	unknownUserDB := openDB("unknown_user")
+	defer unknownUserDB.Close()
+	for _, user := range []string{"root", "reserved_admin", "super_user"} {
+		t.Run(user, func(t *testing.T) {
+			adminDB := openDB(user)
+			defer adminDB.Close()
+			adminConn, err := adminDB.Conn(context.Background())
+			require.NoError(t, err)
+			defer adminConn.Close()
+			require.NoError(t, adminConn.PingContext(context.Background()))
+
+			_, err = adminDB.Conn(context.Background())
+			require.EqualError(t, err, "Error 1040: Too many connections")
+			// Full capacity is rejected before authenticating even an unknown user.
+			_, err = unknownUserDB.Conn(context.Background())
+			require.EqualError(t, err, "Error 1040: Too many connections")
+			require.NoError(t, adminConn.Close())
+			require.Eventually(t, func() bool {
+				return ts.Server.ConnectionCount() == 1
+			}, 5*time.Second, 10*time.Millisecond)
+		})
+	}
+}
+
 func TestTypeAndCharsetOfSendLongData(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 	ts.RunTestTypeAndCharsetOfSendLongData(t)

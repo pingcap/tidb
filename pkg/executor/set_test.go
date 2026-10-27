@@ -1152,6 +1152,15 @@ func TestValidateSetVar(t *testing.T) {
 	err = tk.ExecToErr("set @@global.max_connections='hello'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar))
 
+	tk.MustQuery("select @@global.reserved_admin_connections").Check(testkit.Rows("3"))
+	tk.MustExec("set @@global.reserved_admin_connections=65536")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect reserved_admin_connections value: '65536'"))
+	tk.MustQuery("select @@global.reserved_admin_connections").Check(testkit.Rows("65535"))
+	tk.MustExec("set @@global.reserved_admin_connections=-1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect reserved_admin_connections value: '-1'"))
+	tk.MustQuery("select @@global.reserved_admin_connections").Check(testkit.Rows("0"))
+	tk.MustExec("set @@global.reserved_admin_connections=3")
+
 	tk.MustExec("set @@global.thread_pool_size=65")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect thread_pool_size value: '65'"))
 	result = tk.MustQuery("select @@global.thread_pool_size;")

@@ -100,6 +100,10 @@ const (
 	DefPluginAuditLogBufferSize = 0
 	// DefPluginAuditLogFlushInterval is the default time interval to flush plugin audit log.
 	DefPluginAuditLogFlushInterval = 30
+	// DefReservedAdminConnections is the default number of connections reserved for administrators.
+	DefReservedAdminConnections = 3
+	// MaxReservedAdminConnections is the maximum number of connections reserved for administrators.
+	MaxReservedAdminConnections = 65535
 	// DefAuthTokenRefreshInterval is the default time interval to refresh tidb auth token.
 	DefAuthTokenRefreshInterval = time.Hour
 	// EnvVarKeyspaceName is the system env name for keyspace name.
@@ -559,10 +563,12 @@ type Instance struct {
 	// PluginAuditLogFlushInterval is the flush interval (in seconds) of plugin audit log, it works only when PluginAuditLogBufferSize is greater than 0.
 	PluginAuditLogFlushInterval int `toml:"plugin_audit_log_flush_interval" json:"plugin_audit_log_flush_interval"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
-	TiDBEnableStatsOwner AtomicBool `toml:"tidb_enable_stats_owner" json:"tidb_enable_stats_owner"`
-	TiDBRCReadCheckTS    bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	MaxConnections uint32 `toml:"max_connections" json:"max_connections"`
+	// ReservedAdminConnections is the maximum number of extra connections available to administrators.
+	ReservedAdminConnections uint32     `toml:"reserved_admin_connections" json:"reserved_admin_connections"`
+	TiDBEnableDDL            AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBEnableStatsOwner     AtomicBool `toml:"tidb_enable_stats_owner" json:"tidb_enable_stats_owner"`
+	TiDBRCReadCheckTS        bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBServiceScope indicates the role for tidb for distributed task framework.
 	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
 
@@ -990,6 +996,7 @@ var defaultConf = Config{
 		PluginAuditLogBufferSize:    0,
 		PluginAuditLogFlushInterval: 30,
 		MaxConnections:              0,
+		ReservedAdminConnections:    DefReservedAdminConnections,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBEnableStatsOwner:        *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
@@ -1381,6 +1388,9 @@ func (c *Config) Valid() error {
 	}
 	if c.Instance.PluginAuditLogFlushInterval <= 0 || c.Instance.PluginAuditLogFlushInterval > MaxPluginAuditLogFlushInterval {
 		return fmt.Errorf("plugin-audit-log-flush-interval should be [%d, %d]", 1, MaxPluginAuditLogFlushInterval)
+	}
+	if c.Instance.ReservedAdminConnections > MaxReservedAdminConnections {
+		return fmt.Errorf("reserved-admin-connections should be between %d and %d", 0, MaxReservedAdminConnections)
 	}
 	// txn-local-latches
 	if err := c.TxnLocalLatches.Valid(); err != nil {

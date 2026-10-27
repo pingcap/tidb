@@ -767,6 +767,7 @@ grpc-initial-window-size = 10240
 grpc-max-send-msg-size = 40960
 [instance]
 max_connections = 200
+reserved_admin_connections = 20
 `)
 
 	require.NoError(t, err)
@@ -795,6 +796,7 @@ max_connections = 200
 	require.Equal(t, uint64(16), conf.TiKVClient.ResolveLockLiteThreshold)
 	require.Equal(t, 120*time.Second, conf.TiKVClient.CoprReqTimeout)
 	require.Equal(t, uint32(200), conf.Instance.MaxConnections)
+	require.Equal(t, uint32(20), conf.Instance.ReservedAdminConnections)
 	require.Equal(t, uint32(10), conf.TiDBMaxReuseChunk)
 	require.Equal(t, uint32(20), conf.TiDBMaxReuseColumn)
 	require.Equal(t, []string{"tiflash"}, conf.IsolationRead.Engines)
@@ -915,9 +917,13 @@ grpc-keepalive-timeout = 0.01
 	require.NoError(t, conf.Load(configFile))
 	require.NotNil(t, conf.Valid())
 	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
+	conf.Instance.ReservedAdminConnections = MaxReservedAdminConnections + 1
+	require.ErrorContains(t, conf.Valid(), "reserved-admin-connections should be between 0 and 65535")
+	conf.Instance.ReservedAdminConnections = DefReservedAdminConnections
 
 	configFile = "config.toml.example"
 	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, uint32(3), conf.Instance.ReservedAdminConnections)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false

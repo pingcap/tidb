@@ -491,5 +491,8 @@ tidb_record_plan_in_slow_log = 1
 # The maximum permitted number of simultaneous client connections. When the value is 0, the number of connections is unlimited.
 max_connections = 0
 
+# The number of extra connections reserved for administrators after max_connections is reached.
+reserved_admin_connections = 3
+
 # Run ddl worker on this tidb-server.
 tidb_enable_ddl = true

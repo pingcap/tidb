@@ -872,15 +872,17 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 
 func (s *Server) checkConnectionCount() error {
 	// When the value of Instance.MaxConnections is 0, the number of connections is unlimited.
-	if int(s.cfg.Instance.MaxConnections) == 0 {
+	if s.cfg.Instance.MaxConnections == 0 {
 		return nil
 	}
 
-	conns := s.ConnectionCount()
-
-	if conns >= int(s.cfg.Instance.MaxConnections) {
+	conns := uint64(s.ConnectionCount())
+	maxConnections := uint64(s.cfg.Instance.MaxConnections) + uint64(s.cfg.Instance.ReservedAdminConnections)
+	if conns >= maxConnections {
 		logutil.BgLogger().Error("too many connections",
-			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(servererr.ErrConCount))
+			zap.Uint32("max connections", s.cfg.Instance.MaxConnections),
+			zap.Uint32("reserve admin connections", s.cfg.Instance.ReservedAdminConnections),
+			zap.Error(servererr.ErrConCount))
 		return servererr.ErrConCount
 	}
 	return nil

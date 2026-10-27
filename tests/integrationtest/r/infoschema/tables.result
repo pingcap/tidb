@@ -238,6 +238,9 @@ tidb_txn_mode	SESSION,GLOBAL	pessimistic	pessimistic	NULL	NULL	pessimistic,optim
 SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO';
 VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
 max_connections	INSTANCE	0	0	0	100000	NULL	NO
+SELECT * FROM variables_info WHERE variable_name = 'reserved_admin_connections' AND is_noop='NO';
+VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
+reserved_admin_connections	INSTANCE	3	3	0	65535	NULL	NO
 SELECT * FROM variables_info WHERE variable_name = 'tidb_checksum_table_concurrency';
 VARIABLE_NAME	VARIABLE_SCOPE	DEFAULT_VALUE	CURRENT_VALUE	MIN_VALUE	MAX_VALUE	POSSIBLE_VALUES	IS_NOOP
 tidb_checksum_table_concurrency	SESSION	4	4	1	256	NULL	NO

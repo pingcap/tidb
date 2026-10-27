@@ -180,6 +180,7 @@ SELECT * FROM variables_info WHERE variable_name = 'innodb_compression_level';
 SET GLOBAL innodb_compression_level = DEFAULT;
 SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode';
 SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO';
+SELECT * FROM variables_info WHERE variable_name = 'reserved_admin_connections' AND is_noop='NO';
 SELECT * FROM variables_info WHERE variable_name = 'tidb_checksum_table_concurrency';
 SELECT * FROM variables_info WHERE variable_name = 'tidb_prepared_plan_cache_memory_guard_ratio';
 SELECT * FROM variables_info WHERE variable_name = 'tidb_metric_query_step';
