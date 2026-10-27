@@ -351,13 +351,13 @@ func (c *slowQueryCache) overwrite(key slowQueryKey, sql string) {
 }
 
 // appendDelta is the memory added by retaining one more SlowQuery.
-func (c *slowQueryCache) appendDelta(key slowQueryKey, sql string) int64 {
+func (*slowQueryCache) appendDelta(key slowQueryKey, sql string) int64 {
 	return slowQueryValueMem(key, sql)
 }
 
 // replacementDelta is the retained SlowQuery memory change when a slot is
 // overwritten. The index map is not included.
-func (c *slowQueryCache) replacementDelta(loc *slowQueryCacheLocation, key slowQueryKey, sql string) int64 {
+func (*slowQueryCache) replacementDelta(loc *slowQueryCacheLocation, key slowQueryKey, sql string) int64 {
 	added := slowQueryValueMem(key, sql)
 	old := &loc.group.SlowQueries[loc.index]
 	if !old.valid {
