@@ -654,14 +654,15 @@
       {
         "SQL": "select * from t1, t2 where t1.a=t2.a",
         "Plan": [
-          "IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─TableReader(Build) root  data:Selection",
-          "│ └─Selection cop[tikv]  not(isnull(test.t1.a))",
-          "│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) root  ",
-          "  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "MergeJoin root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─Sort(Build) root  test.t2.a",
+          "│ └─TableReader root  data:Selection",
+          "│   └─Selection cop[tikv]  not(isnull(test.t2.a))",
+          "│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) root  test.t1.a",
+          "  └─TableReader root  data:Selection",
+          "    └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -683,15 +684,15 @@
       {
         "SQL": "select * from t1, t2 where t1.a=t2.a and t1.b=t2.b",
         "Plan": [
-          "IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
-          "├─TableReader(Build) root  data:Selection",
-          "│ └─Selection cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) root  ",
-          "  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-          "  └─Selection(Probe) cop[tikv]  not(isnull(test.t2.b))",
-          "    └─TableRowIDScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "MergeJoin root  inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b",
+          "├─Sort(Build) root  test.t2.a, test.t2.b",
+          "│ └─TableReader root  data:Selection",
+          "│   └─Selection cop[tikv]  not(isnull(test.t2.a)), not(isnull(test.t2.b))",
+          "│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) root  test.t1.a, test.t1.b",
+          "  └─TableReader root  data:Selection",
+          "    └─Selection cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -712,13 +713,14 @@
       {
         "SQL": "select * from t1 left join t2 on t1.a=t2.a",
         "Plan": [
-          "IndexHashJoin root  left outer join, inner:IndexLookUp, left side:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-          "├─TableReader(Build) root  data:TableFullScan",
-          "│ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) root  ",
-          "  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
-          "  │ └─IndexRangeScan cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "MergeJoin root  left outer join, left side:Sort, left key:test.t1.a, right key:test.t2.a",
+          "├─Sort(Build) root  test.t2.a",
+          "│ └─TableReader root  data:Selection",
+          "│   └─Selection cop[tikv]  not(isnull(test.t2.a))",
+          "│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) root  test.t1.a",
+          "  └─TableReader root  data:TableFullScan",
+          "    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -739,13 +741,14 @@
       {
         "SQL": "select * from t1 right join t2 on t1.a=t2.a",
         "Plan": [
-          "IndexHashJoin root  right outer join, inner:IndexLookUp, left side:IndexLookUp, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
-          "├─TableReader(Build) root  data:TableFullScan",
-          "│ └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─IndexLookUp(Probe) root  ",
-          "  ├─Selection(Build) cop[tikv]  not(isnull(test.t1.a))",
-          "  │ └─IndexRangeScan cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
-          "  └─TableRowIDScan(Probe) cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "MergeJoin root  right outer join, left side:Sort, left key:test.t1.a, right key:test.t2.a",
+          "├─Sort(Build) root  test.t1.a",
+          "│ └─TableReader root  data:Selection",
+          "│   └─Selection cop[tikv]  not(isnull(test.t1.a))",
+          "│     └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Sort(Probe) root  test.t2.a",
+          "  └─TableReader root  data:TableFullScan",
+          "    └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
