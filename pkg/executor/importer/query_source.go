@@ -37,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
-// QueryPlan records source metadata and session settings after tenant privilege checks.
-type QueryPlan struct {
+// QuerySource is the SELECT of IMPORT INTO ... FROM SELECT as the source of an
+// import: what a worker needs to run the same query as the submitter, captured
+// after tenant privilege checks.
+type QuerySource struct {
 	ReadTS        uint64
 	SchemaVersion int64
 	Timestamp     int64
@@ -74,7 +76,7 @@ var importQueryWorkerVars = map[string]struct{}{
 
 // RestoreStates restores the captured session states into the worker session
 // sctx, except the variables in importQueryWorkerVars.
-func (q *QueryPlan) RestoreStates(ctx context.Context, sctx sessionctx.Context) error {
+func (q *QuerySource) RestoreStates(ctx context.Context, sctx sessionctx.Context) error {
 	vars := sctx.GetSessionVars()
 	states := *q.SessionStates
 	states.SystemVars = make(map[string]string, len(q.SessionStates.SystemVars))
@@ -99,7 +101,7 @@ func (q *QueryPlan) RestoreStates(ctx context.Context, sctx sessionctx.Context) 
 // BuildMinimalInfoSchema builds an info schema that holds only the source
 // tables at q.ReadTS, and fails if a table changed after the submitter resolved
 // the query.
-func (q *QueryPlan) BuildMinimalInfoSchema(
+func (q *QuerySource) BuildMinimalInfoSchema(
 	store tidbkv.Storage, parent infoschema.InfoSchema,
 ) (infoschema.InfoSchema, error) {
 	m := meta.NewReader(store.GetSnapshot(tidbkv.NewVersion(q.ReadTS)))
@@ -179,8 +181,9 @@ func ParseImportQuery(sctx sessionctx.Context, sql string) (*ast.ImportIntoStmt,
 	return stmt, selectNode, nil
 }
 
-// GenerateImportQueryPlan generates the query plan with the given query.
-func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*QueryPlan, error) {
+// CaptureQuerySource captures the SELECT of the IMPORT INTO statement sql that
+// sctx is running.
+func CaptureQuerySource(sctx sessionctx.Context, sql string) (*QuerySource, error) {
 	_, node, err := ParseImportQuery(sctx, sql)
 	if err != nil {
 		return nil, err
@@ -192,7 +195,7 @@ func GenerateImportQueryPlan(sctx sessionctx.Context, sql string) (*QueryPlan, e
 	}
 
 	txnManager := sessiontxn.GetTxnManager(sctx)
-	q := &QueryPlan{
+	q := &QuerySource{
 		Timestamp:     time.Now().Unix(),
 		Keyspace:      sctx.GetStore().GetKeyspace(),
 		SessionStates: sessionStates,
@@ -245,7 +248,7 @@ func checkQuerySourceTable(dbInfo *model.DBInfo, tblInfo *model.TableInfo) error
 // collectQueryTables collects tables from a resolved query.
 func collectQueryTables(
 	sctx sessionctx.Context, is infoschema.InfoSchema, node ast.StmtNode,
-	q *QueryPlan, seen map[int64]bool,
+	q *QuerySource, seen map[int64]bool,
 ) error {
 	nodeW := resolve.NewNodeW(node)
 	ret := &plannercore.PreprocessorReturn{InfoSchema: is}
