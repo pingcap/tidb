@@ -272,7 +272,7 @@ func (is *mviewRefreshSourceSnapshot) TableByID(ctx context.Context, id int64) (
 
 func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 	for _, method := range []string{"fast", "complete delta apply", "complete in place", "complete out of place"} {
-		for _, change := range []string{"source replaced", "eliminated source replaced", "log replaced", "missing log", "invalid owner", "planned input replaced"} {
+		for _, change := range []string{"source replaced", "eliminated source replaced", "log replaced", "missing log", "planned input replaced"} {
 			t.Run(method+"/"+change, func(t *testing.T) {
 				_, tk, mviewID, mlogID := newMViewRefreshSourceFixture(t)
 				if change == "eliminated source replaced" {
@@ -309,8 +309,6 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 						replacements[mlogID] = nil
 					case "missing log":
 						newSource.MaterializedViewBase.MLogID = 0
-					case "invalid owner":
-						newLog.MaterializedViewLog.BaseTableID++
 					case "planned input replaced":
 						if method == "fast" {
 							plan.(*plannercore.MViewDeltaMerge).MLogTableID += 10000

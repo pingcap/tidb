@@ -25,25 +25,19 @@ import (
 )
 
 func TestResolveRefreshSources(t *testing.T) {
-	for _, tc := range []string{"all logs", "missing logs", "wrong owner", "missing log table", "missing source"} {
+	for _, tc := range []string{"all logs", "missing logs", "missing source"} {
 		t.Run(tc, func(t *testing.T) {
 			a := &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("a"), MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 11}}
 			b := &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("b"), MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 12}}
 			c := &model.TableInfo{ID: 3, Name: pmodel.NewCIStr("c")}
-			la := &model.TableInfo{ID: 11, Name: pmodel.NewCIStr("la"), MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 1}}
-			lb := &model.TableInfo{ID: 12, Name: pmodel.NewCIStr("lb"), MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 2}}
 			mv := &model.TableInfo{ID: 100, Name: pmodel.NewCIStr("mv"), MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{2, 1}}}
-			tables := []*model.TableInfo{a, b, c, la, lb, mv}
+			tables := []*model.TableInfo{a, b, c, mv}
 			switch tc {
 			case "missing logs":
 				mv.MaterializedView.BaseTableIDs = []int64{3, 2, 1}
 				b.MaterializedViewBase = nil
-			case "wrong owner":
-				lb.MaterializedViewLog.BaseTableID = 1
-			case "missing log table":
-				tables = []*model.TableInfo{a, b, la, mv}
 			case "missing source":
-				tables = []*model.TableInfo{a, la, lb, mv}
+				tables = []*model.TableInfo{a, mv}
 			}
 			is := infoschema.MockInfoSchema(tables)
 			sources, err := ResolveRefreshSources(context.Background(), is, mv.ID)

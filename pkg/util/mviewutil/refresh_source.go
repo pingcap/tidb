@@ -79,8 +79,8 @@ func DeleteRefreshSourceInfo(ctx context.Context, exec sqlexec.SQLExecutor, mvie
 	return nil
 }
 
-// ResolveRefreshSources resolves all physical source/log bindings in the supplied schema.
-// A missing log is represented by zero; a broken owner binding is always an error.
+// ResolveRefreshSources resolves source table IDs and their recorded MLog IDs in the supplied schema.
+// MLogID is zero when a source has no materialized view log.
 func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewID int64) ([]model.MViewRefreshSource, error) {
 	mv, ok := is.TableByID(ctx, mviewID)
 	if !ok || mv.Meta().MaterializedView == nil {
@@ -93,17 +93,9 @@ func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewI
 			return nil, errors.Errorf("refresh materialized view: source %d is missing from the computation schema", id)
 		}
 		source := tbl.Meta()
-		var log *model.TableInfo
-		if source.MaterializedViewBase != nil && source.MaterializedViewBase.MLogID != 0 {
-			mlog, ok := is.TableByID(ctx, source.MaterializedViewBase.MLogID)
-			if !ok {
-				return nil, errors.Errorf("refresh materialized view: log %d is missing from the computation schema", source.MaterializedViewBase.MLogID)
-			}
-			log = mlog.Meta()
-		}
-		binding, err := RefreshSourceBinding(source, log)
-		if err != nil {
-			return nil, err
+		binding := model.MViewRefreshSource{TableID: source.ID}
+		if source.MaterializedViewBase != nil {
+			binding.MLogID = source.MaterializedViewBase.MLogID
 		}
 		sources = append(sources, binding)
 	}
@@ -112,19 +104,6 @@ func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewI
 		return nil, errors.New("refresh materialized view: source set is empty")
 	}
 	return sources, nil
-}
-
-// RefreshSourceBinding validates a source's forward and reverse MLog ownership.
-func RefreshSourceBinding(source, log *model.TableInfo) (model.MViewRefreshSource, error) {
-	binding := model.MViewRefreshSource{TableID: source.ID}
-	if source.MaterializedViewBase != nil {
-		binding.MLogID = source.MaterializedViewBase.MLogID
-	}
-	if binding.MLogID != 0 && (log == nil || log.ID != binding.MLogID ||
-		log.MaterializedViewLog == nil || log.MaterializedViewLog.BaseTableID != source.ID) {
-		return model.MViewRefreshSource{}, errors.Errorf("refresh materialized view: invalid source/log owner binding for source %d", source.ID)
-	}
-	return binding, nil
 }
 
 // RefreshSourceLogIDs returns the sorted, distinct whole log set, including a
