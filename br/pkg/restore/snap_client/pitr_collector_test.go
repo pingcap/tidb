@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -360,6 +361,38 @@ func TestReopen(t *testing.T) {
 	coll.RequireRewrite(e, remap(3, 21))
 	require.True(t, e.Finished, "%v", e)
 	require.Equal(t, coll.coll.restoreUUID[:], e.BackupUuid)
+}
+
+func TestReopenWithNothingLeftToIngest(t *testing.T) {
+	coll := newPiTRCollForTest(t)
+	batch := restore.BatchBackupFileSet{backupFileSet(withFile(nameFile("foo.txt")), withRewriteRule(remap(1, 10)))}
+
+	complete := coll.MustStartRestoreBatch(batch)
+	require.NoError(t, complete())
+	coll.Done()
+
+	coll.Reopen()
+	coll.MarkSuccess()
+	coll.Done()
+	exts := coll.ExtFullBkups()
+	require.Len(t, exts, 2)
+	coll.RequireRewrite(exts[0], remap(1, 10))
+	require.False(t, exts[0].Finished, "%v", exts[0])
+	require.Empty(t, exts[1].Files)
+	require.True(t, exts[1].Finished, "%v", exts[1])
+	require.Equal(t, coll.coll.restoreUUID[:], exts[1].BackupUuid)
+
+	migs, err := stream.MigrationExtension(coll.coll.taskStorage).Load(coll.cx)
+	require.NoError(t, err)
+	paths := []string{}
+	for _, m := range migs.ListAll() {
+		paths = append(paths, m.IngestedSstPaths...)
+	}
+	res := iter.CollectAll(coll.cx, stream.LoadIngestedSSTs(coll.cx, coll.coll.taskStorage, paths))
+	require.NoError(t, res.Err)
+	groups := res.Item
+	require.Len(t, groups, 1)
+	require.True(t, groups[0].GroupFinished())
 }
 
 func TestConflict(t *testing.T) {
