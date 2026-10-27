@@ -67,6 +67,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/clients/router"
+	pd "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
@@ -262,9 +263,8 @@ func alterTableLabelRule(codec tikv.Codec, schemaName string, meta *model.TableI
 		return false, nil
 	}
 
-	r, ok := oldRule[tableRuleID]
-	if ok {
-		rule := r.Reset(codec, schemaName, meta.Name.L, "", ids...)
+	rule := buildTableLabelRule(codec, schemaName, meta, ids, oldRule)
+	if rule != nil {
 		err = infosync.PutLabelRule(context.TODO(), rule)
 		if err != nil {
 			return false, errors.Wrapf(err, "failed to notify PD label rule")
@@ -274,71 +274,157 @@ func alterTableLabelRule(codec tikv.Codec, schemaName string, meta *model.TableI
 	return false, nil
 }
 
-func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) (bool, error) {
-	// We want to achieve:
-	// - before we do any reorganization/write to new partitions/global indexes that the placement rules are in-place
-	// - not removing any placement rules for removed partitions
-	// So we will:
-	// 1) First write the new bundles including both new and old partitions,
-	//    EXCEPT if the old partition is in fact a table, then skip that partition
-	// 2) Then overwrite the bundles with the final partitioning scheme (second call in onReorg/
+func buildTableLabelRule(codec tikv.Codec, schemaName string, tblInfo *model.TableInfo, ids []int64, rules map[string]*label.Rule) *label.Rule {
+	tableRuleID := label.NewRuleID(codec, schemaName, tblInfo.Name.L, "")
+	if r, ok := rules[tableRuleID]; ok {
+		return resetPartitionLabelRule(r, codec, schemaName, tblInfo.Name.L, "", ids...)
+	}
+	return nil
+}
 
+func buildTruncatePartitionLabelRulePatch(codec tikv.Codec, schemaName string, tblInfo *model.TableInfo, newPartitions []model.PartitionDefinition, rules map[string]*label.Rule) *pd.LabelRulePatch {
+	tableID := label.NewRuleID(codec, schemaName, tblInfo.Name.L, "")
+	newPartIDs := getPartitionIDs(tblInfo)
+	newRules := make([]*label.Rule, 0, len(newPartitions)+1)
+	if tr, ok := rules[tableID]; ok {
+		newRules = append(newRules, resetPartitionLabelRule(tr, codec, schemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
+	}
+	for _, newPartition := range newPartitions {
+		partRuleID := label.NewRuleID(codec, schemaName, tblInfo.Name.L, newPartition.Name.L)
+		if pr, ok := rules[partRuleID]; ok {
+			newRules = append(newRules, resetPartitionLabelRule(pr, codec, schemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
+		}
+	}
+	return label.NewRulePatch(newRules, []string{})
+}
+
+func buildExchangePartitionLabelRulePatch(codec tikv.Codec, ntSchemaName string, nt *model.TableInfo, ptSchemaName string, pt *model.TableInfo, partDef *model.PartitionDefinition, rules map[string]*label.Rule) *pd.LabelRulePatch {
+	ntrID := label.NewRuleID(codec, ntSchemaName, nt.Name.L, "")
+	ptrID := label.NewRuleID(codec, ptSchemaName, pt.Name.L, partDef.Name.L)
+	ntr := rules[ntrID]
+	ptr := rules[ptrID]
+	partIDs := getPartitionIDs(nt)
+	var setRules []*label.Rule
+	var deleteRules []string
+	if ntr != nil && ptr != nil {
+		setRules = append(setRules, resetPartitionLabelRule(ntr, codec, ptSchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		setRules = append(setRules, resetPartitionLabelRule(ptr, codec, ntSchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
+	} else if ptr != nil {
+		setRules = append(setRules, resetPartitionLabelRule(ptr, codec, ntSchemaName, nt.Name.L, "", append(partIDs, nt.ID)...))
+		deleteRules = append(deleteRules, ptrID)
+	} else if ntr != nil {
+		setRules = append(setRules, resetPartitionLabelRule(ntr, codec, ptSchemaName, pt.Name.L, partDef.Name.L, partDef.ID))
+		deleteRules = append(deleteRules, ntrID)
+	}
+	return label.NewRulePatch(setRules, deleteRules)
+}
+
+func resetPartitionLabelRule(rule *label.Rule, codec tikv.Codec, schemaName, tableName, partitionName string, ids ...int64) *label.Rule {
+	cloned := rule.Clone()
+	// Rule.Clone is shallow; Reset rewrites Labels in place and sorts ids.
+	// Keep fetched rule snapshots and caller-owned ID slices unchanged.
+	cloned.Labels = slices.Clone(rule.Labels)
+	return cloned.Reset(codec, schemaName, tableName, partitionName, slices.Clone(ids)...)
+}
+
+// buildAlterTablePartitionBundles keeps existing partition rules until the DDL
+// finishes, while including rules for the added partitions before writes begin.
+func buildAlterTablePartitionBundles(t placement.PolicyGetter, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	tblInfo = tblInfo.Clone()
 	p := tblInfo.Partition
 	if p != nil {
-		// if partitioning a non-partitioned table, we will first change the metadata,
-		// so the table looks like a partitioned table, with the first/only partition having
-		// the same partition ID as the table, so we can access the table as a single partition.
-		// But in this case we should not add a bundle rule for the same range
-		// both as table and partition.
+		// A table being partitioned is temporarily represented by a partition
+		// with the table ID. Including it would duplicate the table key range.
 		if p.Definitions[0].ID != tblInfo.ID {
-			// prepend with existing partitions
 			addDefs = append(p.Definitions, addDefs...)
 		}
 		p.Definitions = addDefs
 	}
 
-	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
 	if err != nil {
-		return false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-
 	var bundles []*placement.Bundle
 	if tblBundle != nil {
 		bundles = append(bundles, tblBundle)
 	}
-
 	partitionBundles, err := placement.NewPartitionListBundles(t, addDefs)
 	if err != nil {
-		return false, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
+	return append(bundles, partitionBundles...), nil
+}
 
-	bundles = append(bundles, partitionBundles...)
-
+// alterTablePartitionBundles applies placement bundles in two phases:
+//  1. Before reorganization or writes to new partitions/global indexes, install
+//     rules covering both existing and added partitions. Preserve the old
+//     partitions' placement rules while their data is still needed.
+//  2. At finalization, call again with addDefs == nil and the final partition
+//     definitions to overwrite the table bundle with the final layout.
+func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) (bool, error) {
+	bundles, err := buildAlterTablePartitionBundles(t, tblInfo, addDefs)
+	if err != nil {
+		return false, err
+	}
 	if len(bundles) > 0 {
 		return true, infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	}
 	return false, nil
 }
 
+func buildDropPartitionBundles(t placement.PolicyGetter, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	// Keep dropped data's placement in standalone partition bundles before
+	// recomputing the table bundle without those ranges. Preserve this order
+	// for both policy reads and bundles.
+	bundles, err := partitionBundlesForDroppedDefinitions(t, tblInfo, dropPartitions)
+	if err != nil {
+		return nil, err
+	}
+	tableBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+	return bundles, nil
+}
+
+func buildTruncatePartitionBundles(t placement.PolicyGetter, tblInfo *model.TableInfo, oldPartitions, newPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	tableBundle, err := placement.NewTableBundle(t, tblInfo)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tableBundle != nil {
+		bundles = append(bundles, tableBundle)
+	}
+	keepDroppedBundles, err := partitionBundlesForDroppedDefinitions(t, tblInfo, oldPartitions)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return append(bundles, keepDroppedBundles...), nil
+}
+
 // When dropping or truncating a partition, keep its placement settings to avoid
 // unnecessary region scheduling before delete-range GC. Recomputing the table
 // bundle removes inherited rules for the dropped range, so create a standalone
 // partition bundle to preserve those rules until GC.
-func droppedPartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
+func partitionBundlesForDroppedDefinitions(t placement.PolicyGetter, tblInfo *model.TableInfo, dropPartitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	partitions := make([]model.PartitionDefinition, 0, len(dropPartitions))
 	for _, def := range dropPartitions {
 		def = def.Clone()
 		if def.PlacementPolicyRef == nil {
 			def.PlacementPolicyRef = tblInfo.PlacementPolicyRef
 		}
-
 		if def.PlacementPolicyRef != nil {
 			partitions = append(partitions, def)
 		}
 	}
-
 	return placement.NewPartitionListBundles(t, partitions)
 }
 
@@ -360,21 +446,30 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 	tblInfo.Partition.AddingDefinitions = append(tblInfo.Partition.AddingDefinitions, newDefs...)
 }
 
-func updatePartInfoDefinitionsFromFinalDefinitions(
-	checkedTblInfo *model.TableInfo,
-	partInfo *model.PartitionInfo,
-	definitionsOffset int,
-) error {
-	if err := rebuildStorageClassForPartitionDefinitions(checkedTblInfo, checkedTblInfo.Partition.Definitions); err != nil {
-		return err
+// checkAndNormalizePartitionDefinitions returns checked definitions owned by the
+// caller. Validation can fold values in place, so it must not share definition
+// values with either the current table metadata or the requested partitions.
+func checkAndNormalizePartitionDefinitions(
+	ctx expression.BuildContext,
+	tblInfo *model.TableInfo,
+	definitionsOffset, definitionsCount int,
+) ([]model.PartitionDefinition, error) {
+	checkedTblInfo := *tblInfo
+	checkedPartition := *tblInfo.Partition
+	checkedPartition.Definitions = clonePartitionDefinitions(tblInfo.Partition.Definitions)
+	checkedTblInfo.Partition = &checkedPartition
+	if err := checkPartitionDefinitionConstraints(ctx, &checkedTblInfo); err != nil {
+		return nil, errors.Trace(err)
 	}
-	definitionsEnd := definitionsOffset + len(partInfo.Definitions)
-	if definitionsOffset < 0 || definitionsEnd > len(checkedTblInfo.Partition.Definitions) {
-		return errors.Errorf("invalid partition definition range [%d, %d) for %d final definitions",
-			definitionsOffset, definitionsEnd, len(checkedTblInfo.Partition.Definitions))
+	if err := rebuildStorageClassForPartitionDefinitions(&checkedTblInfo, checkedPartition.Definitions); err != nil {
+		return nil, err
 	}
-	partInfo.Definitions = clonePartitionDefinitions(checkedTblInfo.Partition.Definitions[definitionsOffset:definitionsEnd])
-	return nil
+	definitionsEnd := definitionsOffset + definitionsCount
+	if definitionsOffset < 0 || definitionsEnd > len(checkedPartition.Definitions) {
+		return nil, errors.Errorf("invalid partition definition range [%d, %d) for %d final definitions",
+			definitionsOffset, definitionsEnd, len(checkedPartition.Definitions))
+	}
+	return clonePartitionDefinitions(checkedPartition.Definitions[definitionsOffset:definitionsEnd]), nil
 }
 
 // CheckAndUpdateAddedPartitionDefinitions rebuilds added partition definitions
@@ -385,14 +480,16 @@ func CheckAndUpdateAddedPartitionDefinitions(
 	partInfo *model.PartitionInfo,
 	definitionsOffset int,
 ) error {
-	clonedMeta := meta.Clone()
+	clonedMeta := *meta
 	tmp := *partInfo
-	tmp.Definitions = append(clonePartitionDefinitions(meta.Partition.Definitions), tmp.Definitions...)
+	tmp.Definitions = append(slices.Clone(meta.Partition.Definitions), tmp.Definitions...)
 	clonedMeta.Partition = &tmp
-	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
-		return errors.Trace(err)
+	definitions, err := checkAndNormalizePartitionDefinitions(ctx, &clonedMeta, definitionsOffset, len(partInfo.Definitions))
+	if err != nil {
+		return err
 	}
-	return updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset)
+	partInfo.Definitions = definitions
+	return nil
 }
 
 // clonePartitionDefinitions also deep-clones InValues, unlike
@@ -648,12 +745,12 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 	}
 
 	exprCtx := ctx.GetExprCtx()
-	err := generatePartitionDefinitionsFromInterval(exprCtx, s, tbInfo)
+	partitionDefs, err := generatePartitionDefinitionsFromInterval(exprCtx, s, tbInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	defs, err := buildPartitionDefinitionsInfo(exprCtx, s.Definitions, tbInfo, s.Num)
+	defs, err := buildPartitionDefinitionsInfo(exprCtx, partitionDefs, tbInfo, s.Num)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -958,7 +1055,7 @@ func getPartitionIntervalFromTable(ctx expression.BuildContext, tbInfo *model.Ta
 	}
 	partOption := &ast.PartitionOptions{PartitionMethod: partitionMethod}
 	// Generate the definitions from interval, first and last
-	err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo)
+	_, err := generatePartitionDefinitionsFromInterval(ctx, partOption, tbInfo)
 	if err != nil {
 		return nil
 	}
@@ -1082,40 +1179,41 @@ func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
 	return ret
 }
 
-// generatePartitionDefinitionsFromInterval generates partition Definitions according to INTERVAL options on partOptions
-func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo) error {
+// generatePartitionDefinitionsFromInterval returns definitions for the INTERVAL
+// options without changing the request, including when validation fails.
+func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partOptions *ast.PartitionOptions, tbInfo *model.TableInfo) ([]*ast.PartitionDefinition, error) {
 	if partOptions.Interval == nil {
-		return nil
+		return partOptions.Definitions, nil
 	}
 	if tbInfo.Partition.Type != ast.PartitionTypeRange {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only allowed on RANGE partitioning")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only allowed on RANGE partitioning")
 	}
 	if len(partOptions.ColumnNames) > 1 || len(tbInfo.Partition.Columns) > 1 {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, does not allow RANGE COLUMNS with more than one column")
 	}
 	var partCol *model.ColumnInfo
 	if len(tbInfo.Partition.Columns) > 0 {
 		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
 		if partCol == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, could not find any RANGE COLUMNS")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, could not find any RANGE COLUMNS")
 		}
 		// Only support Datetime, date and INT column types for RANGE INTERVAL!
 		switch partCol.FieldType.EvalType() {
 		case types.ETInt, types.ETDatetime:
 		default:
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports Date, Datetime and INT types")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports Date, Datetime and INT types")
 		}
 	}
 	// Allow given partition definitions, but check it later!
 	definedPartDefs := partOptions.Definitions
-	partOptions.Definitions = make([]*ast.PartitionDefinition, 0, 1)
+	definitions := make([]*ast.PartitionDefinition, 0, 1)
 	if partOptions.Interval.FirstRangeEnd == nil || partOptions.Interval.LastRangeEnd == nil {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, currently requires FIRST and LAST partitions to be defined")
 	}
 	switch partOptions.Interval.IntervalExpr.TimeUnit {
 	case ast.TimeUnitInvalid, ast.TimeUnitYear, ast.TimeUnitQuarter, ast.TimeUnitMonth, ast.TimeUnitWeek, ast.TimeUnitDay, ast.TimeUnitHour, ast.TimeUnitMinute, ast.TimeUnitSecond:
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning, only supports YEAR, QUARTER, MONTH, WEEK, DAY, HOUR, MINUTE and SECOND as time unit")
 	}
 	first := ast.PartitionDefinitionClauseLessThan{
 		Exprs: []ast.ExprNode{*partOptions.Interval.FirstRangeEnd},
@@ -1126,20 +1224,20 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 	if len(tbInfo.Partition.Columns) > 0 {
 		colTypes := collectColumnsType(tbInfo)
 		if len(colTypes) != len(tbInfo.Partition.Columns) {
-			return dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
+			return nil, dbterror.ErrWrongPartitionName.GenWithStack("partition column name cannot be found")
 		}
 		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, first.Exprs); err != nil {
-			return err
+			return nil, err
 		}
 		if _, err := checkAndGetColumnsTypeAndValuesMatch(ctx, colTypes, last.Exprs); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		if err := checkPartitionValuesIsInt(ctx, "FIRST PARTITION", first.Exprs, tbInfo); err != nil {
-			return err
+			return nil, err
 		}
 		if err := checkPartitionValuesIsInt(ctx, "LAST PARTITION", last.Exprs, tbInfo); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if partOptions.Interval.NullPart {
@@ -1161,7 +1259,7 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 			}
 			partExpr = ast.NewValueExpr(minv, "", "")
 		}
-		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
+		definitions = append(definitions, &ast.PartitionDefinition{
 			Name: ast.NewCIStr("P_NULL"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{partExpr},
@@ -1169,13 +1267,15 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 		})
 	}
 
-	err := GeneratePartDefsFromInterval(ctx, ast.AlterTablePartition, tbInfo, partOptions)
+	options := *partOptions
+	options.Definitions = definitions
+	definitions, err := generatePartDefsFromInterval(ctx, ast.AlterTablePartition, tbInfo, &options)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if partOptions.Interval.MaxValPart {
-		partOptions.Definitions = append(partOptions.Definitions, &ast.PartitionDefinition{
+		definitions = append(definitions, &ast.PartitionDefinition{
 			Name: ast.NewCIStr("P_MAXVALUE"),
 			Clause: &ast.PartitionDefinitionClauseLessThan{
 				Exprs: []ast.ExprNode{&ast.MaxValueExpr{}},
@@ -1184,20 +1284,21 @@ func generatePartitionDefinitionsFromInterval(ctx expression.BuildContext, partO
 	}
 
 	if len(definedPartDefs) > 0 {
-		err := comparePartitionDefinitions(ctx, partOptions.Definitions, definedPartDefs)
+		err := comparePartitionDefinitions(ctx, definitions, definedPartDefs)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		// Seems valid, so keep the defined so that the user defined names are kept etc.
-		partOptions.Definitions = definedPartDefs
+		definitions = definedPartDefs
 	} else if len(tbInfo.Partition.Definitions) > 0 {
-		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition, partCol)
+		options.Definitions = definitions
+		err := comparePartitionAstAndModel(ctx, &options, tbInfo.Partition, partCol)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 
-	return nil
+	return definitions, nil
 }
 
 func checkAndGetColumnsTypeAndValuesMatch(ctx expression.BuildContext, colTypes []types.FieldType, exprs []ast.ExprNode) ([]types.Datum, error) {
@@ -1284,17 +1385,30 @@ func astIntValueExprFromStr(s string, unsigned bool) (ast.ExprNode, error) {
 //
 // partition definitions will be set on partitionOptions
 func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions) error {
+	definitions, err := generatePartDefsFromInterval(ctx, tp, tbInfo, partitionOptions)
+	if err != nil {
+		return err
+	}
+	if partitionOptions != nil {
+		partitionOptions.Definitions = definitions
+	}
+	return nil
+}
+
+// generatePartDefsFromInterval keeps the existing definition prefix in a new
+// slice so appending generated partitions cannot change the request's backing array.
+func generatePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTableType, tbInfo *model.TableInfo, partitionOptions *ast.PartitionOptions) ([]*ast.PartitionDefinition, error) {
 	if partitionOptions == nil {
-		return nil
+		return nil, nil
 	}
 	var sb strings.Builder
 	err := partitionOptions.Interval.IntervalExpr.Expr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	intervalString := driver.UnwrapFromSingleQuotes(sb.String())
 	if len(intervalString) < 1 || intervalString[:1] < "1" || intervalString[:1] > "9" {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL, should be a positive number")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL, should be a positive number")
 	}
 	var currVal types.Datum
 	var startExpr, lastExpr, currExpr ast.ExprNode
@@ -1303,7 +1417,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 	if len(tbInfo.Partition.Columns) == 1 {
 		partCol = findColumnByName(tbInfo.Partition.Columns[0].L, tbInfo)
 		if partCol == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL COLUMNS partitioning: could not find partitioning column")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL COLUMNS partitioning: could not find partitioning column")
 		}
 	}
 	timeUnit = partitionOptions.Interval.IntervalExpr.TimeUnit
@@ -1319,20 +1433,20 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 		startExpr = *partitionOptions.Interval.LastRangeEnd
 		lastExpr = partitionOptions.Expr
 	default:
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
+		return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Internal error during generating altered INTERVAL partitions, no known alter type")
 	}
 	lastVal, err := expression.EvalSimpleAst(ctx, lastExpr)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	evalCtx := ctx.GetEvalCtx()
 	if partCol != nil {
 		lastVal, err = lastVal.ConvertTo(evalCtx.TypeCtx(), &partCol.FieldType)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
-	partDefs := partitionOptions.Definitions
+	partDefs := slices.Clone(partitionOptions.Definitions)
 	if len(partDefs) == 0 {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
@@ -1371,27 +1485,27 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 		}
 		currVal, err = expression.EvalSimpleAst(ctx, currExpr)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if partCol != nil {
 			currVal, err = currVal.ConvertTo(evalCtx.TypeCtx(), &partCol.FieldType)
 			if err != nil {
-				return err
+				return nil, err
 			}
 		}
 		cmp, err := currVal.Compare(evalCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if cmp > 0 {
 			lastStr, err := lastVal.ToString()
 			if err != nil {
-				return err
+				return nil, err
 			}
 			sb.Reset()
 			err = startExpr.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
 			if err != nil {
-				return err
+				return nil, err
 			}
 			startStr := sb.String()
 			errStr := fmt.Sprintf("INTERVAL: expr (%s) not matching FIRST + n INTERVALs (%s + n * %s",
@@ -1399,14 +1513,14 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			if timeUnit != ast.TimeUnitInvalid {
 				errStr = errStr + " " + timeUnit.String()
 			}
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(errStr + ")")
 		}
 		valStr, err := currVal.ToString()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if len(valStr) == 0 || valStr[0:1] == "'" {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: Error when generating partition values")
 		}
 		partName := "P_LT_" + valStr
 		if timeUnit != ast.TimeUnitInvalid {
@@ -1430,14 +1544,13 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 		}
 		// The last loop still not reach the max value, return error.
 		if i == mysql.PartitionCountLimit-1 {
-			return errors.Trace(dbterror.ErrTooManyPartitions)
+			return nil, errors.Trace(dbterror.ErrTooManyPartitions)
 		}
 	}
 	if len(tbInfo.Partition.Definitions)+len(partDefs) > mysql.PartitionCountLimit {
-		return errors.Trace(dbterror.ErrTooManyPartitions)
+		return nil, errors.Trace(dbterror.ErrTooManyPartitions)
 	}
-	partitionOptions.Definitions = partDefs
-	return nil
+	return partDefs, nil
 }
 
 // buildPartitionDefinitionsInfo build partition definitions info without assign partition id. tbInfo will be constant
@@ -2124,24 +2237,22 @@ func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 	return nil
 }
 
-// updateDroppingPartitionInfo move dropping partitions to DroppingDefinitions
-func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []string) {
-	oldDefs := tblInfo.Partition.Definitions
-	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-len(partLowerNames))
-	droppingDefs := make([]model.PartitionDefinition, 0, len(partLowerNames))
+// splitPartitionDefinitions preserves table order without changing the input definitions.
+// Partition names must be validated and lowercased by the caller.
+func splitPartitionDefinitions(defs []model.PartitionDefinition, partLowerNames []string) (remaining, dropping []model.PartitionDefinition) {
+	remaining = make([]model.PartitionDefinition, 0, len(defs)-len(partLowerNames))
+	dropping = make([]model.PartitionDefinition, 0, len(partLowerNames))
 
 	// consider using a map to probe partLowerNames if too many partLowerNames
-	for i := range oldDefs {
-		found := slices.Contains(partLowerNames, oldDefs[i].Name.L)
+	for i := range defs {
+		found := slices.Contains(partLowerNames, defs[i].Name.L)
 		if found {
-			droppingDefs = append(droppingDefs, oldDefs[i])
+			dropping = append(dropping, defs[i])
 		} else {
-			newDefs = append(newDefs, oldDefs[i])
+			remaining = append(remaining, defs[i])
 		}
 	}
-
-	tblInfo.Partition.Definitions = newDefs
-	tblInfo.Partition.DroppingDefinitions = droppingDefs
+	return remaining, dropping
 }
 
 func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
@@ -2351,9 +2462,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		}
 		// Reason, see https://github.com/pingcap/tidb/issues/55888
 		// Only mark the partitions as to be dropped, so they are not used, but not yet removed.
-		originalDefs := tblInfo.Partition.Definitions
-		updateDroppingPartitionInfo(tblInfo, partNames)
-		tblInfo.Partition.Definitions = originalDefs
+		_, tblInfo.Partition.DroppingDefinitions = splitPartitionDefinitions(tblInfo.Partition.Definitions, partNames)
 		job.SchemaState = model.StateWriteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
 		tblInfo.Partition.DDLAction = job.Type
@@ -2364,7 +2473,7 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		// we can now remove them from the active definitions, allowing writes into
 		// the overlapping range of the higher range partition or LIST default partition.
 		// Their physical data and standalone placement bundles remain until delete-range GC.
-		updateDroppingPartitionInfo(tblInfo, partNames)
+		tblInfo.Partition.Definitions, tblInfo.Partition.DroppingDefinitions = splitPartitionDefinitions(tblInfo.Partition.Definitions, partNames)
 		err = dropLabelRules(jobCtx.stepCtx, jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, partNames)
 		if err != nil {
 			// TODO: Add failpoint error/cancel injection and test failure/rollback and cancellation!
@@ -2378,24 +2487,10 @@ func (w *worker) onDropTablePartition(jobCtx *jobContext, job *model.Job) (ver i
 		}
 
 		var bundles []*placement.Bundle
-		// create placement groups for each dropped partition to keep the data's placement before GC
-		// These placements groups will be deleted after GC
-		bundles, err = droppedPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
+		bundles, err = buildDropPartitionBundles(metaMut, tblInfo, tblInfo.Partition.DroppingDefinitions)
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
-		}
-
-		var tableBundle *placement.Bundle
-		// Recompute table bundle to remove dropped partitions rules from its group
-		tableBundle, err = placement.NewTableBundle(metaMut, tblInfo)
-		if err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
-
-		if tableBundle != nil {
-			bundles = append(bundles, tableBundle)
 		}
 
 		if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
@@ -2475,14 +2570,15 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
-func replaceTruncatePartitions(jobCtx *jobContext, job *model.Job, t *meta.Mutator, tblInfo *model.TableInfo, oldIDs, newIDs []int64) (oldDefinitions, newDefinitions []model.PartitionDefinition, err error) {
+// replaceTruncatePartitions updates IDs in place and returns the matching old and
+// new definitions in oldIDs order.
+func replaceTruncatePartitions(definitions []model.PartitionDefinition, oldIDs, newIDs []int64) (oldDefinitions, newDefinitions []model.PartitionDefinition) {
 	oldDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
 	newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
-	pi := tblInfo.Partition
 	for i, id := range oldIDs {
-		for defIdx := range pi.Definitions {
+		for defIdx := range definitions {
 			// use a reference to actually set the new ID!
-			def := &pi.Definitions[defIdx]
+			def := &definitions[defIdx]
 			if id == def.ID {
 				oldDefinitions = append(oldDefinitions, def.Clone())
 				def.ID = newIDs[i]
@@ -2493,14 +2589,7 @@ func replaceTruncatePartitions(jobCtx *jobContext, job *model.Job, t *meta.Mutat
 		}
 	}
 
-	if err := clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, oldIDs); err != nil {
-		return nil, nil, err
-	}
-
-	if err := updateTruncatePartitionLabelRules(jobCtx, job, t, oldDefinitions, newDefinitions, tblInfo, oldIDs); err != nil {
-		return nil, nil, err
-	}
-	return oldDefinitions, newDefinitions, nil
+	return oldDefinitions, newDefinitions
 }
 
 func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo, oldIDs []int64) (bool, error) {
@@ -2660,8 +2749,11 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
 		// We can still rollback here, since we have not yet started to write to the new partitions!
-		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(jobCtx, job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
-		if err != nil {
+		oldDefinitions, newDefinitions = replaceTruncatePartitions(pi.Definitions, oldIDs, newIDs)
+		if err = clearTruncatePartitionTiflashStatus(tblInfo, newDefinitions, oldIDs); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err = updateTruncatePartitionLabelRules(jobCtx, job, jobCtx.metaMut, oldDefinitions, newDefinitions, tblInfo, oldIDs); err != nil {
 			return ver, errors.Trace(err)
 		}
 		var scatterScope string
@@ -2793,27 +2885,10 @@ func clearTruncatePartitionTiflashStatus(tblInfo *model.TableInfo, newPartitions
 }
 
 func updateTruncatePartitionLabelRules(jobCtx *jobContext, job *model.Job, t *meta.Mutator, oldPartitions, newPartitions []model.PartitionDefinition, tblInfo *model.TableInfo, oldIDs []int64) error {
-	bundles, err := placement.NewPartitionListBundles(t, newPartitions)
+	bundles, err := buildTruncatePartitionBundles(t, tblInfo, oldPartitions, newPartitions)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
-
-	tableBundle, err := placement.NewTableBundle(t, tblInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if tableBundle != nil {
-		bundles = append(bundles, tableBundle)
-	}
-
-	// create placement groups for each dropped partition to keep the data's placement before GC
-	// These placements groups will be deleted after GC
-	keepDroppedBundles, err := droppedPartitionBundles(t, tblInfo, oldPartitions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	bundles = append(bundles, keepDroppedBundles...)
 
 	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	if err != nil {
@@ -2832,19 +2907,7 @@ func updateTruncatePartitionLabelRules(jobCtx *jobContext, job *model.Job, t *me
 		return errors.Wrapf(err, "failed to get label rules from PD")
 	}
 
-	newPartIDs := getPartitionIDs(tblInfo)
-	newRules := make([]*label.Rule, 0, len(oldIDs)+1)
-	if tr, ok := rules[tableID]; ok {
-		newRules = append(newRules, tr.Clone().Reset(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, "", append(newPartIDs, tblInfo.ID)...))
-	}
-
-	for idx, newPartition := range newPartitions {
-		if pr, ok := rules[oldPartRules[idx]]; ok {
-			newRules = append(newRules, pr.Clone().Reset(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, newPartition.Name.L, newPartition.ID))
-		}
-	}
-
-	patch := label.NewRulePatch(newRules, []string{})
+	patch := buildTruncatePartitionLabelRulePatch(jobCtx.store.GetCodec(), job.SchemaName, tblInfo, newPartitions, rules)
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
 		return errors.Wrapf(err, "failed to notify PD the label rules")
@@ -3106,28 +3169,7 @@ func (w *worker) onExchangeTablePartition(jobCtx *jobContext, job *model.Job) (v
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
-	ntr := rules[ntrID]
-	ptr := rules[ptrID]
-
-	// This must be a bug, nt cannot be partitioned!
-	partIDs := getPartitionIDs(nt)
-
-	var setRules []*label.Rule
-	var deleteRules []string
-	if ntr != nil && ptr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(jobCtx.store.GetCodec(), ptDbInfo.Name.L, pt.Name.L, partDef.Name.L, partDef.ID))
-		setRules = append(setRules, ptr.Clone().Reset(jobCtx.store.GetCodec(), ntDbInfo.Name.L, nt.Name.L, "", append(partIDs, nt.ID)...))
-	} else if ptr != nil {
-		setRules = append(setRules, ptr.Clone().Reset(jobCtx.store.GetCodec(), ntDbInfo.Name.L, nt.Name.L, "", append(partIDs, nt.ID)...))
-		// delete ptr
-		deleteRules = append(deleteRules, ptrID)
-	} else if ntr != nil {
-		setRules = append(setRules, ntr.Clone().Reset(jobCtx.store.GetCodec(), ptDbInfo.Name.L, pt.Name.L, partDef.Name.L, partDef.ID))
-		// delete ntr
-		deleteRules = append(deleteRules, ntrID)
-	}
-
-	patch := label.NewRulePatch(setRules, deleteRules)
+	patch := buildExchangePartitionLabelRulePatch(jobCtx.store.GetCodec(), ntDbInfo.Name.L, nt, ptDbInfo.Name.L, pt, partDef, rules)
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
@@ -3353,13 +3395,7 @@ func (w *worker) prepareReorganizePartition(jobCtx *jobContext, job *model.Job, 
 	tblInfo.Partition.DDLAction = job.Type
 	// Stage both partition sets while keeping the original definitions visible.
 	updateAddingPartitionInfo(partInfo, tblInfo)
-	droppingDefs := make([]model.PartitionDefinition, 0, len(partNames))
-	for _, def := range tblInfo.Partition.Definitions {
-		if slices.Contains(partNames, def.Name.L) {
-			droppingDefs = append(droppingDefs, def)
-		}
-	}
-	tblInfo.Partition.DroppingDefinitions = droppingDefs
+	_, tblInfo.Partition.DroppingDefinitions = splitPartitionDefinitions(tblInfo.Partition.Definitions, partNames)
 
 	// Validate placement policy references before applying external changes.
 	for _, def := range tblInfo.Partition.AddingDefinitions {
@@ -3455,9 +3491,11 @@ func (w *worker) validateReorganizePartition(job *model.Job, tblInfo *model.Tabl
 		return err
 	}
 	sctx := w.sess.Context
-	if err = checkReorgPartitionDefs(sctx, job.Type, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap); err != nil {
+	definitions, err := checkAndNormalizeReorgPartitionDefinitions(sctx.GetExprCtx(), job.Type, tblInfo, partInfo, firstPartIdx, lastPartIdx, idMap)
+	if err != nil {
 		return err
 	}
+	partInfo.Definitions = definitions
 	if job.Type != model.ActionAlterTablePartitioning {
 		return nil
 	}
