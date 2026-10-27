@@ -922,7 +922,7 @@ func isSafeMLogTableGrantPriv(priv mysql.PrivilegeType) bool {
 	}
 }
 
-func tablePrivsForGrantTarget(ctx sessionctx.Context, db string, tbl string) (mysql.Privileges, mysql.Privileges) {
+func tablePrivsForGrantTarget(ctx sessionctx.Context, db string, tbl string) (tablePrivs, columnPrivs mysql.Privileges) {
 	allColumnPrivs := mysql.AllColumnPrivs
 	allTablePrivs := mysql.AllTablePrivs
 	is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema)
