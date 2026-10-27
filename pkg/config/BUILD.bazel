@@ -16,6 +16,7 @@ go_library(
     deps = [
         "//pkg/config/configtypes",
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/parser/terror",
         "//pkg/resourcegroup/ruv2",
@@ -51,6 +52,7 @@ go_test(
     shard_count = 39,
     deps = [
         "//pkg/config/deploymode",
+        "//pkg/config/diagnosticmode",
         "//pkg/config/kerneltype",
         "//pkg/resourcegroup/ruv2",
         "//pkg/testkit/testsetup",

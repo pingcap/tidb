@@ -417,8 +417,8 @@ func main() {
 			return
 		}
 	}
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	terror.MustNil(diagnosticmode.Initialize(*diagnosticMode))
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if kerneltype.IsNextGen() {
 		terror.MustNil(initDeployMode(config.GetGlobalConfig()))
 	}
