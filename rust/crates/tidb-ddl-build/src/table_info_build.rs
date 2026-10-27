@@ -69,8 +69,6 @@ use std::sync::atomic::Ordering;
 
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
-
 use tidb_ast::IndexType;
 use tidb_ast::{CiString, IndexOptions};
 use tidb_ast::{
@@ -1120,7 +1118,7 @@ pub fn check_ttl_info_valid(
         &ttl.interval_expr_str,
         tidb_ttl::TimeUnitType::from_i64(ttl.interval_time_unit),
     )
-    .map_err(|error| errors::unsupported(error.to_string()))?;
+    .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?;
     if table.is_common_handle {
         if let Some(primary) = table
             .indices
@@ -1153,15 +1151,13 @@ pub fn check_ttl_info_valid(
     let named = ttl.column_name.original();
     match tidb_model::column::find_column_info(&table.columns, named) {
         None => Err(tidb_error::mysql::MysqlError::from_terror(
-            &tidb_util::dbterror::ERR_BAD_FIELD.generate_with_stack_by_args(&[
-                (named.to_owned()).to_string().into(),
-                "TTL config".into(),
-            ]),
+            &tidb_util::dbterror::ERR_BAD_FIELD
+                .generate_with_stack_by_args(&[named.to_owned().into(), "TTL config".into()]),
         )),
         Some(column) if !column.read().field_type.code().is_type_time() => {
             Err(tidb_error::mysql::MysqlError::from_terror(
                 &tidb_util::dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
-                    .generate_with_stack_by_args(&[(named.to_owned()).to_string().into()]),
+                    .generate_with_stack_by_args(&[named.to_owned().into()]),
             ))
         }
         Some(_) => Ok(()),
@@ -2019,7 +2015,10 @@ pub fn process_modify_column_options(
             .is_some_and(StagedColumnDefault::has_null_default)
     {
         return Err(default_admission_error(
-            errors::invalid_default(name),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[name.to_string().into()]),
+            ),
         ));
     }
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
@@ -2133,7 +2132,10 @@ fn expression_default_origin(
             &context.get_expr_ctx().get_eval_ctx().time_zone(),
         )
         .map_err(|_| {
-            default_admission_error(errors::invalid_default(name.to_owned()))
+            default_admission_error(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[name.to_owned().into()]),
+            ))
         })?;
     // Go `castColumnValue`: a value an ENUM / SET cannot hold is
     // `types.ErrTruncated` with no arguments, which strict DDL raises.
@@ -2763,7 +2765,10 @@ fn build_column(
             .is_some_and(StagedColumnDefault::has_null_default)
     {
         return Err(default_admission_error(
-            errors::invalid_default(name.to_owned()),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[name.to_owned().into()]),
+            ),
         ));
     }
 
@@ -2863,7 +2868,10 @@ pub fn set_column_default(
     // the same spelling is accepted when the column is first defined.
     if !staged.has_default() {
         return Err(default_admission_error(
-            errors::invalid_default(name.to_owned()),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[name.to_owned().into()]),
+            ),
         ));
     }
     persist_column_default(name, info, staged, context)
@@ -2911,7 +2919,10 @@ pub fn recheck_column_default_in_reorg_context(info: &ColumnInfo) -> Refusal<()>
     .map_err(default_admission_error)?;
     if !has_default {
         return Err(default_admission_error(
-            errors::invalid_default(name.to_owned()),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[name.to_owned().into()]),
+            ),
         ));
     }
     // `checkDefaultValue` runs only when the column keeps a default.
@@ -3276,38 +3287,44 @@ fn stage_column_default(
     preceding_names: &[String],
     preceding_types: &[FieldType],
 ) -> Refusal<StagedColumnDefault> {
-    let built =
-        tidb_table::column_default::build_with_current_database(
-            expr,
-            field_type,
-            context.get_expr_ctx().get_eval_ctx().current_database().as_deref(),
-            context.get_expr_ctx().get_charset_info().0,
-            |expr| {
-                // go resolves a DEFAULT expression against the table's own columns
-                // (`getDefaultValue` runs the expression resolver over them), so an
-                // unknown name fails with ErrBadField (1054) 'expression'.
-                let resolver =
-                    crate::generated_column::TableColumnResolver::with_like_default_escape(
-                        preceding_names,
-                        preceding_types,
-                        context.get_expr_ctx().get_eval_ctx().time_zone(),
-                        context.get_expr_ctx().get_eval_ctx().like_default_escape(),
-                    );
-                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver)
-                    .map_err(|error| match resolver.missing_name() {
-                        Some(name) => {
-                            tidb_table::column_default::DefaultError::UnknownColumn(name)
-                        }
-                        None => tidb_table::column_default::rewrite_error(error),
-                    })?;
-                tidb_expr::eval_expression_once(&rewritten, context.get_expr_ctx().get_eval_ctx()).map_err(|_| {
-                    tidb_table::column_default::DefaultError::Unsupported(
-                        "a DEFAULT this node cannot evaluate",
-                    )
-                })
-            },
-        )
-        .map_err(|error| default_admission_error(error.to_mysql_error(name)))?;
+    let built = tidb_table::column_default::build_with_current_database(
+        expr,
+        name,
+        field_type,
+        context
+            .get_expr_ctx()
+            .get_eval_ctx()
+            .current_database()
+            .as_deref(),
+        context.get_expr_ctx().get_charset_info().0,
+        |expr| {
+            // go resolves a DEFAULT expression against the table's own columns
+            // (`getDefaultValue` runs the expression resolver over them), so an
+            // unknown name fails with ErrBadField (1054) 'expression'.
+            let resolver = crate::generated_column::TableColumnResolver::with_like_default_escape(
+                preceding_names,
+                preceding_types,
+                context.get_expr_ctx().get_eval_ctx().time_zone(),
+                context.get_expr_ctx().get_eval_ctx().like_default_escape(),
+            );
+            let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(
+                |error| match (resolver.missing_name(), error) {
+                    (Some(name), _) => MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                            &[tidb_hack::go_to_lower(name).into(), "expression".into()],
+                        ),
+                    ),
+                    (None, tidb_expr::EvalError::Unsupported(message)) => {
+                        MysqlError::unknown(message)
+                    }
+                    (None, _) => MysqlError::unknown("a DEFAULT this node cannot evaluate"),
+                },
+            )?;
+            tidb_expr::eval_expression_once(&rewritten, context.get_expr_ctx().get_eval_ctx())
+                .map_err(|_| MysqlError::unknown("a DEFAULT this node cannot evaluate"))
+        },
+    )
+    .map_err(default_admission_error)?;
 
     match built {
         tidb_table::column_default::ColumnDefault::Computed(computed) => {
@@ -3364,7 +3381,10 @@ fn persist_column_default(
             // expression default.
             if info.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT) {
                 return Err(default_admission_error(
-                    errors::invalid_default(name.to_owned()),
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                            .generate_with_stack_by_args(&[name.to_owned().into()]),
+                    ),
                 ));
             }
             // Go stores the expression spelling with `default_is_expr`; the

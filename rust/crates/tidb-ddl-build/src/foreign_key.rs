@@ -24,7 +24,6 @@ use tidb_datatype::FieldTypeFlags;
 #[allow(unused_imports)]
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 #[allow(unused_imports)]
 use tidb_hack::GoToLower;
 #[allow(unused_imports)]
@@ -109,7 +108,7 @@ pub fn build_fk_info(
         return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
             &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NOT_MATCH
                 .generate_with_stack_by_args(&[
-                    (fk_name.to_owned()).to_string().into(),
+                    fk_name.to_owned().into(),
                     ("Key reference and table reference don't match".to_owned())
                         .to_string()
                         .into(),
@@ -152,7 +151,7 @@ pub fn build_fk_info(
         let Some(column) = find_column_info(&table.columns, &name) else {
             return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
                 &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
-                    .generate_with_stack_by_args(&[(name).to_string().into()]),
+                    .generate_with_stack_by_args(&[name.to_string().into()]),
             )));
         };
         let column = column.read();
@@ -161,7 +160,7 @@ pub fn build_fk_info(
                 return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
                     &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
                         .generate_with_stack_by_args(&[
-                            (fk_name.to_owned()).to_string().into(),
+                            fk_name.to_owned().into(),
                             (column.name.original().to_owned()).to_string().into(),
                         ]),
                 )));
@@ -199,7 +198,7 @@ pub fn build_fk_info(
                 &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
                     .generate_with_stack_by_args(&[
                         (column.name.original().to_owned()).to_string().into(),
-                        (fk_name.to_owned()).to_string().into(),
+                        fk_name.to_owned().into(),
                     ]),
             )));
         }
@@ -236,7 +235,9 @@ pub fn build_fk_infos(create: &CreateTableStmt, schema: &str, table: &mut TableI
             continue;
         };
         if definition.reference.match_type == tidb_ast::ForeignKeyMatch::Partial {
-            return Err(refusal(errors::unsupported("MATCH PARTIAL is not supported yet")));
+            return Err(refusal(tidb_error::mysql::MysqlError::unknown(
+                "MATCH PARTIAL is not supported yet",
+            )));
         }
         foreign_key_id += 1;
         let fk_name = match definition.name.as_deref() {

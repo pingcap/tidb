@@ -23,7 +23,6 @@ pub mod context;
 pub mod bad_null;
 pub mod column;
 pub mod generated_column;
-pub mod partition_errors;
 pub mod partition_fold;
 pub mod partition_metadata;
 pub mod table_from_meta;

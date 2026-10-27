@@ -51,7 +51,6 @@
 //! [`build`] therefore routes every function-call default through
 //! [`func_call_default`] and never through the constant folder.
 //!
-use std::fmt::Display;
 
 use tidb_ast::Expr;
 use tidb_error::mysql::MysqlError;
@@ -175,86 +174,6 @@ impl ColumnDefault {
     }
 }
 
-/// Why a `DEFAULT` was refused at DDL time.
-#[derive(Clone, Debug)]
-pub enum DefaultError {
-    /// Go `ErrDefValGeneratedNamedFunctionIsNotAllowed` (3770): the default
-    /// names a function TiDB does not allow there. The payload is the
-    /// function name as Go reports it.
-    FunctionNotAllowed(String),
-    /// Go `dbterror.ErrInvalidDefaultValue` (1067): the default is not one
-    /// this column can carry. The caller names the column.
-    InvalidDefault,
-    /// Go `expression.ErrIncorrectParameterCount` (1582).
-    WrongParameterCount(&'static str),
-    /// Go `ErrColumnTypeUnsupportedNextValue` (8228).
-    UnsupportedSequenceDefaultType,
-    /// A form Go accepts that this tier does not model yet, named so a
-    /// refusal says which.
-    Unsupported(&'static str),
-    /// Go `plannererrors.ErrBadField` (1054): the DEFAULT expression names a
-    /// column the table does not have (`DEFAULT (a)` on a table without `a`).
-    UnknownColumn(String),
-}
-
-impl DefaultError {
-    /// Attaches the column name: the error Go's DDL raises for this DEFAULT
-    /// decision, the same for every DDL frontend.
-    #[must_use]
-    pub fn to_mysql_error(self, column: &str) -> MysqlError {
-        match self {
-            Self::FunctionNotAllowed(function) => default_function_not_allowed(column, function),
-            Self::InvalidDefault => invalid_default(column),
-            Self::WrongParameterCount(function) => {
-                tidb_expr::EvalError::WrongParameterCount(function).to_mysql_error()
-            }
-            Self::UnsupportedSequenceDefaultType => unsupported_sequence_default_type(column),
-            Self::Unsupported(reason) => MysqlError::unknown(reason),
-            Self::UnknownColumn(name) => unknown_column_in_clause(name, "expression"),
-        }
-    }
-}
-
-/// Go `dbterror.ErrDefValGeneratedNamedFunctionIsNotAllowed` (3770).
-pub fn default_function_not_allowed(column: impl Display, function: impl Display) -> MysqlError {
-    MysqlError::terror(
-        &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED,
-        format!(
-            "Default value expression of column '{column}' contains a disallowed function: \
-             `{function}`."
-        ),
-    )
-}
-
-/// Go `dbterror.ErrInvalidDefaultValue` (1067): "Invalid default value for
-/// '%-.192s'".
-pub fn invalid_default(column: impl Display) -> MysqlError {
-    MysqlError::terror(
-        &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE,
-        format!("Invalid default value for '{column}'"),
-    )
-}
-
-/// Go `dbterror.ErrColumnTypeUnsupportedNextValue` (8228).
-pub fn unsupported_sequence_default_type(column: impl Display) -> MysqlError {
-    MysqlError::terror(
-        &tidb_util::dbterror::ERR_COLUMN_TYPE_UNSUPPORTED_NEXT_VALUE,
-        format!("Unsupported sequence default value for column type '{column}'"),
-    )
-}
-
-/// Go `plannererrors.ErrUnknownColumn` (1054): "Unknown column '%-.192s' in
-/// '%-.192s'", the column folded to lower case as Go's resolver reports it.
-pub fn unknown_column_in_clause(column: impl AsRef<str>, clause: impl Display) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN,
-        format!(
-            "Unknown column '{}' in '{clause}'",
-            tidb_hack::go_to_lower(column)
-        ),
-    )
-}
-
 fn is_value_expr(expr: &Expr) -> bool {
     matches!(
         expr,
@@ -292,7 +211,7 @@ fn computed_default(
     expr: &Expr,
     added_origin_safety: AddedOriginSafety,
     string_charset: &str,
-) -> Result<Option<ColumnDefault>, DefaultError> {
+) -> Result<Option<ColumnDefault>, MysqlError> {
     Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
         // Go `restoreFuncCall` restores the AST the DDL session parsed, whose
         // plain string literals carry its `character_set_connection`.
@@ -357,13 +276,14 @@ fn default_restore_flags() -> tidb_ast::RestoreFlags {
 /// `Ok(None)` is Go's `(nil, false, nil)` return, which means "not settled
 /// here, keep going" -- the clock marker on a column that is not temporal.
 fn func_call_default(
+    column: &str,
     name: &str,
     args: &[Expr],
     expr: &Expr,
     field_type: &FieldType,
     current_database: Option<&str>,
     string_charset: &str,
-) -> Result<Option<ColumnDefault>, DefaultError> {
+) -> Result<Option<ColumnDefault>, MysqlError> {
     // Go's "%s with disallowed args" refusals print `expr.FnName.String()`,
     // the name as written; only the dispatch is case-insensitive.
     let lower = name.to_ascii_lowercase();
@@ -383,7 +303,10 @@ fn func_call_default(
                 _ => 0,
             };
             if written_fsp != field_type.decimal() {
-                return Err(DefaultError::InvalidDefault);
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                        .generate_with_stack_by_args(&[column.into()]),
+                ));
             }
         }
         return Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
@@ -414,7 +337,10 @@ fn func_call_default(
             _ => 0,
         };
         if written_fsp != field_type.decimal() {
-            return Err(DefaultError::InvalidDefault);
+            return Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[column.into()]),
+            ));
         }
         return Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
             // Go stores the marker word itself, not the written spelling, so
@@ -435,10 +361,16 @@ fn func_call_default(
                     | FieldTypeCode::Long
                     | FieldTypeCode::LongLong
             ) {
-                return Err(DefaultError::UnsupportedSequenceDefaultType);
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_COLUMN_TYPE_UNSUPPORTED_NEXT_VALUE
+                        .generate_with_stack_by_args(&[column.into()]),
+                ));
             }
             let [Expr::Column(path)] = args else {
-                return Err(DefaultError::WrongParameterCount("nextval"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["nextval".into()]),
+                ));
             };
             let mut path = path.clone();
             if path.len() == 1 {
@@ -467,7 +399,10 @@ fn func_call_default(
         }
         "vec_from_text" => {
             if args.len() != 1 {
-                return Err(DefaultError::WrongParameterCount("vec_from_text"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["vec_from_text".into()]),
+                ));
             }
             computed_default(expr, AddedOriginSafety::Safe, string_charset)
         }
@@ -475,7 +410,10 @@ fn func_call_default(
         // `VerifyArgsWrapper` still enforces their individual arities.
         "rand" => {
             if args.len() > 1 {
-                return Err(DefaultError::WrongParameterCount("rand"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["rand".into()]),
+                ));
             }
             computed_default(
                 expr,
@@ -485,7 +423,10 @@ fn func_call_default(
         }
         "uuid" => {
             if !args.is_empty() {
-                return Err(DefaultError::WrongParameterCount("uuid"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["uuid".into()]),
+                ));
             }
             computed_default(
                 expr,
@@ -495,7 +436,10 @@ fn func_call_default(
         }
         "uuid_to_bin" => {
             if !(1..=2).contains(&args.len()) {
-                return Err(DefaultError::WrongParameterCount("uuid_to_bin"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["uuid_to_bin".into()]),
+                ));
             }
             computed_default(
                 expr,
@@ -505,54 +449,89 @@ fn func_call_default(
         }
         "date_format" => {
             let [now, format] = args else {
-                return Err(DefaultError::WrongParameterCount("date_format"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["date_format".into()]),
+                ));
             };
             let Some(now_args) = function_args(now, "now") else {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "{name} with disallowed args"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("{name} with disallowed args").into(),
+                        ]),
+                ));
             };
             if !now_args.is_empty() {
-                return Err(DefaultError::WrongParameterCount("now"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["now".into()]),
+                ));
             }
             let Some(format) = string_value(format) else {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "{name} with disallowed args"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("{name} with disallowed args").into(),
+                        ]),
+                ));
             };
             if !matches!(
                 format,
                 "%Y-%m" | "%Y-%m-%d" | "%Y-%m-%d %H.%i.%s" | "%Y-%m-%d %H:%i:%s"
             ) {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "KindString {format}"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("KindString {format}").into(),
+                        ]),
+                ));
             }
             computed_default(expr, AddedOriginSafety::Safe, string_charset)
         }
         "replace" => {
             let [source, _, _] = args else {
-                return Err(DefaultError::WrongParameterCount("replace"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["replace".into()]),
+                ));
             };
             let source = match source {
                 Expr::ConvertUsing { expr, .. } => expr.as_ref(),
                 source => source,
             };
             let Some(upper_args) = function_args(source, "upper") else {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "{name} with disallowed args"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("{name} with disallowed args").into(),
+                        ]),
+                ));
             };
             let [uuid] = upper_args else {
-                return Err(DefaultError::WrongParameterCount("upper"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["upper".into()]),
+                ));
             };
             let Some(uuid_args) = function_args(uuid, "uuid") else {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "{name} with disallowed args"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("{name} with disallowed args").into(),
+                        ]),
+                ));
             };
             if !uuid_args.is_empty() {
-                return Err(DefaultError::WrongParameterCount("uuid"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["uuid".into()]),
+                ));
             }
             computed_default(
                 expr,
@@ -562,23 +541,40 @@ fn func_call_default(
         }
         "upper" => {
             let [substring] = args else {
-                return Err(DefaultError::WrongParameterCount("upper"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["upper".into()]),
+                ));
             };
             let Some(substring_args) = function_args(substring, "substring_index") else {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "{name} with disallowed args"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("{name} with disallowed args").into(),
+                        ]),
+                ));
             };
             let [user, separator, _] = substring_args else {
-                return Err(DefaultError::WrongParameterCount("substring_index"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["substring_index".into()]),
+                ));
             };
             let Some(user_args) = function_args(user, "user") else {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "{name} with disallowed args"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("{name} with disallowed args").into(),
+                        ]),
+                ));
             };
             if !user_args.is_empty() {
-                return Err(DefaultError::WrongParameterCount("user"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["user".into()]),
+                ));
             }
             if let Some(separator) = string_value(separator) {
                 if separator == "@" {
@@ -588,28 +584,46 @@ fn func_call_default(
                         string_charset,
                     );
                 }
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "KindString {separator}"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("KindString {separator}").into(),
+                        ]),
+                ));
             }
-            Err(DefaultError::FunctionNotAllowed(format!(
-                "{name} with disallowed args"
-            )))
+            Err(MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                    .generate_with_stack_by_args(&[
+                        column.into(),
+                        format!("{name} with disallowed args").into(),
+                    ]),
+            ))
         }
         "str_to_date" => {
             if args.len() != 2 {
-                return Err(DefaultError::WrongParameterCount("str_to_date"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["str_to_date".into()]),
+                ));
             }
             if !args.iter().all(is_value_expr) {
-                return Err(DefaultError::FunctionNotAllowed(format!(
-                    "{name} with disallowed args"
-                )));
+                return Err(MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[
+                            column.into(),
+                            format!("{name} with disallowed args").into(),
+                        ]),
+                ));
             }
             computed_default(expr, AddedOriginSafety::Safe, string_charset)
         }
         "json_object" => {
             if !args.len().is_multiple_of(2) {
-                return Err(DefaultError::WrongParameterCount("json_object"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["json_object".into()]),
+                ));
             }
             computed_default(
                 expr,
@@ -624,7 +638,10 @@ fn func_call_default(
         ),
         "json_quote" => {
             if args.len() != 1 {
-                return Err(DefaultError::WrongParameterCount("json_quote"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                        .generate_with_stack_by_args(&["json_quote".into()]),
+                ));
             }
             computed_default(
                 expr,
@@ -632,7 +649,10 @@ fn func_call_default(
                 string_charset,
             )
         }
-        _ => Err(DefaultError::FunctionNotAllowed(lower)),
+        _ => Err(MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
+                .generate_with_stack_by_args(&[column.into(), lower.into()]),
+        )),
     }
 }
 
@@ -641,11 +661,11 @@ fn func_call_default(
 /// at INSERT, not at CREATE) and refuses every other failure.
 fn build_deferred_expression(
     expr: &Expr,
-) -> Result<Result<Expression, tidb_expr::EvalError>, DefaultError> {
+) -> Result<Result<Expression, tidb_expr::EvalError>, MysqlError> {
     match rewrite_expr_resolved(expr, &NoResolver) {
         Ok(expression) => Ok(Ok(expression)),
         Err(error @ tidb_expr::EvalError::UnknownColumnInClause(..)) => Ok(Err(error)),
-        Err(_) => Err(DefaultError::Unsupported(
+        Err(_) => Err(MysqlError::unknown(
             "a DEFAULT expression this node cannot evaluate",
         )),
     }
@@ -653,9 +673,9 @@ fn build_deferred_expression(
 
 /// Builds the evaluable form of a computed default, refusing rather than
 /// storing a default whose expression this tier cannot evaluate.
-fn build_expression(expr: &Expr) -> Result<Expression, DefaultError> {
+fn build_expression(expr: &Expr) -> Result<Expression, MysqlError> {
     rewrite_expr_resolved(expr, &NoResolver)
-        .map_err(|_| DefaultError::Unsupported("a DEFAULT expression this node cannot evaluate"))
+        .map_err(|_| MysqlError::unknown("a DEFAULT expression this node cannot evaluate"))
 }
 
 /// Go `SetDefaultValue` -> `getDefaultValue` for one written `DEFAULT`.
@@ -671,9 +691,10 @@ fn build_expression(expr: &Expr) -> Result<Expression, DefaultError> {
 /// them. The same validation as a freshly parsed DEFAULT applies, so a
 /// marker on a non-temporal column is refused, not frozen.
 pub fn stored_clock_marker_default(
+    column: &str,
     field_type: &FieldType,
     fsp: Option<&str>,
-) -> Result<ColumnDefault, DefaultError> {
+) -> Result<ColumnDefault, MysqlError> {
     let expr = Expr::Func {
         name: "CURRENT_TIMESTAMP".to_owned(),
         args: fsp
@@ -681,17 +702,25 @@ pub fn stored_clock_marker_default(
             .unwrap_or_default(),
         origin_position: 0,
     };
-    build(&expr, field_type, |_| {
-        Err(DefaultError::Unsupported("a clock marker never folds"))
+    build(&expr, column, field_type, |_| {
+        Err(MysqlError::unknown("a clock marker never folds"))
     })
 }
 
 pub fn build(
     expr: &Expr,
+    column: &str,
     field_type: &FieldType,
-    fold: impl FnOnce(&Expr) -> Result<Datum, DefaultError>,
-) -> Result<ColumnDefault, DefaultError> {
-    build_with_current_database(expr, field_type, None, tidb_mysql::DefaultCharset, fold)
+    fold: impl FnOnce(&Expr) -> Result<Datum, MysqlError>,
+) -> Result<ColumnDefault, MysqlError> {
+    build_with_current_database(
+        expr,
+        column,
+        field_type,
+        None,
+        tidb_mysql::DefaultCharset,
+        fold,
+    )
 }
 
 /// [`build`] with Go's preprocessor in front: an unqualified sequence name
@@ -702,11 +731,12 @@ pub fn build(
 /// writes as each plain literal's `_charset` introducer.
 pub fn build_with_current_database(
     expr: &Expr,
+    column: &str,
     field_type: &FieldType,
     current_database: Option<&str>,
     string_charset: &str,
-    fold: impl FnOnce(&Expr) -> Result<Datum, DefaultError>,
-) -> Result<ColumnDefault, DefaultError> {
+    fold: impl FnOnce(&Expr) -> Result<Datum, MysqlError>,
+) -> Result<ColumnDefault, MysqlError> {
     let mut expr = expr;
     while let Expr::Paren(inner) = expr {
         expr = inner;
@@ -720,6 +750,7 @@ pub fn build_with_current_database(
     };
     if let Some((name, args)) = call {
         if let Some(default) = func_call_default(
+            column,
             &name,
             args,
             expr,
@@ -738,22 +769,14 @@ pub fn build_with_current_database(
     fold(expr).map(ColumnDefault::Value)
 }
 
-/// The rewriter's own refusal, as Go surfaces the expression rewriter's
-/// error; other failures keep the generic refusal.
-pub fn rewrite_error(error: tidb_expr::EvalError) -> DefaultError {
-    match error {
-        tidb_expr::EvalError::Unsupported(message) => DefaultError::Unsupported(message),
-        _ => DefaultError::Unsupported("a DEFAULT this node cannot evaluate"),
-    }
-}
-
 /// Builds the same computed `CURRENT_TIMESTAMP` value source used by a
 /// declared default, but for an `ON UPDATE CURRENT_TIMESTAMP` column. The
 /// column's fractional precision is part of the expression so evaluation and
 /// storage use the same rounding path as an omitted default.
 pub fn on_update_current_timestamp(
+    column: &str,
     field_type: &FieldType,
-) -> Result<ColumnDefault, DefaultError> {
+) -> Result<ColumnDefault, MysqlError> {
     let args = (field_type.decimal() > 0)
         .then(|| Expr::Int(field_type.decimal().to_string()))
         .into_iter()
@@ -763,7 +786,7 @@ pub fn on_update_current_timestamp(
         args,
         origin_position: 0,
     };
-    build(&expr, field_type, |_| {
+    build(&expr, column, field_type, |_| {
         unreachable!("a clock marker is computed")
     })
 }

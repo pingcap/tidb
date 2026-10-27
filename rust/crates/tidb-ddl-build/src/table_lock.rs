@@ -39,15 +39,18 @@ fn find_session_info_index(lock: &TableLockInfo, info: &SessionInfo) -> Option<u
 /// tbInfo.Lock.Tp, tbInfo.Lock.Sessions[0])`; `table` is the lowercase name.
 #[must_use]
 pub fn table_locked_error(table: &str, lock: &TableLockInfo) -> MysqlError {
-    crate::errors::table_locked(
-        table,
-        lock.tp,
-        &lock
-            .sessions
-            .iter()
-            .next()
-            .map(ToString::to_string)
-            .unwrap_or_default(),
+    let holder = lock
+        .sessions
+        .iter()
+        .next()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    MysqlError::from_terror(
+        &tidb_error::catalog::infoschema::ERR_TABLE_LOCKED.generate_with_stack_by_args(&[
+            table.into(),
+            lock.tp.sql().into(),
+            holder.into(),
+        ]),
     )
 }
 

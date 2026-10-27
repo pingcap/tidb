@@ -15,7 +15,6 @@
 //! The checks of the statements that move or remove a whole table, Go
 //! `pkg/ddl/executor.go`'s `dropTableObject` and `renameTable` admission.
 
-use crate::errors;
 use tidb_error::mysql::MysqlError;
 use tidb_hack::GoToLower;
 
@@ -53,12 +52,18 @@ pub fn check_drop_object(
     }
     match expected {
         DropObjectKind::View if actual != DropObjectKind::View => {
-            Err(errors::wrong_object(schema, name, "VIEW"))
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
+                    schema.into(),
+                    name.into(),
+                    "VIEW".into(),
+                ]),
+            ))
         }
         DropObjectKind::Table if actual != DropObjectKind::Table => Ok(false),
         DropObjectKind::Table if cached => Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
-                .generate_with_stack_by_args(&[("Drop Table").into()]),
+                .generate_with_stack_by_args(&["Drop Table".into()]),
         )),
         _ => Ok(true),
     }
@@ -133,7 +138,10 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         if !is_alter && target_exists {
             return Err(occupied());
         }
-        return Err(errors::table_not_exists(from_db, from_name));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[from_db.into(), from_name.into()]),
+        ));
     }
     if is_alter
         && from_db.go_to_lower() == to_db.go_to_lower()
@@ -163,7 +171,7 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
     if to_name.go_to_lower().chars().count() > 64 {
         return Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_util::dbterror::ERR_TOO_LONG_IDENT
-                .generate_with_stack_by_args(&[(to_name).to_string().into()]),
+                .generate_with_stack_by_args(&[to_name.to_string().into()]),
         ));
     }
     Ok(true)
@@ -206,7 +214,13 @@ pub fn check_view_target(
             &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
                 .generate_with_stack_by_args(&[(&format!("{database}.{name}")).into()]),
         )),
-        Some(false) => Err(errors::wrong_object(database, name, "VIEW")),
+        Some(false) => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_WRONG_OBJECT.generate_with_stack_by_args(&[
+                database.into(),
+                name.into(),
+                "VIEW".into(),
+            ]),
+        )),
         _ => Ok(()),
     }
 }

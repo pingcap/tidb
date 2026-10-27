@@ -170,7 +170,6 @@ use tidb_datatype::FieldType;
 
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 use crate::generated_column::{
     is_disallowed_generated_function, GeneratedColumn, TableColumnResolver,
 };
@@ -397,7 +396,7 @@ impl AdmissibilityScan {
                 // multi-valued, admitted only as the whole expression.
                 self.cast_array |= cast.array;
                 if cast.array && !cast_array_allowed {
-                    self.fail(tidb_error::mysql::MysqlError::from_terror(&tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions").to_string().into()])));
+                    self.fail(tidb_error::mysql::MysqlError::from_terror(&tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&["Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions".into()])));
                     return;
                 }
                 self.walk(&cast.expr);
@@ -468,7 +467,7 @@ impl AdmissibilityScan {
             // it can only turn an index this tier would have to evaluate
             // into an error, never build one whose stored keys disagree with
             // the rows they index.
-            _ => self.decline(errors::unsupported(
+            _ => self.decline(tidb_error::mysql::MysqlError::unknown(
                 "this expression form is not supported in an expression index yet",
             )),
         }
@@ -505,7 +504,7 @@ impl AdmissibilityScan {
         if tidb_expr::builtin_registry::verify_args_by_count(&name, count).is_err() {
             self.fail(tidb_error::mysql::MysqlError::from_terror(
                 &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
-                    .generate_with_stack_by_args(&[(name).to_string().into()]),
+                    .generate_with_stack_by_args(&[name.to_string().into()]),
             ));
             return false;
         }
@@ -536,11 +535,11 @@ impl AdmissibilityScan {
             return Err(match self.gen_type {
                 GenType::Column => tidb_error::mysql::MysqlError::from_terror(
                     &tidb_util::dbterror::ERR_GENERATED_COLUMN_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                        .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
                 GenType::Index => tidb_error::mysql::MysqlError::from_terror(
                     &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                        .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
             });
         }
@@ -554,18 +553,18 @@ impl AdmissibilityScan {
             return Err(match self.gen_type {
                 GenType::Column => tidb_error::mysql::MysqlError::from_terror(
                     &tidb_util::dbterror::ERR_GENERATED_COLUMN_ROW_VALUE_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                        .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
                 GenType::Index => tidb_error::mysql::MysqlError::from_terror(
                     &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ROW_VALUE_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                        .generate_with_stack_by_args(&[name.to_owned().into()]),
                 ),
             });
         }
         if self.window_func {
             return Err(tidb_error::mysql::MysqlError::from_terror(
                 &tidb_error::plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
-                    .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                    .generate_with_stack_by_args(&[name.to_owned().into()]),
             ));
         }
         if let Some(error) = self.other {
@@ -584,7 +583,7 @@ impl AdmissibilityScan {
             ));
         }
         if self.gen_type == GenType::Column && self.cast_array {
-            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions").to_string().into()])));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&["Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions".into()])));
         }
         Ok(())
     }
@@ -672,7 +671,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         if names.iter().any(|n| n.go_equal_fold(&name.go_to_lower())) {
             return Err(tidb_error::mysql::MysqlError::from_terror(
                 &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
-                    .generate_with_stack_by_args(&[(name).to_string().into()]),
+                    .generate_with_stack_by_args(&[name.to_string().into()]),
             ));
         }
 
@@ -688,10 +687,19 @@ pub fn build_hidden_columns_with_like_default_escape(
                 return Err(match (resolver.missing_name(), error) {
                     // Go reports 1054 with the clause `expression`, not the
                     // `generated column function` a column generation uses.
-                    (Some(missing), _) => errors::unknown_column_in_clause(missing, "expression".to_owned()),
-                    (None, tidb_expr::EvalError::Unsupported(_)) => errors::unsupported(
-                        "this expression index's expression is not supported yet",
+                    (Some(missing), _) => tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                            &[
+                                tidb_hack::go_to_lower(missing).into(),
+                                ("expression".to_owned()).to_string().into(),
+                            ],
+                        ),
                     ),
+                    (None, tidb_expr::EvalError::Unsupported(_)) => {
+                        tidb_error::mysql::MysqlError::unknown(
+                            "this expression index's expression is not supported yet",
+                        )
+                    }
                     // Go returns `BuildSimpleExpr`'s own error, such as
                     // `CAST(j AS JSON ARRAY)`'s 1235.
                     (None, error) => error.to_mysql_error(),
@@ -699,7 +707,12 @@ pub fn build_hidden_columns_with_like_default_escape(
             }
         };
         if let Some(missing) = resolver.missing_name() {
-            return Err(errors::unknown_column_in_clause(missing, "expression".to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_hack::go_to_lower(missing).into(),
+                    ("expression".to_owned()).to_string().into(),
+                ]),
+            ));
         }
         // Go `BuildHiddenColumnInfo`: an expression that IS a column is 3762,
         // checked on the BUILT expression so `((a))` and `(((a)))` are both
@@ -722,7 +735,7 @@ pub fn build_hidden_columns_with_like_default_escape(
         // index whose key type disagrees with the value it stores reads back
         // the wrong rows and `ADMIN CHECK TABLE` would call it consistent.
         let Some(mut field_type) = built_expr.static_type().cloned() else {
-            return Err(errors::unsupported(
+            return Err(tidb_error::mysql::MysqlError::unknown(
                 "an expression index over an expression with no static type is not supported yet",
             ));
         };

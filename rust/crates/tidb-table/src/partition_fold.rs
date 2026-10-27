@@ -55,11 +55,16 @@ pub fn fold_range_column_value(
         // allowlist over each bound after folding.  COLLATE is not one of the
         // allowed value forms, even though the evaluator can otherwise pass
         // the string through unchanged.
-        return Err(crate::partition_errors::partition_function_not_allowed());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_FUNCTION_IS_NOT_ALLOWED
+                .generate_with_stack_by_args(&[]),
+        ));
     }
     let value = eval_column_value(expr, ctx)?;
     if !range_column_value_kind_allowed(value.kind(), field_type.code()) {
-        return Err(crate::partition_errors::partition_column_value_wrong_type());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+        ));
     }
     convert_column_value(value, field_type, ctx)
 }
@@ -84,7 +89,12 @@ pub fn partition_value_resolver(
 pub fn partition_value_failure(error: tidb_expr::EvalError, otherwise: MysqlError) -> MysqlError {
     match error {
         tidb_expr::EvalError::UnknownColumnInClause(column, clause) => {
-            crate::column_default::unknown_column_in_clause(column, clause.to_owned())
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_hack::go_to_lower(column).into(),
+                    clause.to_owned().into(),
+                ]),
+            )
         }
         _ => otherwise,
     }
@@ -96,14 +106,24 @@ pub fn eval_column_value(
     expr: &Expr,
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<Datum, MysqlError> {
-    let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx))
-            .map_err(|_| crate::partition_errors::partition_column_value_wrong_type())?;
+    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+        expr,
+        &partition_value_resolver(ctx),
+    )
+    .map_err(|_| {
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+        )
+    })?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
     rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
-        .map_err(|_| crate::partition_errors::partition_column_value_wrong_type())
+        .map_err(|_| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+            )
+        })
 }
 
 fn convert_column_value(
@@ -117,9 +137,15 @@ fn convert_column_value(
             ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
             &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
         )
-        .map_err(|_| crate::partition_errors::partition_column_value_wrong_type())?;
+        .map_err(|_| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+            )
+        })?;
     if converted.event.is_some() {
-        return Err(crate::partition_errors::partition_column_value_wrong_type());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+        ));
     }
     Ok(converted.value)
 }
@@ -166,7 +192,10 @@ pub fn build_list_values(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(PartitionKind, Option<MysqlError>), MysqlError> {
     if definitions.is_empty() {
-        return Err(crate::partition_errors::partitions_must_be_defined("LIST"));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                .generate_with_stack_by_args(&["LIST".into()]),
+        ));
     }
     let unsigned = partition_expression_is_unsigned(built);
     build_list_values_with_unsigned(definitions, unsigned, ctx, definition_tail)
@@ -183,7 +212,10 @@ pub fn build_list_values_with_unsigned(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(PartitionKind, Option<MysqlError>), MysqlError> {
     if definitions.is_empty() {
-        return Err(crate::partition_errors::partitions_must_be_defined("LIST"));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                .generate_with_stack_by_args(&["LIST".into()]),
+        ));
     }
     let mut values = Vec::new();
     let mut seen = HashSet::new();
@@ -202,31 +234,48 @@ pub fn build_list_values_with_unsigned(
         match &definition.clause {
             PartitionDefinitionClause::Default => {
                 if default_partition.replace(ordinal).is_some() {
-                    duplicate.get_or_insert(crate::partition_errors::partition_duplicate_list_value());
+                    duplicate.get_or_insert(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                            .generate_with_stack_by_args(&[]),
+                    ));
                 }
             }
             PartitionDefinitionClause::In(items) => {
                 for item in items {
                     if matches!(item, PartitionValue::Default) {
                         if default_partition.replace(ordinal).is_some() {
-                            duplicate.get_or_insert(crate::partition_errors::partition_duplicate_list_value());
+                            duplicate.get_or_insert(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                                    .generate_with_stack_by_args(&[]),
+                            ));
                         }
                         continue;
                     };
                     let PartitionValue::Expr(expr) = item else {
-                        return Err(crate::partition_errors::partition_values_not_int(definition.name.clone()));
+                        return Err(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE
+                                .generate_with_stack_by_args(&[(definition.name.clone())
+                                    .to_string()
+                                    .into()]),
+                        ));
                     };
                     let value = fold_list_value(expr, &definition.name, unsigned, ctx)?;
                     let Some(bits) = value else {
                         if null_partition.replace(ordinal).is_some() {
-                            duplicate.get_or_insert(crate::partition_errors::partition_duplicate_list_value());
+                            duplicate.get_or_insert(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                                    .generate_with_stack_by_args(&[]),
+                            ));
                         }
                         continue;
                     };
                     if seen.insert(bits as u64) {
                         values.push((bits, ordinal));
                     } else {
-                        duplicate.get_or_insert(crate::partition_errors::partition_duplicate_list_value());
+                        duplicate.get_or_insert(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                                .generate_with_stack_by_args(&[]),
+                        ));
                         // Go's loader fills a map, so the LAST definition to
                         // claim a value owns it. Pushing a second pair would
                         // instead leave the FIRST one to win the search.
@@ -240,12 +289,17 @@ pub fn build_list_values_with_unsigned(
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
-                return Err(crate::partition_errors::partition_wrong_values(
-                    "RANGE",
-                    "LESS THAN",
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                        .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
-            _ => return Err(crate::partition_errors::partitions_must_be_defined("LIST")),
+            _ => {
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                        .generate_with_stack_by_args(&["LIST".into()]),
+                ))
+            }
         }
         definition_tail(ordinal)?;
     }
@@ -265,24 +319,43 @@ fn fold_list_value(
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<Option<i64>, MysqlError> {
     let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx))
-            .map_err(|error| partition_value_failure(error, crate::partition_errors::partition_values_not_int(partition.to_owned())))?;
+        tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(
+            |error| {
+                partition_value_failure(
+                    error,
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE
+                            .generate_with_stack_by_args(&[partition.to_owned().into()]),
+                    ),
+                )
+            },
+        )?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
     match rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
-        .map_err(|_| crate::partition_errors::partition_values_not_int(partition.to_owned()))?
-    {
+        .map_err(|_| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE
+                    .generate_with_stack_by_args(&[partition.to_owned().into()]),
+            )
+        })? {
         Datum::Int(value) => {
             if unsigned && value < 0 {
-                Err(crate::partition_errors::partition_const_domain())
+                Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_PARTITION_CONST_DOMAIN
+                        .generate_with_stack_by_args(&[]),
+                ))
             } else {
                 Ok(Some(value))
             }
         }
         Datum::UInt(value) => Ok(Some(value as i64)),
         Datum::Null => Ok(None),
-        _ => Err(crate::partition_errors::partition_values_not_int(partition.to_owned())),
+        _ => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE
+                .generate_with_stack_by_args(&[partition.to_owned().into()]),
+        )),
     }
 }
 
@@ -341,24 +414,38 @@ pub fn fold_range_bound(
     partition: &str,
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<FoldedRangeBound, MysqlError> {
-    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx))
-        .map_err(|error| {
-            partition_value_failure(
-                error,
-                crate::partition_errors::partition_values_not_int(partition.to_owned()),
-            )
-        })?;
+    let rewritten =
+        tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(
+            |error| {
+                partition_value_failure(
+                    error,
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE
+                            .generate_with_stack_by_args(&[partition.to_owned().into()]),
+                    ),
+                )
+            },
+        )?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
     dual.set_num_virtual_rows(1);
     let value = rewritten
         .eval(ctx.get_expr_ctx().get_eval_ctx(), dual.get_row(0))
-        .map_err(|_| crate::partition_errors::partition_values_not_int(partition.to_owned()))?;
+        .map_err(|_| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE
+                    .generate_with_stack_by_args(&[partition.to_owned().into()]),
+            )
+        })?;
     match value {
         Datum::Int(value) => Ok(FoldedRangeBound::Signed(value)),
         Datum::UInt(value) => Ok(FoldedRangeBound::Unsigned(value)),
-        Datum::Null => Err(crate::partition_errors::partition_field_type_not_allowed(
-            "NULL".to_owned(),
+        Datum::Null => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
+                .generate_with_stack_by_args(&[("NULL".to_owned()).to_string().into()]),
         )),
-        _ => Err(crate::partition_errors::partition_values_not_int(partition.to_owned())),
+        _ => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE
+                .generate_with_stack_by_args(&[partition.to_owned().into()]),
+        )),
     }
 }

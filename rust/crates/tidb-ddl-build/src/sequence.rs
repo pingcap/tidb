@@ -21,7 +21,6 @@
 use tidb_table::sequence::SequenceInfo;
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 use tidb_ast::SequenceOption;
 
 /// Go `model.Default*Sequence*Value`: the defaults depend on the SIGN of the
@@ -149,7 +148,12 @@ fn build_sequence_info(
     };
     let info = apply_sequence_options(base, options, true);
     if !sequence_options_are_valid(&info) {
-        return Err(errors::sequence_values_conflicting(database, name));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_SEQUENCE_INVALID_DATA.generate_with_stack_by_args(&[
+                tidb_hack::go_to_lower(database).into(),
+                tidb_hack::go_to_lower(name).into(),
+            ]),
+        ));
     }
     Ok(info)
 }
@@ -236,7 +240,7 @@ pub fn build_create_sequence(
     if name.is_empty() || name.as_bytes().last() == Some(&b' ') {
         return Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
-                .generate_with_stack_by_args(&[(name).to_string().into()]),
+                .generate_with_stack_by_args(&[name.to_string().into()]),
         ));
     }
     let mut comment = String::new();
@@ -274,7 +278,12 @@ pub fn alter_sequence_options(
 ) -> Result<(SequenceInfo, Option<i64>), MysqlError> {
     let info = apply_sequence_options(existing, options, false);
     if !sequence_options_are_valid(&info) {
-        return Err(errors::sequence_values_conflicting(database, name));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_SEQUENCE_INVALID_DATA.generate_with_stack_by_args(&[
+                tidb_hack::go_to_lower(database).into(),
+                tidb_hack::go_to_lower(name).into(),
+            ]),
+        ));
     }
     let restart = options.iter().find_map(|option| match option {
         SequenceOption::RestartWith(value) => Some(*value),

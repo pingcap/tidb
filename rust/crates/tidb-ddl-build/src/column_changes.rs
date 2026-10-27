@@ -79,13 +79,15 @@ pub fn modify_column_error(error: tidb_table::kv_table::KvTableError) -> MysqlEr
             &tidb_util::dbterror::ERR_INVALID_USE_OF_NULL,
             "Invalid use of NULL value".to_owned(),
         ),
-        KvTableError::Vector(message) => crate::errors::unsupported(message),
+        KvTableError::Vector(message) => tidb_error::mysql::MysqlError::unknown(message),
         KvTableError::DuplicateEntry { value, key } => MysqlError::terror(
             &tidb_error::catalog::kv::ERR_KEY_EXISTS,
             format!("Duplicate entry '{value}' for key '{key}'"),
         ),
         // Go `updateColumnWorker.reformatErrors`' text and code.
         KvTableError::ColumnCast(error) => error,
-        other => crate::errors::parse_error(format!("column modification failed: {other:?}")),
+        other => tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(
+            format!("column modification failed: {other:?}"),
+        )),
     }
 }

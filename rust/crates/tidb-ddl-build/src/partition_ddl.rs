@@ -29,7 +29,6 @@ use tidb_table::partition_routing::{
     PartitionDef, PartitionKind, PartitionSpec, RangeBound, RangeColumnBound,
 };
 
-use crate::errors;
 use crate::table_partition::{self, StoredPartitionDefinition};
 
 /// Go `StmtCtx.AppendNote(err)` for a refusal `IF [NOT] EXISTS` turns into a
@@ -153,7 +152,13 @@ pub fn plan_hash_partition_management(
                         ("SYSTEM_TIME", "HISTORY")
                     }
                 };
-                return Err(errors::partition_wrong_values(method, clause));
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                        .generate_with_stack_by_args(&[
+                            method.to_string().into(),
+                            clause.to_string().into(),
+                        ]),
+                ));
             }
             let added = if definitions.is_empty() {
                 count as usize
@@ -346,7 +351,7 @@ pub fn plan_partition_change(
             query_rewrite = Some(rewrite);
         }
         _ => {
-            return Err(errors::unsupported(
+            return Err(tidb_error::mysql::MysqlError::unknown(
                 "the job path plans only ADD and DROP PARTITION changes",
             ));
         }
@@ -555,7 +560,7 @@ pub fn plan_drop_partitions(
     ) {
         return Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_util::dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
-                .generate_with_stack_by_args(&[("DROP").into()]),
+                .generate_with_stack_by_args(&["DROP".into()]),
         ));
     }
     refuse_affinity(table, "DROP PARTITION")?;
@@ -631,13 +636,20 @@ pub fn plan_add_partitions(
         // Go `BuildAddedPartitionInfo`: a RANGE/LIST table needs its
         // definitions written out; a bare count carries none.
         tidb_ast::AddPartitionSpec::Count(_) => {
-            return Err(errors::partitions_must_be_defined(non_hash_partition_method(
-                table,
-            )));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                    .generate_with_stack_by_args(&[(non_hash_partition_method(table))
+                        .to_string()
+                        .into()]),
+            ));
         }
     };
     if definitions.is_empty() {
-        return Err(errors::partitions_must_be_defined(non_hash_partition_method(table)));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED.generate_with_stack_by_args(
+                &[(non_hash_partition_method(table)).to_string().into()],
+            ),
+        ));
     }
     // Go `checkListPartitions` / `buildRangePartitionDefinitions`: a definition
     // without its VALUES clause is 1479 naming the clause the method needs.
@@ -662,7 +674,7 @@ pub fn plan_add_partitions(
         .iter()
         .any(|definition| !definition.sub_partitions.is_empty())
     {
-        return Err(errors::unsupported(
+        return Err(tidb_error::mysql::MysqlError::unknown(
             "ALTER TABLE ... ADD PARTITION subpartitions are not supported yet",
         ));
     }
@@ -714,7 +726,7 @@ pub fn plan_add_partitions(
             // A table wearing `PartitionTypeNone` is mid-`ALTER ...
             // PARTITION BY`; it has no LIST values for a definition to join.
             PartitionKind::None => {
-                return Err(errors::unsupported(
+                return Err(tidb_error::mysql::MysqlError::unknown(
                     "ADD PARTITION while the table is being repartitioned".to_owned(),
                 ))
             }
@@ -769,7 +781,10 @@ pub fn plan_add_partitions(
                     || (null_partition.is_some() && added_null.is_some())
                     || (default_partition.is_some() && added_default.is_some())
                 {
-                    return Err(errors::partition_duplicate_list_value());
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                            .generate_with_stack_by_args(&[]),
+                    ));
                 }
                 added
             }
@@ -818,7 +833,10 @@ pub fn plan_add_partitions(
                 if added_keys.keys().any(|key| keys.contains_key(key))
                     || (default_partition.is_some() && added_default.is_some())
                 {
-                    return Err(errors::partition_duplicate_list_value());
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                            .generate_with_stack_by_args(&[]),
+                    ));
                 }
                 added
             }
@@ -951,7 +969,7 @@ pub fn plan_add_partitions(
             PartitionKind::Hash | PartitionKind::Key => {
                 return Err(tidb_error::mysql::MysqlError::from_terror(
                     &tidb_util::dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
-                        .generate_with_stack_by_args(&[("ADD").into()]),
+                        .generate_with_stack_by_args(&["ADD".into()]),
                 ));
             }
         }
@@ -1120,7 +1138,10 @@ pub fn plan_last_partition_less_than(
             return Err(unsupported("LAST PARTITION of HASH/KEY partitioned table"))
         }
         PartitionKind::List { .. } | PartitionKind::ListColumns { .. } => {
-            return Err(errors::partitions_must_be_defined("LIST"))
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                    .generate_with_stack_by_args(&["LIST".into()]),
+            ))
         }
         _ => {}
     }
@@ -1280,7 +1301,11 @@ fn existing_method(partition: &PartitionSpec) -> Result<PartitionMethod, MysqlEr
     let expression = || {
         tidb_model::generated_expr::parse_expression(&partition.expr_text)
             .map(Some)
-            .map_err(|error| errors::parse_error(error.message))
+            .map_err(|error| {
+                tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(
+                    error.message,
+                ))
+            })
     };
     let (kind, expr, columns) = match &partition.kind {
         PartitionKind::Range { .. } => (PartitionType::RANGE, expression()?, Vec::new()),
@@ -1394,7 +1419,10 @@ pub fn plan_reorganize_partition(
         // Go `BuildAddedPartitionInfo`: RANGE and LIST need written
         // definitions.
         if definitions.is_empty() {
-            return Err(errors::partitions_must_be_defined(partition.kind.sql()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                    .generate_with_stack_by_args(&[(partition.kind.sql()).to_string().into()]),
+            ));
         }
 
         // Go `getReorganizedDefinitions`: RANGE splices the new definitions
@@ -1548,7 +1576,12 @@ fn range_columns_bounds_equal(
             (RangeColumnBound::Value(old), RangeColumnBound::Value(new)) => {
                 let order =
                     tidb_expr::compare_datums_with_collation(old, new, field_type.collation())
-                        .map_err(|_| errors::partition_column_value_wrong_type())?;
+                        .map_err(|_| {
+                            tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                                    .generate_with_stack_by_args(&[]),
+                            )
+                        })?;
                 if order != std::cmp::Ordering::Equal {
                     return Ok(false);
                 }
@@ -1609,7 +1642,7 @@ pub fn plan_alter_table_partitioning(
         // method that resolved no column has no expression to build
         // (`extractPartitionExprColumns`).
         if matches!(spec.kind, PartitionKind::Key) && spec.dependencies.is_empty() {
-            return Err(errors::unsupported(
+            return Err(tidb_error::mysql::MysqlError::unknown(
                 "expression should not be an empty string".to_owned(),
             ));
         }

@@ -4396,7 +4396,7 @@ pub fn null_timestamp_substitute(
     {
         return None;
     }
-    let now = crate::column_default::on_update_current_timestamp(field_type).ok()?;
+    let now = crate::column_default::on_update_current_timestamp("", field_type).ok()?;
     crate::column_default::evaluate(
         &now,
         field_type,

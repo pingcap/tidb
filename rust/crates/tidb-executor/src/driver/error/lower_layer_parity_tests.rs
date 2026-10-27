@@ -241,62 +241,6 @@ mod autoinc {
     }
 }
 
-mod default_error {
-    use tidb_table::column_default::DefaultError;
-
-    /// `DefaultError::to_mysql_error` renders what the retired
-    /// `into_driver_error` did: code, SQLSTATE, message and identity.
-    #[test]
-    fn default_error_renders_as_the_driver_error_did() {
-        use crate::{DriverError, ExecError};
-        for (new, old) in [
-            (
-                DefaultError::FunctionNotAllowed("rand".to_owned()),
-                DriverError::from(
-                    tidb_util::dbterror::ERR_DEF_VAL_GENERATED_NAMED_FUNCTION_IS_NOT_ALLOWED
-                        .generate_with_stack_by_args(&["c".into(), "rand".into()]),
-                ),
-            ),
-            (
-                DefaultError::InvalidDefault,
-                DriverError::from(
-                    tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
-                        .generate_with_stack_by_args(&["c".into()]),
-                ),
-            ),
-            (
-                DefaultError::WrongParameterCount("now"),
-                DriverError::Exec(ExecError::Eval(tidb_expr::EvalError::WrongParameterCount(
-                    "now",
-                ))),
-            ),
-            (
-                DefaultError::UnsupportedSequenceDefaultType,
-                DriverError::from(
-                    tidb_util::dbterror::ERR_COLUMN_TYPE_UNSUPPORTED_NEXT_VALUE
-                        .generate_with_stack_by_args(&["c".into()]),
-                ),
-            ),
-            (
-                DefaultError::Unsupported("a DEFAULT this node cannot evaluate"),
-                DriverError::unsupported("a DEFAULT this node cannot evaluate"),
-            ),
-            (
-                DefaultError::UnknownColumn("ÀB".to_owned()),
-                DriverError::from(
-                    tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
-                        tidb_util::stringutil::go_to_lower(&"ÀB".to_owned()).into(),
-                        ("expression".to_owned()).into(),
-                    ]),
-                ),
-            ),
-        ] {
-            assert_eq!(new.to_mysql_error("c"), old.to_mysql_error());
-        }
-    }
-
-}
-
 mod kill_stop {
     use crate::{DriverError, ExecError};
     use tidb_kv::mem_quota::KillStop;

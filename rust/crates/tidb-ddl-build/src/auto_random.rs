@@ -15,7 +15,6 @@
 use tidb_table::kv_table::{AutoIdError, AutoRandomError, AutoRandomSpec};
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 /// Validates Go's `setTableAutoRandomBits` contract and returns the persisted
@@ -146,13 +145,13 @@ pub fn rebase_error(error: AutoRandomError) -> MysqlError {
         AutoRandomError::RebaseOverflow { base, maximum } => tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(format!(
                 "alter auto_random_base to {base} overflows the incremental bits, max allowed base is {maximum}"
             )).to_string().into()])),
-        AutoRandomError::InvalidDefinition(reason) => tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[(reason).to_string().into()])),
+        AutoRandomError::InvalidDefinition(reason) => tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INVALID_AUTO_RANDOM.generate_with_stack_by_args(&[reason.to_string().into()])),
         AutoRandomError::AutoId(AutoIdError::Exhausted) => tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED.generate_with_stack_by_args(&[])),
         AutoRandomError::AutoId(AutoIdError::OutOfRange { value, type_name }) => {
             tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(format!("constant {} overflows {}", (value), (type_name))))
         }
         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
-            errors::auto_id_unavailable(detail.0)
+            tidb_error::mysql::MysqlError::unknown(detail.0)
         }
         AutoRandomError::ExplicitInsertDisabled => {
             unreachable!("a rebase does not inspect row values")

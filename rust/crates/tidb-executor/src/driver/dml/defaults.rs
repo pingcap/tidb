@@ -120,8 +120,8 @@ impl PreparedOnUpdateNow {
             {
                 continue;
             }
-            let value = crate::column_default::on_update_current_timestamp(&meta.field_type)
-                .map_err(|error| error.to_mysql_error(&meta.name))?;
+            let value =
+                crate::column_default::on_update_current_timestamp(&meta.name, &meta.field_type)?;
             columns.push((offset, value, meta.clone()));
         }
         Ok(Self { columns })

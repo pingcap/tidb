@@ -20,7 +20,6 @@
 
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 use tidb_hack::GoToLower;
 use tidb_model::RegionSplitPolicy;
 
@@ -125,7 +124,7 @@ fn restored_bounds(bounds: &[tidb_ast::Expr]) -> Result<Vec<String>, MysqlError>
                 bound,
                 &tidb_expr::simple_expr::BuildOptions::default(),
             )
-            .map_err(|error| errors::unsupported(error.to_string()))?;
+            .map_err(|error| tidb_error::mysql::MysqlError::unknown(error.to_string()))?;
             built
                 .eval(&tidb_expr::NoColumns, tidb_chunk::row::Row::empty())
                 .map_err(|error| error.to_mysql_error())?;

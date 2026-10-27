@@ -3329,10 +3329,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 tidb_table::kv_table::KvTableError::CacheTableUnsupported(operation) => {
                     tidb_error::mysql::MysqlError::from_terror(
                         &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
-                            .generate_with_stack_by_args(&[(operation).into()]),
+                            .generate_with_stack_by_args(&[operation.into()]),
                     )
                 }
-                other => tidb_ddl_build::errors::unsupported(format!(
+                other => tidb_error::mysql::MysqlError::unknown(format!(
                     "cache table size check failed: {other:?}"
                 )),
             };

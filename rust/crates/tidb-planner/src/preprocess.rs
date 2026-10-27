@@ -391,10 +391,16 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
         for option in &create.table_options {
             match option {
                 TableOption::ShardRowIdBits(_) => {
-                    return Err(opt_on_temporary_table("shard_row_id_bits"))
+                    return Err(MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
+                    ))
                 }
                 TableOption::PlacementPolicy(_) => {
-                    return Err(opt_on_temporary_table("PLACEMENT"))
+                    return Err(MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            .generate_with_stack_by_args(&["PLACEMENT".into()]),
+                    ))
                 }
                 _ => {}
             }
@@ -624,7 +630,10 @@ fn check_column_options(temporary: bool, options: &[ColumnOption]) -> Result<usi
                 stored = *is_stored;
             }
             ColumnOption::AutoRandom(_) if temporary => {
-                return Err(opt_on_temporary_table("auto_random"));
+                return Err(MysqlError::from_terror(
+                    &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        .generate_with_stack_by_args(&["auto_random".into()]),
+                ));
             }
             _ => {}
         }
@@ -1004,20 +1013,6 @@ fn wrong_table_name(name: impl std::fmt::Display) -> MysqlError {
     MysqlError::terror(
         &tidb_util::dbterror::ERR_WRONG_TABLE_NAME,
         format!("Incorrect table name '{name}'"),
-    )
-}
-
-/// Go `plannererrors.ErrOptOnTemporaryTable` (the DDL executor's operations
-/// raise `dbterror`'s definition).
-fn opt_on_temporary_table(operation: &str) -> MysqlError {
-    MysqlError::terror(
-        match operation {
-            "placement" | "pre split regions" | "set TiFlash replica" | "masking policy" => {
-                &tidb_util::dbterror::ERR_OPT_ON_TEMPORARY_TABLE
-            }
-            _ => &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE,
-        },
-        format!("`{operation}` is unsupported on temporary tables."),
     )
 }
 

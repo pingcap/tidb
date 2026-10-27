@@ -414,10 +414,11 @@ pub fn cluster_table(
             // unservable here.
             Some(
                 crate::column_default::stored_clock_marker_default(
+                    &name,
                     &column.field_type,
                     fsp.as_deref(),
                 )
-                .map_err(|error| format!("its column {name} has a default {error:?}"))?,
+                .map_err(|error| format!("its column {name} has a default: {}", error.message))?,
             )
         } else if !column.default_is_expr
             && matches!(
@@ -444,12 +445,12 @@ pub fn cluster_table(
                 origin_position: 0,
             };
             Some(
-                crate::column_default::build(&marker, &column.field_type, |_| {
-                    Err(crate::column_default::DefaultError::Unsupported(
+                crate::column_default::build(&marker, &name, &column.field_type, |_| {
+                    Err(tidb_error::mysql::MysqlError::unknown(
                         "a clock marker never folds",
                     ))
                 })
-                .map_err(|error| format!("its column {name} has a default {error:?}"))?,
+                .map_err(|error| format!("its column {name} has a default: {}", error.message))?,
             )
         } else if column.default_is_expr {
             // Go stores the expression spelling with `default_is_expr`;

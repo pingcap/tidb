@@ -18,7 +18,6 @@
 use tidb_datatype::{Datum, FieldType};
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 
 /// Go `checkColumnDefaultValue` (`pkg/ddl/add_column.go:1212`), the BLOB /
 /// TEXT / JSON arm, shared by every entry point that Go's `SetDefaultValue`
@@ -65,7 +64,7 @@ pub fn check_column_default_value(
     use tidb_datatype::FieldTypeCode;
 
     if !value.is_null() && field_type.code() == FieldTypeCode::VectorFloat32 {
-        return Err(errors::unsupported(format!(
+        return Err(tidb_error::mysql::MysqlError::unknown(format!(
             "VECTOR column '{column}' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))"
         )));
     }
@@ -78,10 +77,22 @@ pub fn check_column_default_value(
         )
     {
         let converted = value
-            .convert_to_in(field_type, ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(), zone)
-            .map_err(|_| errors::invalid_default(column.to_owned()))?;
+            .convert_to_in(
+                field_type,
+                ctx.get_expr_ctx().get_eval_ctx().type_ctx_flags(),
+                zone,
+            )
+            .map_err(|_| {
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                        .generate_with_stack_by_args(&[column.to_owned().into()]),
+                )
+            })?;
         if matches!(converted.value, Datum::Time(time) if time.is_zero()) {
-            return Err(errors::invalid_default(column.to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[column.to_owned().into()]),
+            ));
         }
     }
     if value.is_null()
@@ -100,13 +111,13 @@ pub fn check_column_default_value(
     if ctx.get_sql_mode().has_strict_mode() || !empty {
         return Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
-                .generate_with_stack_by_args(&[(column.to_owned()).to_string().into()]),
+                .generate_with_stack_by_args(&[column.to_owned().into()]),
         ));
     }
     // Go `ctx.GetEvalCtx().AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))`.
     let reported = tidb_error::mysql::MysqlError::from_terror(
         &tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
-            .generate_with_stack_by_args(&[(column).to_string().into()]),
+            .generate_with_stack_by_args(&[column.to_string().into()]),
     );
     ctx.append_warning(tidb_util::context::WarnErr::Terror(
         tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT.generate(reported.message),
@@ -150,7 +161,12 @@ pub fn validate_column_default(
     flags: tidb_datatype::ConversionFlags,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Datum, MysqlError> {
-    let invalid = || errors::invalid_default(column.to_owned());
+    let invalid = || {
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                .generate_with_stack_by_args(&[column.to_owned().into()]),
+        )
+    };
     if stored.is_null() {
         // Inline PRIMARY KEY + DEFAULT NULL was already intercepted by
         // `checkPriKeyConstraint`. At this later `checkDefaultValue` boundary
@@ -199,7 +215,12 @@ pub fn column_default_storage_value(
     if value.is_null() {
         return Ok(Datum::Null);
     }
-    let invalid = || errors::invalid_default(column.to_owned());
+    let invalid = || {
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                .generate_with_stack_by_args(&[column.to_owned().into()]),
+        )
+    };
 
     // Go handles binary literals before its target-type switch. The three
     // branches are exhaustive and return immediately, so FLOAT/DOUBLE never
@@ -323,7 +344,12 @@ pub fn timestamp_default_to_utc(
     if stored.is_null() || field_type.code() != tidb_datatype::FieldTypeCode::Timestamp {
         return Ok(stored);
     }
-    let invalid = || errors::invalid_default(column.to_owned());
+    let invalid = || {
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                .generate_with_stack_by_args(&[column.to_owned().into()]),
+        )
+    };
     let converted = stored
         .convert_to_in(field_type, flags, zone)
         .map_err(|_| invalid())?;
@@ -414,7 +440,12 @@ pub fn bit_column_default(
     field_type: &FieldType,
     column: &str,
 ) -> Result<Datum, MysqlError> {
-    let invalid = || errors::invalid_default(column.to_owned());
+    let invalid = || {
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE
+                .generate_with_stack_by_args(&[column.to_owned().into()]),
+        )
+    };
     let bits = match value {
         Datum::BinaryLiteral(_) | Datum::Bit(_) => {
             let (bytes, error) = value

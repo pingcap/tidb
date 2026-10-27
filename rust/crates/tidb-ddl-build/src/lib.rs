@@ -20,7 +20,6 @@
 use tidb_error::mysql::MysqlError;
 
 pub mod column_defaults;
-pub mod errors;
 pub mod column_field_type;
 pub mod foreign_key;
 pub mod index;
@@ -195,10 +194,16 @@ pub fn validate_temporary_table_create(
         for option in &create.table_options {
             match option {
                 tidb_ast::TableOption::ShardRowIdBits(_) => {
-                    return Err(errors::opt_on_temporary_table("shard_row_id_bits"));
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
+                    ));
                 }
                 tidb_ast::TableOption::PlacementPolicy(_) => {
-                    return Err(errors::opt_on_temporary_table("PLACEMENT"));
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                            .generate_with_stack_by_args(&["PLACEMENT".into()]),
+                    ));
                 }
                 _ => {}
             }
@@ -209,7 +214,10 @@ pub fn validate_temporary_table_create(
                 .iter()
                 .any(|option| matches!(option, tidb_ast::ColumnOption::AutoRandom(_)))
         }) {
-            return Err(errors::opt_on_temporary_table("auto_random"));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                    .generate_with_stack_by_args(&["auto_random".into()]),
+            ));
         }
     }
 
@@ -225,16 +233,25 @@ pub fn check_create_table_like_source(
     temporary: tidb_ast::CreateTableTemporary,
 ) -> Result<(), MysqlError> {
     if source.temp_table_type != tidb_model::TempTableType::NONE {
-        return Err(opt_on_temporary_table("create table like"));
+        return Err(MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&["create table like".into()]),
+        ));
     }
     if temporary == tidb_ast::CreateTableTemporary::None {
         return Ok(());
     }
     if source.auto_random_bits != 0 {
-        return Err(opt_on_temporary_table("auto_random"));
+        return Err(MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&["auto_random".into()]),
+        ));
     }
     if source.pre_split_regions != 0 {
-        return Err(opt_on_temporary_table("pre split regions"));
+        return Err(MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&["pre split regions".into()]),
+        ));
     }
     if source.partition.is_some() {
         return Err(MysqlError::terror(
@@ -243,20 +260,18 @@ pub fn check_create_table_like_source(
         ));
     }
     if source.shard_row_id_bits != 0 {
-        return Err(opt_on_temporary_table("shard_row_id_bits"));
+        return Err(MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&["shard_row_id_bits".into()]),
+        ));
     }
     if source.placement_policy_ref.is_some() {
-        return Err(opt_on_temporary_table("placement"));
+        return Err(MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .generate_with_stack_by_args(&["placement".into()]),
+        ));
     }
     Ok(())
-}
-
-/// The preprocessor's `plannererrors.ErrOptOnTemporaryTable`.
-fn opt_on_temporary_table(operation: &str) -> MysqlError {
-    MysqlError::terror(
-        &tidb_error::plannererrors::ERR_OPT_ON_TEMPORARY_TABLE,
-        format!("`{operation}` is unsupported on temporary tables."),
-    )
 }
 
 /// Go `setTemporaryType` (`pkg/ddl/create_table.go`): the table's
@@ -293,7 +308,7 @@ pub fn check_too_long_identifier(name: &str) -> Result<(), MysqlError> {
     if name.chars().count() > MAX_IDENTIFIER_LENGTH {
         return Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_util::dbterror::ERR_TOO_LONG_IDENT
-                .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                .generate_with_stack_by_args(&[name.to_owned().into()]),
         ));
     }
     Ok(())
@@ -319,7 +334,9 @@ pub fn ttl_info_from_options(
         {
             let interval_time_unit =
                 tidb_model::time_unit_type_from_keyword(unit).ok_or_else(|| {
-                    errors::unsupported(format!("`{unit}` is not a TTL interval unit"))
+                    tidb_error::mysql::MysqlError::unknown(format!(
+                        "`{unit}` is not a TTL interval unit"
+                    ))
                 })?;
             info = Some(tidb_model::TTLInfo {
                 column_name: tidb_ast::CiString::new(column.clone()),

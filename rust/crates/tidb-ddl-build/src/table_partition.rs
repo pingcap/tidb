@@ -71,7 +71,6 @@ use tidb_table::partition_routing::{
 };
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 pub use tidb_table::partition_metadata::{
     partition_spec_from_metadata, stored_definitions_as_ast, StoredPartitionDefinition,
     PARTITION_MAX_VALUE,
@@ -98,7 +97,7 @@ pub const MAX_PARTITIONS: u64 = 8192;
 /// # Errors
 ///
 /// The captured `CREATE` rejections -- 1054, 1486, 1500, 1503, 1504, 1517,
-/// 1564, 1659, 8264 -- plus [`errors::unsupported()`] naming the method,
+/// 1564, 1659, 8264 -- plus a 1105 refusal naming the method,
 /// for one this tier does not route.
 /// [`build_table_partitioning_inner`], with the STORED bound text mirrored
 /// onto every definition.
@@ -184,7 +183,7 @@ fn build_table_partitioning_inner(
         // The method name is Go's own spelling, so the refusal reads like the
         // clause the user wrote rather than like a Rust variant.
         let name = method.kind.sql();
-        return Err(errors::unsupported(format!(
+        return Err(tidb_error::mysql::MysqlError::unknown(format!(
             "CREATE TABLE ... PARTITION BY {name} is not supported by this node: \
              it can neither route a row to one of those partitions nor prune \
              them, so accepting the clause would build an ordinary \
@@ -225,15 +224,26 @@ fn build_table_partitioning_inner(
             )?;
             unsigned = super::table_partition_range::partition_expression_is_unsigned(&built);
         } else if let [path] = method.columns.as_slice() {
-            let name = path
-                .last()
-                .ok_or_else(errors::partition_column_value_wrong_type)?;
+            let name = path.last().ok_or_else(|| {
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                        .generate_with_stack_by_args(&[]),
+                )
+            })?;
             let offset = names
                 .iter()
                 .position(|candidate| candidate.go_lower_eq(name))
-                .ok_or_else(errors::partition_field_not_found)?;
+                .ok_or_else(|| {
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART
+                            .generate_with_stack_by_args(&[]),
+                    )
+                })?;
             if !super::table_partition_list::list_columns_type_allowed(&types[offset]) {
-                return Err(errors::partition_field_type_not_allowed(name.clone()));
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
+                        .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+                ));
             }
             column = Some(&types[offset]);
         }
@@ -277,11 +287,11 @@ fn build_table_partitioning_inner(
         if definitions.is_empty() {
             return Err(tidb_error::mysql::MysqlError::from_terror(
                 &tidb_error::catalog::ast::ERR_NO_PARTS
-                    .generate_with_stack_by_args(&[("partitions").to_string().into()]),
+                    .generate_with_stack_by_args(&["partitions".into()]),
             ));
         }
         if unresolved_with_keys {
-            return Err(errors::partition_metadata_incomplete());
+            return Err(tidb_error::mysql::MysqlError::unknown("Table partition metadata not correct, neither partition expression or list of partition columns"));
         }
         let dependency_offsets = dependencies
             .iter()
@@ -428,7 +438,7 @@ fn build_table_partitioning_inner(
         // A column list rather than an expression is Go's KEY-shaped path
         // (`HASH COLUMNS`), which this tier does not route.
         let name = method.kind.sql();
-        return Err(errors::unsupported(format!(
+        return Err(tidb_error::mysql::MysqlError::unknown(format!(
             "CREATE TABLE ... PARTITION BY {name} COLUMNS is not supported by this node"
         )));
     };
@@ -505,7 +515,7 @@ fn build_table_partitioning_inner(
     if definitions.is_empty() {
         return Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_error::catalog::ast::ERR_NO_PARTS
-                .generate_with_stack_by_args(&[("partitions").to_string().into()]),
+                .generate_with_stack_by_args(&["partitions".into()]),
         ));
     }
     let indexes = apply_update_indexes(partitioning, indexes, handle_offsets)?;
@@ -612,9 +622,12 @@ fn build_key_partition_columns(
         columns
             .iter()
             .map(|path| {
-                path.last()
-                    .cloned()
-                    .ok_or_else(errors::partition_column_value_wrong_type)
+                path.last().cloned().ok_or_else(|| {
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                            .generate_with_stack_by_args(&[]),
+                    )
+                })
             })
             .collect::<Result<_, _>>()?
     };
@@ -626,9 +639,16 @@ fn build_key_partition_columns(
             // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // a DIFFERENT error from the 1054 the expression path raises.
-            .ok_or_else(errors::partition_field_not_found)?;
+            .ok_or_else(|| {
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                )
+            })?;
         if !key_partition_type_allowed(&types[offset]) {
-            return Err(errors::partition_field_type_not_allowed(name));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
+                    .generate_with_stack_by_args(&[name.to_string().into()]),
+            ));
         }
         dependencies.push(name);
     }
@@ -802,8 +822,13 @@ fn build_partition_expression(
             // Go's `extractColumns` quotes `columnNameExpr.Name.Name.L`,
             // the folded name, so a mixed-case `NoSuch` is reported as
             // `Unknown column 'nosuch'`.
-            Some(name) => errors::unknown_column_in_clause(go_to_lower(&name), "partition function".to_owned()),
-            None => errors::unsupported(
+            Some(name) => tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_hack::go_to_lower(go_to_lower(&name)).into(),
+                    ("partition function".to_owned()).to_string().into(),
+                ]),
+            ),
+            None => tidb_error::mysql::MysqlError::unknown(
                 "this partition expression is not supported yet".to_owned(),
             ),
         })?;
@@ -811,7 +836,12 @@ fn build_partition_expression(
     // resolver was never consulted, so the missing name is still the
     // authority on 1054.
     if let Some(name) = resolver.missing_name() {
-        return Err(errors::unknown_column_in_clause(go_to_lower(&name), "partition function".to_owned()));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_hack::go_to_lower(go_to_lower(&name)).into(),
+                ("partition function".to_owned()).to_string().into(),
+            ]),
+        ));
     }
     let dependency_offsets = resolver.dependencies();
     let dependencies = resolver.dependency_names();
@@ -923,7 +953,7 @@ fn check_partition_expression_allowed(
             }
             Ok(())
         }
-        _ => Err(errors::partition_function_not_allowed()),
+        _ => Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_PARTITION_FUNCTION_IS_NOT_ALLOWED.generate_with_stack_by_args(&[]))),
     }
 }
 
@@ -962,16 +992,20 @@ fn check_partition_expression_type(
     // why `unwrap_parentheses` has no place here.
     if let Expr::Column(path) = expr {
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
-        return Err(errors::partition_field_type_not_allowed(go_to_lower(
-            &name,
-        )));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
+                .generate_with_stack_by_args(&[(go_to_lower(&name)).to_string().into()]),
+        ));
     }
     // Go's remaining `expression.Column` arm quotes `col.OrigName`, the name
     // as the source spelled it -- which is what a parenthesised column
     // reaches.
     if let Expr::Column(path) = unwrap_parentheses(expr) {
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
-        return Err(errors::partition_field_type_not_allowed(name));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
+                .generate_with_stack_by_args(&[name.to_string().into()]),
+        ));
     }
     Err(tidb_error::mysql::MysqlError::from_terror(
         &tidb_util::dbterror::ERR_PARTITION_FUNC_NOT_ALLOWED
@@ -1103,7 +1137,7 @@ pub fn partition_definition_comment(
             &tidb_util::dbterror::ERR_TOO_LONG_TABLE_PARTITION_COMMENT.generate_with_stack_by_args(
                 &[
                     (definition.name.clone()).to_string().into(),
-                    (MAX_PARTITION_COMMENT_LENGTH).into(),
+                    MAX_PARTITION_COMMENT_LENGTH.into(),
                 ],
             ),
         );
@@ -1266,7 +1300,12 @@ fn collect_args_type(
             // Go quotes `col.Name.Name.L`, the name the parser already folded,
             // so the message reads `Unknown column 'nosuch'` for a `NoSuch`
             // that was written in mixed case.
-            return Err(errors::unknown_column_in_clause(go_to_lower(column), "partition function".to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_hack::go_to_lower(go_to_lower(column)).into(),
+                    ("partition function".to_owned()).to_string().into(),
+                ]),
+            ));
         };
         arg_types.push(types[offset].code());
     }
@@ -1620,7 +1659,7 @@ fn check_partition_columns_unique(columns: &[String]) -> Result<(), MysqlError> 
         if seen.contains(&folded) {
             return Err(tidb_error::mysql::MysqlError::from_terror(
                 &tidb_util::dbterror::ERR_SAME_NAME_PARTITION_FIELD
-                    .generate_with_stack_by_args(&[(folded).to_string().into()]),
+                    .generate_with_stack_by_args(&[folded.to_string().into()]),
             ));
         }
         seen.push(folded);
@@ -1674,7 +1713,7 @@ pub fn check_too_long_partition_name(name: &str) -> Result<(), MysqlError> {
     if name.chars().count() > MAX_TABLE_NAME_LENGTH {
         return Err(tidb_error::mysql::MysqlError::from_terror(
             &tidb_util::dbterror::ERR_TOO_LONG_IDENT
-                .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                .generate_with_stack_by_args(&[name.to_owned().into()]),
         ));
     }
     Ok(())
@@ -2067,7 +2106,12 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
         datum
             .restore_value_expr()
             .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-            .map_err(|_| errors::partition_column_value_wrong_type())
+            .map_err(|_| {
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                        .generate_with_stack_by_args(&[]),
+                )
+            })
     };
     // Go switches on the COLUMN's EvalType first, and the `_binary 0x..`
     // form lives INSIDE the ETString arm (`ddl/partition.go:5260-5266`).
@@ -2107,7 +2151,9 @@ fn stored_value_text(datum: &Datum, field_type: Option<&FieldType>) -> Result<St
         Some(EvalType::Datetime | EvalType::Duration) => rendered(),
         // Go's switch has no other arm and returns
         // `ErrWrongTypeColumnValue` for anything else.
-        _ => Err(errors::partition_column_value_wrong_type()),
+        _ => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+        )),
     }
 }
 
@@ -2141,7 +2187,12 @@ pub fn stored_in_values(
             // Go stores the catch-all as the literal word `DEFAULT`, which
             // `buildListPartitionValueMap` matches with `strings.EqualFold`.
             PartitionValue::Default => tuples.push(vec!["DEFAULT".to_owned()]),
-            PartitionValue::MaxValue => return Err(errors::partition_column_value_wrong_type()),
+            PartitionValue::MaxValue => {
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                        .generate_with_stack_by_args(&[]),
+                ))
+            }
             PartitionValue::Expr(expr) => {
                 tuples.push(vec![stored_list_component(expr, field_types.first(), ctx)?]);
             }

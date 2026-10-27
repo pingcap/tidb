@@ -128,8 +128,11 @@ fn stored_clause(
     definition: &StoredPartitionDefinition,
 ) -> Result<PartitionDefinitionClause, MysqlError> {
     let parse = |text: &String| {
-        tidb_model::generated_expr::parse_expression(text)
-            .map_err(|error| crate::partition_errors::parse_error(error.message))
+        tidb_model::generated_expr::parse_expression(text).map_err(|error| {
+            tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(
+                error.message,
+            ))
+        })
     };
     if !definition.less_than.is_empty() {
         let mut values = Vec::with_capacity(definition.less_than.len());
@@ -225,7 +228,9 @@ pub fn partition_spec_from_metadata(
     // `PARTITIONS 0`. The two paths raise different errors for the same
     // shape because they are different code.
     if definitions.is_empty() {
-        return Err(crate::partition_errors::partition_metadata_unknown());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[]),
+        ));
     }
     let physical = definitions
         .iter()
@@ -270,7 +275,10 @@ pub fn partition_spec_from_metadata(
         PartitionType::KEY => {
             for column in columns {
                 if !names.iter().any(|candidate| candidate.go_lower_eq(column)) {
-                    return Err(crate::partition_errors::partition_field_not_found());
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART
+                            .generate_with_stack_by_args(&[]),
+                    ));
                 }
             }
             Ok(PartitionSpec {
@@ -322,8 +330,12 @@ pub fn partition_spec_from_metadata(
         // builds it against the table's own columns
         // (`generateHashPartitionExpr` and the `len(partCols) < 1` arms).
         PartitionType::HASH | PartitionType::RANGE | PartitionType::LIST => {
-            let expr = tidb_model::generated_expr::parse_expression(expr_text)
-                .map_err(|error| crate::partition_errors::parse_error(error.message))?;
+            let expr =
+                tidb_model::generated_expr::parse_expression(expr_text).map_err(|error| {
+                    tidb_error::mysql::MysqlError::from_terror(&tidb_util::misc::syntax_error(
+                        error.message,
+                    ))
+                })?;
             // Go keeps the stored `PartitionInfo.Expr` text as it is; restoring
             // the parsed form again would bracket it a second time.
             let (built, dependencies) = build_stored_expression(
@@ -412,7 +424,7 @@ pub fn partition_spec_from_metadata(
         }),
         other => {
             let name = other.sql();
-            Err(crate::partition_errors::unsupported(format!(
+            Err(tidb_error::mysql::MysqlError::unknown(format!(
                 "loading a PARTITION BY {name} table is not supported by this node"
             )))
         }
@@ -438,16 +450,18 @@ fn build_stored_expression(
         like_default_escape,
     );
     let unknown_column = |name: &str| {
-        crate::column_default::unknown_column_in_clause(
-            tidb_hack::go_to_lower(name),
-            "partition function".to_owned(),
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                tidb_hack::go_to_lower(tidb_hack::go_to_lower(name)).into(),
+                ("partition function".to_owned()).to_string().into(),
+            ]),
         )
     };
     let built = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(|_| {
         match resolver.missing_name() {
             // Go's `extractColumns` quotes the folded name.
             Some(name) => unknown_column(&name),
-            None => crate::partition_errors::unsupported(
+            None => tidb_error::mysql::MysqlError::unknown(
                 "this partition expression is not supported yet".to_owned(),
             ),
         }
@@ -470,21 +484,33 @@ fn load_range_bounds(
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<Vec<RangeBound>, MysqlError> {
     if definitions.is_empty() {
-        return Err(crate::partition_errors::partitions_must_be_defined("RANGE"));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                .generate_with_stack_by_args(&["RANGE".into()]),
+        ));
     }
     let mut bounds = Vec::with_capacity(definitions.len());
     for definition in definitions {
         let values = match &definition.clause {
             PartitionDefinitionClause::LessThan(values) => values,
             PartitionDefinitionClause::In(_) => {
-                return Err(crate::partition_errors::partition_wrong_values(
-                    "LIST", "IN",
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                        .generate_with_stack_by_args(&["LIST".into(), "IN".into()]),
                 ))
             }
-            _ => return Err(crate::partition_errors::partitions_must_be_defined("RANGE")),
+            _ => {
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                        .generate_with_stack_by_args(&["RANGE".into()]),
+                ))
+            }
         };
         let [value] = values.as_slice() else {
-            return Err(crate::partition_errors::partitions_must_be_defined("RANGE"));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                    .generate_with_stack_by_args(&["RANGE".into()]),
+            ));
         };
         bounds.push(match value {
             PartitionValue::MaxValue => RangeBound::MaxValue,
@@ -492,8 +518,10 @@ fn load_range_bounds(
                 crate::partition_fold::fold_range_bound(expr, &definition.name, ctx)?.stored(),
             ),
             PartitionValue::Default | PartitionValue::Tuple(_) => {
-                return Err(crate::partition_errors::partition_values_not_int(
-                    definition.name.clone(),
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_VALUES_IS_NOT_INT_TYPE.generate_with_stack_by_args(
+                        &[(definition.name.clone()).to_string().into()],
+                    ),
                 ))
             }
         });
@@ -512,13 +540,19 @@ fn load_partition_columns(
     let mut dependency_names = Vec::with_capacity(columns.len());
     let mut field_types = Vec::with_capacity(columns.len());
     for path in columns {
-        let name = path
-            .last()
-            .ok_or_else(crate::partition_errors::partition_column_value_wrong_type)?;
+        let name = path.last().ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+            )
+        })?;
         let offset = names
             .iter()
             .position(|candidate| candidate.go_lower_eq(name))
-            .ok_or_else(crate::partition_errors::partition_field_not_found)?;
+            .ok_or_else(|| {
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                )
+            })?;
         dependency_names.push(name.clone());
         field_types.push(types[offset].clone());
     }
@@ -538,17 +572,26 @@ fn load_range_columns_bounds(
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<(Vec<String>, Vec<FieldType>, Vec<Vec<RangeColumnBound>>), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
-        return Err(crate::partition_errors::partitions_must_be_defined("RANGE"));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                .generate_with_stack_by_args(&["RANGE".into()]),
+        ));
     }
     let (dependency_names, field_types) = load_partition_columns(columns, names, types)?;
     let mut less_than = Vec::with_capacity(definitions.len());
     for definition in definitions {
         let PartitionDefinitionClause::LessThan(values) = &definition.clause else {
             return match &definition.clause {
-                PartitionDefinitionClause::In(_) => Err(
-                    crate::partition_errors::partition_wrong_values("LIST", "IN"),
-                ),
-                _ => Err(crate::partition_errors::partitions_must_be_defined("RANGE")),
+                PartitionDefinitionClause::In(_) => {
+                    Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                            .generate_with_stack_by_args(&["LIST".into(), "IN".into()]),
+                    ))
+                }
+                _ => Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                        .generate_with_stack_by_args(&["RANGE".into()]),
+                )),
             };
         };
         let bound = values
@@ -559,10 +602,18 @@ fn load_range_columns_bounds(
                 PartitionValue::Expr(expr) => {
                     crate::partition_fold::fold_range_column_value(expr, field_type, ctx)
                         .map(RangeColumnBound::Value)
-                        .map_err(|_| crate::partition_errors::partition_const_domain())
+                        .map_err(|_| {
+                            tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_util::dbterror::ERR_PARTITION_CONST_DOMAIN
+                                    .generate_with_stack_by_args(&[]),
+                            )
+                        })
                 }
                 PartitionValue::Default | PartitionValue::Tuple(_) => {
-                    Err(crate::partition_errors::partition_column_value_wrong_type())
+                    Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                            .generate_with_stack_by_args(&[]),
+                    ))
                 }
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -583,7 +634,10 @@ fn load_list_columns_values(
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<(Vec<String>, PartitionKind), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
-        return Err(crate::partition_errors::partitions_must_be_defined("LIST"));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                .generate_with_stack_by_args(&["LIST".into()]),
+        ));
     }
     let (dependency_names, field_types) = load_partition_columns(columns, names, types)?;
     let mut values = Vec::new();
@@ -603,7 +657,12 @@ fn load_list_columns_values(
                             std::slice::from_ref(expr)
                         }
                         PartitionValue::Tuple(exprs) if exprs.len() == field_types.len() => exprs,
-                        _ => return Err(crate::partition_errors::partition_column_list()),
+                        _ => {
+                            return Err(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST
+                                    .generate_with_stack_by_args(&[]),
+                            ))
+                        }
                     };
                     let tuple = exprs
                         .iter()
@@ -616,18 +675,28 @@ fn load_list_columns_values(
                         &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
                         &tuple,
                     )
-                    .map_err(|_| crate::partition_errors::partition_column_value_wrong_type())?;
+                    .map_err(|_| {
+                        tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                                .generate_with_stack_by_args(&[]),
+                        )
+                    })?;
                     keys.insert(key, ordinal);
                     values.push((tuple, ordinal));
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
-                return Err(crate::partition_errors::partition_wrong_values(
-                    "RANGE",
-                    "LESS THAN",
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                        .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
                 ));
             }
-            _ => return Err(crate::partition_errors::partitions_must_be_defined("LIST")),
+            _ => {
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                        .generate_with_stack_by_args(&["LIST".into()]),
+                ))
+            }
         }
     }
     Ok((

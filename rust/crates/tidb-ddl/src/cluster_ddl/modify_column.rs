@@ -354,8 +354,10 @@ fn get_modifiable_column_job(
         return Err(unsupported_modify_column("can't set auto_increment"));
     }
     if is_auto_increment && !new_col.default_value.is_nil() {
-        return Err(driver_refusal(tidb_table::column_default::invalid_default(
-            new_col.name.original().to_owned(),
+        return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_INVALID_DEFAULT_VALUE.generate_with_stack_by_args(&[
+                (new_col.name.original().to_owned()).to_string().into(),
+            ]),
         )));
     }
     if !context.0.allow_remove_auto_inc() && was_auto_increment && !is_auto_increment {

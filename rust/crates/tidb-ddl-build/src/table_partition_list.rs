@@ -30,7 +30,6 @@ pub use tidb_table::partition_fold::{
     fold_range_column_value, partition_value_failure, partition_value_resolver,
 };
 
-use crate::errors;
 use tidb_hack::GoCaseCompare;
 
 /// Builds `LIST COLUMNS`' typed tuple key set.
@@ -43,14 +42,19 @@ pub fn build_list_columns_values(
     definition_tail: &mut dyn FnMut(usize) -> Result<(), MysqlError>,
 ) -> Result<(Vec<String>, PartitionKind), MysqlError> {
     if columns.is_empty() || definitions.is_empty() {
-        return Err(errors::partitions_must_be_defined("LIST"));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                .generate_with_stack_by_args(&["LIST".into()]),
+        ));
     }
     let mut dependency_names = Vec::with_capacity(columns.len());
     let mut field_types = Vec::with_capacity(columns.len());
     for path in columns {
-        let name = path
-            .last()
-            .ok_or_else(errors::partition_column_value_wrong_type)?;
+        let name = path.last().ok_or_else(|| {
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE.generate_with_stack_by_args(&[]),
+            )
+        })?;
         // Go `checkPartitionColumnsUnique`, from
         // `checkPartitionDefinitionConstraints`.
         if dependency_names
@@ -68,11 +72,18 @@ pub fn build_list_columns_values(
             // Go `checkColumnsPartitionType` (`partition.go:787`) reports a
             // column list's missing name as `ErrFieldNotFoundPart` (1488),
             // not the 1054 the expression path raises.
-            .ok_or_else(errors::partition_field_not_found)?;
+            .ok_or_else(|| {
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_FIELD_NOT_FOUND_PART.generate_with_stack_by_args(&[]),
+                )
+            })?;
         let field_type = types[offset].clone();
         // Go `checkColumnsPartitionType` (`partition.go:642`).
         if !list_columns_type_allowed(&field_type) {
-            return Err(errors::partition_field_type_not_allowed(name.clone()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
+                    .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+            ));
         }
         dependency_names.push(name.clone());
         field_types.push(field_type);
@@ -101,26 +112,50 @@ pub fn build_list_columns_values(
                         // reports ErrPartitionColumnList (1653), including
                         // the scalar value supplied for a multi-column LIST
                         // COLUMNS key.
-                        _ => return Err(errors::partition_column_list()),
+                        _ => {
+                            return Err(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_error::catalog::ast::ERR_PARTITION_COLUMN_LIST
+                                    .generate_with_stack_by_args(&[]),
+                            ))
+                        }
                     };
                     let tuple = exprs
                         .iter()
                         .zip(&field_types)
                         .map(|(expr, field_type)| fold_column_value(expr, field_type, ctx))
                         .collect::<Result<Vec<_>, _>>()?;
-                    let key = tidb_codec::encode_key_in_timezone(&ctx.get_expr_ctx().get_eval_ctx().time_zone(), &tuple)
-                        .map_err(|_| errors::partition_column_value_wrong_type())?;
+                    let key = tidb_codec::encode_key_in_timezone(
+                        &ctx.get_expr_ctx().get_eval_ctx().time_zone(),
+                        &tuple,
+                    )
+                    .map_err(|_| {
+                        tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::ERR_WRONG_TYPE_COLUMN_VALUE
+                                .generate_with_stack_by_args(&[]),
+                        )
+                    })?;
                     // Go `checkListPartitionValue`.
                     if keys.insert(key, ordinal).is_some() {
-                        return Err(errors::partition_duplicate_list_value());
+                        return Err(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                                .generate_with_stack_by_args(&[]),
+                        ));
                     }
                     values.push((tuple, ordinal));
                 }
             }
             PartitionDefinitionClause::LessThan(_) => {
-                return Err(errors::partition_wrong_values("RANGE", "LESS THAN"));
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITION_WRONG_VALUES
+                        .generate_with_stack_by_args(&["RANGE".into(), "LESS THAN".into()]),
+                ));
             }
-            _ => return Err(errors::partitions_must_be_defined("LIST")),
+            _ => {
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_PARTITIONS_MUST_BE_DEFINED
+                        .generate_with_stack_by_args(&["LIST".into()]),
+                ))
+            }
         }
         definition_tail(ordinal)?;
     }
@@ -143,7 +178,10 @@ fn set_default_partition(
     // `formatListPartitionValue` (`ddl/partition.go:2010`), which
     // `checkListPartitionValue` reaches.
     if slot.replace(ordinal).is_some() {
-        return Err(errors::partition_duplicate_list_value());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_MULTIPLE_DEF_CONST_IN_LIST_PART
+                .generate_with_stack_by_args(&[]),
+        ));
     }
     Ok(())
 }
