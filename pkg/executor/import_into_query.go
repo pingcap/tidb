@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -101,7 +102,28 @@ func encodeImportQueryStates(sctx sessionctx.Context) (*sessionstates.SessionSta
 	}
 	states.SystemVars[vardef.Timestamp] = timestamp
 	states.ResourceGroupName = vars.StmtCtx.ResourceGroupName
+
 	return states, nil
+}
+
+// checkQuerySourceTable rejects a source table that a worker cannot read the
+// same way as the submitter: the data of a temporary table lives only in the
+// submitting session, the rows of a memory table come from the node or the
+// session that reads them and its definition is not stored, and reading a
+// sequence allocates values again on every attempt.
+func checkQuerySourceTable(dbInfo *model.DBInfo, tblInfo *model.TableInfo) error {
+	var kind string
+	switch {
+	case tblInfo.TempTableType != model.TempTableNone:
+		kind = "temporary source tables"
+	case metadef.IsMemDB(dbInfo.Name.L):
+		kind = "memory source tables"
+	case tblInfo.IsSequence():
+		kind = "sequences"
+	default:
+		return nil
+	}
+	return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(kind + " in IMPORT INTO FROM SELECT")
 }
 
 // collectImportQueryTables records the source tables of a resolved query.
@@ -124,9 +146,8 @@ func collectQueryTables(
 
 	for _, tableName := range nodeW.GetResolveContext().GetTableNames() {
 		tblInfo, dbInfo := tableName.TableInfo, tableName.DBInfo
-		if tblInfo.TempTableType != model.TempTableNone {
-			return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
-				"temporary source tables in IMPORT INTO FROM SELECT")
+		if err := checkQuerySourceTable(dbInfo, tblInfo); err != nil {
+			return err
 		}
 		if seen[tblInfo.ID] {
 			continue

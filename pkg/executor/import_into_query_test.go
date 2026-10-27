@@ -74,6 +74,17 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 			_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select * from "+tbl)
 			require.ErrorContains(t, err, "temporary source tables in IMPORT INTO FROM SELECT")
 		}
+		tk.MustExec("create sequence query_seq")
+		for sql, msg := range map[string]string{
+			"select nextval(query_seq)":                                                         "sequences in IMPORT INTO FROM SELECT",
+			"select * from query_seq":                                                           "sequences in IMPORT INTO FROM SELECT",
+			"select table_name from information_schema.tables":                                  "memory source tables in IMPORT INTO FROM SELECT",
+			"select * from performance_schema.session_variables":                                "memory source tables in IMPORT INTO FROM SELECT",
+			"select i from query_src where i in (select 1 from information_schema.processlist)": "memory source tables in IMPORT INTO FROM SELECT",
+		} {
+			_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from "+sql)
+			require.ErrorContains(t, err, msg, sql)
+		}
 		_, err = executor.GenerateImportQueryPlan(tk.Session(), "import into unused_target from select ? from query_src")
 		require.ErrorContains(t, err, "unexpected '?'")
 	})
