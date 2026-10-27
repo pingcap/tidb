@@ -3087,15 +3087,15 @@ def go_deps():
         name = "com_github_mgechev_dots",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/mgechev/dots",
-        sum = "h1:o+4OJ3OjWzgQHGJXKfJ8rbH4dqDugu5BiEy84nxg0k4=",
-        version = "v1.0.0",
+        sum = "h1:zpIH83+oKzcpryru8ceC6BxnoG8TBrhgAvRg8obzup0=",
+        version = "v0.0.0-20210922191527-e955255bf517",
     )
     go_repository(
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/mgechev/revive",
-        sum = "h1:hwTTVC3svSv9X2FA2hiYT17Uws+lfxDWhPxzBZZCREg=",
-        version = "v1.17.0",
+        sum = "h1:+6LDNE1XKsUCkpuDOMrzjOsXqiQOZ/jPlscLyA6mMXw=",
+        version = "v1.4.0",
     )
     go_repository(
         name = "com_github_microcosm_cc_bluemonday",
@@ -5970,13 +5970,6 @@ def go_deps():
         importpath = "go.starlark.net",
         sum = "h1:xwwDQW5We85NaTk2APgoN9202w/l0DVGp+GZMfsrh7s=",
         version = "v0.0.0-20210223155950-e043a3d3c984",
-    )
-    go_repository(
-        name = "org_codeberg_chavacava_garif",
-        build_file_proto_mode = "disable_global",
-        importpath = "codeberg.org/chavacava/garif",
-        sum = "h1:K9oYxSlvlXrHXyW26Z4q61bTpJDo1wbvXcYKar/F/LM=",
-        version = "v0.2.1",
     )
     go_repository(
         name = "org_go_simpler_musttag",
