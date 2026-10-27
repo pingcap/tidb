@@ -71,7 +71,6 @@ use std::sync::{Arc, Mutex};
 
 mod export;
 pub mod account_policy;
-pub mod errors;
 pub mod load;
 pub mod loaded;
 mod password;

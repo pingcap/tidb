@@ -2367,17 +2367,17 @@ fn lower_alter_table_catalog(
                 // Go `AlterTable`: each VALIDATION spec appends its own 8200
                 // warning; ENABLE / DISABLE KEYS do nothing (MyISAM only).
                 tidb_ast::AlterTableAction::WithValidation => {
-                    context.append_sql_warn(tidb_util::context::SqlWarn::of(
+                    context.append_sql_warn(tidb_util::context::SqlWarn::raised(
                         DdlWarningLevel::Warning,
-                        &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITH_VALIDATION,
-                        "ALTER TABLE WITH VALIDATION is currently unsupported",
+                        tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITH_VALIDATION
+                            .generate_with_stack_by_args(&[]),
                     ))
                 }
                 tidb_ast::AlterTableAction::WithoutValidation => {
-                    context.append_sql_warn(tidb_util::context::SqlWarn::of(
+                    context.append_sql_warn(tidb_util::context::SqlWarn::raised(
                         DdlWarningLevel::Warning,
-                        &tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITHOUT_VALIDATION,
-                        "ALTER TABLE WITHOUT VALIDATION is currently unsupported",
+                        tidb_util::dbterror::ERR_UNSUPPORTED_ALTER_TABLE_WITHOUT_VALIDATION
+                            .generate_with_stack_by_args(&[]),
                     ))
                 }
                 tidb_ast::AlterTableAction::SetKeysEnabled(_) => {}

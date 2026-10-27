@@ -116,10 +116,10 @@ pub fn handle_bad_null(
     if level == NullLevel::Error {
         return Err(ColumnError::ColumnCannotBeNull(column.to_owned()));
     }
-    ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
+    ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
         tidb_util::context::WarningLevel::Warning,
-        &tidb_error::catalog::table::ERR_COLUMN_CANT_NULL,
-        format!("Column '{column}' cannot be null"),
+        tidb_error::catalog::table::ERR_COLUMN_CANT_NULL
+            .generate_with_stack_by_args(&[column.into()]),
     ));
     *value = zero_value(field_type);
     Ok(true)

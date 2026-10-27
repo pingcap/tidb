@@ -120,10 +120,10 @@ fn set_sys_variable(
         // The variable is a noop. For compatibility we allow it to still be
         // changed, but we append a warning since users might be expecting
         // something that's not going to happen (Go `ErrSettingNoopVariable`).
-        ctx.append_sql_warning(tidb_util::context::SqlWarn::of(
+        ctx.append_sql_warning(tidb_util::context::SqlWarn::raised(
             tidb_util::context::WarningLevel::Warning,
-            &tidb_util::dbterror::exeerrors::ERR_SETTING_NOOP_VARIABLE,
-            format!("setting {} has no effect in TiDB", sys_var.name),
+            tidb_util::dbterror::exeerrors::ERR_SETTING_NOOP_VARIABLE
+                .generate_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
     let mut is_instance = v.is_instance;
@@ -132,10 +132,10 @@ fn set_sys_variable(
         // and warn that this will not be supported in future
         // (Go `ErrInstanceScope`).
         is_instance = true;
-        ctx.append_sql_warning(tidb_util::context::SqlWarn::of(
+        ctx.append_sql_warning(tidb_util::context::SqlWarn::raised(
             tidb_util::context::WarningLevel::Warning,
-            &tidb_util::dbterror::exeerrors::ERR_INSTANCE_SCOPE,
-            format!( "modifying {} will require SET GLOBAL in a future version of TiDB", sys_var.name ),
+            tidb_util::dbterror::exeerrors::ERR_INSTANCE_SCOPE
+                .generate_with_stack_by_args(&[sys_var.name.into()]),
         ));
     }
 

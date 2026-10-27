@@ -925,10 +925,10 @@ pub fn check_no_default_value_for_insert(
             return Err(crate::column::ColumnError::NoDefaultForField(name.to_owned()));
         }
         if !not_null {
-            ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
+            ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
                 tidb_util::context::WarningLevel::Warning,
-                &tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE,
-                format!("Field '{name}' doesn't have a default value"),
+                tidb_error::catalog::table::ERR_NO_DEFAULT_VALUE
+                    .generate_with_stack_by_args(&[name.into()]),
             ));
         }
     }

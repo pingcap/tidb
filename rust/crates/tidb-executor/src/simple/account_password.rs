@@ -499,11 +499,11 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             self.mirror_account_policy_and_history(&registry, &user, &host)?;
         }
         for account in skipped {
-            self.append_sql_warning(tidb_util::context::SqlWarn::of(
-                    tidb_util::context::WarningLevel::Note,
-                    &tidb_error::catalog::infoschema::ERR_USER_DROP_EXISTS,
-                    format!("User {account} does not exist."),
-                ));
+            self.append_sql_warning(tidb_util::context::SqlWarn::raised(
+                tidb_util::context::WarningLevel::Note,
+                tidb_error::catalog::infoschema::ERR_USER_DROP_EXISTS
+                    .generate_with_stack_by_args(&[account.into()]),
+            ));
         }
         // A sandboxed session escapes by giving ITSELF a new password, which
         // is the only thing it was allowed in here to do (Go's

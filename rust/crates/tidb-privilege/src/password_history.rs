@@ -316,7 +316,10 @@ impl PrivilegeRegistry {
                         }
                     };
                     if matches {
-                        return Err(crate::errors::exists_in_history_password(user, host));
+                        return Err(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::exeerrors::ERR_EXISTS_IN_HISTORY_PASSWORD
+                                .generate_with_stack_by_args(&[user.into(), host.into()]),
+                        ));
                     }
                 }
             }

@@ -1577,10 +1577,11 @@ fn run_insert_rows(
                                             )),
                                     ));
                                 }
-                                ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
+                                ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
                                     tidb_util::context::WarningLevel::Warning,
-                                    &tidb_error::catalog::types::ERR_OVERFLOW,
-                                    format!("constant {value} overflows {type_name}"),
+                                    tidb_error::catalog::types::ERR_OVERFLOW.generate_with_stack(
+                                        format!("constant {value} overflows {type_name}"),
+                                    ),
                                 ));
                                 if !has_on_duplicate {
                                     if !insert.ignore {
@@ -1589,10 +1590,10 @@ fn run_insert_rows(
                                                 .generate_with_stack_by_args(&[]),
                                         ));
                                     }
-                                    ctx.append_sql_warn(tidb_util::context::SqlWarn::of(
+                                    ctx.append_sql_warn(tidb_util::context::SqlWarn::raised(
                                         tidb_util::context::WarningLevel::Warning,
-                                        &tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED,
-                                        "Failed to read auto-increment value from storage engine",
+                                        tidb_error::catalog::autoid::ERR_AUTOINC_READ_FAILED
+                                            .generate_with_stack_by_args(&[]),
                                     ));
                                     return Ok((0, None));
                                 }

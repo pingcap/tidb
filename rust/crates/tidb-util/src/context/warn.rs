@@ -85,11 +85,17 @@ impl SqlWarn {
         }
     }
 
-    /// A warning raised as the Go error `proto` with `message`
-    /// (`proto.GenWithStackByArgs(...)`).
+    /// A warning raised as the Go error `error`
+    /// (`ErrX.GenWithStackByArgs(...)`).
+    #[must_use]
+    pub fn raised(level: super::WarningLevel, error: TerrorError) -> Self {
+        Self::new(level, WarnErr::Terror(error))
+    }
+
+    /// A warning raised as the Go error `proto` with `message`.
     #[must_use]
     pub fn of(level: super::WarningLevel, proto: &TerrorError, message: impl Into<String>) -> Self {
-        Self::new(level, WarnErr::Terror(proto.generate(message.into())))
+        Self::raised(level, proto.generate(message.into()))
     }
 
     /// A warning whose error this tier knows only by its MySQL code: Go's

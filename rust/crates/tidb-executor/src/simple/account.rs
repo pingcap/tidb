@@ -705,10 +705,10 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 }
                 // go `executeCreateUser` demotes the duplicate to
                 // ErrUserAlreadyExists (3163) as a NOTE under IF NOT EXISTS.
-                self.append_sql_warning(tidb_util::context::SqlWarn::of(
+                self.append_sql_warning(tidb_util::context::SqlWarn::raised(
                     tidb_util::context::WarningLevel::Note,
-                    &tidb_error::catalog::infoschema::ERR_USER_ALREADY_EXISTS,
-                    format!("User '{user}'@'{host}' already exists."),
+                    tidb_error::catalog::infoschema::ERR_USER_ALREADY_EXISTS
+                        .generate_with_stack_by_args(&[format!("'{}'@'{}'", user, host).into()]),
                 ));
                 continue;
             }
@@ -846,10 +846,10 @@ pub trait AccountExec: super::account_tables::UserTableExec {
             } else {
                 // go demotes the duplicate to Note 3163 under IF NOT
                 // EXISTS, same as CREATE USER.
-                self.append_sql_warning(tidb_util::context::SqlWarn::of(
+                self.append_sql_warning(tidb_util::context::SqlWarn::raised(
                     tidb_util::context::WarningLevel::Note,
-                    &tidb_error::catalog::infoschema::ERR_USER_ALREADY_EXISTS,
-                    format!("User '{role}'@'{host}' already exists."),
+                    tidb_error::catalog::infoschema::ERR_USER_ALREADY_EXISTS
+                        .generate_with_stack_by_args(&[format!("'{}'@'{}'", role, host).into()]),
                 ));
             }
         }
@@ -1419,10 +1419,10 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                         )
                     });
                 }
-                self.append_sql_warning(tidb_util::context::SqlWarn::of(
+                self.append_sql_warning(tidb_util::context::SqlWarn::raised(
                     tidb_util::context::WarningLevel::Note,
-                    &tidb_error::catalog::infoschema::ERR_USER_DROP_EXISTS,
-                    format!("User {account} does not exist."),
+                    tidb_error::catalog::infoschema::ERR_USER_DROP_EXISTS
+                        .generate_with_stack_by_args(&[account.into()]),
                 ));
             }
             self.require_system_user_privilege_over(&spec.user, &spec.host)?;
@@ -1808,10 +1808,10 @@ pub trait AccountExec: super::account_tables::UserTableExec {
                 // `GRANT` raises for it, and the delete still runs
                 // (captured: the statement reports OK with a 3929 warning).
                 for name in unregistered {
-                    self.append_sql_warning(tidb_util::context::SqlWarn::of(
+                    self.append_sql_warning(tidb_util::context::SqlWarn::raised(
                         tidb_util::context::WarningLevel::Warning,
-                        &tidb_util::dbterror::exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED,
-                        format!("Dynamic privilege '{name}' is not registered with the server."),
+                        tidb_util::dbterror::exeerrors::ERR_DYNAMIC_PRIVILEGE_NOT_REGISTERED
+                            .generate_with_stack_by_args(&[name.into()]),
                     ));
                 }
             }

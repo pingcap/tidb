@@ -101,7 +101,11 @@ impl Session {
                                 ids: &mut Vec<i64>,
                                 warnings: &mut Vec<(u16, String)>| {
                 let Some(TableEntry::Kv(table)) = catalog.table_in(database, table) else {
-                    warnings.push((1146, format!("Table '{database}.{table}' doesn't exist")));
+                    let error = tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::infoschema::ERR_TABLE_NOT_EXISTS
+                            .generate_with_stack_by_args(&[database.into(), table.into()]),
+                    );
+                    warnings.push((error.code, error.message));
                     return;
                 };
                 ids.push(table.table_id);
@@ -118,7 +122,11 @@ impl Session {
                                 append_table(database, &table, &mut ids, &mut warnings);
                             }
                         } else {
-                            warnings.push((1049, format!("Unknown database '{database}'")));
+                            let error = tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_error::catalog::infoschema::ERR_DATABASE_NOT_EXISTS
+                                    .generate_with_stack_by_args(&[database.as_str().into()]),
+                            );
+                            warnings.push((error.code, error.message));
                         }
                     }
                     tidb_ast::StatsObject::Table { database, table } => {
