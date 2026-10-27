@@ -18,6 +18,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -106,6 +107,23 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		require.Contains(t, tables, "query_view_db.inner_v")
 		require.Contains(t, tables, "query_view_db.base")
 		require.Contains(t, tables, "test.query_cached")
+
+		// The worker rebuilds the schema the submitter resolved the query with.
+		parent := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+		is, err := executor.BuildQueryInfoSchema(store, q, parent)
+		require.NoError(t, err)
+		for name, src := range tables {
+			tbl, ok := is.TableByID(context.Background(), src.ID)
+			require.True(t, ok, name)
+			require.Equal(t, src.Revision, tbl.Meta().Revision, name)
+		}
+		require.Equal(t, q.SchemaVersion, is.SchemaMetaVersion())
+		// A table that changed after the query was resolved fails the rebuild.
+		changed := *q
+		changed.Tables = append([]importer.SourceTable(nil), q.Tables...)
+		changed.Tables[0].Revision++
+		_, err = executor.BuildQueryInfoSchema(store, &changed, parent)
+		require.ErrorContains(t, err, "changed before the import query snapshot")
 	})
 	t.Run("capture transaction schema", func(t *testing.T) {
 		ddlTK := testkit.NewTestKit(t, store)
@@ -133,5 +151,34 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		require.Less(t, q.SchemaVersion, queryTK.Session().GetLatestInfoSchema().SchemaMetaVersion())
 		_, locked := queryTK.Session().GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID)
 		require.False(t, locked)
+
+	})
+	t.Run("restore session states", func(t *testing.T) {
+		submitTK := testkit.NewTestKit(t, store)
+		submitTK.MustExec("use test")
+		submitTK.MustExec("set cte_max_recursion_depth = 5, tidb_mem_quota_query = 1048576, @v = 1")
+		submitTK.MustExec("begin")
+		defer submitTK.MustExec("rollback")
+		submitTK.Session().GetSessionVars().StmtCtx.AppendWarning(errors.New("warning of the statement before"))
+		q, err := executor.GenerateImportQueryPlan(submitTK.Session(), "import into unused_target from select i from query_src")
+		require.NoError(t, err)
+
+		workerTK := testkit.NewTestKit(t, store)
+		workerVars := workerTK.Session().GetSessionVars()
+		memQuota := workerVars.MemQuotaQuery
+		require.NoError(t, executor.RestoreImportQueryStates(context.Background(), workerTK.Session(), q))
+		require.Equal(t, "test", workerVars.CurrentDB)
+		require.Equal(t, 5, workerVars.CTEMaxRecursionDepth)
+		v, ok := workerVars.GetUserVarVal("v")
+		require.True(t, ok)
+		require.Equal(t, int64(1), v.GetInt64())
+		timestamp, err := workerVars.GetSessionOrGlobalSystemVar(context.Background(), vardef.Timestamp)
+		require.NoError(t, err)
+		require.Equal(t, q.SessionStates.SystemVars[vardef.Timestamp], timestamp)
+		// The worker keeps its own memory budget and transaction, and drops the
+		// warnings of the submitter.
+		require.Equal(t, memQuota, workerVars.MemQuotaQuery)
+		require.False(t, workerVars.InTxn())
+		require.Empty(t, workerVars.StmtCtx.GetWarnings())
 	})
 }
