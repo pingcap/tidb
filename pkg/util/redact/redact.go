@@ -27,6 +27,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -249,6 +250,7 @@ func (t TaskInfoRedacted) String() string {
 			if backend.S3 != nil {
 				// Copy S3 config and redact sensitive fields
 				s3Copy := *backend.S3
+				s3Copy.Endpoint = ast.RedactURL(s3Copy.Endpoint)
 				s3Copy.AccessKey = "[REDACTED]"
 				s3Copy.SecretAccessKey = "[REDACTED]"
 				s3Copy.SseKmsKeyId = "[REDACTED]"
@@ -264,6 +266,7 @@ func (t TaskInfoRedacted) String() string {
 		case *backup.StorageBackend_Gcs:
 			if backend.Gcs != nil {
 				gcsCopy := *backend.Gcs
+				gcsCopy.Endpoint = ast.RedactURL(gcsCopy.Endpoint)
 				gcsCopy.CredentialsBlob = "[REDACTED]"
 				storageCopy.Backend = &backup.StorageBackend_Gcs{Gcs: &gcsCopy}
 			}
@@ -271,6 +274,7 @@ func (t TaskInfoRedacted) String() string {
 		case *backup.StorageBackend_AzureBlobStorage:
 			if backend.AzureBlobStorage != nil {
 				azCopy := *backend.AzureBlobStorage
+				azCopy.Endpoint = ast.RedactURL(azCopy.Endpoint)
 				azCopy.SharedKey = "[REDACTED]"
 				azCopy.AccessSig = "[REDACTED]"
 				azCopy.EncryptionKey = &backup.AzureCustomerKey{EncryptionKey: "[REDACTED]"}

@@ -91,6 +91,32 @@ func TestRedactInitAndValueAndKey(t *testing.T) {
 }
 
 func TestTaskInfoS3CredentialsRedacted(t *testing.T) {
+	for _, tc := range []struct{ name, endpoint, expected string }{
+		{"signed", "https://FAKE_USER:FAKE_PASS@host/path?sig=FAKE_SIGNATURE#FAKE_FRAGMENT", "https://host/path"},
+		{"malformed", "https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE", "(invalid URL)"},
+	} {
+		for _, backend := range []struct {
+			name    string
+			storage *backup.StorageBackend
+		}{
+			{"s3", &backup.StorageBackend{Backend: &backup.StorageBackend_S3{S3: &backup.S3{Endpoint: tc.endpoint}}}},
+			{"gcs", &backup.StorageBackend{Backend: &backup.StorageBackend_Gcs{Gcs: &backup.GCS{Endpoint: tc.endpoint}}}},
+			{"azure", &backup.StorageBackend{Backend: &backup.StorageBackend_AzureBlobStorage{AzureBlobStorage: &backup.AzureBlobStorage{Endpoint: tc.endpoint}}}},
+		} {
+			t.Run(backend.name+"/"+tc.name, func(t *testing.T) {
+				info := &backup.StreamBackupTaskInfo{Storage: backend.storage}
+				original := info.String()
+
+				output := (TaskInfoRedacted{Info: info}).String()
+
+				require.Equal(t, original, info.String(), "logging must not mutate task endpoints")
+				for _, secret := range []string{"FAKE_USER", "FAKE_PASS", "FAKE_SIGNATURE", "FAKE_FRAGMENT"} {
+					require.NotContains(t, output, secret)
+				}
+				require.Contains(t, output, `endpoint:"`+tc.expected+`"`)
+			})
+		}
+	}
 	s3 := &backup.S3{
 		Bucket:                  "backup-bucket",
 		SessionToken:            "session-token-value",
