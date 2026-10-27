@@ -267,7 +267,7 @@ impl Drop for QueryCancellationLease {
     }
 }
 
-pub use tidb_cluster::sql_query_error::{lock_sql_error, SqlQueryError, RESULT_UNDETERMINED_MESSAGE};
+pub use tidb_cluster::sql_query_error::{lock_sql_error, SqlQueryError};
 pub use tidb_ddl::real_tikv_ddl::cluster_ddl_error;
 
 pub fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {

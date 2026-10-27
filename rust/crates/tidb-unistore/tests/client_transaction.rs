@@ -368,8 +368,8 @@ fn store_facade_preserves_schema_error_and_never_publishes_invalid_schema() {
             assert!(check_ts > 0);
             assert_eq!(table_ids, &[42]);
             Err(SchemaLeaseError {
-                code: 8028,
-                message: "schema changed".to_owned(),
+                error: tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED
+                    .generate_with_stack("schema changed"),
             })
         }
     }
@@ -386,7 +386,7 @@ fn store_facade_preserves_schema_error_and_never_publishes_invalid_schema() {
         )
         .unwrap();
     assert!(
-        matches!(outcome, OptimisticCommitOutcome::RolledBack(ref failure) if matches!(failure.cause, TransactionCause::SchemaLease { code: 8028, .. })),
+        matches!(outcome, OptimisticCommitOutcome::RolledBack(ref failure) if matches!(failure.cause, TransactionCause::SchemaLease { ref error } if error.code().value() == 8028)),
         "{outcome:?}"
     );
     assert_eq!(store.get(b"a"), None);

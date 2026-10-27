@@ -22,10 +22,9 @@ pub enum TransactionCause {
     /// ran out (client-go `checkSchemaValid`; Go `ErrInfoSchemaChanged` /
     /// `ErrInfoSchemaExpired`).
     SchemaLease {
-        /// The MySQL error code, 8028 or 8027.
-        code: u16,
-        /// The client-visible message.
-        message: String,
+        /// The Go error: `ErrInfoSchemaChanged` (8028) or
+        /// `ErrInfoSchemaExpired` (8027).
+        error: tidb_error::terror::TerrorError,
     },
     /// Insert assertion observed an existing encoded key.
     AlreadyExists {
@@ -128,7 +127,7 @@ impl std::fmt::Display for TransactionCause {
             | Self::Transport { detail }
             | Self::Timestamp { detail }
             | Self::InvalidResponse { detail } => formatter.write_str(detail),
-            Self::SchemaLease { message, .. } => formatter.write_str(message),
+            Self::SchemaLease { error } => formatter.write_str(error.message()),
             Self::SharedLockLost { start_ts, key } => write!(
                 formatter,
                 "Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS={start_ts}, key={key}"

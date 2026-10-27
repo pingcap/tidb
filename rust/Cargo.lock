@@ -4982,6 +4982,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-distsql",
+ "tidb-error",
  "tidb-expr",
  "tidb-hack",
  "tidb-log",

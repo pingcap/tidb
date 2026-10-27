@@ -37,3 +37,4 @@ async-trait.workspace = true
 
 [dev-dependencies]
 flate2.workspace = true
+tidb-error = { path = "../tidb-error" }

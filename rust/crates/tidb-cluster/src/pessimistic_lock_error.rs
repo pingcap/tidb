@@ -80,12 +80,33 @@ pub struct LockSqlError {
     pub identity: Option<tidb_error::terror::TerrorIdentity>,
 }
 
+/// A Go error raised as the statement's failure: its code, SQLSTATE, message
+/// and identity, with no write-conflict arguments.
+impl From<tidb_error::mysql::MysqlError> for LockSqlError {
+    fn from(error: tidb_error::mysql::MysqlError) -> Self {
+        Self {
+            code: error.code,
+            state: error.state,
+            message: error.message,
+            write_conflict: None,
+            identity: error.identity,
+        }
+    }
+}
+
 impl LockSqlError {
+    /// Keeps a write conflict's `newWriteConflictError` arguments beside it.
+    #[must_use]
+    pub fn with_write_conflict(mut self, args: Option<Box<WriteConflictArgs>>) -> Self {
+        self.write_conflict = args;
+        self
+    }
+
     /// Whether this error carries Go's result-undetermined identity.
     #[must_use]
     pub fn is_result_undetermined(&self) -> bool {
-        self.code == tidb_error::mysql::errcode::ErrUnknown
-            && self.message == ERR_RESULT_UNDETERMINED.message()
+        // Go `terror.ErrResultUndetermined.Equal(err)`.
+        self.identity == Some(ERR_RESULT_UNDETERMINED.identity())
     }
 }
 
@@ -105,13 +126,9 @@ impl PessimisticStatementRetry {
                 .pessimistic_txn
                 .max_retry_count
         {
-            return Err(LockSqlError {
-                code: tidb_error::mysql::errcode::ErrUnknown,
-                state: DEFAULT_SQL_STATE,
-                message: "pessimistic lock retry limit reached".to_owned(),
-                write_conflict: None,
-                identity: None,
-            });
+            return Err(LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+                "pessimistic lock retry limit reached",
+            )));
         }
         self.count += 1;
         Ok(())
@@ -132,43 +149,27 @@ impl PessimisticStatementRetry {
 #[must_use]
 pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlError {
     match failure {
-        PessimisticLockFailure::Deadlock(_) => LockSqlError {
-            code: ERR_LOCK_DEADLOCK,
-            state: DEADLOCK_SQL_STATE,
-            message: "Deadlock found when trying to get lock; try restarting transaction"
-                .to_owned(),
-            write_conflict: None,
-            // Go `ExecStmt.handlePessimisticLockError`: client-go's deadlock
-            // becomes `exeerrors.ErrDeadlock`.
-            identity: Some(tidb_util::dbterror::exeerrors::ERR_DEADLOCK.identity()),
-        },
-        PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => LockSqlError {
-            code: ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET,
-            state: DEFAULT_SQL_STATE,
-            message: "Statement aborted because lock(s) could not be acquired immediately and \
-                      NOWAIT is set."
-                .to_owned(),
-            write_conflict: None,
-            identity: Some(
-                tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET.identity(),
-            ),
-        },
-        PessimisticLockFailure::LockWaitTimeout { .. } => LockSqlError {
-            code: ERR_LOCK_WAIT_TIMEOUT,
-            state: DEFAULT_SQL_STATE,
-            message: "Lock wait timeout exceeded; try restarting transaction".to_owned(),
-            write_conflict: None,
-            identity: Some(tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT.identity()),
-        },
+        // Go `ExecStmt.handlePessimisticLockError`: client-go's deadlock
+        // becomes `exeerrors.ErrDeadlock`.
+        PessimisticLockFailure::Deadlock(_) => {
+            LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_DEADLOCK.generate_with_stack_by_args(&[]),
+            ))
+        }
+        PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. } => {
+            LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::tikv::ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET
+                    .generate_with_stack_by_args(&[]),
+            ))
+        }
+        PessimisticLockFailure::LockWaitTimeout { .. } => {
+            LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::tikv::ERR_LOCK_WAIT_TIMEOUT.generate_with_stack_by_args(&[]),
+            ))
+        }
         // Go retries or aborts the statement; only a commit's conflict is
         // rewritten with table names, so the arguments stop here.
-        PessimisticLockFailure::WriteConflict { detail } => LockSqlError {
-            code: ERR_WRITE_CONFLICT,
-            state: DEFAULT_SQL_STATE,
-            message: format!("Write conflict, {detail} [try again later]"),
-            write_conflict: None,
-            identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
-        },
+        PessimisticLockFailure::WriteConflict { detail } => write_conflict_error(detail),
         PessimisticLockFailure::Transaction(cause @ TransactionCause::BackoffExhausted { .. }) => {
             transaction_cause_to_sql_error(cause)
         }
@@ -176,13 +177,11 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
             cause @ (TransactionCause::SharedLockLost { .. }
             | TransactionCause::AssertionFailed { .. }),
         ) => transaction_cause_to_sql_error(cause),
-        PessimisticLockFailure::Transaction(cause) => LockSqlError {
-            code: 1105,
-            state: DEFAULT_SQL_STATE,
-            message: format!("pessimistic transaction aborted: {cause}"),
-            write_conflict: None,
-            identity: None,
-        },
+        PessimisticLockFailure::Transaction(cause) => {
+            LockSqlError::from(tidb_error::mysql::MysqlError::unknown(format!(
+                "pessimistic transaction aborted: {cause}"
+            )))
+        }
     }
 }
 
@@ -228,24 +227,26 @@ pub fn commit_outcome_to_sql_error_with_hint(
             }
             Err(transaction_cause_to_sql_error(&failed.cause))
         }
-        OptimisticCommitOutcome::Undetermined(_) => Err(LockSqlError {
-            code: 1105,
-            state: DEFAULT_SQL_STATE,
-            message: ERR_RESULT_UNDETERMINED.message().to_owned(),
-            write_conflict: None,
-            identity: Some(ERR_RESULT_UNDETERMINED.identity()),
-        }),
+        OptimisticCommitOutcome::Undetermined(_) => Err(LockSqlError::from(
+            tidb_error::mysql::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED),
+        )),
     }
 }
 
 pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
-    LockSqlError {
-        code: 1062,
-        state: *b"23000",
-        message: format!("Duplicate entry '{}' for key '{}'", hint.value, hint.key),
-        write_conflict: None,
-        identity: Some(tidb_error::catalog::kv::ERR_KEY_EXISTS.identity()),
-    }
+    LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+        &tidb_error::catalog::kv::ERR_KEY_EXISTS
+            .generate_with_stack_by_args(&[hint.value.as_str().into(), hint.key.as_str().into()]),
+    ))
+}
+
+/// Go `newWriteConflictError`'s error (`ErrWriteConflict`, 9007): `detail` is
+/// the conflict's `txnStartTS=..., key=...` description.
+fn write_conflict_error(detail: &str) -> LockSqlError {
+    LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+        &tidb_error::catalog::kv::ERR_WRITE_CONFLICT
+            .generate_with_stack(format!("Write conflict, {detail} [try again later]")),
+    ))
 }
 
 /// Renders a transaction-ending cause as the error TiDB reports for it.
@@ -260,13 +261,9 @@ pub(crate) fn duplicate_key_sql_error(hint: &DuplicateKeyHint) -> LockSqlError {
 #[must_use]
 pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
     match cause {
-        TransactionCause::WriteConflict { detail, args } => LockSqlError {
-            code: ERR_WRITE_CONFLICT,
-            state: DEFAULT_SQL_STATE,
-            message: format!("Write conflict, {detail} [try again later]"),
-            write_conflict: args.clone(),
-            identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
-        },
+        TransactionCause::WriteConflict { detail, args } => {
+            write_conflict_error(detail).with_write_conflict(args.clone())
+        }
         TransactionCause::BackoffExhausted { kind, detail } => {
             backoff_exhausted_to_sql_error(*kind, detail)
         }
@@ -275,21 +272,9 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
         }
         // The session's own error, rendered by the checker (Go
         // `ErrInfoSchemaChanged` 8028 / `ErrInfoSchemaExpired` 8027).
-        TransactionCause::SchemaLease { code, message } => LockSqlError {
-            code: *code,
-            state: DEFAULT_SQL_STATE,
-            message: message.clone(),
-            write_conflict: None,
-            identity: match *code {
-                tidb_error::tidb::errcode::ErrInfoSchemaChanged => {
-                    Some(tidb_error::catalog::domain::ERR_INFO_SCHEMA_CHANGED.identity())
-                }
-                tidb_error::tidb::errcode::ErrInfoSchemaExpired => {
-                    Some(tidb_error::catalog::domain::ERR_INFO_SCHEMA_EXPIRED.identity())
-                }
-                _ => None,
-            },
-        },
+        TransactionCause::SchemaLease { error } => {
+            LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(error))
+        }
         TransactionCause::AssertionFailed {
             key,
             assertion,
@@ -330,13 +315,9 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
                 identity: Some(txnkv_identity(prototype)),
             }
         }
-        other => LockSqlError {
-            code: 1105,
-            state: DEFAULT_SQL_STATE,
-            message: format!("transaction failed: {other}"),
-            write_conflict: None,
-            identity: None,
-        },
+        other => LockSqlError::from(tidb_error::mysql::MysqlError::unknown(format!(
+            "transaction failed: {other}"
+        ))),
     }
 }
 
@@ -374,21 +355,12 @@ fn shared_lock_lost_to_sql_error(start_ts: u64, key: &str) -> LockSqlError {
 fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> LockSqlError {
     let source = StorageDriverError::from_backoff(kind, detail);
     match to_tidb_driver_error(&source) {
-        ConvertedDriverError::Terror(converted) => LockSqlError {
-            code: u16::try_from(converted.code().value())
-                .expect("registered TiDB error code fits the MySQL protocol"),
-            state: DEFAULT_SQL_STATE,
-            message: converted.message().to_owned(),
-            write_conflict: None,
-            identity: Some(converted.identity()),
-        },
-        ConvertedDriverError::Passthrough(source) => LockSqlError {
-            code: 1105,
-            state: DEFAULT_SQL_STATE,
-            message: source.to_string(),
-            write_conflict: None,
-            identity: None,
-        },
+        ConvertedDriverError::Terror(converted) => {
+            LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(&converted))
+        }
+        ConvertedDriverError::Passthrough(source) => {
+            LockSqlError::from(tidb_error::mysql::MysqlError::unknown(source.to_string()))
+        }
         ConvertedDriverError::Kv(_) | ConvertedDriverError::Transaction(_) => {
             unreachable!("backoff source table has no kv or transaction conversion rows")
         }
@@ -413,17 +385,11 @@ pub fn locked_with_conflict_error(
     conflict_commit_ts: u64,
     conflict_key: &[u8],
 ) -> LockSqlError {
-    LockSqlError {
-        code: ERR_WRITE_CONFLICT,
-        state: DEFAULT_SQL_STATE,
-        message: format!(
-            "Write conflict, txnStartTS={start_ts}, conflictStartTS=0, \
-             conflictCommitTS={conflict_commit_ts}, key={conflict_key:?} primary=<unknown>, \
-             reason=LockedWithConflict [try again later]"
-        ),
-        write_conflict: None,
-        identity: Some(tidb_error::catalog::kv::ERR_WRITE_CONFLICT.identity()),
-    }
+    write_conflict_error(&format!(
+        "txnStartTS={start_ts}, conflictStartTS=0, \
+         conflictCommitTS={conflict_commit_ts}, key={conflict_key:?} primary=<unknown>, \
+         reason=LockedWithConflict"
+    ))
 }
 
 /// Whether the SQL layer may retry only the statement, under a newer
@@ -500,7 +466,6 @@ mod tests {
         });
         let error = commit_outcome_to_sql_error(&undetermined)
             .expect_err("an undetermined commit is not a durable one");
-        assert_eq!(error.code, 1105);
         assert_eq!(error.message, ERR_RESULT_UNDETERMINED.message());
         assert!(error.is_result_undetermined());
     }

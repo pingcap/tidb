@@ -18,6 +18,7 @@
 //! identity. It lives below the session so the DDL worker, which answers a
 //! submitted job through it, does not need the server crate.
 
+use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_txnkv::driver::transaction_error::WriteConflictArgs;
 
 use crate::pessimistic_lock_error::LockSqlError;
@@ -121,34 +122,30 @@ impl SqlQueryError {
     ///
     /// Go `pkg/parser/terror/terror.go:265-269` defines
     /// `ErrResultUndetermined = ClassGlobal.NewStdErr(CodeResultUndetermined,
-    /// mysql.Message("execution result undetermined", nil))`, which carries
-    /// the default MySQL code `mysql.ErrUnknown` (1105). It exists because no
-    /// SQL error code can express "unknown", and a client that receives an
-    /// ordinary error is entitled to retry — which double-applies if the
-    /// commit did land. `pkg/server/conn.go:1288-1291` therefore closes the
-    /// connection rather than reporting either outcome.
+    /// mysql.Message("execution result undetermined", nil))`. It exists
+    /// because no SQL error code can express "unknown", and a client that
+    /// receives an ordinary error is entitled to retry -- which double-applies
+    /// if the commit did land. `pkg/server/conn.go:1288-1291` therefore closes
+    /// the connection rather than reporting either outcome.
     #[must_use]
     pub fn result_undetermined() -> Self {
-        Self::new(1105, *b"HY000", RESULT_UNDETERMINED_MESSAGE)
+        let error = tidb_error::mysql::MysqlError::from_terror(&ERR_RESULT_UNDETERMINED);
+        Self {
+            identity: error.identity,
+            ..Self::new(error.code, error.state, error.message)
+        }
     }
 
     /// Whether this failure is the undetermined verdict, so the caller must
-    /// close the connection instead of answering.
-    ///
-    /// Go matches on the `terror` identity (`terror.ErrResultUndetermined
-    /// .Equal(err)`); we have no error identities on the wire boundary, so the
-    /// exact message is the identity. It is safe as an identity precisely
-    /// because the client never sees it: Go closes the connection without
-    /// writing an ERR packet at all, and so do we.
+    /// close the connection instead of answering: Go
+    /// `terror.ErrResultUndetermined.Equal(err)`. The client never sees it:
+    /// Go closes the connection without writing an ERR packet at all, and so
+    /// do we.
     #[must_use]
     pub fn is_result_undetermined(&self) -> bool {
-        self.code == 1105 && self.message == RESULT_UNDETERMINED_MESSAGE
+        self.identity == Some(ERR_RESULT_UNDETERMINED.identity())
     }
 }
-
-/// Go `pkg/parser/terror/terror.go:268`: `mysql.Message("execution result
-/// undetermined", nil)`.
-pub const RESULT_UNDETERMINED_MESSAGE: &str = "execution result undetermined";
 
 /// Preserves a transaction driver's client-visible error triple at the SQL
 /// boundary. Domain-specific commit errors delegate here instead of

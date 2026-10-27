@@ -130,7 +130,6 @@ pub use sql_node::{
     ConnectionTracker, GeneralExecuteOutcome, PreparedGeneral,
     QueryCancellationLease, QueryResult, QuerySession,
     QuerySessionFactory, SessionContext, ShutdownHandle, SqlNodeError, SqlQueryError, WriteOutcome,
-    RESULT_UNDETERMINED_MESSAGE,
 };
 pub use wire_status::{
     WireStatus, SERVER_MORE_RESULTS_EXISTS, SERVER_STATUS_AUTOCOMMIT, SERVER_STATUS_CURSOR_EXISTS,

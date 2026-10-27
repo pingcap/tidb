@@ -76,10 +76,7 @@ impl SchemaLeaseChecker for SessionSchemaLeaseChecker {
         match checker.check(check_ts) {
             Ok(_) => Ok(()),
             Err((_, error)) => Err(SchemaLeaseError {
-                code: error.code(),
-                // The client reads Go's `terror.ToSQLError` message
-                // (`GetMsg()`), without the `[class:code]` of `Error()`.
-                message: error.message(),
+                error: error.to_terror(),
             }),
         }
     }
@@ -181,18 +178,19 @@ mod tests {
         let error = checker
             .check_by_schema_ver(ts_at(now + 1), &[77])
             .expect_err("changed table");
-        assert_eq!(error.code, 8028);
+        assert_eq!(error.error.code().value(), 8028);
         assert!(
             error
-                .message
+                .error
+                .message()
                 .starts_with("Information schema is changed"),
             "{}",
-            error.message
+            error.error.message()
         );
         assert!(
-            error.message.ends_with("[try again later]"),
+            error.error.message().ends_with("[try again later]"),
             "{}",
-            error.message
+            error.error.message()
         );
         // A table the change did not touch commits.
         assert_eq!(checker.check_by_schema_ver(ts_at(now + 1), &[78]), Ok(()));
@@ -212,13 +210,14 @@ mod tests {
         let error = checker
             .check_by_schema_ver(ts_at(now_ms()), &[77])
             .expect_err("stopped");
-        assert_eq!(error.code, 8027);
+        assert_eq!(error.error.code().value(), 8027);
         assert!(
             error
-                .message
+                .error
+                .message()
                 .starts_with("Information schema is out of date"),
             "{}",
-            error.message
+            error.error.message()
         );
         set_schema_out_of_date_retry_times(10);
     }
@@ -238,7 +237,9 @@ mod tests {
             checker
                 .check_by_schema_ver(ts_at(now_ms()), &[77])
                 .expect_err("below floor")
-                .code,
+                .error
+                .code()
+                .value(),
             8028
         );
     }

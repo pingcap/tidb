@@ -428,13 +428,9 @@ pub trait IndexBackfiller {
         _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         _buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
-        Err(LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: "this path cannot validate an exchanged partition's rows".to_owned(),
-            write_conflict: None,
-            identity: None,
-        })
+        Err(LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+            "this path cannot validate an exchanged partition's rows",
+        )))
     }
 
     /// Go `checkCacheTableSize` for an `ALTER TABLE ... CACHE`: the table's
@@ -460,13 +456,9 @@ pub trait IndexBackfiller {
         _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         _buffer: &MutationBuffer,
     ) -> Result<bool, LockSqlError> {
-        Err(LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: "this path cannot read a table's rows".to_owned(),
-            write_conflict: None,
-            identity: None,
-        })
+        Err(LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+            "this path cannot read a table's rows",
+        )))
     }
 
     fn reorg_add_index(
@@ -476,13 +468,9 @@ pub trait IndexBackfiller {
         _snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
         _buffer: &MutationBuffer,
     ) -> Result<AddIndexReorgAnswer, LockSqlError> {
-        Err(LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: "this path cannot reorganize an index".to_owned(),
-            write_conflict: None,
-            identity: None,
-        })
+        Err(LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+            "this path cannot reorganize an index",
+        )))
     }
 
     /// The node's live row-ID allocators, for the `mysql.*` rows the owner
@@ -567,24 +555,16 @@ pub enum AddIndexReorgAnswer {
 
 /// The default for a backfiller that cannot read a table's stored bytes.
 fn cache_table_check_unavailable() -> LockSqlError {
-    LockSqlError {
-        code: 1105,
-        state: *b"HY000",
-        message: "this path cannot measure a table for ALTER TABLE ... CACHE".to_owned(),
-        write_conflict: None,
-        identity: None,
-    }
+    LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+        "this path cannot measure a table for ALTER TABLE ... CACHE",
+    ))
 }
 
 /// The default for a backfiller that cannot read a child and its parent.
 fn foreign_key_check_unavailable() -> LockSqlError {
-    LockSqlError {
-        code: 1105,
-        state: *b"HY000",
-        message: "this path cannot check a foreign key's existing rows".to_owned(),
-        write_conflict: None,
-        identity: None,
-    }
+    LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+        "this path cannot check a foreign key's existing rows",
+    ))
 }
 
 /// Executes Go's existing-row CHECK validation from the DDL transaction's
@@ -2242,13 +2222,10 @@ mod tests {
 
     #[test]
     fn session_ddl_commit_classification_preserves_determinate_errors() {
-        let conflict = LockSqlError {
-            code: WRITE_CONFLICT_CODE,
-            state: *b"HY000",
-            message: "write conflict at schema version key".to_owned(),
-            write_conflict: None,
-            identity: None,
-        };
+        let conflict = LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::kv::ERR_WRITE_CONFLICT
+                .generate_with_stack("write conflict at schema version key"),
+        ));
         assert!(matches!(
             classify_session_ddl_commit_error(61, conflict),
             ClusterDdlError::ConcurrentSchemaChange {
@@ -2257,13 +2234,9 @@ mod tests {
             }
         ));
 
-        let ordinary = LockSqlError {
-            code: 1105,
-            state: *b"HY000",
-            message: "prewrite transport failed definitively".to_owned(),
-            write_conflict: None,
-            identity: None,
-        };
+        let ordinary = LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+            "prewrite transport failed definitively",
+        ));
         assert!(matches!(
             classify_session_ddl_commit_error(61, ordinary),
             ClusterDdlError::Commit(error)

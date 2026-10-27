@@ -3124,13 +3124,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                 .map_err(backfill_failure)?;
             return Ok(AddIndexReorgAnswer::Checked(found.map(|error| {
                 let error = tidb_ddl_build::column_changes::modify_column_error(error);
-                LockSqlError {
-                    code: error.code,
-                    state: error.state,
-                    message: error.message,
-                    write_conflict: None,
-                    identity: None,
-                }
+                LockSqlError::from(error)
             })));
         }
         let info = reorg.table.clone_like_go();
@@ -3193,13 +3187,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     .map(AddIndexReorgAnswer::Batch)
                     .map_err(|error| {
                         let error = tidb_ddl_build::column_changes::modify_column_error(error);
-                        LockSqlError {
-                            code: error.code,
-                            state: error.state,
-                            message: error.message,
-                            write_conflict: None,
-                            identity: None,
-                        }
+                        LockSqlError::from(error)
                     })
             }
             AddIndexReorgWork::TableRange { physical_id } => table
@@ -3311,13 +3299,9 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         buffer: &MutationBuffer,
     ) -> Result<(), LockSqlError> {
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
-        self.session_pool.foreign_key(plan, &storage).map_err(|error| LockSqlError {
-            code: error.code,
-            state: error.state,
-            message: error.message,
-            write_conflict: None,
-            identity: None,
-        })
+        self.session_pool
+            .foreign_key(plan, &storage)
+            .map_err(|error| LockSqlError::from(error))
     }
     fn stage_cache_table_check(
         &self,
@@ -3335,13 +3319,7 @@ impl IndexBackfiller for KvTableIndexBackfiller {
                     "cache table size check failed: {other:?}"
                 )),
             };
-            LockSqlError {
-                code: error.code,
-                state: error.state,
-                message: error.message,
-                write_conflict: None,
-                identity: None,
-            }
+            LockSqlError::from(error)
         })
     }
 }
@@ -3365,16 +3343,12 @@ impl KvTableIndexBackfiller {
                 partition.read().partition_type == tidb_ast::PartitionType::KEY
             })
         {
-            return Err(LockSqlError {
-                code: tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
-                state: *b"HY000",
-                message: format!(
-                    "Unsupported partition type of table {} when exchanging partition",
-                    plan.partitioned.name.original()
+            return Err(LockSqlError::from(
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_PARTITION_TYPE
+                        .generate_with_stack_by_args(&[plan.partitioned.name.original().into()]),
                 ),
-                write_conflict: None,
-                identity: None,
-            });
+            ));
         }
         let storage = ClusterTableStorage::new(buffer.clone(), snapshot);
         let mut standalone = cluster_table(&plan.standalone, &storage, &AutoIdSource::Unavailable)
@@ -3450,13 +3424,7 @@ fn check_constraint_validation_table_error(
 }
 
 fn exchange_validation_internal(message: String) -> LockSqlError {
-    LockSqlError {
-        code: 1105,
-        state: *b"HY000",
-        message,
-        write_conflict: None,
-        identity: None,
-    }
+    LockSqlError::from(tidb_error::mysql::MysqlError::unknown(message))
 }
 
 fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
@@ -3467,25 +3435,16 @@ fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) ->
                 || error.equal(&tidb_error::catalog::table::ERR_NO_PARTITION_FOR_GIVEN_VALUE)
                 || error.equal(&tidb_error::catalog::table::ERR_CHECK_CONSTRAINT_VIOLATED) =>
         {
-            LockSqlError {
-                code: tidb_error::tidb::errcode::ErrRowDoesNotMatchPartition,
-                state: *b"HY000",
-                message: "Found a row that does not match the partition".to_owned(),
-                write_conflict: None,
-                identity: None,
-            }
+            LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_ROW_DOES_NOT_MATCH_PARTITION
+                    .generate_with_stack_by_args(&[]),
+            ))
         }
         tidb_table::kv_table::KvTableError::CheckConstraint {
             eval: Some(eval), ..
         } => {
             let error = eval.to_mysql_error();
-            LockSqlError {
-                code: error.code,
-                state: error.state,
-                message: error.message,
-                write_conflict: None,
-                identity: None,
-            }
+            LockSqlError::from(error)
         }
         other => exchange_validation_internal(format!("{other:?}")),
     }
@@ -3494,13 +3453,7 @@ fn exchange_validation_table_error(error: tidb_table::kv_table::KvTableError) ->
 /// Preserve the shared table/expression error identity through DDL rollback.
 fn backfill_failure(error: tidb_table::kv_table::KvTableError) -> LockSqlError {
     let error = tidb_ddl_build::table_backfill::index_backfill_error(error);
-    LockSqlError {
-        code: error.code,
-        state: error.state,
-        message: error.message,
-        write_conflict: None,
-        identity: None,
-    }
+    LockSqlError::from(error)
 }
 
 

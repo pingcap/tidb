@@ -768,10 +768,7 @@ impl<S: PdClient> ClientTransaction<S> {
                     .unwrap_or_else(|e| e.into_inner())
                     .take()
                 {
-                    value.cause = TransactionCause::SchemaLease {
-                        code: error.code,
-                        message: error.message,
-                    };
+                    value.cause = TransactionCause::SchemaLease { error: error.error };
                 }
                 &mut value.receipt
             }
@@ -857,7 +854,7 @@ impl tikv_client::transaction::SchemaLeaseChecker for DriverSchemaChecker {
         _version: &dyn tikv_client::transaction::SchemaVersion,
     ) -> tikv_client::Result<tikv_client::transaction::RelatedSchemaChange> {
         self.lease.check(timestamp).map_err(|error| {
-            let message = error.message.clone();
+            let message = error.error.message().to_owned();
             *self.error.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
             tikv_client::Error::StringError(message)
         })?;

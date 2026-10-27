@@ -3195,7 +3195,8 @@ mod client_error_recording_output_tests {
 
 #[cfg(test)]
 mod undetermined_tests {
-    use crate::sql_node::{SqlQueryError, RESULT_UNDETERMINED_MESSAGE};
+    use crate::sql_node::SqlQueryError;
+    use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 
     /// Go `pkg/server/conn.go:1288-1291` returns from the command loop for an
     /// undetermined result, writing no ERR packet: the client must not be able
@@ -3205,7 +3206,7 @@ mod undetermined_tests {
     fn an_undetermined_result_is_never_answered_with_an_err_packet() {
         let undetermined = SqlQueryError::result_undetermined();
         assert!(undetermined.is_result_undetermined());
-        assert_eq!(undetermined.message, RESULT_UNDETERMINED_MESSAGE);
+        assert_eq!(undetermined.message, ERR_RESULT_UNDETERMINED.message());
 
         // Every ordinary failure still gets its ERR packet; only this one does
         // not, and the refusal lives in the single shared writer so no answer
@@ -3214,7 +3215,7 @@ mod undetermined_tests {
         assert!(!ordinary.is_result_undetermined());
         let same_code_different_text = SqlQueryError::unknown("execution result undetermine");
         assert!(!same_code_different_text.is_result_undetermined());
-        let different_code = SqlQueryError::new(1062, *b"23000", RESULT_UNDETERMINED_MESSAGE);
+        let different_code = SqlQueryError::new(1062, *b"23000", ERR_RESULT_UNDETERMINED.message());
         assert!(!different_code.is_result_undetermined());
     }
 }

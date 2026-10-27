@@ -1108,15 +1108,11 @@ impl<S: StoreClient> SessionTransaction<S> {
                 wait,
                 &call,
             ),
-            SessionTransactionState::Optimistic(_) => {
-                LockKeysOutcome::TransactionError(LockSqlError {
-                    code: 1105,
-                    state: *b"HY000",
-                    message: "a pessimistic lock requires a pessimistic transaction".to_owned(),
-                    write_conflict: None,
-                    identity: None,
-                })
-            }
+            SessionTransactionState::Optimistic(_) => LockKeysOutcome::TransactionError(
+                LockSqlError::from(tidb_error::mysql::MysqlError::unknown(
+                    "a pessimistic lock requires a pessimistic transaction",
+                )),
+            ),
             SessionTransactionState::Finished => {
                 return Err(StorageError::Backend(
                     "the transaction is already finished".to_owned(),
@@ -2365,14 +2361,9 @@ pub(crate) fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSq
         // `ErrTxnAbortedByGC` (9006) and `ErrPDServerTimeout` keeps its own.
         OptimisticCoordinatorError::Visibility(error) => {
             match tidb_txnkv::to_tidb_driver_error(&error.into_storage_driver_error()) {
-                tidb_txnkv::ConvertedDriverError::Terror(converted) => LockSqlError {
-                    code: u16::try_from(converted.code().value())
-                        .expect("registered TiDB error code fits the MySQL protocol"),
-                    state: *b"HY000",
-                    message: converted.message().to_owned(),
-                    write_conflict: None,
-                    identity: None,
-                },
+                tidb_txnkv::ConvertedDriverError::Terror(converted) => {
+                    LockSqlError::from(tidb_error::mysql::MysqlError::from_terror(&converted))
+                }
                 other => engine_sql_error(other.to_string()),
             }
         }
@@ -2382,25 +2373,15 @@ pub(crate) fn coordinator_sql_error(error: OptimisticCoordinatorError) -> LockSq
 
 fn storage_sql_error(error: StorageError) -> LockSqlError {
     match error {
-        StorageError::Sql(error) => LockSqlError {
-            code: error.code,
-            state: error.state,
-            message: error.message,
-            write_conflict: None,
-            identity: None,
-        },
+        StorageError::Sql(error) => LockSqlError::from(error),
         other => engine_sql_error(other.to_string()),
     }
 }
 
 fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
-    LockSqlError {
-        code: 1105,
-        state: *b"HY000",
-        message: format!("transaction failed: {detail}"),
-        write_conflict: None,
-        identity: None,
-    }
+    LockSqlError::from(tidb_error::mysql::MysqlError::unknown(format!(
+        "transaction failed: {detail}"
+    )))
 }
 
 #[cfg(test)]

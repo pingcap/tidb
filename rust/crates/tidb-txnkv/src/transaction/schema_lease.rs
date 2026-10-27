@@ -29,14 +29,11 @@
 
 use std::sync::Arc;
 
-/// Go `domain.ErrInfoSchemaChanged` (8028) or `ErrInfoSchemaExpired` (8027),
-/// already rendered the way the session reports it.
+/// Go `domain.ErrInfoSchemaChanged` (8028) or `ErrInfoSchemaExpired` (8027).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SchemaLeaseError {
-    /// The MySQL error code.
-    pub code: u16,
-    /// The client-visible message, `[class:code]` prefix included.
-    pub message: String,
+    /// The Go error, as the checker raises it.
+    pub error: tidb_error::terror::TerrorError,
 }
 
 /// Go `kv.SchemaChecker` / client-go `SchemaLeaseChecker`.
