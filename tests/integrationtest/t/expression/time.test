@@ -37,8 +37,10 @@ select dayname("1962-03-01")^7;
 drop table if exists t;
 create table t (a bigint primary key, b timestamp);
 insert into t values (1, "2019-04-29 11:56:12");
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 0;
 explain format = 'plan_tree' select * from t where b = (select max(b) from t);
 select * from t where b = (select max(b) from t);
+set @@session.tidb_opt_enable_non_eval_scalar_subquery = 1;
 
 # TestDateTimeAddReal
 SELECT "1900-01-01 00:00:00" + INTERVAL 1.123456789e3 SECOND;

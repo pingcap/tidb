@@ -44,8 +44,10 @@ WHERE EXISTS
                FROM mysql_3 a1 NATURAL
                RIGHT JOIN mysql_3 a2
                WHERE t1.col_pk_date IS NULL
-               GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("TableDual root  rows:0",
-			"ScalarSubQuery root  Output: ScalarQueryCol#29, ScalarQueryCol#30, ScalarQueryCol#31, ScalarQueryCol#32, ScalarQueryCol#33, ScalarQueryCol#34, ScalarQueryCol#35",
+               GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("Selection root  ScalarQueryCol#29",
+			"└─TableReader root  data:TableFullScan",
+			"  └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+			"ScalarSubQuery root  Output: ScalarQueryCol#29",
 			"└─HashJoin root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.mysql_3.col_pk_char, test.mysql_3.col_pk_char)]",
 			"  ├─HashAgg(Build) root  group by:test.mysql_3.col_pk_char, funcs:firstrow(test.mysql_3.col_pk_char)->test.mysql_3.col_pk_char",
 			"  │ └─TableDual root  rows:0",
