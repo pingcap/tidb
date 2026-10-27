@@ -1732,7 +1732,7 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 			BoolToOnOff(vardef.DefTiDBEnableAdaptiveLimitScan),
 			vardef.On,
 		},
-		{vardef.TiDBAnalyzeSampledNDVThreshold, "0", "500000000"},
+		{vardef.TiDBAnalyzeSampledNDVThreshold, "0", "100000000"},
 		{
 			vardef.TiDBRowFormatVersion,
 			strconv.Itoa(vardef.DefTiDBRowFormatV1),
