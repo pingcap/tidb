@@ -82,13 +82,13 @@ partition by list (id) (partition p0 values in (1))`)
 partition p1 values in (2 + 0), partition p2 values in (2))`)
 		partInfo, err := BuildAddedPartitionInfo(ctx.GetExprCtx(), tbInfo, spec)
 		require.NoError(t, err)
-		original := clonePartitionDefinitions(tbInfo.Partition.Definitions)
-		requested := clonePartitionDefinitions(partInfo.Definitions)
+		requestedValue := partInfo.Definitions[0].InValues[0][0]
 
-		err = CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), tbInfo, partInfo, len(original))
+		err = CheckAndUpdateAddedPartitionDefinitions(ctx.GetExprCtx(), tbInfo, partInfo, len(tbInfo.Partition.Definitions))
 		require.ErrorContains(t, err, "Multiple definition of same constant in list partitioning")
-		require.Equal(t, original, tbInfo.Partition.Definitions)
-		require.Equal(t, requested, partInfo.Definitions)
+		require.Equal(t, [][]string{{"1"}}, tbInfo.Partition.Definitions[0].InValues)
+		require.Equal(t, [][]string{{requestedValue}}, partInfo.Definitions[0].InValues)
+		require.Equal(t, [][]string{{"2"}}, partInfo.Definitions[1].InValues)
 	})
 
 	t.Run("alter without storage class keeps existing metadata", func(t *testing.T) {

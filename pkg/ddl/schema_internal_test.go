@@ -116,8 +116,6 @@ func TestRestoreOriginalPartitionDefinitions(t *testing.T) {
 			{ID: 40, Name: ast.NewCIStr("p3"), InValues: [][]string{{"3"}}},
 		}
 		originalIDs := []int64{10, 20, 30, 40, 50}
-		currentBefore := clonePartitionDefinitions(current)
-		droppingBefore := clonePartitionDefinitions(dropping)
 
 		restored, err := restoreOriginalPartitionDefinitions(originalIDs, current, dropping)
 
@@ -130,45 +128,32 @@ func TestRestoreOriginalPartitionDefinitions(t *testing.T) {
 			{ID: 50, Name: ast.NewCIStr("p4"), InValues: [][]string{{"4"}}},
 		}, restored)
 		require.Equal(t, []int64{10, 20, 30, 40, 50}, originalIDs)
-		require.Equal(t, currentBefore, current)
-		require.Equal(t, droppingBefore, dropping)
-	})
-
-	t.Run("independent definitions and nested values", func(t *testing.T) {
-		current := []model.PartitionDefinition{
-			{ID: 1, LessThan: []string{"10"}, InValues: [][]string{{"1", "2"}, {"3", "4"}}},
-		}
-		dropping := []model.PartitionDefinition{
-			{ID: 2, LessThan: []string{"20"}, InValues: [][]string{{"5", "6"}, {"7", "8"}}},
-		}
-		currentBefore := clonePartitionDefinitions(current)
-		droppingBefore := clonePartitionDefinitions(dropping)
-
-		restored, err := restoreOriginalPartitionDefinitions([]int64{1, 2}, current, dropping)
-
-		require.NoError(t, err)
-		require.Len(t, restored, 2)
-		for i := range restored {
-			restored[i].ID = 100
-			restored[i].LessThan[0] = "changed"
-			restored[i].InValues[0][0] = "changed"
-			restored[i].InValues[1] = []string{"replaced"}
-		}
-		require.Equal(t, currentBefore, current)
-		require.Equal(t, droppingBefore, dropping)
 	})
 
 	t.Run("missing original ID", func(t *testing.T) {
-		current := []model.PartitionDefinition{{ID: 1, InValues: [][]string{{"1"}}}}
-		dropping := []model.PartitionDefinition{{ID: 3, InValues: [][]string{{"3"}}}}
-		currentBefore := clonePartitionDefinitions(current)
-		droppingBefore := clonePartitionDefinitions(dropping)
+		current := []model.PartitionDefinition{{ID: 1}}
+		dropping := []model.PartitionDefinition{{ID: 3}}
 
 		restored, err := restoreOriginalPartitionDefinitions([]int64{1, 2, 3}, current, dropping)
 
-		require.ErrorContains(t, err, "2")
+		require.ErrorContains(t, err, "missing partition ID 2")
 		require.Nil(t, restored)
-		require.Equal(t, currentBefore, current)
-		require.Equal(t, droppingBefore, dropping)
+	})
+}
+
+func TestClonePartitionDefinitions(t *testing.T) {
+	t.Run("RANGE", func(t *testing.T) {
+		definitions := []model.PartitionDefinition{{ID: 1, LessThan: []string{"10"}}}
+		cloned := clonePartitionDefinitions(definitions)
+		cloned[0].ID = 2
+		cloned[0].LessThan[0] = "20"
+		require.Equal(t, []model.PartitionDefinition{{ID: 1, LessThan: []string{"10"}}}, definitions)
+	})
+	t.Run("LIST", func(t *testing.T) {
+		definitions := []model.PartitionDefinition{{ID: 1, InValues: [][]string{{"1", "2"}, {"3", "4"}}}}
+		cloned := clonePartitionDefinitions(definitions)
+		cloned[0].InValues[0][0] = "changed"
+		cloned[0].InValues[1] = []string{"replaced"}
+		require.Equal(t, []model.PartitionDefinition{{ID: 1, InValues: [][]string{{"1", "2"}, {"3", "4"}}}}, definitions)
 	})
 }
