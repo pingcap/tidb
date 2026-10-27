@@ -43,6 +43,7 @@ import (
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 )
 
 var (
@@ -550,6 +551,15 @@ func TestImportQueryRouting(t *testing.T) {
 				require.ErrorContains(t, err, "mock import from select setup error")
 			}
 		}
+	}
+	if kerneltype.IsNextGen() {
+		// Submitting sets no GC barrier; only the task keeper sets one for a submitted task.
+		gcStates := store.(kv.StorageWithPD).GetPDClient().GetGCStatesClient(uint32(store.GetCodec().GetKeyspaceID()))
+		state, err := gcStates.GetGCState(context.Background(), pdgc.ExcludeGCBarriers(false))
+		require.NoError(t, err)
+		barriers, err := state.GetGCBarriers()
+		require.NoError(t, err)
+		require.Empty(t, barriers)
 	}
 	t.Run("plan shapes run like other TiDB operators", func(t *testing.T) {
 		vardef.EnableDistTask.Store(true)
