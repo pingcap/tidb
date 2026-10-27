@@ -35,6 +35,7 @@ go_test(
     deps = [
         ":session",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/executor",
         "//pkg/metrics",
         "//pkg/session",
