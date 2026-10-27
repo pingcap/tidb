@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -45,16 +46,17 @@ import (
 
 type cloudImportExecutor struct {
 	taskexecutor.BaseStepExecutor
-	job           *model.Job
-	store         kv.Storage
-	indexes       []*model.IndexInfo
-	ptbl          table.PhysicalTable
-	cloudStoreURI string
-	backendCtx    ingest.BackendCtx
-	backend       *ingestctrl.Backend
-	metric        *lightningmetric.Common
-	engine        atomic.Pointer[globalsort.Engine]
-	summary       *execute.SubtaskSummary
+	job            *model.Job
+	store          kv.Storage
+	indexes        []*model.IndexInfo
+	ptbl           table.PhysicalTable
+	cloudStoreURI  string
+	rangeMemPerCPU int64
+	backendCtx     ingest.BackendCtx
+	backend        *ingestctrl.Backend
+	metric         *lightningmetric.Common
+	engine         atomic.Pointer[globalsort.Engine]
+	summary        *execute.SubtaskSummary
 }
 
 func newCloudImportExecutor(
@@ -63,18 +65,30 @@ func newCloudImportExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
+	rangeMemPerCPU int64,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
-		job:           job,
-		store:         store,
-		indexes:       indexes,
-		ptbl:          ptbl,
-		cloudStoreURI: cloudStoreURI,
-		summary:       &execute.SubtaskSummary{},
+		job:            job,
+		store:          store,
+		indexes:        indexes,
+		ptbl:           ptbl,
+		cloudStoreURI:  cloudStoreURI,
+		rangeMemPerCPU: rangeMemPerCPU,
+		summary:        &execute.SubtaskSummary{},
 	}, nil
 }
 
+var errExecutorMemoryTooSmall = errors.New("executor memory per CPU is below the global-sort plan budget")
+
 func (e *cloudImportExecutor) Init(ctx context.Context) error {
+	// A restarted node may inherit pending assignments before the owner's
+	// resource cache catches up with its new hardware specification.
+	if e.rangeMemPerCPU > 0 {
+		rc := diststorage.GetNodeResource()
+		if rc == nil || rc.TotalCPU <= 0 || rc.TotalMem/int64(rc.TotalCPU) < e.rangeMemPerCPU {
+			return errExecutorMemoryTooSmall
+		}
+	}
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
 	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)

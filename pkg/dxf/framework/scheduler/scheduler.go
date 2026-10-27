@@ -575,11 +575,12 @@ func (s *BaseScheduler) switch2NextStep() error {
 	}
 
 	nodes := s.nodeMgr.getNodes()
-	nodeIDs := filterByScope(nodes, task.TargetScope)
+	nodeIDs := FilterByScope(nodes, task.TargetScope)
 	eligibleNodes, err := getEligibleNodes(s.ctx, s, nodeIDs)
 	if err != nil {
 		return err
 	}
+	allEligibleNodes := eligibleNodes
 	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
 		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
 		// calculate the number of subtasks, so we need to do this before
@@ -596,6 +597,18 @@ func (s *BaseScheduler) switch2NextStep() error {
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePrepareOrPlanErr(err)
+	}
+	// Planning may have added resource requirements to the task clone. Check the
+	// target step with that new metadata, not the still-current scheduler task.
+	eligibleNodes, err = filterNodesByMemory(s.Extension, task, nextStep, allEligibleNodes, nodes)
+	if err != nil {
+		return s.handlePrepareOrPlanErr(err)
+	}
+	if len(eligibleNodes) == 0 {
+		return errors.New("no executor satisfies the planned memory per CPU")
+	}
+	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
+		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
 	}
 
 	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {

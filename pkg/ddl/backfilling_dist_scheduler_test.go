@@ -278,6 +278,9 @@ func TestCalculateRegionBatch(t *testing.T) {
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+	// The fake GCS server needs no credentials. Avoid real metadata-service
+	// discovery, whose dial goroutines can outlive this local test.
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", t.TempDir()+"/missing-credentials.json")
 
 	// init test env.
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -290,6 +293,15 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "handle")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
+	// Executor resources, rather than the owner's larger memory per CPU, must
+	// determine the import range budget.
+	originalNodeResource := storage.GetNodeResource()
+	t.Cleanup(func() { storage.SetNodeResource(originalNodeResource) })
+	storage.SetNodeResource(proto.NewNodeResource(2, 1<<30, 100<<30))
+	require.NoError(t, mgr.InitMeta(ctx, ":3999", "analytics"))
+	storage.SetNodeResource(proto.NewNodeResource(16, 32<<30, 100<<30))
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
+	storage.SetNodeResource(proto.NewNodeResource(2, 8<<30, 100<<30))
 	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), store, mgr, "host:port", proto.NodeResourceForTest)
 
 	tk.MustExec("use test")
@@ -306,7 +318,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.NoError(t, err)
 	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	ext.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
-		Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
+		Param: scheduler.NewParamForTest(mgr, newBackfillingSchedulerTestRuntime(ctrl, store, dom.SysSessionPool())),
 	}
 	sch.Extension = ext
 
@@ -376,6 +388,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	var taskMetaView struct {
 		EleIDs          []int64 `json:"ele_ids"`
 		CloudStorageURI string  `json:"cloud_storage_uri"`
+		RangeMemPerCPU  int64   `json:"range_mem_per_cpu"`
 		Summary         *struct {
 			IndexKVSize uint64 `json:"index_kv_size"`
 		} `json:"summary"`
@@ -387,13 +400,28 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.EqualError(t, err, "mock global-sort ingest planning error")
 	require.Empty(t, subtaskMetas)
 	require.Equal(t, originalTaskMeta, task.Meta)
+	checkpointedTask, err := mgr.GetTaskByID(ctx, task.ID)
+	require.NoError(t, err)
+	var checkpointedMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(checkpointedTask.Meta, &checkpointedMeta))
+	require.Equal(t, int64(2<<30), checkpointedMeta.RangeMemPerCPU)
+	// A replacement owner must reuse the checkpoint, even if executors scale up
+	// between attempts (including retries after a partially inserted plan).
+	storage.SetNodeResource(proto.NewNodeResource(16, 64<<30, 100<<30))
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", ""))
+	storage.SetNodeResource(proto.NewNodeResource(2, 8<<30, 100<<30))
+	recovered, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
+	require.NoError(t, err)
+	recovered.(*ddl.LitBackfillScheduler).GlobalSort = true
+	recovered.(*ddl.LitBackfillScheduler).BaseScheduler = ext.(*ddl.LitBackfillScheduler).BaseScheduler
 
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
+	subtaskMetas, err = recovered.OnNextSubtasksBatch(ctx, sch, task, execIDs, proto.BackfillStepWriteAndIngest)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	require.NoError(t, json.Unmarshal(task.Meta, &taskMetaView))
 	require.Equal(t, originalEleIDs, taskMetaView.EleIDs)
 	require.Equal(t, originalCloudStorageURI, taskMetaView.CloudStorageURI)
+	require.Equal(t, int64(2<<30), taskMetaView.RangeMemPerCPU)
 	require.NotNil(t, taskMetaView.Summary)
 	require.Equal(t, uint64(42), taskMetaView.Summary.IndexKVSize)
 
@@ -454,6 +482,17 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
+
+	// A partially inserted legacy plan has no durable sizing input. It must not
+	// be combined with newly generated ranges under a different memory budget.
+	legacyID, err := mgr.CreateTask(ctx, "legacy-partial", proto.Backfill, "", 1, "", 0, proto.ExtraParams{}, originalTaskMeta)
+	require.NoError(t, err)
+	legacyTask, err := mgr.GetTaskByID(ctx, legacyID)
+	require.NoError(t, err)
+	disttestutil.CreateSubTask(t, mgr, legacyID, proto.BackfillStepWriteAndIngest, ":4000", []byte(`{}`), proto.Backfill, 1)
+	_, err = ext.OnNextSubtasksBatch(ctx, sch, legacyTask, execIDs, proto.BackfillStepWriteAndIngest)
+	require.ErrorContains(t, err, "partially persisted global-sort import plan")
+	require.False(t, ext.IsRetryableErr(err))
 }
 
 func TestGetNextStep(t *testing.T) {
@@ -609,4 +648,19 @@ func TestBackfillTaskMetaVersion(t *testing.T) {
 	require.NotNil(t, summaryMetaView.Summary)
 	_, ok := summaryMetaView.Summary["index_kv_size"]
 	require.False(t, ok, "zero-valued summary fields are omitted from the encoded meta")
+
+	ext := &ddl.LitBackfillScheduler{}
+	task := &proto.Task{Meta: []byte(`{"cloud_storage_uri":"s3://bucket","range_mem_per_cpu":2147483648}`)}
+	minimum, err := ext.GetMinMemPerCPU(task, proto.BackfillStepWriteAndIngest)
+	require.NoError(t, err)
+	require.Equal(t, int64(2<<30), minimum)
+	for _, step := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepMergeTempIndex} {
+		minimum, err = ext.GetMinMemPerCPU(task, step)
+		require.NoError(t, err)
+		require.Zero(t, minimum)
+	}
+	task.Meta = []byte(`{"cloud_storage_uri":"s3://bucket"}`)
+	minimum, err = ext.GetMinMemPerCPU(task, proto.BackfillStepWriteAndIngest)
+	require.NoError(t, err)
+	require.Zero(t, minimum, "legacy plans stay decode-compatible")
 }

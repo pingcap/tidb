@@ -46,12 +46,14 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -67,6 +69,9 @@ type LitBackfillScheduler struct {
 }
 
 var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
+var _ scheduler.NodeResourceAwareExtension = (*LitBackfillScheduler)(nil)
+
+var errLegacyImportPlan = errors.New("cannot resume a partially persisted global-sort import plan without its memory budget")
 
 func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	sch := LitBackfillScheduler{
@@ -169,17 +174,23 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		return metaBytes, nil
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
+			memPerCPU, err := sch.getRangeMemPerCPU(ctx, taskHandle, task)
+			if err != nil {
+				return nil, err
+			}
 			metas, totalKVSize, err := generateGlobalSortIngestPlan(
 				ctx,
 				store.(kv.StorageWithPD),
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
+				memPerCPU,
 				logger)
 			if err != nil {
 				return nil, err
 			}
 			backfillMeta.Summary = &BackfillTaskSummary{IndexKVSize: totalKVSize}
+			backfillMeta.RangeMemPerCPU = memPerCPU
 			newTaskMeta, err := json.Marshal(&backfillMeta)
 			if err != nil {
 				return nil, err
@@ -286,9 +297,117 @@ func (*LitBackfillScheduler) GetEligibleInstances(_ context.Context, _ *proto.Ta
 	return nil, nil
 }
 
+// GetMinMemPerCPU limits placement only for the ranges planned with this budget.
+// Old import plans have no budget and retain their existing placement behavior.
+func (*LitBackfillScheduler) GetMinMemPerCPU(task *proto.Task, step proto.Step) (int64, error) {
+	if step != proto.BackfillStepWriteAndIngest {
+		return 0, nil
+	}
+	var m BackfillTaskMeta
+	if err := json.Unmarshal(task.Meta, &m); err != nil {
+		return 0, err
+	}
+	if m.CloudStorageURI == "" {
+		return 0, nil
+	}
+	return m.RangeMemPerCPU, nil
+}
+
+func minExecutorMemPerCPU(nodes []proto.ManagedNode, execIDs []string) (int64, error) {
+	resources := make(map[string]int64, len(nodes))
+	for _, n := range nodes {
+		if n.CPUCount > 0 && n.MemorySize > 0 {
+			resources[n.ID] = n.MemorySize / int64(n.CPUCount)
+		}
+	}
+	minimum := int64(math.MaxInt64)
+	for _, id := range execIDs {
+		memory := resources[id]
+		if memory <= 0 {
+			return 0, errors.Errorf("executor %s has not reported valid CPU and memory resources", id)
+		}
+		minimum = min(minimum, memory)
+	}
+	if len(execIDs) == 0 {
+		return 0, errors.New("no executor available to plan global-sort import ranges")
+	}
+	return minimum, nil
+}
+
+// getRangeMemPerCPU checkpoints a planning input before publishing any child
+// plans. Batch insertion may persist some subtasks before advancing the parent;
+// retries and replacement owners must therefore reuse the original budget.
+func (sch *LitBackfillScheduler) getRangeMemPerCPU(ctx context.Context, h diststorage.TaskHandle, task *proto.Task) (int64, error) {
+	nodes, err := sch.GetTaskMgr().GetAllNodes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// Include every node that may later receive this task, rather than only
+	// the initial prefix selected by MaxNodeCount.
+	execIDs := scheduler.FilterByScope(nodes, task.TargetScope)
+	eligible := make(map[string]struct{}, len(execIDs))
+	for _, id := range execIDs {
+		eligible[id] = struct{}{}
+	}
+	var budget int64
+	err = h.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		rows, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			select meta from mysql.tidb_global_task
+			where id = %? and state = %? and step = %? for update`, task.ID, task.State, task.Step)
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return diststorage.ErrTaskChanged
+		}
+		var persisted BackfillTaskMeta
+		if err := json.Unmarshal(rows[0].GetBytes(0), &persisted); err != nil {
+			return err
+		}
+		if persisted.RangeMemPerCPU > 0 {
+			budget = persisted.RangeMemPerCPU
+			return nil
+		}
+		// An old owner may already have inserted part of a legacy plan. Choosing
+		// a new budget would mix incompatible range boundaries in that plan.
+		partial, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			select 1 from mysql.tidb_background_subtask where task_key = %? and step = %? limit 1`,
+			diststorage.TaskIDToKey(task.ID), proto.BackfillStepWriteAndIngest)
+		if err != nil {
+			return err
+		}
+		if len(partial) > 0 {
+			return errLegacyImportPlan
+		}
+		budget, err = minExecutorMemPerCPU(nodes, execIDs)
+		if err != nil {
+			return err
+		}
+		persisted.RangeMemPerCPU = budget
+		meta, err := json.Marshal(&persisted)
+		if err != nil {
+			return err
+		}
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			"update mysql.tidb_global_task set meta = %? where id = %?", meta, task.ID)
+		return err
+	})
+	if err != nil {
+		return 0, err
+	}
+	for _, node := range nodes {
+		if node.CPUCount > 0 && node.MemorySize/int64(node.CPUCount) >= budget {
+			if _, ok := eligible[node.ID]; ok {
+				return budget, nil
+			}
+		}
+	}
+	return 0, errors.New("no executor satisfies the planned memory per CPU")
+}
+
 // IsRetryableErr implements scheduler.Extension interface.
 func (*LitBackfillScheduler) IsRetryableErr(err error) bool {
-	return !goerrors.Is(err, errdef.ErrTooManyDataFiles)
+	return !goerrors.Is(err, errdef.ErrTooManyDataFiles) && !goerrors.Is(err, errLegacyImportPlan)
 }
 
 // ModifyMeta implements scheduler.Extension interface.
@@ -486,6 +605,7 @@ func generateGlobalSortIngestPlan(
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	cloudStorageURI string,
+	memPerCPU int64,
 	logger *zap.Logger,
 ) ([][]byte, uint64, error) {
 	var (
@@ -557,7 +677,7 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, memPerCPU, logger)
 		if err != nil {
 			return nil, totalKVSize, errors.Trace(err)
 		}
@@ -606,6 +726,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	eleID int64,
 	cloudStorageURI string,
 	instanceCnt int64,
+	memPerCPU int64,
 	logger *zap.Logger,
 ) (metaArr []*BackfillSubTaskMeta, err error) {
 	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
@@ -621,7 +742,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		importTS = uint64(i)
 	})
 	splitter, err := getRangeSplitter(
-		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
+		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, memPerCPU, kvMeta.MultipleFilesStats, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -800,6 +921,7 @@ func getRangeSplitter(
 	cloudStorageURI string,
 	totalSize int64,
 	instanceCnt int64,
+	memPerCPU int64,
 	multiFileStat []simplesst.MultipleFilesStat,
 	logger *zap.Logger,
 ) (*globalsort.RangeSplitter, error) {
@@ -831,8 +953,7 @@ func getRangeSplitter(
 			logger.Warn("fail to get region split keys and size", zap.Error(err))
 		}
 	}
-	nodeRc := diststorage.GetNodeResource()
-	rangeSize, rangeKeys := globalsort.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
+	rangeSize, rangeKeys := globalsort.CalRangeSize(memPerCPU, regionSplitSize, regionSplitKeys)
 	logutil.DDLIngestLogger().Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),
 		zap.Int64("region-split-keys", regionSplitKeys),

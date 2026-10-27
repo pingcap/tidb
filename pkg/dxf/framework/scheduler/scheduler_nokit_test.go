@@ -210,6 +210,59 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 }
 
+func TestInitialDispatchUsesPlannedMemory(t *testing.T) {
+	for _, enoughMemory := range []bool{true, false} {
+		t.Run(fmt.Sprint(enoughMemory), func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			taskMgr := mock.NewMockTaskManager(ctrl)
+			ext := mock.NewMockScheduler(ctrl)
+			task := &proto.Task{TaskBase: proto.TaskBase{
+				ID: 1, State: proto.TaskStateRunning, Step: proto.BackfillStepMergeSort, RequiredSlots: 1, MaxNodeCount: 1,
+			}}
+			sch := createScheduler(task, true, taskMgr, ctrl)
+			largeMemory := int64(4 << 30)
+			if !enoughMemory {
+				largeMemory = 2 << 30
+			}
+			sch.nodeMgr.nodes.Store(&[]proto.ManagedNode{
+				{ID: "small", CPUCount: 2, MemorySize: 2 << 30},
+				{ID: "large", CPUCount: 2, MemorySize: largeMemory},
+			})
+			sch.slotMgr.updateCapacity(2)
+			sch.Extension = &memoryAwareTestScheduler{
+				Scheduler: ext,
+				minimumFn: func(planned *proto.Task, step proto.Step) (int64, error) {
+					require.Equal(t, []byte("planned"), planned.Meta)
+					require.Equal(t, proto.BackfillStepWriteAndIngest, step)
+					return 2 << 30, nil
+				},
+			}
+			ext.EXPECT().GetNextStep(gomock.Any()).Return(proto.BackfillStepWriteAndIngest)
+			ext.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+			ext.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ storage.TaskHandle, planned *proto.Task, _ []string, _ proto.Step) ([][]byte, error) {
+					planned.Meta = []byte("planned")
+					return [][]byte{[]byte("subtask")}, nil
+				})
+			if enoughMemory {
+				taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+				taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, planned *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
+						require.Equal(t, []byte("planned"), planned.Meta)
+						require.Len(t, subtasks, 1)
+						require.Equal(t, "large", subtasks[0].ExecID)
+						return nil
+					})
+				require.NoError(t, sch.Switch2NextStep())
+			} else {
+				require.ErrorContains(t, sch.Switch2NextStep(), "no executor satisfies")
+				require.Nil(t, sch.GetTask().Meta)
+				require.Equal(t, proto.BackfillStepMergeSort, sch.GetTask().Step)
+			}
+		})
+	}
+}
+
 func TestGetEligibleNodes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()

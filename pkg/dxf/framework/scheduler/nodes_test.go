@@ -28,6 +28,43 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+type memoryAwareTestScheduler struct {
+	Scheduler
+	minimum   int64
+	minimumFn func(*proto.Task, proto.Step) (int64, error)
+}
+
+func (s *memoryAwareTestScheduler) GetMinMemPerCPU(task *proto.Task, step proto.Step) (int64, error) {
+	if s.minimumFn != nil {
+		return s.minimumFn(task, step)
+	}
+	return s.minimum, nil
+}
+
+func TestFilterNodesByMemory(t *testing.T) {
+	aware := &memoryAwareTestScheduler{minimum: 2 << 30}
+	task := &proto.Task{}
+	nodes := []proto.ManagedNode{
+		{ID: "large", CPUCount: 16, MemorySize: 32 << 30},
+		{ID: "small", CPUCount: 16, MemorySize: 16 << 30},
+		{ID: "old", CPUCount: 16},
+		{ID: "invalid", MemorySize: 32 << 30},
+		{ID: "other-scope", CPUCount: 8, MemorySize: 32 << 30},
+	}
+	ids := []string{"small", "large", "old", "invalid", "missing"}
+	eligible, err := filterNodesByMemory(aware, task, proto.BackfillStepWriteAndIngest, ids, nodes)
+	require.NoError(t, err)
+	require.Equal(t, []string{"large"}, eligible)
+	eligible, err = filterNodesByMemory(aware, task, proto.BackfillStepWriteAndIngest, []string{"small", "old"}, nodes)
+	require.NoError(t, err)
+	require.Empty(t, eligible)
+	// Zero is reserved for legacy plans and steps with no memory requirement.
+	aware.minimum = 0
+	eligible, err = filterNodesByMemory(aware, task, proto.BackfillStepReadIndex, ids, nodes)
+	require.NoError(t, err)
+	require.Equal(t, ids, eligible)
+}
+
 func TestMaintainLiveNodes(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -185,7 +222,7 @@ func TestFilterByScope(t *testing.T) {
 
 	for i, cas := range cases {
 		t.Run(fmt.Sprintf("case-%d", i), func(t *testing.T) {
-			require.Equal(t, cas.expectedNodes, filterByScope(cas.nodes, cas.targetScope))
+			require.Equal(t, cas.expectedNodes, FilterByScope(cas.nodes, cas.targetScope))
 		})
 	}
 }

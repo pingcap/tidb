@@ -59,18 +59,21 @@ func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string
 }
 
 // InitMetaSession insert the manager information into dist_framework_meta.
-// if the record exists, update the cpu_count and role.
+// if the record exists, update the resources and role.
 func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := GetDXFCPUCount()
+	cpuCount, memorySize := 0, int64(0)
+	if rc := GetNodeResource(); rc != nil {
+		cpuCount, memorySize = rc.TotalCPU, rc.TotalMem
+	}
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
-		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
-		values (%?, %?, %?, -1)
+		insert into mysql.dist_framework_meta(host, role, cpu_count, memory_size, keyspace_id)
+		values (%?, %?, %?, %?, -1)
 		on duplicate key
-		update cpu_count = %?, role = %?`,
-		execID, role, cpuCount, cpuCount, role)
+		update cpu_count = %?, memory_size = %?, role = %?`,
+		execID, role, cpuCount, memorySize, cpuCount, memorySize, role)
 	return err
 }
 
@@ -82,13 +85,16 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	cpuCount := GetDXFCPUCount()
+	cpuCount, memorySize := 0, int64(0)
+	if rc := GetNodeResource(); rc != nil {
+		cpuCount, memorySize = rc.TotalCPU, rc.TotalMem
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
-		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
-		values (%?, %?, %?, -1)
+		insert into mysql.dist_framework_meta(host, role, cpu_count, memory_size, keyspace_id)
+		values (%?, %?, %?, %?, -1)
 		on duplicate key
-		update cpu_count = %?`,
-		execID, role, cpuCount, cpuCount)
+		update cpu_count = %?, memory_size = %?`,
+		execID, role, cpuCount, memorySize, cpuCount, memorySize)
 	return err
 }
 
@@ -137,7 +143,7 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	r := tracing.StartRegion(ctx, "TaskManager.getAllNodesWithSession")
 	defer r.End()
 	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
-		select host, role, cpu_count
+		select host, role, cpu_count, memory_size
 		from mysql.dist_framework_meta
 		order by host`)
 	if err != nil {
@@ -146,9 +152,10 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	nodes := make([]proto.ManagedNode, 0, len(rs))
 	for _, r := range rs {
 		nodes = append(nodes, proto.ManagedNode{
-			ID:       r.GetString(0),
-			Role:     r.GetString(1),
-			CPUCount: int(r.GetInt64(2)),
+			ID:         r.GetString(0),
+			Role:       r.GetString(1),
+			CPUCount:   int(r.GetInt64(2)),
+			MemorySize: r.GetInt64(3),
 		})
 	}
 	return nodes, nil

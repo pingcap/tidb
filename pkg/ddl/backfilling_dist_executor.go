@@ -71,6 +71,10 @@ type BackfillTaskMeta struct {
 	CloudStorageURI string `json:"cloud_storage_uri"`
 	EstimateRowSize int    `json:"estimate_row_size"`
 	MergeTempIndex  bool   `json:"merge_temp_index"`
+	// RangeMemPerCPU is the durable input used to size global-sort import ranges.
+	// It also limits which executors may receive those ranges. Zero identifies
+	// legacy plans that predate executor-memory reporting.
+	RangeMemPerCPU int64 `json:"range_mem_per_cpu,omitempty"`
 
 	Summary *BackfillTaskSummary `json:"summary,omitempty"`
 
@@ -193,7 +197,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI)
+		return newCloudImportExecutor(jobMeta, store, indexInfos, tbl, cloudStorageURI, s.taskMeta.RangeMemPerCPU)
 	case proto.BackfillStepMergeTempIndex:
 		return newMergeTempIndexExecutor(&s.task.TaskBase, jobMeta, store, tbl)
 	default:
@@ -240,6 +244,15 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 }
 
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
+	if task.Step == proto.BackfillStepWriteAndIngest {
+		// The import budget is added after this task executor may have started
+		// its read-index step, so read it from the latest task metadata.
+		var latest BackfillTaskMeta
+		if err := json.Unmarshal(task.Meta, &latest); err != nil {
+			return nil, err
+		}
+		s.taskMeta.RangeMemPerCPU = latest.RangeMemPerCPU
+	}
 	switch task.Step {
 	case proto.BackfillStepReadIndex,
 		proto.BackfillStepMergeSort,
@@ -256,6 +269,9 @@ func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {
+	if errors.Cause(err) == errExecutorMemoryTooSmall {
+		return true
+	}
 	if isIndexInfoNotFoundErr(err) {
 		return false
 	}

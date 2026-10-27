@@ -191,6 +191,12 @@ type Extension interface {
 	ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error)
 }
 
+// NodeResourceAwareExtension optionally constrains placement using the resources
+// assumed by a step's plan. A zero minimum preserves legacy placement behavior.
+type NodeResourceAwareExtension interface {
+	GetMinMemPerCPU(task *proto.Task, step proto.Step) (int64, error)
+}
+
 // Param is used to pass parameters when creating scheduler.
 type Param struct {
 	taskMgr        TaskManager

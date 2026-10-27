@@ -109,3 +109,21 @@ func TestUpgradeVersion285TTLTaskScanIndexID(t *testing.T) {
 	require.Equal(t, int64(1), req.GetRow(0).GetInt64(0))
 	require.NoError(t, rs.Close())
 }
+
+func TestUpgradeVersion321DXFMemorySize(t *testing.T) {
+	defer memory.CleanupGlobalMemArbitratorForTest()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	se := CreateSessionAndSetID(t, store)
+	MustExec(t, se, "ALTER TABLE mysql.dist_framework_meta DROP COLUMN memory_size")
+	MustExec(t, se, "INSERT INTO mysql.dist_framework_meta(host, role, cpu_count) VALUES ('old-executor', '', 16)")
+	upgradeToVer321(se, version320)
+	upgradeToVer321(se, version320)
+	rs := MustExecToRecodeSet(t, se, "SELECT memory_size FROM mysql.dist_framework_meta WHERE host = 'old-executor'")
+	defer func() { require.NoError(t, rs.Close()) }()
+	req := rs.NewChunk(nil)
+	require.NoError(t, rs.Next(context.Background(), req))
+	require.Equal(t, 1, req.NumRows())
+	require.Zero(t, req.GetRow(0).GetInt64(0))
+}

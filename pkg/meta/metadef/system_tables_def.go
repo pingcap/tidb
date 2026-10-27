@@ -592,6 +592,7 @@ const (
         host VARCHAR(261) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         cpu_count int default 0,
+        memory_size bigint NOT NULL DEFAULT 0,
         keyspace_id bigint(8) NOT NULL DEFAULT -1
     );`
 

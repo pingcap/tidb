@@ -285,7 +285,7 @@ func TestBalanceOneTask(t *testing.T) {
 				slotMgr: slotMgr,
 			})
 			b.currUsedSlots = c.initUsedSlots
-			require.NoError(t, b.balanceSubtasks(ctx, mockScheduler, c.eligibleNodes))
+			require.NoError(t, b.balanceSubtasks(ctx, mockScheduler, c.eligibleNodes, nil))
 			require.Equal(t, c.expectedUsedSlots, b.currUsedSlots)
 			// c.subtasks is updated in-place
 			require.Equal(t, c.expectedSubtasks, c.subtasks)
@@ -305,12 +305,12 @@ func TestBalanceOneTask(t *testing.T) {
 			nodeMgr: newNodeManager(""),
 			slotMgr: slotMgr,
 		})
-		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}), "mock error")
+		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}, nil), "mock error")
 		require.True(t, ctrl.Satisfied())
 
 		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
-		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, nil), "no eligible nodes to balance subtasks")
+		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, nil, nil), "no eligible nodes to balance subtasks")
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -328,7 +328,7 @@ func TestBalanceOneTask(t *testing.T) {
 			nodeMgr: newNodeManager(""),
 			slotMgr: slotMgr,
 		})
-		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}), "mock error")
+		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}, nil), "mock error")
 		require.True(t, ctrl.Satisfied())
 
 		b.currUsedSlots = map[string]int{"tidb1": 0, "tidb2": 0}
@@ -340,7 +340,7 @@ func TestBalanceOneTask(t *testing.T) {
 		mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(errors.New("mock error2"))
 		mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1, RequiredSlots: 16}}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
-		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1", "tidb2"}), "mock error2")
+		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1", "tidb2"}, nil), "mock error2")
 		// not updated
 		require.Equal(t, map[string]int{"tidb1": 0, "tidb2": 0}, b.currUsedSlots)
 		require.True(t, ctrl.Satisfied())
@@ -473,4 +473,50 @@ func TestBalancerUpdateUsedNodes(t *testing.T) {
 		{ID: 5, ExecID: "tidb3", State: proto.SubtaskStatePending},
 	})
 	require.Equal(t, map[string]int{"tidb1": 28, "tidb2": 12, "tidb3": 12}, b.currUsedSlots)
+}
+
+func TestBalanceRespectsPlannedMemory(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	ctx := context.Background()
+	manager := NewManager(ctx, nil, taskMgr, "owner", proto.NodeResourceForTest)
+	manager.slotMgr.updateCapacity(4)
+	nodes := []proto.ManagedNode{
+		{ID: "large", CPUCount: 4, MemorySize: 8 << 30},
+		{ID: "small", CPUCount: 4, MemorySize: 4 << 30},
+	}
+	manager.nodeMgr.nodes.Store(&nodes)
+	b := newBalancer(Param{taskMgr: taskMgr, nodeMgr: manager.nodeMgr, slotMgr: manager.slotMgr})
+	ext := mock.NewMockScheduler(ctrl)
+	task := &proto.Task{TaskBase: proto.TaskBase{ID: 1, Step: proto.BackfillStepWriteAndIngest, RequiredSlots: 2}}
+	ext.EXPECT().GetTask().Return(task).AnyTimes()
+	ext.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+	aware := &memoryAwareTestScheduler{Scheduler: ext, minimum: 2 << 30}
+	subtasks := []*proto.SubtaskBase{
+		{ID: 1, ExecID: "small", State: proto.SubtaskStatePending},
+		{ID: 2, ExecID: "large", State: proto.SubtaskStateRunning},
+	}
+	taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), int64(1)).Return(subtasks, nil)
+	taskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, moved []*proto.SubtaskBase) error {
+			require.Len(t, moved, 1)
+			require.Equal(t, "large", moved[0].ExecID)
+			return nil
+		})
+	b.currUsedSlots = map[string]int{"large": 0, "small": 0}
+	require.NoError(t, b.balanceSubtasks(ctx, aware, []string{"large", "small"}, nodes))
+	require.Equal(t, map[string]int{"large": 2, "small": 0}, b.currUsedSlots)
+
+	// A task with no capable destination must retain its accounting and allow
+	// the next task in this balance pass to proceed.
+	aware.minimum = 4 << 30
+	manager.addScheduler(1, aware)
+	next := mock.NewMockScheduler(ctrl)
+	next.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 2, RequiredSlots: 2}}).AnyTimes()
+	next.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+	manager.addScheduler(2, next)
+	taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), int64(1)).Return(subtasks, nil)
+	taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), int64(2)).Return(nil, nil)
+	b.balance(ctx, manager)
+	require.Equal(t, map[string]int{"large": 2, "small": 0}, b.currUsedSlots)
 }

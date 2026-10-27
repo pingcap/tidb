@@ -85,8 +85,8 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
 		task := sch.GetTask()
-		nodeIDs := filterByScope(managedNodes, task.TargetScope)
-		if err := b.balanceSubtasks(ctx, sch, nodeIDs); err != nil {
+		nodeIDs := FilterByScope(managedNodes, task.TargetScope)
+		if err := b.balanceSubtasks(ctx, sch, nodeIDs, managedNodes); err != nil {
 			b.logger.Warn("failed to balance subtasks",
 				zap.Int64("task-id", task.ID), zap.String("task-key", task.Key), llog.ShortError(err))
 			return
@@ -94,7 +94,7 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	}
 }
 
-func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNodes []string) error {
+func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNodes []string, resources []proto.ManagedNode) error {
 	task := sch.GetTask()
 	eligibleNodes, err := getEligibleNodes(ctx, sch, managedNodes)
 	if err != nil {
@@ -102,6 +102,20 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	}
 	if len(eligibleNodes) == 0 {
 		return errors.New("no eligible nodes to balance subtasks")
+	}
+	eligibleNodes, err = filterNodesByMemory(sch, task, task.Step, eligibleNodes, resources)
+	if err != nil {
+		return err
+	}
+	if len(eligibleNodes) == 0 {
+		// Resource shortage is temporary and must not stop balancing other tasks.
+		// Still account for this task's existing assignments in this balance pass.
+		subtasks, err := b.taskMgr.GetActiveSubtasks(ctx, task.ID)
+		if err != nil {
+			return err
+		}
+		b.updateUsedNodes(&task.TaskBase, subtasks)
+		return nil
 	}
 	return b.doBalanceSubtasks(ctx, task, eligibleNodes)
 }

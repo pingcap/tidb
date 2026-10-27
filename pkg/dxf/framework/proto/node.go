@@ -28,6 +28,9 @@ type ManagedNode struct {
 	// all managed node should have the same role
 	Role     string
 	CPUCount int
+	// MemorySize is the effective memory available to DXF, in bytes.
+	// Zero means the node has not reported its memory (for example, an old TiDB).
+	MemorySize int64
 }
 
 // NodeResource is the resource of the node.

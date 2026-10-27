@@ -895,9 +895,9 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err := sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4000", Role: "background", CPUCount: 100},
-		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "background", CPUCount: 8},
+		{ID: ":4000", Role: "background", CPUCount: 100, MemorySize: 100},
+		{ID: ":4001", Role: "", CPUCount: 8, MemorySize: 8},
+		{ID: ":4002", Role: "background", CPUCount: 8, MemorySize: 8},
 	}, nodes)
 
 	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
@@ -907,10 +907,10 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4000", Role: "background", CPUCount: 100},
-		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "", CPUCount: 100},
-		{ID: ":4003", Role: "background", CPUCount: 100},
+		{ID: ":4000", Role: "background", CPUCount: 100, MemorySize: 100},
+		{ID: ":4001", Role: "", CPUCount: 8, MemorySize: 8},
+		{ID: ":4002", Role: "", CPUCount: 100, MemorySize: 100},
+		{ID: ":4003", Role: "background", CPUCount: 100, MemorySize: 100},
 	}, nodes)
 	cpuCount, err := sm.GetCPUCountOfNode(ctx)
 	require.NoError(t, err)
@@ -922,24 +922,24 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "background", CPUCount: 100},
-		{ID: ":4003", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8, MemorySize: 8},
+		{ID: ":4002", Role: "background", CPUCount: 100, MemorySize: 100},
+		{ID: ":4003", Role: "background", CPUCount: 100, MemorySize: 100},
 	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4003"}))
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8, MemorySize: 8},
+		{ID: ":4002", Role: "background", CPUCount: 100, MemorySize: 100},
 	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4002"}))
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4001", Role: "", CPUCount: 8},
+		{ID: ":4001", Role: "", CPUCount: 8, MemorySize: 8},
 	}, nodes)
 	cpuCount, err = sm.GetCPUCountOfNode(ctx)
 	require.NoError(t, err)
@@ -949,16 +949,16 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8, MemorySize: 8},
+		{ID: ":4002", Role: "background", CPUCount: 100, MemorySize: 100},
 	}, nodes)
 	// should not reset role
 	require.NoError(t, sm.RecoverMeta(ctx, ":4002", ""))
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8, MemorySize: 8},
+		{ID: ":4002", Role: "background", CPUCount: 100, MemorySize: 100},
 	}, nodes)
 
 	storage.SetNodeResource(proto.NewNodeResource(100, 100, 100))
@@ -988,7 +988,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 			break
 		}
 	}
-	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 5}, limitedNode)
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 5, MemorySize: 5}, limitedNode)
 
 	storage.SetNodeResource(proto.NewNodeResource(1, 1, 100))
 	require.NoError(t, sm.RecoverMeta(ctx, ":4004", ""))
@@ -1000,7 +1000,19 @@ func TestDistFrameworkMeta(t *testing.T) {
 			break
 		}
 	}
-	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 1}, limitedNode)
+	require.Equal(t, proto.ManagedNode{ID: ":4004", Role: "background", CPUCount: 1, MemorySize: 1}, limitedNode)
+
+	storage.SetNodeResource(proto.NewNodeResource(16, 32<<30, 100<<30))
+	require.NoError(t, sm.InitMeta(ctx, ":4005", "background"))
+	storage.SetNodeResource(proto.NewNodeResource(8, 24<<30, 100<<30))
+	require.NoError(t, sm.RecoverMeta(ctx, ":4005", ""))
+	nodes, err = sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.ID == ":4005" {
+			require.Equal(t, proto.ManagedNode{ID: ":4005", Role: "background", CPUCount: 8, MemorySize: 24 << 30}, n)
+		}
+	}
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {

@@ -174,7 +174,9 @@ func (nm *NodeManager) getNodes() []proto.ManagedNode {
 	return slices.Clone(nodes)
 }
 
-func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
+// FilterByScope selects executors using the same scope policy for planning and
+// placement, including the preference for background nodes for an empty scope.
+func FilterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 	var nodeIDs []string
 	haveBackground := false
 	for _, node := range nodes {
@@ -198,4 +200,33 @@ func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 		}
 	}
 	return nodeIDs
+}
+
+// filterNodesByMemory only narrows the existing eligible set. Unlike the legacy
+// GetEligibleInstances hook, an empty result really means no eligible executor.
+func filterNodesByMemory(ext Extension, task *proto.Task, step proto.Step, nodeIDs []string, nodes []proto.ManagedNode) ([]string, error) {
+	aware, ok := ext.(NodeResourceAwareExtension)
+	if !ok {
+		return nodeIDs, nil
+	}
+	minimum, err := aware.GetMinMemPerCPU(task, step)
+	if err != nil {
+		return nil, err
+	}
+	if minimum <= 0 {
+		return nodeIDs, nil
+	}
+	capable := make(map[string]struct{}, len(nodes))
+	for _, n := range nodes {
+		if n.CPUCount > 0 && n.MemorySize/int64(n.CPUCount) >= minimum {
+			capable[n.ID] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		if _, ok := capable[id]; ok {
+			result = append(result, id)
+		}
+	}
+	return result, nil
 }

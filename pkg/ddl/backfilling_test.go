@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -53,6 +55,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMinExecutorMemPerCPU(t *testing.T) {
+	nodes := []proto.ManagedNode{
+		{ID: "owner", CPUCount: 2, MemorySize: 8 << 30},
+		{ID: "executor1", CPUCount: 16, MemorySize: 32 << 30},
+		{ID: "executor2", CPUCount: 8, MemorySize: 8 << 30},
+		{ID: "old-executor", CPUCount: 16},
+		{ID: "invalid-cpu", MemorySize: 32 << 30},
+	}
+	minimum, err := minExecutorMemPerCPU(nodes, []string{"executor1"})
+	require.NoError(t, err)
+	require.Equal(t, int64(2<<30), minimum)
+	minimum, err = minExecutorMemPerCPU(nodes, []string{"executor1", "executor2"})
+	require.NoError(t, err)
+	require.Equal(t, int64(1<<30), minimum)
+	for _, id := range []string{"old-executor", "invalid-cpu", "missing"} {
+		_, err = minExecutorMemPerCPU(nodes, []string{"executor1", id})
+		require.ErrorContains(t, err, "has not reported valid CPU and memory")
+	}
+	_, err = minExecutorMemPerCPU(nodes, nil)
+	require.ErrorContains(t, err, "no executor")
+}
+
 func TestDoneTaskKeeper(t *testing.T) {
 	n := newDoneTaskKeeper(kv.Key("a"))
 	n.updateNextKey(0, kv.Key("b"))
@@ -76,6 +100,15 @@ func TestDoneTaskKeeper(t *testing.T) {
 }
 
 func TestBackfillRetryableErrors(t *testing.T) {
+	t.Run("undersized restarted executor waits for rebalance", func(t *testing.T) {
+		original := diststorage.GetNodeResource()
+		t.Cleanup(func() { diststorage.SetNodeResource(original) })
+		diststorage.SetNodeResource(proto.NewNodeResource(16, 16<<30, 100<<30))
+		e := &cloudImportExecutor{rangeMemPerCPU: 2 << 30}
+		err := e.Init(context.Background())
+		require.ErrorIs(t, err, errExecutorMemoryTooSmall)
+		require.True(t, (&backfillDistExecutor{}).IsRetryableError(errors.Annotate(err, "initialize import")))
+	})
 	t.Run("index info not found is non-retryable for executor", func(t *testing.T) {
 		err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
 		require.True(t, isIndexInfoNotFoundErr(err))
