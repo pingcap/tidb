@@ -571,5 +571,18 @@ id	tenant	payload
 SELECT /*+ USE_INDEX(repro_union_scan_hint) */ * FROM repro_union_scan_hint WHERE tenant = 'csong' ORDER BY id;
 id	tenant	payload
 9	csong	uncommitted
+INSERT INTO repro_union_scan_hint (id, tenant, payload) VALUES (9223372036854775807, 'csong', 'uncommitted'), (9223372036854775808, 'csong', 'uncommitted'), (18446744073709551615, 'csong', 'uncommitted');
+SELECT /*+ USE_INDEX(repro_union_scan_hint) */ * FROM repro_union_scan_hint WHERE tenant = 'csong' ORDER BY id ASC;
+id	tenant	payload
+9	csong	uncommitted
+9223372036854775807	csong	uncommitted
+9223372036854775808	csong	uncommitted
+18446744073709551615	csong	uncommitted
+SELECT /*+ USE_INDEX(repro_union_scan_hint) */ * FROM repro_union_scan_hint WHERE tenant = 'csong' ORDER BY id DESC;
+id	tenant	payload
+18446744073709551615	csong	uncommitted
+9223372036854775808	csong	uncommitted
+9223372036854775807	csong	uncommitted
+9	csong	uncommitted
 ROLLBACK;
 DROP TABLE repro_union_scan_hint;
