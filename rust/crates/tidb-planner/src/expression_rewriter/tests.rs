@@ -487,7 +487,10 @@ fn in_subquery_arity_mismatch_is_refused() {
     let err = er
         .handle_in_subquery(f.outer(), &lexpr, wide, false, false, 0, true, true)
         .expect_err("arity mismatch");
-    assert_eq!(err, RewriteError::OperandColumns(1));
+    assert_eq!(
+        err,
+        RewriteError::Eval(tidb_expr::EvalError::OperandColumns(1))
+    );
 }
 
 // ***** scalar subqueries *****
@@ -655,7 +658,10 @@ fn an_ordered_quantifier_refuses_a_row_on_the_left() {
     let err = er
         .handle_compare_subquery(f.outer(), &lexpr, f.inner(), CompareOp::Lt, false, 0)
         .expect_err("row < any");
-    assert_eq!(err, RewriteError::OperandColumns(1));
+    assert_eq!(
+        err,
+        RewriteError::Eval(tidb_expr::EvalError::OperandColumns(1))
+    );
 }
 
 #[test]
@@ -758,7 +764,10 @@ fn mismatched_row_widths_are_refused() {
     let err = er
         .construct_binary_op_function(&l, &r, "eq")
         .expect_err("width mismatch");
-    assert_eq!(err, RewriteError::OperandColumns(2));
+    assert_eq!(
+        err,
+        RewriteError::Eval(tidb_expr::EvalError::OperandColumns(2))
+    );
 }
 
 // ***** correlated column resolution *****
@@ -823,10 +832,11 @@ fn an_unresolvable_name_names_its_clause() {
     let err = er
         .to_column(&f.inner(), &qualified("t", "a"))
         .expect_err("unresolvable");
-    assert_eq!(
-        err,
-        RewriteError::UnknownColumn("a".to_owned(), "where clause")
-    );
+    let RewriteError::Mysql(error) = err else {
+        panic!("{err:?}");
+    };
+    assert!(error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN));
+    assert_eq!(error.message, "Unknown column 'a' in 'where clause'");
 }
 
 #[test]
@@ -840,7 +850,9 @@ fn a_hidden_column_is_not_referenceable() {
     let err = er
         .to_column(&f.inner(), &qualified("s", "b"))
         .expect_err("hidden");
-    assert!(matches!(err, RewriteError::UnknownColumn(_, _)));
+    assert!(
+        matches!(&err, RewriteError::Mysql(error) if error.equal(&tidb_error::plannererrors::ERR_UNKNOWN_COLUMN))
+    );
 }
 
 // ***** correlated-column extraction *****

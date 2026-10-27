@@ -257,17 +257,7 @@ impl From<RewriteError> for PlanError {
             // The rewriter's own typed errors keep the MySQL identity Go
             // gives them; only the builder-level messages stay flat.
             RewriteError::Eval(error) => error.into(),
-            RewriteError::OperandColumns(count) => Self::eval(EvalError::OperandColumns(count)),
-            RewriteError::UnknownColumn(column, clause) => Self::from(
-                tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
-                    tidb_hack::go_to_lower(column).into(),
-                    clause.into(),
-                ]),
-            ),
-            RewriteError::Ambiguous(column, clause) => Self::from(
-                tidb_error::plannererrors::ERR_AMBIGUOUS
-                    .generate_with_stack_by_args(&[column.into(), clause.into()]),
-            ),
+            RewriteError::Mysql(error) => Self::from(error),
             other => Self::internal(other.to_string()),
         }
     }

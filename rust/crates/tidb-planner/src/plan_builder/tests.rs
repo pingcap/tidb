@@ -1538,7 +1538,7 @@ fn test_rewrite_error_flattens_into_plan_error() {
 
     // The rewriter's typed errors keep Go's MySQL identity (1241 here); a
     // builder-level message stays flat.
-    let error: PlanError = RewriteError::OperandColumns(2).into();
+    let error: PlanError = RewriteError::Eval(EvalError::OperandColumns(2)).into();
     assert_eq!(
         error.kind(),
         &crate::plan_base::PlanErrorKind::Eval(EvalError::OperandColumns(2))

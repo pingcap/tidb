@@ -58,16 +58,20 @@ impl SequenceSnapshot {
         }
     }
 
-    /// Qualified name for Go's sequence error messages.
-    pub(crate) fn key(&self, path: &[String]) -> String {
+    /// The `(database, name)` Go's sequence errors name.
+    pub(crate) fn key(&self, path: &[String]) -> (String, String) {
         match path {
-            [name] => format!("{}.{}", self.current_db, name.go_to_lower()),
-            [database, name] => format!("{}.{}", database.go_to_lower(), name.go_to_lower()),
-            other => other
-                .iter()
-                .map(|part| part.go_to_lower())
-                .collect::<Vec<_>>()
-                .join("."),
+            [name] => (self.current_db.to_string(), name.go_to_lower()),
+            [database, name] => (database.go_to_lower(), name.go_to_lower()),
+            [] => (String::new(), String::new()),
+            [leading @ .., name] => (
+                leading
+                    .iter()
+                    .map(|part| part.go_to_lower())
+                    .collect::<Vec<_>>()
+                    .join("."),
+                name.go_to_lower(),
+            ),
         }
     }
 
@@ -84,12 +88,14 @@ impl SequenceSnapshot {
         });
         match entry.map(Arc::as_ref) {
             Some(TableEntry::Sequence(sequence)) => Ok(sequence),
-            Some(_) => Err(tidb_expr::EvalError::Sequence(
-                tidb_expr::SequenceEvalError::WrongObject(self.key(path)),
-            )),
-            None => Err(tidb_expr::EvalError::Sequence(
-                tidb_expr::SequenceEvalError::NotASequence(self.key(path)),
-            )),
+            Some(_) => Err(tidb_expr::EvalError::Sequence({
+                let (database, name) = self.key(path);
+                tidb_expr::SequenceEvalError::WrongObject(database, name)
+            })),
+            None => Err(tidb_expr::EvalError::Sequence({
+                let (database, name) = self.key(path);
+                tidb_expr::SequenceEvalError::NotASequence(database, name)
+            })),
         }
     }
 

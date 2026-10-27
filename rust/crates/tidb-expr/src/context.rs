@@ -235,69 +235,59 @@ pub enum EvalError {
 /// `infoschema.ErrWrongObject`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SequenceEvalError {
-    /// Go `table.ErrSequenceHasRunOut` (4135). Captured:
-    /// `Sequence 'test.s4' has run out`.
-    RunOut(String),
-    /// Go `infoschema.ErrTableNotExists` (1146). Captured for
-    /// `select nextval(nosuch)`: `Table 'test.nosuch' doesn't exist`.
-    NotASequence(String),
-    /// Go `infoschema.ErrWrongObject` (1347). An existing table or view was
-    /// named where Go's sequence lookup requires `SEQUENCE`.
-    WrongObject(String),
+    /// Go `table.ErrSequenceHasRunOut` (4135) for `(database, sequence)`.
+    /// Captured: `Sequence 'test.s4' has run out`.
+    RunOut(String, String),
+    /// Go `infoschema.ErrTableNotExists` (1146) for `(database, name)`.
+    /// Captured for `select nextval(nosuch)`:
+    /// `Table 'test.nosuch' doesn't exist`.
+    NotASequence(String, String),
+    /// Go `infoschema.ErrWrongObject` (1347) for `(database, name)`. An
+    /// existing table or view was named where Go's sequence lookup requires
+    /// `SEQUENCE`.
+    WrongObject(String, String),
     /// Go `errSequenceAccessDenied` (`ErrTableaccessDenied`, 1142): the
-    /// builtin's own `RequestVerification` refused INSERT (`NEXTVAL`,
-    /// `SETVAL`) or SELECT (`LASTVAL`) on the sequence.
+    /// builtin's own `RequestVerification` refused INSERT or SELECT on the
+    /// sequence.
     AccessDenied {
-        /// `INSERT` or `SELECT`.
+        /// `INSERT` for `SETVAL`, `SELECT` for `NEXTVAL` / `LASTVAL`.
         privilege: &'static str,
-        /// Go `AuthUsername`.
+        /// The authenticated user.
         user: String,
-        /// Go `AuthHostname`.
+        /// The authenticated host.
         host: String,
-        /// The sequence name as written, unqualified.
+        /// The sequence's name.
         sequence: String,
     },
 }
 
 impl SequenceEvalError {
-    /// The Go definition this error is raised as.
+    /// The Go error this raises, as Go raises it.
     #[must_use]
-    pub fn proto(&self) -> &'static tidb_error::terror::TerrorError {
+    pub fn to_terror(&self) -> tidb_error::terror::TerrorError {
         use tidb_error::catalog::{expression, infoschema, table};
         match self {
-            SequenceEvalError::RunOut(_) => &table::ERR_SEQUENCE_HAS_RUN_OUT,
-            SequenceEvalError::NotASequence(_) => &infoschema::ERR_TABLE_NOT_EXISTS,
-            SequenceEvalError::WrongObject(_) => &infoschema::ERR_WRONG_OBJECT,
-            SequenceEvalError::AccessDenied { .. } => &expression::ERR_SEQUENCE_ACCESS_DENIED,
-        }
-    }
-
-    /// The MySQL error number.
-    #[must_use]
-    pub fn code(&self) -> u16 {
-        match self {
-            SequenceEvalError::RunOut(_) => 4135,
-            SequenceEvalError::NotASequence(_) => 1146,
-            SequenceEvalError::WrongObject(_) => 1347,
-            SequenceEvalError::AccessDenied { .. } => 1142,
-        }
-    }
-
-    /// The message TiDB prints.
-    #[must_use]
-    pub fn message(&self) -> String {
-        match self {
-            SequenceEvalError::RunOut(name) => format!("Sequence '{name}' has run out"),
-            SequenceEvalError::NotASequence(name) => format!("Table '{name}' doesn't exist"),
-            SequenceEvalError::WrongObject(name) => format!("'{name}' is not SEQUENCE"),
+            SequenceEvalError::RunOut(database, name) => table::ERR_SEQUENCE_HAS_RUN_OUT
+                .generate_with_stack_by_args(&[database.as_str().into(), name.as_str().into()]),
+            SequenceEvalError::NotASequence(database, name) => infoschema::ERR_TABLE_NOT_EXISTS
+                .generate_with_stack_by_args(&[database.as_str().into(), name.as_str().into()]),
+            SequenceEvalError::WrongObject(database, name) => infoschema::ERR_WRONG_OBJECT
+                .generate_with_stack_by_args(&[
+                    database.as_str().into(),
+                    name.as_str().into(),
+                    "SEQUENCE".into(),
+                ]),
             SequenceEvalError::AccessDenied {
                 privilege,
                 user,
                 host,
                 sequence,
-            } => format!(
-                "{privilege} command denied to user '{user}'@'{host}' for table '{sequence}'"
-            ),
+            } => expression::ERR_SEQUENCE_ACCESS_DENIED.generate_with_stack_by_args(&[
+                (*privilege).into(),
+                user.as_str().into(),
+                host.as_str().into(),
+                sequence.as_str().into(),
+            ]),
         }
     }
 }
@@ -389,109 +379,64 @@ pub enum JsonError {
 }
 
 impl JsonError {
-    /// The Go definition this error is raised as: the `json` class for the
-    /// document / path errors, `types` and `expression` for the few the JSON
-    /// builtins raise through those packages.
+    /// The Go error this raises, as Go raises it: the `json` document / path
+    /// errors in `types`, the argument errors in `expression`.
     #[must_use]
-    pub fn proto(&self) -> &'static tidb_error::terror::TerrorError {
+    pub fn to_terror(&self) -> tidb_error::terror::TerrorError {
         use tidb_error::catalog::{expression, types};
         match self {
-            JsonError::InvalidText | JsonError::EmptyText => &types::ERR_INVALID_JSON_TEXT,
-            JsonError::InvalidTextInParam { .. } => &types::ERR_INVALID_JSON_TEXT_IN_PARAM,
-            JsonError::InvalidCharset => &types::ERR_INVALID_JSON_CHARSET,
-            JsonError::InvalidPath(_) => &types::ERR_INVALID_JSON_PATH,
-            JsonError::InvalidPathMultipleSelection => {
-                &types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION
-            }
-            JsonError::InvalidTypeForJson { .. } => &expression::ERR_INVALID_TYPE_FOR_JSON,
-            JsonError::InvalidJsonType { .. } => &types::ERR_INVALID_JSON_TYPE,
-            JsonError::IncorrectType { .. } => &expression::ERR_INCORRECT_TYPE,
-            JsonError::NullMemberName => &types::ERR_JSON_DOCUMENT_NULL_KEY,
-            JsonError::VacuousPath => &types::ERR_JSON_VACUOUS_PATH,
-            JsonError::InvalidPathArrayCell => &types::ERR_INVALID_JSON_PATH_ARRAY_CELL,
-            JsonError::BadOneOrAllArg { .. } => &types::ERR_JSON_BAD_ONE_OR_ALL_ARG,
-            JsonError::DocumentTooDeep => &types::ERR_JSON_DOCUMENT_TOO_DEEP,
-        }
-    }
-
-    /// The `pkg/errno` code TiDB reports for this error.
-    #[must_use]
-    pub const fn code(&self) -> u16 {
-        match self {
-            JsonError::InvalidText | JsonError::EmptyText => 3140,
-            JsonError::InvalidTextInParam { .. } => 3141,
-            JsonError::InvalidCharset => 3144,
-            // Go raises it where the function is evaluated; a function
-            // pushed to the coprocessor reaches the client as 1105 through
-            // the executor's coprocessor error conversion instead.
-            JsonError::InvalidPath(_) => 3143,
-            JsonError::InvalidPathMultipleSelection => 3149,
-            JsonError::InvalidTypeForJson { .. } => 3146,
-            JsonError::InvalidJsonType { .. } => 3853,
-            JsonError::IncorrectType { .. } => 3064,
-            JsonError::NullMemberName => 3158,
-            JsonError::VacuousPath => 3153,
-            JsonError::InvalidPathArrayCell => 3165,
-            JsonError::BadOneOrAllArg { .. } => 3154,
-            JsonError::DocumentTooDeep => 3157,
-        }
-    }
-
-    /// The message `pkg/errno/errname.go` formats for this error.
-    #[must_use]
-    pub fn message(&self) -> String {
-        match self {
-            JsonError::InvalidText => "Invalid JSON text: The document root must not be followed \
-                 by other values."
-                .to_owned(),
-            JsonError::EmptyText => "Invalid JSON text: The document is empty".to_owned(),
+            JsonError::InvalidText => types::ERR_INVALID_JSON_TEXT.generate_with_stack_by_args(&[
+                "The document root must not be followed by other values.".into(),
+            ]),
+            JsonError::EmptyText => types::ERR_INVALID_JSON_TEXT
+                .generate_with_stack_by_args(&["The document is empty".into()]),
             JsonError::InvalidCharset => {
-                "Cannot create a JSON value from a string with CHARACTER SET 'binary'.".to_owned()
+                types::ERR_INVALID_JSON_CHARSET.generate_with_stack_by_args(&["binary".into()])
             }
             JsonError::InvalidTextInParam {
                 argument,
                 function,
                 reason,
                 position,
-            } => format!(
-                "Invalid JSON text in argument {argument} to function {function}: \"{reason}\" at position {position}."
-            ),
-            JsonError::InvalidPath(position) => format!(
-                "Invalid JSON path expression. The error is around character position {position}."
-            ),
-            JsonError::InvalidPathMultipleSelection => {
-                "In this situation, path expressions may not contain the * and ** tokens or an \
-                 array range."
-                    .to_owned()
+            } => types::ERR_INVALID_JSON_TEXT_IN_PARAM.generate_with_stack_by_args(&[
+                (*argument).into(),
+                (*function).into(),
+                (*reason).into(),
+                (*position).into(),
+            ]),
+            JsonError::InvalidPath(position) => {
+                types::ERR_INVALID_JSON_PATH.generate_with_stack_by_args(&[(*position).into()])
             }
-            JsonError::InvalidTypeForJson { argument, function } => format!(
-                "Invalid data type for JSON data in argument {argument} to function {function}; \
-                 a JSON string or JSON type is required."
-            ),
+            JsonError::InvalidPathMultipleSelection => {
+                types::ERR_INVALID_JSON_PATH_MULTIPLE_SELECTION.generate_with_stack_by_args(&[])
+            }
+            JsonError::InvalidTypeForJson { argument, function } => {
+                expression::ERR_INVALID_TYPE_FOR_JSON
+                    .generate_with_stack_by_args(&[(*argument).into(), (*function).into()])
+            }
             JsonError::InvalidJsonType {
                 argument,
                 function,
                 required,
-            } => format!(
-                "Invalid JSON type in argument {argument} to function {function}; an {required} \
-                 is required."
-            ),
-            JsonError::IncorrectType { argument, function } => {
-                format!("Incorrect type for argument {argument} in function {function}.")
-            }
+            } => types::ERR_INVALID_JSON_TYPE.generate_with_stack_by_args(&[
+                (*argument).into(),
+                (*function).into(),
+                required.as_str().into(),
+            ]),
+            JsonError::IncorrectType { argument, function } => expression::ERR_INCORRECT_TYPE
+                .generate_with_stack_by_args(&[argument.to_string().into(), (*function).into()]),
             JsonError::NullMemberName => {
-                "JSON documents may not contain NULL member names.".to_owned()
+                types::ERR_JSON_DOCUMENT_NULL_KEY.generate_with_stack_by_args(&[])
             }
-            JsonError::VacuousPath => {
-                "The path expression '$' is not allowed in this context.".to_owned()
-            }
+            JsonError::VacuousPath => types::ERR_JSON_VACUOUS_PATH.generate_with_stack_by_args(&[]),
             JsonError::InvalidPathArrayCell => {
-                "A path expression is not a path to a cell in an array.".to_owned()
+                types::ERR_INVALID_JSON_PATH_ARRAY_CELL.generate_with_stack_by_args(&[])
             }
-            JsonError::BadOneOrAllArg { function } => format!(
-                "The oneOrAll argument to {function} may take these values: 'one' or 'all'."
-            ),
-            JsonError::DocumentTooDeep => "The JSON document exceeds the maximum depth.".to_owned(),
+            JsonError::BadOneOrAllArg { function } => types::ERR_JSON_BAD_ONE_OR_ALL_ARG
+                .generate_with_stack_by_args(&[(*function).into()]),
+            JsonError::DocumentTooDeep => {
+                types::ERR_JSON_DOCUMENT_TOO_DEEP.generate_with_stack_by_args(&[])
+            }
         }
     }
 }

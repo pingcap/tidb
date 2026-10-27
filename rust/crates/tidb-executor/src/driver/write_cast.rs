@@ -21,7 +21,7 @@
 //! assignment, and nothing at all for an `ON DUPLICATE KEY UPDATE` one -- so
 //! the same value written three ways answers with three different codes and
 //! three different messages. [`CastShape`] is that fork, and
-//! [`raw_assignment_error`] is the undecorated form the assignment paths
+//! the cast's own undecorated error is what the assignment paths
 //! report.
 //!
 //! Mirrors `pkg/executor/insert_common.go`'s `completeInsertErr` /
@@ -368,32 +368,9 @@ impl CastShape {
             other => other,
         }
     }
-
-    /// Names one failed cast, which is the whole difference between the two
-    /// shapes. A WARNING carries the same naming as the error would, because
-    /// Go builds the object first and only then decides whether the mode
-    /// makes it fatal.
-    fn name_failure(self, error: CastFailure, source: &Datum, field_type: &FieldType) -> CastFailure {
-        match self {
-            Self::RawTable
-            | Self::OnDuplicateAssignment
-            | Self::GeneratedOnDuplicate
-            | Self::LoadDataRow => raw_assignment_error(error, source, field_type),
-            Self::InsertRow | Self::InsertSelectRow => error,
-            Self::UpdateAssignment => match error {
-                // Go's `handleUpdateError` re-titles exactly these two.
-                CastFailure::DataTooLong { .. } | CastFailure::DataOutOfRange { .. } => error,
-                other => raw_assignment_error(other, source, field_type),
-            },
-        }
-    }
 }
 
 impl CastCompletion for CastShape {
-    fn name(&self, failure: CastFailure, source: &Datum, field_type: &FieldType) -> CastFailure {
-        self.error_shape().name_failure(failure, source, field_type)
-    }
-
     fn complete_error(
         &self,
         error: tidb_error::mysql::SqlError,
@@ -401,7 +378,7 @@ impl CastCompletion for CastShape {
         field_type: &FieldType,
         column: &str,
         row_index: usize,
-    ) -> CastFailure {
+    ) -> MysqlError {
         complete_typed_cast(error, source, field_type, column, row_index, self.error_shape())
     }
 
@@ -412,7 +389,7 @@ impl CastCompletion for CastShape {
         field_type: &FieldType,
         column: &str,
         row_index: usize,
-    ) -> CastFailure {
+    ) -> MysqlError {
         complete_typed_cast(error, source, field_type, column, row_index, self.warning_shape())
     }
 
@@ -437,31 +414,32 @@ fn complete_typed_cast(
     column: &str,
     row: usize,
     shape: CastShape,
-) -> CastFailure {
+) -> MysqlError {
     let insert = shape == CastShape::InsertRow;
     let update = shape == CastShape::UpdateAssignment;
+    let row = row + 1;
     match error.code {
-        1690 if insert || update => CastFailure::DataOutOfRange {
-            column: column.to_owned(),
-            row: row + 1,
-        },
-        1264 if insert => CastFailure::DataOutOfRange {
-            column: column.to_owned(),
-            row: row + 1,
-        },
-        1406 if insert || update => CastFailure::DataTooLong {
-            column: column.to_owned(),
-            row: row + 1,
-        },
-        1265 if insert => CastFailure::DataTruncatedAtRow {
-            column: column.to_owned(),
-            row: row + 1,
-        },
+        1690 if insert || update => MysqlError::from_terror(
+            &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE
+                .generate_with_stack_by_args(&[column.into(), row.into()]),
+        ),
+        1264 if insert => MysqlError::from_terror(
+            &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE
+                .generate_with_stack_by_args(&[column.into(), row.into()]),
+        ),
+        1406 if insert || update => MysqlError::from_terror(
+            &tidb_error::catalog::types::ERR_DATA_TOO_LONG
+                .generate_with_stack_by_args(&[column.into(), row.into()]),
+        ),
+        1265 if insert => MysqlError::from_terror(
+            &tidb_error::catalog::types::ERR_TRUNCATED
+                .generate_with_stack_by_args(&[column.into(), row.into()]),
+        ),
         // Go `completeLoadErr`.
-        1406 if shape == CastShape::LoadDataRow => CastFailure::DataTruncatedAtRow {
-            column: column.to_owned(),
-            row: row + 1,
-        },
+        1406 if shape == CastShape::LoadDataRow => MysqlError::from_terror(
+            &tidb_error::catalog::types::ERR_TRUNCATED
+                .generate_with_stack_by_args(&[column.into(), row.into()]),
+        ),
         1292 if insert
             && matches!(
                 field.code(),
@@ -471,20 +449,26 @@ fn complete_typed_cast(
                     | tidb_datatype::FieldTypeCode::Timestamp
             ) =>
         {
-            CastFailure::IncorrectTemporalValue {
-                type_name: tidb_datatype::type_str(field.code()).to_owned(),
-                value: datum_error_text(source),
-                column: column.to_owned(),
-                row: row + 1,
-            }
+            MysqlError::from_terror(
+                &tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
+                    .generate_with_stack_by_args(&[
+                        tidb_datatype::type_str(field.code()).into(),
+                        datum_error_text(source).into(),
+                        column.into(),
+                        row.into(),
+                    ]),
+            )
         }
-        1292 if insert => CastFailure::IncorrectValue {
-            type_name: tidb_datatype::type_str(field.code()).to_owned(),
-            value: datum_error_text(source),
-            column: column.to_owned(),
-            row: row + 1,
-        },
-        _ => CastFailure::Mysql(MysqlError::from_sql_error(error)),
+        1292 if insert => MysqlError::from_terror(
+            &tidb_error::catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
+                .generate_with_stack_by_args(&[
+                    tidb_datatype::type_str(field.code()).into(),
+                    datum_error_text(source).into(),
+                    column.into(),
+                    row.into(),
+                ]),
+        ),
+        _ => MysqlError::from_sql_error(error),
     }
 }
 
@@ -543,7 +527,7 @@ pub fn cast_value_for_update_assignment(
 /// (`InsertValues.handleErr`), which is why the same statement's plain-insert
 /// spelling names `'abc'`.
 ///
-/// (1) is [`raw_assignment_error`]: a STRICT assignment returns
+/// (1) is the cast's own raw error: a STRICT assignment returns
 /// `table.CastValue`'s error UNWRAPPED -- no column, no row, and a different
 /// CODE from the insert spelling of the same value.
 pub fn cast_value_for_assignment(

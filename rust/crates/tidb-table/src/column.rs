@@ -102,140 +102,6 @@ impl From<CastError> for ColumnError {
     }
 }
 
-/// One failed cast before it is rendered: the Go error each producer raises,
-/// kept typed while a [`CastCompletion`] re-titles it for its caller.
-#[allow(missing_docs)]
-#[derive(Clone, Debug)]
-pub enum CastFailure {
-    IncorrectValue {
-        type_name: String,
-        value: String,
-        column: String,
-        row: usize,
-    },
-    IncorrectTemporalValue {
-        type_name: String,
-        value: String,
-        column: String,
-        row: usize,
-    },
-    DataOutOfRange {
-        column: String,
-        row: usize,
-    },
-    DataTooLong {
-        column: String,
-        row: usize,
-    },
-    DataTruncatedAtRow {
-        column: String,
-        row: usize,
-    },
-    TruncatedIncorrectValue {
-        kind: String,
-        value: String,
-    },
-    IncorrectValueRaw {
-        type_name: String,
-        value: String,
-    },
-    DataTooLongRaw {
-        field_len: u64,
-        data_len: u64,
-    },
-    DataTruncatedUnformatted,
-    Mysql(MysqlError),
-    Eval(tidb_expr::EvalError),
-}
-
-impl CastFailure {
-    /// The code, SQLSTATE, message and identity this failure reports.
-    #[must_use]
-    pub fn to_mysql_error(self) -> MysqlError {
-        CastError::from(self).to_mysql_error()
-    }
-}
-
-impl From<CastFailure> for CastError {
-    fn from(failure: CastFailure) -> Self {
-        Self::Column(match failure {
-            CastFailure::IncorrectValue {
-                type_name,
-                value,
-                column,
-                row,
-            } => incorrect_value(&type_name, &value, &column, row),
-            CastFailure::IncorrectTemporalValue {
-                type_name,
-                value,
-                column,
-                row,
-            } => MysqlError::from_terror(
-                &tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
-                    .generate_with_stack_by_args(&[
-                        (&type_name).into(),
-                        (&value).into(),
-                        (&column).into(),
-                        row.into(),
-                    ]),
-            ),
-            CastFailure::DataOutOfRange { column, row } => MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_WARN_DATA_OUT_OF_RANGE
-                    .generate_with_stack_by_args(&[(&column).into(), row.into()]),
-            ),
-            CastFailure::DataTooLong { column, row } => MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_DATA_TOO_LONG
-                    .generate_with_stack_by_args(&[(&column).into(), row.into()]),
-            ),
-            CastFailure::DataTruncatedAtRow { column, row } => MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_TRUNCATED
-                    .generate_with_stack_by_args(&[(&column).into(), row.into()]),
-            ),
-            CastFailure::TruncatedIncorrectValue { kind, value } => MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
-                    .generate_with_stack_by_args(&[(&kind).into(), (&value).into()]),
-            ),
-            CastFailure::IncorrectValueRaw { type_name, value } => MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_WRONG_VALUE
-                    .generate_with_stack_by_args(&[(&type_name).into(), (&value).into()]),
-            ),
-            CastFailure::DataTooLongRaw {
-                field_len,
-                data_len,
-            } => MysqlError::from_terror(
-                &tidb_error::catalog::types::ERR_DATA_TOO_LONG.generate_with_stack(format!(
-                    "Data Too Long, field len {field_len}, data len {data_len}"
-                )),
-            ),
-            CastFailure::DataTruncatedUnformatted => {
-                MysqlError::from_terror(&tidb_error::catalog::types::ERR_TRUNCATED)
-            }
-            CastFailure::Mysql(error) => error,
-            CastFailure::Eval(error) => return Self::Eval(error),
-        })
-    }
-}
-
-
-/// Go `table.ErrTruncatedWrongValueForField` (1366): "Incorrect %-.32s
-/// value: '%-.128s' for column '%.192s' at row %d".
-///
-/// Go `table.CastValue` converts an invalid character group into the same
-/// 1366 error BEFORE an INSERT/UPDATE caller can append a row. Row zero is
-/// that raw form; every completed write supplies a one-based row.
-#[must_use]
-pub fn incorrect_value(type_name: &str, value: &str, column: &str, row: usize) -> MysqlError {
-    let message = if row == 0 && type_name == "string" {
-        format!("Incorrect string value '{value}' for column '{column}'")
-    } else {
-        format!("Incorrect {type_name} value: '{value}' for column '{column}' at row {row}")
-    };
-    MysqlError::from_terror(
-        &tidb_error::catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD
-            .generate_with_stack(message),
-    )
-}
-
 /// DDL's legacy value/event callers treat scale rounding as nonfatal.
 pub fn conversion_event_is_silent(event: &tidb_datatype::ScalarConversionEvent) -> bool {
     matches!(event, tidb_datatype::ScalarConversionEvent::RoundedToScale)
@@ -312,12 +178,11 @@ pub fn cast_table_value_with_flags(
 /// HandleTruncate runs before forceIgnoreTruncate; warnings already appended
 /// by the type context survive suppression of the remaining error.
 fn handle_raw_cast_error(
-    error: CastFailure,
+    reported: MysqlError,
     ctx: &dyn crate::context::MutateContext,
     flags: tidb_datatype::ConversionFlags,
     force_ignore_truncate: bool,
-) -> Result<(), CastFailure> {
-    let reported = error.clone().to_mysql_error();
+) -> Result<(), CastError> {
     let pending = tidb_datatype::TruncationPolicy::new(
         flags.ignore_truncate_err(),
         flags.truncate_as_warning(),
@@ -326,18 +191,20 @@ fn handle_raw_cast_error(
         Some(tidb_error::mysql::SqlError {
             code: reported.code,
             state: tidb_error::mysql::mysql_state(reported.code),
-            message: reported.message,
+            message: reported.message.clone(),
             identity: reported.identity,
         }),
-        |warning| ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
-            warning.code,
-            warning.message.clone(),
-            warning.identity,
-        )),
+        |warning| {
+            ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
+                tidb_util::context::WarningLevel::Warning,
+                warning.code,
+                warning.message.clone(),
+                warning.identity,
+            ))
+        },
     );
     if pending.is_some() && !force_ignore_truncate {
-        Err(error)
+        Err(CastError::Column(reported))
     } else {
         Ok(())
     }
@@ -349,9 +216,6 @@ fn handle_raw_cast_error(
 /// `completeLoadErr`, `doDupRowUpdate`'s handler). The executor owns every
 /// completion except `RawCast`.
 pub trait CastCompletion {
-    /// Names a cast that failed outright, or a zero date the SQL mode
-    /// refuses: `failure` is the completed (column, 1-based row) form.
-    fn name(&self, failure: CastFailure, source: &Datum, field_type: &FieldType) -> CastFailure;
     /// Completes the error a conversion stage returned.
     fn complete_error(
         &self,
@@ -360,7 +224,7 @@ pub trait CastCompletion {
         field_type: &FieldType,
         column: &str,
         row_index: usize,
-    ) -> CastFailure;
+    ) -> MysqlError;
     /// Completes a warning a conversion stage raised.
     fn complete_warning(
         &self,
@@ -369,7 +233,7 @@ pub trait CastCompletion {
         field_type: &FieldType,
         column: &str,
         row_index: usize,
-    ) -> CastFailure;
+    ) -> MysqlError;
     /// Whether warnings name the converted value rather than the source
     /// (`doDupRowUpdate` completes them after the cast).
     fn warns_with_converted_value(&self) -> bool {
@@ -388,10 +252,6 @@ pub trait CastCompletion {
 pub(crate) struct RawCast;
 
 impl CastCompletion for RawCast {
-    fn name(&self, failure: CastFailure, source: &Datum, field_type: &FieldType) -> CastFailure {
-        raw_assignment_error(failure, source, field_type)
-    }
-
     fn complete_error(
         &self,
         error: tidb_error::mysql::SqlError,
@@ -399,8 +259,8 @@ impl CastCompletion for RawCast {
         _: &FieldType,
         _: &str,
         _: usize,
-    ) -> CastFailure {
-        CastFailure::Mysql(MysqlError::from_sql_error(error))
+    ) -> MysqlError {
+        MysqlError::from_sql_error(error)
     }
 
     fn complete_warning(
@@ -410,8 +270,8 @@ impl CastCompletion for RawCast {
         _: &FieldType,
         _: &str,
         _: usize,
-    ) -> CastFailure {
-        CastFailure::Mysql(MysqlError::from_sql_error(error))
+    ) -> MysqlError {
+        MysqlError::from_sql_error(error)
     }
 }
 
@@ -441,16 +301,18 @@ pub fn cast_value_with_flags(
         // Go convertToString returns its decoded bytes beside the charset
         // error without applying width production. CastColumnValue names and
         // handles that error before its final CHAR trailing-space pass.
+        // Go `convertToIncorrectStringErr`.
+        let invalid_hex: String = invalid_bytes
+            .iter()
+            .map(|byte| format!("\\x{byte:02X}"))
+            .collect();
         handle_raw_cast_error(
-            CastFailure::IncorrectValue {
-                type_name: "string".to_owned(),
-                value: invalid_bytes
-                    .iter()
-                    .map(|byte| format!("\\x{byte:02X}"))
-                    .collect(),
-                column: column.to_owned(),
-                row: 0,
-            },
+            MysqlError::from_terror(
+                &tidb_error::catalog::table::ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD.fast_generate(
+                    "Incorrect string value '%s' for column '%s'",
+                    &[invalid_hex.into(), column.into()],
+                ),
+            ),
             ctx,
             flags,
             force_ignore_truncate,
@@ -510,9 +372,8 @@ fn cast_contextual_value(
     // Conversion stages may emit several warnings before the final error.
     // Preserve their order and let the caller complete their text.
     for warning in warnings.0.into_inner() {
-        let reported = completion
-            .complete_warning(warning.to_sql_error(), warning_source, field, column, row)
-            .to_mysql_error();
+        let reported =
+            completion.complete_warning(warning.to_sql_error(), warning_source, field, column, row);
         ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
             tidb_util::context::WarningLevel::Warning,
             reported.code,
@@ -520,43 +381,25 @@ fn cast_contextual_value(
             reported.identity,
         ));
     }
-    let converted = result.map_err(|error| {
-        if field.code() == tidb_datatype::FieldTypeCode::VectorFloat32 {
-            return CastFailure::Eval(tidb_expr::EvalError::Vector(error.to_string()));
-        }
-
-        json_write_error(&error).map(CastFailure::Eval).unwrap_or_else(|| {
-            if matches!(
-                field.code(),
-                tidb_datatype::FieldTypeCode::Timestamp
-                    | tidb_datatype::FieldTypeCode::Datetime
-                    | tidb_datatype::FieldTypeCode::Date
-                    | tidb_datatype::FieldTypeCode::Duration
-            ) {
-                return completion.name(
-                    CastFailure::IncorrectTemporalValue {
-                        type_name: tidb_datatype::type_str(field.code()).to_owned(),
-                        value: datum_error_text(source),
-                        column: column.to_owned(),
-                        row: row + 1,
-                    },
-                    source,
-                    field,
-                );
+    let converted = match result {
+        Ok(converted) => converted,
+        Err(error) => {
+            if field.code() == tidb_datatype::FieldTypeCode::VectorFloat32 {
+                return Err(CastError::Eval(tidb_expr::EvalError::Vector(
+                    error.to_string(),
+                )));
             }
-
-            completion.name(
-                CastFailure::IncorrectValue {
-                    type_name: tidb_datatype::type_str(field.code()).to_owned(),
-                    value: datum_error_text(source),
-                    column: column.to_owned(),
-                    row: row + 1,
-                },
-                source,
-                field,
-            )
-        })
-    })?;
+            if let Some(eval) = json_write_error(&error) {
+                return Err(CastError::Eval(eval));
+            }
+            // `ConvertTo` failed outright: the producer's error is what the
+            // statement caller completes, as for any other conversion error.
+            let producer = conversion_failure(source, field).to_sql_error();
+            return Err(CastError::Column(
+                completion.complete_error(producer, source, field, column, row),
+            ));
+        }
+    };
     if let Datum::Time(time) = converted.value {
         let invalid = converted
             .error
@@ -578,12 +421,12 @@ fn cast_contextual_value(
                 tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
             )
         {
-            raw.code = 1292;
-            raw.message = format!(
-                "Truncated incorrect {} value: '{}'",
-                field.compact_str(false),
-                datum_error_text(source)
-            );
+            raw = tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+                .generate_with_stack_by_args(&[
+                    field.compact_str(false).into(),
+                    datum_error_text(source).into(),
+                ])
+                .to_sql_error();
         }
         if !flags.ignore_truncate_err() {
             if flags.truncate_as_warning()
@@ -596,13 +439,7 @@ fn cast_contextual_value(
                 // sees it: a TIMESTAMP column keeps the timestamp already
                 // adjusted past the gap and warns `ErrTruncateWrongInsertValue`
                 // (1292), the same diagnostic strict mode raises below.
-                let reported = CastFailure::IncorrectTemporalValue {
-                    type_name: "timestamp".to_owned(),
-                    value: datum_error_text(source),
-                    column: column.to_owned(),
-                    row: row + 1,
-                }
-                .to_mysql_error();
+                let reported = dst_transition_error(source, column, row);
                 ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
             tidb_util::context::WarningLevel::Warning,
             reported.code,
@@ -610,19 +447,17 @@ fn cast_contextual_value(
             reported.identity,
         ));
             } else if flags.truncate_as_warning() {
-                let reported = completion
-                    .complete_warning(
-                        raw,
-                        if completion.warns_with_converted_value() {
-                            &converted.value
-                        } else {
-                            source
-                        },
-                        field,
-                        column,
-                        row,
-                    )
-                    .to_mysql_error();
+                let reported = completion.complete_warning(
+                    raw,
+                    if completion.warns_with_converted_value() {
+                        &converted.value
+                    } else {
+                        source
+                    },
+                    field,
+                    column,
+                    row,
+                );
                 ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
             tidb_util::context::WarningLevel::Warning,
             reported.code,
@@ -634,17 +469,11 @@ fn cast_contextual_value(
                     && completion.completes_dst_transition()
                     && field.code() == tidb_datatype::FieldTypeCode::Timestamp
                 {
-                    return Err(CastFailure::IncorrectTemporalValue {
-                        type_name: "timestamp".to_owned(),
-                        value: datum_error_text(source),
-                        column: column.to_owned(),
-                        row: row + 1,
-                    }
-                    .into());
+                    return Err(CastError::Column(dst_transition_error(source, column, row)));
                 }
-                return Err(completion
-                    .complete_error(raw, source, field, column, row)
-                    .into());
+                return Err(CastError::Column(
+                    completion.complete_error(raw, source, field, column, row),
+                ));
             }
         }
     }
@@ -690,15 +519,11 @@ pub fn truncate_char_trailing_spaces(value: Datum, field_type: &FieldType) -> Da
     Datum::new_collation_string(bytes, collation)
 }
 
-/// Go `table.CastValue`'s OWN error, which an assignment returns unchanged.
-///
-/// The insert path decorates that error with the column and the row
-/// (`completeInsertErr`); an `ON DUPLICATE KEY UPDATE` assignment does not
-/// (`pkg/executor/insert.go:511-514`, `return err`), and neither does the
-/// `UPDATE` path for anything except `ErrDataTooLong` and `ErrOverflow`
-/// (`handleUpdateError`). This function names the UNDECORATED error, given
-/// the wrapped one this tier built plus the source and target the conversion
-/// saw -- the same three inputs Go's producer had.
+/// The error `types.Datum.ConvertTo` raises when a cast fails outright: the
+/// producer's own error, before any statement caller completes it with a
+/// column and a row (`completeInsertErr`, `handleUpdateError`,
+/// `completeLoadErr`) -- `table.CastValue` returns it unchanged to an
+/// `ON DUPLICATE KEY UPDATE` assignment and to an `UPDATE`.
 ///
 /// Which producer raises which error, from the Go source:
 ///
@@ -707,77 +532,62 @@ pub fn truncate_char_trailing_spaces(value: Datum, field_type: &FieldType) -> Da
 /// | string -> int/uint/float/double/year | `getValidFloatPrefix` (`convert.go:563`) | `Truncated incorrect DOUBLE value: '<s>'` |
 /// | string -> decimal, no leading number | `MyDecimal.FromString` (`mydecimal.go:415`) | `Truncated incorrect DECIMAL value: '<s>'` |
 /// | string -> decimal, trailing garbage | bare `ErrTruncated`, re-titled by `castColumnValue` with `CompactStr` | `Truncated incorrect decimal(4,1) value: '<s>'` |
-/// | string -> time | bare `ErrTruncated`, same re-title | `Truncated incorrect time value: '<s>'` |
-/// | string -> date/datetime/timestamp | `ErrWrongValue` | `Incorrect date value: '<s>'` |
-/// | too long for a string column | `ProduceStrWithSpecifiedTp` (`datum.go:1302`) | `Data Too Long, field len 3, data len 7` |
-/// | unknown ENUM/SET label | bare `ErrTruncated`, NOT re-titled | `Data truncated for column '%s' at row %d` |
+/// | string -> date/datetime/timestamp/time | `ErrWrongValue` | `Incorrect date value: '<s>'` |
 ///
 /// Measured against TiDB for every row, with
 /// `insert into k (id) values (1) on duplicate key update <col> = <value>`.
-///
-/// NOT COVERED, and left carrying the decorated form rather than guessed at:
-/// `ErrOverflow` (1264), whose raw spelling an assignment only reaches for a
-/// non-constant source (a constant one is refused at build time with 1690),
-/// and `BIT`, whose Go form is a THIRD spelling of 1406 with no `data len`
-/// (`datum.go:1735`).
-#[must_use]
-pub fn raw_assignment_error(
-    wrapped: CastFailure,
-    source: &Datum,
-    field_type: &FieldType,
-) -> CastFailure {
+fn conversion_failure(source: &Datum, field_type: &FieldType) -> tidb_error::terror::TerrorError {
     use tidb_datatype::{EvalType, FieldTypeCode};
 
+    let text = datum_error_text(source);
+    let temporal = matches!(
+        field_type.code(),
+        FieldTypeCode::Timestamp
+            | FieldTypeCode::Datetime
+            | FieldTypeCode::Date
+            | FieldTypeCode::Duration
+    );
     let source_is_string = matches!(source, Datum::Bytes(_) | Datum::String(_));
-    match wrapped {
-        // Go's 1366 arm covers the numeric targets, whose conversions raise
-        // their own 1292 before `completeInsertErr` renames them.
-        CastFailure::IncorrectValue { value, .. } if source_is_string => {
-            match field_type.eval_type() {
-                EvalType::Int | EvalType::Real => CastFailure::TruncatedIncorrectValue {
-                    kind: "DOUBLE".to_owned(),
-                    value,
-                },
-                // `FromString` fails outright without a leading number and
-                // truncates with one; only the first names `DECIMAL`.
-                EvalType::Decimal => CastFailure::TruncatedIncorrectValue {
-                    kind: if starts_with_number(&value) {
-                        field_type.compact_str(false)
-                    } else {
-                        "DECIMAL".to_owned()
-                    },
-                    value,
-                },
-                // TIME reaches the same re-title as a truncated decimal.
-                EvalType::Duration => CastFailure::TruncatedIncorrectValue {
-                    kind: field_type.compact_str(false),
-                    value,
-                },
-                _ => CastFailure::IncorrectValue {
-                    value,
-                    type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-                    column: String::new(),
-                    row: 0,
-                },
-            }
-        }
-        CastFailure::IncorrectTemporalValue {
-            type_name, value, ..
-        } => CastFailure::IncorrectValueRaw { type_name, value },
-        // A BIT column reports 1406 too, with a Go message this does not
-        // model; only the string widths take the raw form.
-        CastFailure::DataTooLong { .. }
-            if field_type.eval_type() == EvalType::String
-                && field_type.code() != FieldTypeCode::Bit =>
-        {
-            CastFailure::DataTooLongRaw {
-                field_len: field_type.flen().max(0) as u64,
-                data_len: datum_error_text(source).chars().count() as u64,
-            }
-        }
-        CastFailure::DataTruncatedAtRow { .. } => CastFailure::DataTruncatedUnformatted,
-        other => other,
+    let truncated = |kind: String| {
+        tidb_error::catalog::types::ERR_TRUNCATED_WRONG_VAL
+            .generate_with_stack_by_args(&[kind.into(), text.clone().into()])
+    };
+    if temporal || !source_is_string {
+        return wrong_value(field_type, &text);
     }
+    match field_type.eval_type() {
+        EvalType::Int | EvalType::Real => truncated("DOUBLE".to_owned()),
+        // `FromString` fails outright without a leading number and truncates
+        // with one; only the first names `DECIMAL`.
+        EvalType::Decimal => truncated(if starts_with_number(&text) {
+            field_type.compact_str(false)
+        } else {
+            "DECIMAL".to_owned()
+        }),
+        _ => wrong_value(field_type, &text),
+    }
+}
+
+/// Go `types.ErrWrongValue.GenWithStackByArgs(types.TypeStr(tp), str)`.
+fn wrong_value(field_type: &FieldType, text: &str) -> tidb_error::terror::TerrorError {
+    tidb_error::catalog::types::ERR_WRONG_VALUE.generate_with_stack_by_args(&[
+        tidb_datatype::type_str(field_type.code()).into(),
+        text.into(),
+    ])
+}
+
+/// Go `InsertValues.handleErr`'s TIMESTAMP arm for `ErrTimestampInDSTTransition`:
+/// `exeerrors.ErrTruncateWrongInsertValue.GenWithStackByArgs(...)`.
+fn dst_transition_error(source: &Datum, column: &str, row: usize) -> MysqlError {
+    MysqlError::from_terror(
+        &tidb_util::dbterror::exeerrors::ERR_TRUNCATE_WRONG_INSERT_VALUE
+            .generate_with_stack_by_args(&[
+                "timestamp".into(),
+                datum_error_text(source).into(),
+                column.into(),
+                (row + 1).into(),
+            ]),
+    )
 }
 
 /// Whether Go's `MyDecimal.FromString` finds a number to read at all: it
@@ -818,17 +628,13 @@ fn apply_zero_date(
         ctx.date_modes(),
         ctx.strict(),
     );
-    let error = || {
-        completion.name(
-            CastFailure::IncorrectTemporalValue {
-                type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-                value: datum_error_text(source),
-                column: column.to_owned(),
-                row: row_index + 1,
-            },
-            source,
-            field_type,
-        )
+    let wrong_value_for = |value: &Datum| {
+        tidb_error::catalog::types::ERR_WRONG_VALUE
+            .generate_with_stack_by_args(&[
+                tidb_datatype::type_str(field_type.code()).into(),
+                datum_error_text(value).into(),
+            ])
+            .to_sql_error()
     };
     match action {
         ZeroDateAction::Store(value) => Ok(value),
@@ -836,25 +642,37 @@ fn apply_zero_date(
             // ODKU completes its warnings like the insert row, naming the
             // converted value it stores (`'0000-00-00 00:00:00'`).
             let reported = if completion.warns_with_converted_value() {
-                CastFailure::IncorrectTemporalValue {
-                    type_name: tidb_datatype::type_str(field_type.code()).to_owned(),
-                    value: datum_error_text(&value),
-                    column: column.to_owned(),
-                    row: row_index + 1,
-                }
+                completion.complete_warning(
+                    wrong_value_for(&value),
+                    &value,
+                    field_type,
+                    column,
+                    row_index,
+                )
             } else {
-                error()
-            }
-            .to_mysql_error();
+                completion.complete_error(
+                    wrong_value_for(source),
+                    source,
+                    field_type,
+                    column,
+                    row_index,
+                )
+            };
             ctx.append_sql_warn(tidb_util::context::SqlWarn::from_error(
-            tidb_util::context::WarningLevel::Warning,
-            reported.code,
-            reported.message.clone(),
-            reported.identity,
-        ));
+                tidb_util::context::WarningLevel::Warning,
+                reported.code,
+                reported.message.clone(),
+                reported.identity,
+            ));
             Ok(value)
         }
-        ZeroDateAction::Refuse => Err(error().into()),
+        ZeroDateAction::Refuse => Err(CastError::Column(completion.complete_error(
+            wrong_value_for(source),
+            source,
+            field_type,
+            column,
+            row_index,
+        ))),
     }
 }
 

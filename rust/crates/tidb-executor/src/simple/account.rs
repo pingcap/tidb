@@ -345,9 +345,8 @@ pub fn max_user_connections_option(
 /// document in the `User_attributes` JSON column, so a malformed text is that
 /// column's `Invalid JSON text` (3140).
 pub fn invalid_user_attribute_json() -> DriverError {
-    let error = tidb_expr::JsonError::InvalidText;
     DriverError::Mysql(crate::MysqlError::from_terror(
-        &error.proto().generate_with_stack(error.message()),
+        &tidb_expr::JsonError::InvalidText.to_terror(),
     ))
 }
 

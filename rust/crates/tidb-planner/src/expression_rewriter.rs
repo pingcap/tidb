@@ -392,36 +392,25 @@ pub struct ExprRewriterPlanCtx {
 /// What went wrong, in the shape Go assigns to `er.err`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RewriteError {
-    /// Go `expression.ErrOperandColumns.GenWithStackByArgs(n)`.
-    OperandColumns(usize),
-    /// Go `plannererrors.ErrAmbiguous.GenWithStackByArgs(name, clause)`.
-    Ambiguous(String, &'static str),
-    /// Go `plannererrors.ErrUnknownColumn.GenWithStackByArgs(name, clause)`.
-    UnknownColumn(String, &'static str),
+    /// The error value Go's rewriter raises as it is (`ErrUnknownColumn`,
+    /// `ErrAmbiguous`, ...).
+    Mysql(tidb_error::mysql::MysqlError),
     /// Go `errors.New("We don't support <=> all or <=> any now")`.
     NullEqQuantifierUnsupported,
-    /// Go's `expression.NewFunction` error, kept verbatim.
+    /// A scalar function the builder refused, with Go's message.
     FunctionBuild(String),
-    /// A typed evaluation-layer error Go's rewriter stored in `er.err` as it
-    /// came back: a collation mix is 1267, not a message.
+    /// An evaluation error that keeps its typed identity.
     Eval(tidb_expr::EvalError),
-    /// Go's `aggregation.NewAggFuncDesc` error.
+    /// An aggregate function the builder refused, with Go's message.
     AggFuncBuild(String),
-    /// The outer plan produced no schema, which Go reaches by dereferencing
-    /// nil; see [`LogicalPlan::schema`].
+    /// A plan whose rewriter has no schema to resolve columns against.
     MissingSchema,
 }
 
 impl std::fmt::Display for RewriteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::OperandColumns(n) => write!(f, "Operand should contain {n} column(s)"),
-            Self::Ambiguous(name, clause) => {
-                write!(f, "Column '{name}' in {clause} is ambiguous")
-            }
-            Self::UnknownColumn(name, clause) => {
-                write!(f, "Unknown column '{name}' in '{clause}'")
-            }
+            Self::Mysql(error) => f.write_str(&error.message),
             Self::NullEqQuantifierUnsupported => {
                 write!(f, "We don't support <=> all or <=> any now")
             }
@@ -877,7 +866,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ///
     /// # Errors
     ///
-    /// [`RewriteError::OperandColumns`] on a width mismatch, or the builder's
+    /// `ErrOperandColumns` on a width mismatch, or the builder's
     /// error.
     pub fn construct_binary_op_function(
         &self,
@@ -890,7 +879,9 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
             return self.new_function(op, tiny(), vec![l.clone(), r.clone()]);
         }
         if r_len != l_len {
-            return Err(RewriteError::OperandColumns(l_len));
+            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(
+                l_len,
+            )));
         }
         let arg = |expr: &Expression, i: usize| -> Expression {
             get_func_arg(expr, i)
@@ -1282,7 +1273,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ///
     /// # Errors
     ///
-    /// [`RewriteError::OperandColumns`] on an arity mismatch,
+    /// `ErrOperandColumns` on an arity mismatch,
     /// [`RewriteError::NullEqQuantifierUnsupported`] for `<=>`, or a builder
     /// error.
     pub fn handle_compare_subquery(
@@ -1310,10 +1301,12 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let can_multi_col = (!all && op == CompareOp::Eq) || (all && op == CompareOp::Ne);
         let l_len = get_row_len(lexpr);
         if !can_multi_col && (l_len != 1 || np_schema.len() != 1) {
-            return Err(RewriteError::OperandColumns(1));
+            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(1)));
         }
         if l_len != np_schema.len() {
-            return Err(RewriteError::OperandColumns(l_len));
+            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(
+                l_len,
+            )));
         }
         let rexpr = self.row_of_schema(&np_schema)?;
         // Go: "Lexpr cannot compare with rexpr by different collate".
@@ -1778,7 +1771,7 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ///
     /// # Errors
     ///
-    /// [`RewriteError::OperandColumns`] on an arity mismatch, or a builder
+    /// `ErrOperandColumns` on an arity mismatch, or a builder
     /// error.
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     pub fn handle_in_subquery(
@@ -1796,7 +1789,9 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         let np_schema = np.schema().ok_or(RewriteError::MissingSchema)?.clone();
         let l_len = get_row_len(lexpr);
         if l_len != np_schema.len() {
-            return Err(RewriteError::OperandColumns(l_len));
+            return Err(RewriteError::Eval(tidb_expr::EvalError::OperandColumns(
+                l_len,
+            )));
         }
         let mut lexpr = lexpr.clone();
         // Go: an anti/left-outer-semi join cannot treat `in` as a plain column
@@ -2083,8 +2078,8 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ///
     /// # Errors
     ///
-    /// [`RewriteError::Ambiguous`] when the name matches twice in one scope,
-    /// [`RewriteError::UnknownColumn`] when no scope resolves it or the match
+    /// `ErrAmbiguous` when the name matches twice in one scope,
+    /// `ErrUnknownColumn` when no scope resolves it or the match
     /// is a hidden column.
     pub fn to_column(
         &mut self,
@@ -2093,16 +2088,27 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
     ) -> Result<(), RewriteError> {
         let clause = self.clause();
         let idx = find_field_name(&self.names, v).map_err(|_| {
-            RewriteError::Ambiguous(v.column.original.clone(), ClauseCode::FieldList.message())
+            RewriteError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                    v.column.original.clone().into(),
+                    ClauseCode::FieldList.message().into(),
+                ]),
+            ))
         })?;
         if let Some(idx) = idx {
             let schema = self.schema.as_ref().ok_or(RewriteError::MissingSchema)?;
             let column = schema.columns[idx].clone();
             let name = self.names[idx].clone();
             if column.is_hidden {
-                return Err(RewriteError::UnknownColumn(
-                    v.column.original.clone(),
-                    clause.message(),
+                return Err(RewriteError::Mysql(
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(
+                            &[
+                                tidb_hack::go_to_lower(v.column.original.clone()).into(),
+                                clause.message().into(),
+                            ],
+                        ),
+                    ),
                 ));
             }
             let (column, name) = self.remap_redundant(plan, clause, column, name);
@@ -2120,7 +2126,12 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
         for i in (0..self.plan_ctx.outer_schemas.len()).rev() {
             let outer_names = &self.plan_ctx.outer_names[i];
             let idx = find_field_name(outer_names, v).map_err(|_| {
-                RewriteError::Ambiguous(v.column.original.clone(), ClauseCode::FieldList.message())
+                RewriteError::Mysql(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                        v.column.original.clone().into(),
+                        ClauseCode::FieldList.message().into(),
+                    ]),
+                ))
             })?;
             if let Some(idx) = idx {
                 let column = self.plan_ctx.outer_schemas[i].columns[idx].clone();
@@ -2132,9 +2143,13 @@ impl<'a, C: Columns> ExpressionRewriter<'a, C> {
                 return Ok(());
             }
         }
-        Err(RewriteError::UnknownColumn(
-            v.column.original.clone(),
-            clause.message(),
+        Err(RewriteError::Mysql(
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_UNKNOWN_COLUMN.generate_with_stack_by_args(&[
+                    tidb_hack::go_to_lower(v.column.original.clone()).into(),
+                    clause.message().into(),
+                ]),
+            ),
         ))
     }
 
@@ -2356,7 +2371,7 @@ pub fn should_remap_redundant_base_column(
 ///
 /// # Errors
 ///
-/// [`RewriteError::Ambiguous`] when the full name slice matches twice.
+/// `ErrAmbiguous` when the full name slice matches twice.
 pub fn find_field_name_from_natural_using_join<'p>(
     plan: &'p LogicalPlan,
     column: &QualifiedColumnName,
@@ -2402,9 +2417,13 @@ fn lookup_full_names<'p>(
         return Ok(None);
     };
     match find_field_name(full_names, column) {
-        Err(_) => Err(RewriteError::Ambiguous(
-            column.column.original.clone(),
-            ClauseCode::FieldList.message(),
+        Err(_) => Err(RewriteError::Mysql(
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_AMBIGUOUS.generate_with_stack_by_args(&[
+                    column.column.original.clone().into(),
+                    ClauseCode::FieldList.message().into(),
+                ]),
+            ),
         )),
         Ok(Some(idx)) => Ok(Some((&schema.columns[idx], &full_names[idx]))),
         Ok(None) => Ok(None),

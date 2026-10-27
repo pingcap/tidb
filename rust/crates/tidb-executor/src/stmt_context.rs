@@ -6038,9 +6038,8 @@ impl Columns for StmtContext {
         let sequence = self.sequences.resolve(path)?;
         self.check_sequence_privilege(path, true)?;
         let value = sequence.allocator.next_val().map_err(|_| {
-            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(
-                self.sequences.key(path),
-            ))
+            let (database, name) = self.sequences.key(path);
+            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
         })?;
         // Go records the value in the SESSION's sequence state, which is what
         // `LASTVAL` reads back.
@@ -6071,9 +6070,8 @@ impl Columns for StmtContext {
         // Go `SetSequenceVal`: the reported value is NULL when the stored
         // counter was already at or past `value` (`alreadySatisfied`).
         let reported = sequence.allocator.set_val(value).map_err(|_| {
-            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(
-                self.sequences.key(path),
-            ))
+            let (database, name) = self.sequences.key(path);
+            tidb_expr::EvalError::Sequence(tidb_expr::SequenceEvalError::RunOut(database, name))
         })?;
         Ok(reported.map_or(Datum::Null, Datum::Int))
     }

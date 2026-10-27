@@ -1290,7 +1290,9 @@ fn json_one_or_all_argument_errors() {
         JsonError::BadOneOrAllArg {
             function: "json_contains_path"
         }
-        .code(),
+        .to_terror()
+        .code()
+        .value(),
         3154
     );
 }
@@ -1410,7 +1412,9 @@ fn json_merge_go_vectors() {
 #[test]
 fn json_mutation_path_error_codes() {
     let code = |name: &str, args: &[Datum]| match call_result(name, args) {
-        Err(crate::EvalError::Json(error)) => error.code(),
+        Err(crate::EvalError::Json(error)) => {
+            u16::try_from(error.to_terror().code().value()).unwrap()
+        }
         other => panic!("expected a json error from {name}, got {other:?}"),
     };
     assert_eq!(code("JSON_REMOVE", &[s(r#"{"a":1}"#), s("$")]), 3153);
@@ -1839,7 +1843,7 @@ fn path_errors_carry_go_code_and_position() {
 fn json_errors_carry_go_codes() {
     use crate::{EvalError, JsonError};
     let code = |name: &str, args: &[Datum]| match call_result(name, args) {
-        Err(EvalError::Json(error)) => error.code(),
+        Err(EvalError::Json(error)) => u16::try_from(error.to_terror().code().value()).unwrap(),
         other => panic!("expected a json-class error, got {other:?}"),
     };
     assert_eq!(code("JSON_EXTRACT", &[s("x"), s("$.a")]), 3140);
@@ -1851,7 +1855,7 @@ fn json_errors_carry_go_codes() {
     assert_eq!(code("JSON_QUOTE", &[Datum::Int(1)]), 3064);
     assert_eq!(code("JSON_OBJECT", &[Datum::Null, Datum::Int(1)]), 3158);
     assert_eq!(
-        JsonError::InvalidPath(7).message(),
+        JsonError::InvalidPath(7).to_terror().message(),
         "Invalid JSON path expression. The error is around character position 7."
     );
 }

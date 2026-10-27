@@ -111,26 +111,24 @@ impl std::fmt::Display for DriverError {
 #[cfg(test)]
 mod source_tests {
     use super::*;
-    /// MySQL `ER_PARSE_ERROR`.
-    const ER_PARSE_ERROR: u16 = 1064;
-    /// MySQL `ER_UNKNOWN_SYSTEM_VARIABLE`.
-    const ER_UNKNOWN_SYSTEM_VARIABLE: u16 = 1193;
-    /// MySQL `ER_INCORRECT_GLOBAL_LOCAL_VAR`.
-    const ER_INCORRECT_GLOBAL_LOCAL_VAR: u16 = 1238;
-    /// MySQL `ER_SUBQUERY_NO_1_ROW`.
-    const ER_SUBQUERY_NO_1_ROW: u16 = 1242;
-    /// MySQL `ER_DB_CREATE_EXISTS`.
-    const ER_DB_CREATE_EXISTS: u16 = 1007;
-    /// MySQL `ER_NO_DB_ERROR`.
-    const ER_NO_DB_ERROR: u16 = 1046;
-    /// MySQL `ER_BAD_DB_ERROR`.
-    const ER_BAD_DB_ERROR: u16 = 1049;
 
     #[test]
     fn raw_incorrect_string_value_matches_table_cast_value() {
         // pkg/table/column_test.go::TestCastValue expects the raw table error,
         // before a statement-level caller has attached a row number.
-        let error = tidb_table::column::incorrect_value("string", "\\x81", "", 0);
+        let ctx = crate::StmtContext::for_dml(true, true, false);
+        let field = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
+            .with_flen(10)
+            .with_collation_name("utf8mb4_bin");
+        let error = tidb_table::column::cast_table_value(
+            tidb_datatype::Datum::new_bytes([0x81]),
+            &field,
+            "",
+            &ctx,
+            false,
+        )
+        .expect_err("an invalid character group is refused")
+        .to_mysql_error();
 
         assert_eq!(error.code, 1366);
         assert_eq!(error.state, *b"HY000");
