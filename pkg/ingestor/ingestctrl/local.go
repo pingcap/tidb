@@ -1365,11 +1365,11 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 }
 
 // NewExternalEngine creates an external engine that reads the globally sorted
-// KV files described by cfg, to be imported by ImportExternalEngine. The caller
+// KV files described by cfg, to be ingested by IngestExternalEngine. The caller
 // owns the returned engine and must close it. If ts is 0, a new TS is allocated.
 func (local *Backend) NewExternalEngine(
 	ctx context.Context,
-	cfg *backend.ExternalEngineConfig,
+	cfg *globalsort.EngineConfig,
 	ts uint64,
 ) (*globalsort.Engine, error) {
 	if ts == 0 {
@@ -1439,18 +1439,18 @@ func (local *Backend) ImportEngine(
 	defer localEngine.unlock()
 	localEngine.regionSplitSize = regionSplitSize
 	localEngine.regionSplitKeyCnt = regionSplitKeys
-	return local.importEngine(ctx, localEngine, regionSplitSize, regionSplitKeys)
+	return local.ingestEngine(ctx, localEngine, regionSplitSize, regionSplitKeys)
 }
 
-// ImportExternalEngine imports an external engine created by NewExternalEngine
+// IngestExternalEngine ingests an external engine created by NewExternalEngine
 // to TiKV.
-func (local *Backend) ImportExternalEngine(
+func (local *Backend) IngestExternalEngine(
 	ctx context.Context,
 	e *globalsort.Engine,
 	regionSplitSize, regionSplitKeys int64,
 ) error {
 	regionSplitSize, regionSplitKeys = local.adjustRegionSplitSizeKeys(ctx, regionSplitSize, regionSplitKeys)
-	return local.importEngine(ctx, e, regionSplitSize, regionSplitKeys)
+	return local.ingestEngine(ctx, e, regionSplitSize, regionSplitKeys)
 }
 
 // adjustRegionSplitSizeKeys raises the given region split size and keys to the
@@ -1473,9 +1473,9 @@ func (local *Backend) adjustRegionSplitSizeKeys(
 	return regionSplitSize, regionSplitKeys
 }
 
-// importEngine splits and scatters regions for the engine, then writes and
+// ingestEngine splits and scatters regions for the engine, then writes and
 // ingests its data to TiKV. It doesn't depend on how the engine is managed.
-func (local *Backend) importEngine(
+func (local *Backend) ingestEngine(
 	ctx context.Context,
 	e engineapi.Engine,
 	regionSplitSize, regionSplitKeys int64,

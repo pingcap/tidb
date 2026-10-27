@@ -732,7 +732,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}
 	localBackend.SetCollector(collector)
 
-	eng, err := localBackend.NewExternalEngine(ctx, &backend.ExternalEngineConfig{
+	eng, err := localBackend.NewExternalEngine(ctx, &globalsort.EngineConfig{
 		ExtStore:      objStore,
 		DataFiles:     sm.DataFiles,
 		StatFiles:     sm.StatFiles,
@@ -755,7 +755,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			e.logger.Warn("failed to close engine", zap.Error(err))
 		}
 	}()
-	err = localBackend.ImportExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}

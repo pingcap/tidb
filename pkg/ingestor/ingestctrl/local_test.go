@@ -2618,7 +2618,7 @@ func TestExternalEngine(t *testing.T) {
 	dataFiles, statFiles, err := globalsort.MockExternalEngine(extStorage, keys, values)
 	require.NoError(t, err)
 
-	externalCfg := &backend.ExternalEngineConfig{
+	externalCfg := &globalsort.EngineConfig{
 		ExtStore:      extStorage,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
@@ -2658,7 +2658,7 @@ func TestExternalEngine(t *testing.T) {
 	go func() {
 		eng, err2 := local.NewExternalEngine(ctx, externalCfg, 0)
 		require.NoError(t, err2)
-		err2 = local.ImportExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		err2 = local.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
 		require.NoError(t, eng.Close())
 		close(done)

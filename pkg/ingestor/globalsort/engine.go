@@ -129,6 +129,29 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 	b.kvsPerFile = nil
 }
 
+// EngineConfig is the configuration used to create an external engine
+// that reads globally sorted KV files.
+type EngineConfig struct {
+	ExtStore  storeapi.Storage
+	DataFiles []string
+	StatFiles []string
+	StartKey  []byte
+	EndKey    []byte
+	JobKeys   [][]byte
+	SplitKeys [][]byte
+	// TotalFileSize can be an estimated value.
+	TotalFileSize int64
+	// TotalKVCount can be an estimated value.
+	TotalKVCount int64
+	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
+	// OnDup is the action when a duplicate key is found during global sort.
+	OnDup engineapi.OnDuplicateKey
+	// this is the prefix of files recording conflicted KVs
+	FilePrefix string
+}
+
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
 	storage           storeapi.Storage

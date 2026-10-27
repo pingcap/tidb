@@ -22,7 +22,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/importdef"
@@ -30,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -115,29 +113,6 @@ type LocalEngineConfig struct {
 
 	// blocksize
 	BlockSize int
-}
-
-// ExternalEngineConfig is the configuration used to create an external engine
-// that reads globally sorted KV files, see ingestctrl.Backend.NewExternalEngine.
-type ExternalEngineConfig struct {
-	ExtStore  storeapi.Storage
-	DataFiles []string
-	StatFiles []string
-	StartKey  []byte
-	EndKey    []byte
-	JobKeys   [][]byte
-	SplitKeys [][]byte
-	// TotalFileSize can be an estimated value.
-	TotalFileSize int64
-	// TotalKVCount can be an estimated value.
-	TotalKVCount int64
-	CheckHotspot bool
-	// MemCapacity is the memory capacity for the whole subtask.
-	MemCapacity int64
-	// OnDup is the action when a duplicate key is found during global sort.
-	OnDup engineapi.OnDuplicateKey
-	// this is the prefix of files recording conflicted KVs
-	FilePrefix string
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
