@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -223,15 +224,8 @@ func (*Manager) createSessionManager(
 
 	coordinator := newSchemaCoordinator()
 	isValidator := isvalidator.New(vardef.GetSchemaLease())
-	factory := ksSessFactoryGetter(ks, isValidator)
-	globalVars := newGlobalVarCache(ks, factory)
-	defer func() {
-		if err != nil {
-			globalVars.close()
-		}
-	}()
 	sessPool := util.NewSessionPool(
-		crossKSSessPoolSize, globalVars.wrap(factory),
+		crossKSSessPoolSize, ksSessFactoryGetter(ks, isValidator),
 		func(r pools.Resource) {
 			_, ok := r.(sessionctx.Context)
 			intest.Assert(ok)
@@ -331,6 +325,7 @@ func (*Manager) createSessionManager(
 		ServerStateSyncer: serverStateSyncer,
 	})
 
+	globalVars := newGlobalVarCache(ctx, ks, sessPool)
 	mgr := &SessionManager{
 		ctx:               ctx,
 		cancel:            cancel,
@@ -343,6 +338,7 @@ func (*Manager) createSessionManager(
 		infoCache:         infoCache,
 		isSyncer:          isSyncer,
 		sessPool:          sessPool,
+		globalVars:        globalVars,
 		coordinator:       coordinator,
 		isValidator:       isValidator,
 		svrInfoSyncer:     svrInfoSyncer,
@@ -356,7 +352,7 @@ func (*Manager) createSessionManager(
 		isSyncer.SyncLoop(ctx)
 	})
 	mgr.wg.RunWithLog(func() {
-		globalVars.refreshLoop(ctx, etcdCli)
+		globalVars.refreshLoop(etcdCli)
 	})
 	mgr.wg.RunWithLog(func() {
 		isSyncer.MDLCheckLoop(ctx)
@@ -507,6 +503,7 @@ type SessionManager struct {
 	infoCache         *infoschema.InfoCache
 	isSyncer          *issyncer.Syncer
 	sessPool          util.DestroyableSessionPool
+	globalVars        *globalVarCache
 	coordinator       *schemaCoordinator
 	isValidator       validatorapi.Validator
 	svrInfoSyncer     *serverinfo.Syncer
@@ -521,6 +518,12 @@ func (m *SessionManager) Store() kv.Storage {
 // InfoCache returns the InfoCache instance used by the session manager.
 func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 	return m.infoCache
+}
+
+// GlobalVarAccessor returns the accessor of a session of the runtime, which
+// reads global variables of the keyspace from the cache of the runtime.
+func (m *SessionManager) GlobalVarAccessor(vars *variable.SessionVars) variable.GlobalVarAccessor {
+	return &keyspaceGlobalVars{GlobalVarAccessor: vars.GlobalVarsAccessor, vars: vars, cache: m.globalVars}
 }
 
 // SysSessionPool returns the session pool used by the session manager.

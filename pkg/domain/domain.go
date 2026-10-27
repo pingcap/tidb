@@ -917,6 +917,16 @@ func (do *Domain) GetKSInfoCache(targetKS string) (*infoschema.InfoCache, error)
 	return mgr.InfoCache(), nil
 }
 
+// GetKSGlobalVarAccessor returns the accessor of a session of the runtime of
+// the given keyspace, which reads global variables of that keyspace.
+func (do *Domain) GetKSGlobalVarAccessor(targetKS string, vars *variable.SessionVars) (variable.GlobalVarAccessor, error) {
+	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return mgr.GlobalVarAccessor(vars), nil
+}
+
 // GetKSSessPool returns the session pool for the given keyspace.
 func (do *Domain) GetKSSessPool(targetKS string) (util.DestroyableSessionPool, error) {
 	mgr, err := do.crossKSSessMgr.GetOrCreate(targetKS, do.crossKSSessFactoryGetter)
