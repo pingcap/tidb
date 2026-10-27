@@ -110,7 +110,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 
 		// The worker rebuilds the schema the submitter resolved the query with.
 		parent := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
-		is, err := executor.BuildMinimalInfoSchema(store, q, parent)
+		is, err := q.BuildMinimalInfoSchema(store, parent)
 		require.NoError(t, err)
 		for name, src := range tables {
 			tbl, ok := is.TableByID(context.Background(), src.ID)
@@ -122,7 +122,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		changed := *q
 		changed.Tables = append([]importer.SourceTable(nil), q.Tables...)
 		changed.Tables[0].Revision++
-		_, err = executor.BuildMinimalInfoSchema(store, &changed, parent)
+		_, err = changed.BuildMinimalInfoSchema(store, parent)
 		require.ErrorContains(t, err, "changed before the import query snapshot")
 	})
 	t.Run("capture transaction schema", func(t *testing.T) {
@@ -166,7 +166,7 @@ func TestGenerateImportQueryPlan(t *testing.T) {
 		workerTK := testkit.NewTestKit(t, store)
 		workerVars := workerTK.Session().GetSessionVars()
 		memQuota := workerVars.MemQuotaQuery
-		require.NoError(t, executor.RestoreQueryStates(context.Background(), workerTK.Session(), q))
+		require.NoError(t, q.RestoreStates(context.Background(), workerTK.Session()))
 		require.Equal(t, "test", workerVars.CurrentDB)
 		require.Equal(t, 5, workerVars.CTEMaxRecursionDepth)
 		v, ok := workerVars.GetUserVarVal("v")
