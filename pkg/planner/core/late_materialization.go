@@ -15,8 +15,12 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"slices"
+	"strings"
+
+	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -60,10 +64,10 @@ const lateMaterializationName = "late_materialization"
 // their table row read. The rewrite returns the same rows for any data, since
 // every handle read from an index has a row in the same snapshot.
 //
-// Whether it pays depends on the physical plan, so it is decided during
-// physical optimization: the normal plan is built first, a table is split only
-// if that plan produces more of its rows than reach the fetch point, the
-// rewritten plan is optimized again, and the cheaper of the two is kept. The
+// Each ordinary physical plan proposes tables only when it produces more rows
+// than reach the fetch point. For the ordinary cost winner, one dedicated round rebuilds
+// the AST, applies that proposal after logical optimization, and competes on
+// cost through the normal alternative framework. The
 // rewritten plan may use a merge join only where the original plan already
 // did: a merge join's cost assumes it stops early under a Limit while its
 // readers fetch ahead, so a new merge join could look cheaper than it is. With
@@ -159,6 +163,9 @@ func buildLateMaterializeRegion(root base.LogicalPlan) *lateMaterializeRegion {
 		r.byItems = x.ByItems
 		tree = x.Children()[0]
 		for _, item := range x.ByItems {
+			if expression.IsMutableEffectsExpr(item.Expr) {
+				return nil
+			}
 			for _, col := range expression.ExtractColumns(item.Expr) {
 				belowUsed[col.UniqueID] = struct{}{}
 			}
@@ -344,6 +351,7 @@ func splitLateMaterializeTarget(t *lateMaterializeTarget) (*logicalop.DataSource
 
 	newHandle := t.handle.Clone().(*expression.Column)
 	newHandle.UniqueID = sctx.GetSessionVars().AllocPlanColumnID()
+	newHandle.CleanHashCode()
 	movedCols = append(movedCols, newHandle)
 	movedInfos = append(movedInfos, handleInfo)
 
@@ -435,8 +443,7 @@ func lateMaterializeHandleInfo(ds *logicalop.DataSource, handle *expression.Colu
 
 // rewriteLateMaterializeRegion splits the region's targets and joins them back
 // above the region root. It edits the region in place, so it is applied to a
-// clone. It returns false if the rewritten region cannot be wired up; the clone
-// is then discarded.
+// fresh AST build. A failed rewrite discards that alternative round.
 func rewriteLateMaterializeRegion(r *lateMaterializeRegion) (base.LogicalPlan, bool) {
 	root := r.root
 	sctx := root.SCtx()
@@ -532,44 +539,6 @@ func rewriteLateMaterializeRegion(r *lateMaterializeRegion) (base.LogicalPlan, b
 	proj.SetOutputNames(originNames)
 	proj.SetChildren(top)
 	return proj, true
-}
-
-// rewriteLateMaterializeClone rewrites a clone of the region, so the original
-// subtree stays untouched for the original plan. chosen holds the positions of
-// the targets to split. It returns false if the region cannot be cloned or the
-// clone does not match the original.
-func rewriteLateMaterializeClone(r *lateMaterializeRegion, chosen []int) (base.LogicalPlan, bool) {
-	root, ok := cloneLogicalSubtree(r.root)
-	if !ok {
-		return nil, false
-	}
-	clone := buildLateMaterializeRegion(root)
-	if clone == nil || len(clone.targets) != len(r.targets) {
-		return nil, false
-	}
-	targets := make([]*lateMaterializeTarget, 0, len(chosen))
-	for _, i := range chosen {
-		relinkLateMaterializeAccessPaths(r.targets[i].ds, clone.targets[i].ds)
-		targets = append(targets, clone.targets[i])
-	}
-	clone.targets = targets
-	return rewriteLateMaterializeRegion(clone)
-}
-
-// relinkLateMaterializeAccessPaths makes the clone's PossibleAccessPaths point
-// at its own AllPossibleAccessPaths, as they do in the original. Cloning copies
-// the two lists separately; the split DataSource's paths are derived again, and
-// derivation updates AllPossibleAccessPaths while physical optimization reads
-// PossibleAccessPaths. Paths that are not in AllPossibleAccessPaths, such as
-// index merge paths, are dropped; derivation generates them again.
-func relinkLateMaterializeAccessPaths(orig, clone *logicalop.DataSource) {
-	paths := make([]*util.AccessPath, 0, len(orig.PossibleAccessPaths))
-	for _, path := range orig.PossibleAccessPaths {
-		if i := slices.Index(orig.AllPossibleAccessPaths, path); i >= 0 {
-			paths = append(paths, clone.AllPossibleAccessPaths[i])
-		}
-	}
-	clone.PossibleAccessPaths = paths
 }
 
 // lateMaterializeReaderPath returns the path from the plan root to the root
@@ -747,97 +716,172 @@ func lateMaterializeAllowedMergeJoins(logic base.LogicalPlan, plan base.Physical
 	return allowed
 }
 
-// resetLogicalTaskMaps drops the physical tasks cached on every logical node.
-func resetLogicalTaskMaps(p base.LogicalPlan) {
-	if r, ok := p.(interface{ ResetTaskMap() }); ok {
-		r.ResetTaskMap()
+// LateMaterializationAlternative owns the proposal for one statement. It is
+// carried by the optimization context, never by a session or a logical node.
+// Each ordinary round records a proposal; Enabled applies the winning one to an AST
+// build in the dedicated alternative round.
+type LateMaterializationAlternative struct {
+	Enabled    bool
+	recorded   bool
+	signature  string
+	tasks      []lateMaterializationTask
+	mergeJoins map[string]struct{}
+	warnings   map[string]struct{}
+}
+
+type lateMaterializationTask struct {
+	region  int
+	targets []int
+}
+
+type lateMaterializationContextKey struct{}
+
+// WithLateMaterializationAlternative attaches statement-local proposal state.
+func WithLateMaterializationAlternative(ctx context.Context, alternative *LateMaterializationAlternative) context.Context {
+	return context.WithValue(ctx, lateMaterializationContextKey{}, alternative)
+}
+
+// HasProposal reports whether the baseline plan justified an alternative.
+func (a *LateMaterializationAlternative) HasProposal() bool { return len(a.tasks) > 0 }
+
+// lateMaterializationSignature maps column identities through DataSource
+// occurrences, not allocator IDs. The tree path distinguishes self joins and
+// repeated aliases in different query blocks. Requiring identical topology and
+// schemas makes positional region/target and merge-join mapping conservative:
+// a changed rebuild is rejected instead of applying a proposal to another table.
+func lateMaterializationSignature(root base.LogicalPlan) string {
+	columns := make(map[int64]string)
+	var sources func(base.LogicalPlan, string)
+	sources = func(p base.LogicalPlan, path string) {
+		if ds, ok := p.(*logicalop.DataSource); ok {
+			for _, col := range ds.Schema().Columns {
+				columns[col.UniqueID] = fmt.Sprintf("%s/%d", path, col.ID)
+			}
+		}
+		for i, child := range p.Children() {
+			sources(child, fmt.Sprintf("%s/%d", path, i))
+		}
 	}
-	for _, child := range p.Children() {
-		resetLogicalTaskMaps(child)
+	sources(root, "r")
+	var result strings.Builder
+	var walk func(base.LogicalPlan)
+	walk = func(p base.LogicalPlan) {
+		fmt.Fprintf(&result, "(%T:%d", p, p.QueryBlockOffset())
+		if ds, ok := p.(*logicalop.DataSource); ok {
+			fmt.Fprintf(&result, ":%d:%v", ds.TableInfo.ID, ds.TableAsName)
+		}
+		if join, ok := p.(*logicalop.LogicalJoin); ok {
+			fmt.Fprintf(&result, ":%v", join.JoinType)
+		}
+		for _, col := range p.Schema().Columns {
+			if identity, ok := columns[col.UniqueID]; ok {
+				fmt.Fprintf(&result, ":%s", identity)
+			} else {
+				fmt.Fprintf(&result, ":derived:%d:%s:%s", col.ID, col.OrigName, col.RetType)
+			}
+		}
+		for _, child := range p.Children() {
+			walk(child)
+		}
+		result.WriteByte(')')
+	}
+	walk(root)
+	return result.String()
+}
+
+func walkLateMaterializationJoins(p base.LogicalPlan, path string, visit func(string, *logicalop.LogicalJoin)) {
+	if join, ok := p.(*logicalop.LogicalJoin); ok {
+		visit(path, join)
+	}
+	for i, child := range p.Children() {
+		walkLateMaterializationJoins(child, fmt.Sprintf("%s/%d", path, i), visit)
 	}
 }
 
-// tryLateMaterialization builds a late-materialized alternative to plan and
-// returns whichever of the two is cheaper. warnStart is the number of
-// statement warnings before plan was built, so the alternative's optimization
-// warnings replace the original's rather than adding to them.
-func tryLateMaterialization(logic base.LogicalPlan, plan base.PhysicalPlan, cost float64, warnStart int) (base.LogicalPlan, base.PhysicalPlan, float64) {
-	sessVars := logic.SCtx().GetSessionVars()
-	if !sessVars.StmtCtx.InSelectStmt || sessVars.IsMPPEnforced() ||
+func (a *LateMaterializationAlternative) record(logic base.LogicalPlan, plan base.PhysicalPlan) {
+	a.recorded = true
+	sv := logic.SCtx().GetSessionVars()
+	if !sv.StmtCtx.InSelectStmt || sv.IsMPPEnforced() ||
 		DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(lateMaterializationName) {
-		return logic, plan, cost
+		return
 	}
 	var regions []*lateMaterializeRegion
 	findLateMaterializeRegions(logic, nil, 0, &regions)
-	type rewriteTask struct {
-		region *lateMaterializeRegion
-		chosen []int
-	}
-	var tasks []rewriteTask
-	for _, r := range regions {
+	for i, r := range regions {
 		var chosen []int
-		for i, t := range r.targets {
-			if worthLateMaterializing(plan, t) {
-				chosen = append(chosen, i)
+		for j, target := range r.targets {
+			if worthLateMaterializing(plan, target) {
+				chosen = append(chosen, j)
 			}
 		}
 		if len(chosen) > 0 {
-			tasks = append(tasks, rewriteTask{region: r, chosen: chosen})
+			a.tasks = append(a.tasks, lateMaterializationTask{region: i, targets: chosen})
 		}
 	}
-	if len(tasks) == 0 {
-		return logic, plan, cost
+	if !a.HasProposal() {
+		return
 	}
+	a.signature = lateMaterializationSignature(logic)
+	allowed := lateMaterializeAllowedMergeJoins(logic, plan)
+	a.mergeJoins = make(map[string]struct{})
+	walkLateMaterializationJoins(logic, "r", func(path string, join *logicalop.LogicalJoin) {
+		if _, ok := allowed[join.ID()]; ok {
+			a.mergeJoins[path] = struct{}{}
+		}
+	})
+	a.warnings = make(map[string]struct{})
+	for _, warning := range sv.StmtCtx.GetWarnings() {
+		a.warnings[warning.Err.Error()] = struct{}{}
+	}
+}
 
-	// Each region is rewritten as a clone and swapped in at its parent, so the
-	// original plan's subtrees are never edited. When the original plan wins,
-	// the subtrees are swapped back and the warnings and the plan and column ID
-	// counters are restored, so trying the alternative leaves no trace in
-	// EXPLAIN output.
-	warns := slices.Clone(sessVars.StmtCtx.GetWarnings())
-	planID, planColumnID := sessVars.PlanID.Load(), sessVars.PlanColumnID.Load()
-	newLogic := logic
-	swapped := make([]*lateMaterializeRegion, 0, len(tasks))
-	restore := func() (base.LogicalPlan, base.PhysicalPlan, float64) {
-		for _, r := range swapped {
-			r.parent.SetChild(r.childIdx, r.root)
-		}
-		sessVars.StmtCtx.SetWarnings(warns)
-		sessVars.PlanID.Store(planID)
-		sessVars.PlanColumnID.Store(planColumnID)
-		return logic, plan, cost
+func (a *LateMaterializationAlternative) apply(logic base.LogicalPlan) (base.LogicalPlan, error) {
+	if !a.HasProposal() || a.signature != lateMaterializationSignature(logic) {
+		return nil, errors.New("late materialization proposal does not match rebuilt logical plan")
 	}
-	for _, task := range tasks {
-		rewritten, ok := rewriteLateMaterializeClone(task.region, task.chosen)
+	// Resolve the baseline's allowed joins before adding the fetch joins.
+	allowed := make(map[int]struct{})
+	walkLateMaterializationJoins(logic, "r", func(path string, join *logicalop.LogicalJoin) {
+		if _, ok := a.mergeJoins[path]; ok {
+			allowed[join.ID()] = struct{}{}
+		}
+	})
+	var regions []*lateMaterializeRegion
+	findLateMaterializeRegions(logic, nil, 0, &regions)
+	for _, task := range a.tasks {
+		if task.region >= len(regions) {
+			return nil, errors.New("late materialization region missing from rebuilt plan")
+		}
+		r := regions[task.region]
+		targets := make([]*lateMaterializeTarget, 0, len(task.targets))
+		for _, index := range task.targets {
+			if index >= len(r.targets) {
+				return nil, errors.New("late materialization target missing from rebuilt plan")
+			}
+			targets = append(targets, r.targets[index])
+		}
+		r.targets = targets
+		rewritten, ok := rewriteLateMaterializeRegion(r)
 		if !ok {
-			return restore()
+			return nil, errors.New("cannot wire late materialization fetch joins")
 		}
-		if task.region.parent == nil {
-			newLogic = rewritten
-			continue
-		}
-		task.region.parent.SetChild(task.region.childIdx, rewritten)
-		swapped = append(swapped, task.region)
-	}
-	resetLogicalTaskMaps(newLogic)
-	sessVars.StmtCtx.SetWarnings(slices.Clone(warns[:min(warnStart, len(warns))]))
-	sessVars.StmtCtx.LateMaterializationMergeJoins = lateMaterializeAllowedMergeJoins(newLogic, plan)
-	newPlan, newCost, err := physicalOptimize(newLogic)
-	sessVars.StmtCtx.LateMaterializationMergeJoins = nil
-	if err != nil || newCost >= cost {
-		return restore()
-	}
-	// The rewrite must not change whether hints apply: reject it if it raised a
-	// warning the original plan did not.
-	before := make(map[string]struct{})
-	for _, w := range warns[min(warnStart, len(warns)):] {
-		before[w.Err.Error()] = struct{}{}
-	}
-	newWarns := sessVars.StmtCtx.GetWarnings()
-	for _, w := range newWarns[min(warnStart, len(newWarns)):] {
-		if _, ok := before[w.Err.Error()]; !ok {
-			return restore()
+		if r.parent == nil {
+			logic = rewritten
+		} else {
+			r.parent.SetChild(r.childIdx, rewritten)
 		}
 	}
-	return newLogic, newPlan, newCost
+	logic.SCtx().GetSessionVars().StmtCtx.LateMaterializationMergeJoins = allowed
+	return logic, nil
+}
+
+// checkWarnings preserves hint applicability: a candidate with a new warning
+// cannot displace the default plan, regardless of its estimated cost.
+func (a *LateMaterializationAlternative) checkWarnings(logic base.LogicalPlan) error {
+	for _, warning := range logic.SCtx().GetSessionVars().StmtCtx.GetWarnings() {
+		if _, ok := a.warnings[warning.Err.Error()]; !ok {
+			return errors.New("late materialization alternative introduced an optimization warning")
+		}
+	}
+	return nil
 }

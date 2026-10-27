@@ -20,11 +20,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func prepareLateMaterializationTables(tk *testkit.TestKit) {
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = on")
 	tk.MustExec("use test")
 	tk.MustExec("set @@cte_max_recursion_depth = 100000")
 	gen := "with recursive s(i) as (select 1 union all select i+1 from s where i < 3000) "
@@ -98,6 +100,9 @@ func TestLateMaterializationResults(t *testing.T) {
 		// Three tables, with an outer join to the third.
 		"select o.pad, u.pad, h.pad from o join u on o.id = u.k join h on u.id = h.id order by o.c, o.id limit 10 offset %d",
 		"select o.pad, u.pad, h.pad from o join u on o.id = u.k left join h on u.id = h.id order by o.c, o.id limit 10 offset %d",
+		// An independent scalar subquery is optimized while building the AST,
+		// before the outer join records its late-materialization proposal.
+		"select o.pad, u.pad, (select max(v) from h) from o join u on o.id = u.k order by o.c, o.id limit 10 offset %d",
 		// Expressions over deferred columns.
 		"select concat(o.pad, '-', u.pad), u.v + 1 from o join u on o.id = u.k order by o.c, o.id limit 10 offset %d",
 		// The paged join as a derived table under an aggregation.
@@ -235,6 +240,69 @@ func TestLateMaterializationPlans(t *testing.T) {
 	}
 }
 
+// TestLateMaterializationAlternativeRound checks that the rewrite participates
+// in the common alternative framework and leaves the first round intact when
+// its candidate fails, adds a warning, or costs more.
+func TestLateMaterializationAlternativeRound(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	prepareLateMaterializationTables(tk)
+	const sql = "select o.pad, u.pad from o join u on o.id = u.k order by o.c, o.id limit 10 offset 2000"
+	const roundFailpoint = "github.com/pingcap/tidb/pkg/planner/failIfAlternativeLogicalPlanRoundTriggered"
+	const coreFailpointPrefix = "github.com/pingcap/tidb/pkg/planner/core/"
+
+	t.Run("gates", func(t *testing.T) {
+		require.NoError(t, failpoint.Enable(roundFailpoint, fmt.Sprintf("return(%q)", "late-materialization:"+sql)))
+		t.Cleanup(func() { _ = failpoint.Disable(roundFailpoint) })
+		require.EqualError(t, tk.ExecToErr(sql), "unexpected alternative logical plan round")
+
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = off")
+		tk.MustQuery(sql)
+		tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = on")
+		setLateMaterialization(tk, false)
+		tk.MustQuery(sql)
+		setLateMaterialization(tk, true)
+
+		const scalarSQL = "select o.pad, u.pad, (select max(v) from h) from o join u on o.id = u.k order by o.c, o.id limit 10 offset 2000"
+		require.NoError(t, failpoint.Enable(roundFailpoint, fmt.Sprintf("return(%q)", "late-materialization:"+scalarSQL)))
+		require.EqualError(t, tk.ExecToErr(scalarSQL), "unexpected alternative logical plan round")
+	})
+
+	setLateMaterialization(tk, false)
+	basePlan := tk.MustQuery("explain format = 'brief' " + sql).Rows()
+	baseWarnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	basePlanID := tk.Session().GetSessionVars().PlanID.Load()
+	baseColumnID := tk.Session().GetSessionVars().PlanColumnID.Load()
+	want := tk.MustQuery(sql).Rows()
+	setLateMaterialization(tk, true)
+
+	for _, tt := range []struct {
+		name, expression string
+	}{
+		{"lateMaterializationAlternativeError", "return(true)"},
+		{"lateMaterializationAlternativeWarning", "return(true)"},
+		{"lateMaterializationAlternativeCost", "return(1000000000000000)"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			name := coreFailpointPrefix + tt.name
+			require.NoError(t, failpoint.Enable(name, tt.expression))
+			t.Cleanup(func() { _ = failpoint.Disable(name) })
+			require.Equal(t, basePlan, tk.MustQuery("explain format = 'brief' "+sql).Rows())
+			sv := tk.Session().GetSessionVars()
+			require.Equal(t, baseWarnings, sv.StmtCtx.GetWarnings())
+			require.Equal(t, basePlanID, sv.PlanID.Load())
+			require.Equal(t, baseColumnID, sv.PlanColumnID.Load())
+			require.Nil(t, sv.StmtCtx.LateMaterializationMergeJoins)
+			require.Equal(t, want, tk.MustQuery(sql).Rows())
+			require.Nil(t, sv.StmtCtx.LateMaterializationMergeJoins)
+		})
+	}
+
+	// Repeated planning must not retain a failed round's rewrite state.
+	require.NotEqual(t, basePlan, tk.MustQuery("explain format = 'brief' "+sql).Rows())
+	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.LateMaterializationMergeJoins)
+}
+
 // TestLateMaterializationKeepsMergeJoin checks that a merge join the original
 // plan chose survives the rewrite: the same merge join runs over index-only
 // readers and the table rows are joined back after the Limit. A merge join the
@@ -242,6 +310,7 @@ func TestLateMaterializationPlans(t *testing.T) {
 func TestLateMaterializationKeepsMergeJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans = on")
 	tk.MustExec("use test")
 	tk.MustExec("set @@cte_max_recursion_depth = 100000")
 	gen := "with recursive s(i) as (select 1 union all select i+1 from s where i < 20000) "
