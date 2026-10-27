@@ -77,6 +77,11 @@ type GrantExec struct {
 	is        infoschema.InfoSchema
 	WithGrant bool
 	done      bool
+
+	// Reuse the permanent target validated in Next for persistent table grants.
+	// Session-local temporary tables must not affect the target or its privileges.
+	targetTable  table.Table
+	targetDBName string
 }
 
 // Next implements the Executor Next interface.
@@ -152,6 +157,8 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				return err
 			}
 		}
+		e.targetTable = tbl
+		e.targetDBName = dbName
 	}
 
 	// Commit the old transaction, like DDL.
@@ -514,7 +521,7 @@ func (e *GrantExec) grantLevelPriv(ctx context.Context, priv *ast.PrivElem, user
 		return e.grantDBLevel(priv, user, internalSession)
 	case ast.GrantLevelTable:
 		if len(priv.Cols) == 0 {
-			return e.grantTableLevel(ctx, priv, user, internalSession)
+			return e.grantTableLevel(priv, user, internalSession)
 		}
 		return e.grantColumnLevel(ctx, priv, user, internalSession)
 	default:
@@ -584,21 +591,11 @@ func (e *GrantExec) grantDBLevel(priv *ast.PrivElem, user *ast.UserSpec, interna
 }
 
 // grantTableLevel manipulates mysql.tables_priv table.
-func (e *GrantExec) grantTableLevel(ctx context.Context, priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
-	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
-	// Earlier validation may allow GRANT on a missing table, for example CREATE/ALL.
-	// Keep that behavior here: ignore ErrTableNotExists and continue with the input table name.
-	if err != nil && !terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-		return err
-	}
-	tblName := e.Level.TableName
-	if tbl != nil {
-		tblName = tbl.Meta().Name.O
-	}
-
+func (e *GrantExec) grantTableLevel(priv *ast.PrivElem, user *ast.UserSpec, internalSession sessionctx.Context) error {
+	dbName, tblName := e.targetDBName, e.Level.TableName
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	err = composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName, tbl)
+	err := composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName, e.targetTable)
 	if err != nil {
 		return err
 	}
