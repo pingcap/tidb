@@ -20,8 +20,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -173,30 +175,94 @@ func TestRedactLockInfo(t *testing.T) {
 }
 
 func TestRedactRegionError(t *testing.T) {
-	defer InitRedact(false)
-	epochNotMatch := &errorpb.Error{
-		Message: "epoch not match for key secret-key",
-		EpochNotMatch: &errorpb.EpochNotMatch{
-			CurrentRegions: []*metapb.Region{{Id: 1, StartKey: []byte("secret-start"), EndKey: []byte("secret-end")}},
+	previousMode := errors.RedactLogEnabled.Load()
+	t.Cleanup(func() { errors.RedactLogEnabled.Store(previousMode) })
+	regionErr := &errorpb.Error{
+		Message: "secret-message",
+		NotLeader: &errorpb.NotLeader{
+			RegionId: 1,
+			Leader:   &metapb.Peer{Id: 11, StoreId: 21, Role: metapb.PeerRole_Learner},
 		},
+		EpochNotMatch: &errorpb.EpochNotMatch{
+			CurrentRegions: []*metapb.Region{
+				{
+					Id:             2,
+					StartKey:       []byte("secret-start"),
+					EndKey:         []byte("secret-end"),
+					RegionEpoch:    &metapb.RegionEpoch{ConfVer: 3, Version: 7},
+					Peers:          []*metapb.Peer{{Id: 12, StoreId: 22, IsWitness: true}},
+					EncryptionMeta: &encryptionpb.EncryptionMeta{KeyId: 31, Iv: []byte("secret-iv")},
+				},
+				{Id: 3},
+			},
+		},
+		KeyNotInRegion: &errorpb.KeyNotInRegion{
+			Key: []byte("secret-key"), RegionId: 4,
+			StartKey: []byte("secret-key-start"), EndKey: []byte("secret-key-end"),
+		},
+		BucketVersionNotMatch: &errorpb.BucketVersionNotMatch{Version: 5, Keys: [][]byte{[]byte("secret-bucket"), {}}},
+		ServerIsBusy:          &errorpb.ServerIsBusy{Reason: "secret-busy", BackoffMs: 10, EstimatedWaitMs: 20, AppliedIndex: 30},
+		ReadIndexNotReady:     &errorpb.ReadIndexNotReady{Reason: "secret-read-index", RegionId: 6},
+		DiskFull:              &errorpb.DiskFull{StoreId: []uint64{23, 24}, Reason: "secret-disk"},
+		UndeterminedResult:    &errorpb.UndeterminedResult{Message: "secret-undetermined"},
+		IncompatibleRequest: &errorpb.IncompatibleRequest{
+			Reason:  errorpb.IncompatibleRequestReason_IncompatibleRequestReasonTxnProtocolVersionOutOfRange,
+			Message: "secret-incompatible", ProvidedTxnProtocolVersion: 3,
+			MinCompatibleTxnProtocolVersion: 1, MaxCompatibleTxnProtocolVersion: 2,
+		},
+		DataIsNotReady: &errorpb.DataIsNotReady{RegionId: 7, PeerId: 13, SafeTs: 42},
 	}
-	keyNotInRegion := &errorpb.Error{
-		KeyNotInRegion: &errorpb.KeyNotInRegion{Key: []byte("secret-key"), RegionId: 2},
-	}
-	serverIsBusy := &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{Reason: "busy"}}
+	original := proto.Clone(regionErr)
 
-	InitRedact(false)
-	for _, e := range []*errorpb.Error{epochNotMatch, keyNotInRegion, serverIsBusy, {}} {
-		require.Equal(t, e.String(), RegionError(e))
-	}
+	for _, mode := range []string{"OFF", "ON", "MARKER"} {
+		t.Run(mode, func(t *testing.T) {
+			errors.RedactLogEnabled.Store(mode)
+			var nilErr *errorpb.Error
+			require.Equal(t, nilErr.String(), RegionError(nilErr))
+			formatted := RegionError(regionErr)
+			if mode == "OFF" {
+				require.Equal(t, regionErr.String(), formatted)
+				require.Equal(t, "", RegionError(&errorpb.Error{}))
+				return
+			}
 
-	InitRedact(true)
-	require.Equal(t, "message:? epoch_not_match:?", RegionError(epochNotMatch))
-	require.Equal(t, "key_not_in_region:?", RegionError(keyNotInRegion))
-	require.Equal(t, "server_is_busy:?", RegionError(serverIsBusy))
-	require.Equal(t, "?", RegionError(&errorpb.Error{}))
-	var nilErr *errorpb.Error
-	require.Equal(t, nilErr.String(), RegionError(nilErr))
+			require.NotContains(t, formatted, "secret")
+			require.Equal(t, "?", RegionError(&errorpb.Error{}))
+			require.True(t, strings.HasPrefix(formatted, `message:"?" `))
+			region := regionErr.EpochNotMatch.CurrentRegions[0]
+			for field, detail := range map[string]proto.Message{
+				"not_leader": regionErr.NotLeader,
+				"epoch_not_match": &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{
+					{
+						Id: region.Id, StartKey: []byte("?"), EndKey: []byte("?"),
+						RegionEpoch: region.RegionEpoch, Peers: region.Peers,
+						EncryptionMeta: &encryptionpb.EncryptionMeta{KeyId: 31, Iv: []byte("?")},
+					},
+					{Id: 3},
+				}},
+				"key_not_in_region": &errorpb.KeyNotInRegion{
+					Key: []byte("?"), RegionId: 4, StartKey: []byte("?"), EndKey: []byte("?"),
+				},
+				"bucket_version_not_match": &errorpb.BucketVersionNotMatch{Version: 5, Keys: [][]byte{[]byte("?"), {}}},
+				"server_is_busy":           &errorpb.ServerIsBusy{Reason: "?", BackoffMs: 10, EstimatedWaitMs: 20, AppliedIndex: 30},
+				"read_index_not_ready":     &errorpb.ReadIndexNotReady{Reason: "?", RegionId: 6},
+				"disk_full":                &errorpb.DiskFull{StoreId: []uint64{23, 24}, Reason: "?"},
+				"undetermined_result":      &errorpb.UndeterminedResult{Message: "?"},
+				"incompatible_request": &errorpb.IncompatibleRequest{
+					Reason:  errorpb.IncompatibleRequestReason_IncompatibleRequestReasonTxnProtocolVersionOutOfRange,
+					Message: "?", ProvidedTxnProtocolVersion: 3,
+					MinCompatibleTxnProtocolVersion: 1, MaxCompatibleTxnProtocolVersion: 2,
+				},
+				"data_is_not_ready": regionErr.DataIsNotReady,
+			} {
+				require.Contains(t, formatted, field+":<"+detail.String()+">", field)
+			}
+			require.Equal(t, original, regionErr)
+			require.NotPanics(t, func() {
+				RegionError(&errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{CurrentRegions: []*metapb.Region{nil}}})
+			})
+		})
+	}
 }
 
 func TestTaskInfoS3CredentialsRedacted(t *testing.T) {

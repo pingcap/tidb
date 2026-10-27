@@ -2393,11 +2393,12 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 				}
 				jobIDMap[params.JobID] = newJobID
 			}
+			// These table/index prefixes contain only internal IDs, so keep them visible for diagnostics.
 			log.Info("insert into the delete range",
 				zap.Int64("jobID", newJobID),
 				zap.Int64("elemID", params.ElemID),
-				logutil.Redact(zap.String("startKey", params.StartKey)),
-				logutil.Redact(zap.String("endKey", params.EndKey)),
+				zap.String("startKey", params.StartKey),
+				zap.String("endKey", params.EndKey),
 				zap.Uint64("ts", ts))
 			// (job_id, elem_id, start_key, end_key, ts)
 			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)
