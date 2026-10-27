@@ -14,11 +14,7 @@
 
 FROM rockylinux:9
 
-<<<<<<< HEAD
-ENV GOLANG_VERSION 1.25.12
-=======
 ENV GOLANG_VERSION 1.27.3
->>>>>>> 7fa5afdeb84 (build: upgrade Go to 1.27.3 (#72180))
 ENV ARCH amd64
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
 ENV GOPATH /home/prow/go

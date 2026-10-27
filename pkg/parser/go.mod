@@ -1,10 +1,6 @@
 module github.com/pingcap/tidb/pkg/parser
 
-<<<<<<< HEAD
-go 1.25.0
-=======
 go 1.27.3
->>>>>>> 7fa5afdeb84 (build: upgrade Go to 1.27.3 (#72180))
 
 require (
 	github.com/cznic/mathutil v0.0.0-20181122101859-297441e03548

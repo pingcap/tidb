@@ -2613,11 +2613,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-<<<<<<< HEAD
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
-=======
-func tryFillViewColumnType(_ context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
->>>>>>> 7fa5afdeb84 (build: upgrade Go to 1.27.3 (#72180))
+func tryFillViewColumnType(_ context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName pmodel.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}

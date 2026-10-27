@@ -249,6 +249,7 @@ func (g *groupsReference) group(typ *mapType, i uint64) groupReference {
 	}
 }
 
+// revive:disable:var-naming Keep field names identical to the Go runtime ABI mirror.
 // $GOROOT/src/internal/abi/type.go:`type Type struct`
 type abiType struct {
 	Size_       uintptr
@@ -276,6 +277,8 @@ type abiType struct {
 	Str       int32 // string form
 	PtrToThis int32 // type for pointer to this type, may be zero
 }
+
+// revive:enable:var-naming
 
 // $GOROOT/src/internal/abi/map.go:`type MapType struct`
 type mapType struct {
