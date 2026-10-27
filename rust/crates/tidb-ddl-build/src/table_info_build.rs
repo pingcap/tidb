@@ -625,7 +625,10 @@ pub fn build_table_info_in_schema(
         // key is refused; otherwise it is clamped, never refused.
         if bits > 0 && clustered {
             return Err(default_admission_error(
-                errors::unsupported_shard_row_id_bits(),
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_SHARD_ROW_ID_BITS
+                        .generate_with_stack_by_args(&[]),
+                ),
             ));
         }
         table.shard_row_id_bits = bits.min(tidb_vardef::tidb_vars::MAX_SHARD_ROW_ID_BITS);
@@ -676,7 +679,10 @@ pub fn build_table_info_in_schema(
     if create.partitioning.is_some() {
         if temporary != tidb_model::TempTableType::NONE {
             return Err(default_admission_error(
-                errors::partition_no_temporary(),
+                tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_PARTITION_NO_TEMPORARY
+                        .generate_with_stack_by_args(&[]),
+                ),
             ));
         }
         // Go `checkPartitionType` ignores LINEAR and builds the plain
@@ -1104,7 +1110,10 @@ pub fn check_ttl_info_valid(
         return Ok(());
     };
     if table.temp_table_type != tidb_model::TempTableType::NONE {
-        return Err(errors::temp_table_not_allowed_with_ttl());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_TEMP_TABLE_NOT_ALLOWED_WITH_TTL
+                .generate_with_stack_by_args(&[]),
+        ));
     }
     tidb_ttl::eval_expire_time(
         &chrono::Utc::now(),
@@ -1128,18 +1137,32 @@ pub fn check_ttl_info_valid(
                     })
             });
             if float_key {
-                return Err(errors::unsupported_primary_key_type_with_ttl());
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_PRIMARY_KEY_TYPE_WITH_TTL
+                        .generate_with_stack_by_args(&[]),
+                ));
             }
         }
     }
     if referred_by_foreign_key {
-        return Err(errors::ttl_referenced_by_foreign_key());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
+                .generate_with_stack_by_args(&[]),
+        ));
     }
     let named = ttl.column_name.original();
     match tidb_model::column::find_column_info(&table.columns, named) {
-        None => Err(errors::unknown_column_in_ttl_config(named.to_owned())),
+        None => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_BAD_FIELD.generate_with_stack_by_args(&[
+                (named.to_owned()).to_string().into(),
+                "TTL config".into(),
+            ]),
+        )),
         Some(column) if !column.read().field_type.code().is_type_time() => {
-            Err(errors::unsupported_column_in_ttl_config(named.to_owned()))
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
+                    .generate_with_stack_by_args(&[(named.to_owned()).to_string().into()]),
+            ))
         }
         Some(_) => Ok(()),
     }
@@ -1752,12 +1775,20 @@ pub fn build_added_column(
         match name.to_ascii_lowercase().as_str() {
             "nextval" => {
                 return Err(default_admission_error(
-                    errors::add_column_sequence_default(column.name.clone()),
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_ADD_COLUMN_WITH_SEQUENCE_AS_DEFAULT
+                            .generate_with_stack_by_args(&[(column.name.clone())
+                                .to_string()
+                                .into()]),
+                    ),
                 ));
             }
             "rand" | "uuid" | "uuid_to_bin" | "replace" | "upper" => {
                 return Err(default_admission_error(
-                    errors::binlog_unsafe_system_function(),
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
+                            .generate_with_stack_by_args(&[]),
+                    ),
                 ));
             }
             _ => {}
@@ -1993,7 +2024,9 @@ pub fn process_modify_column_options(
     }
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
         return Err(default_admission_error(
-            errors::primary_cant_have_null(),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
+            ),
         ));
     }
     crate::column_field_type::check_column_value_constraint(&field_type)
@@ -2072,7 +2105,10 @@ fn expression_default_origin(
     if check_unsafe_func && !lower.contains("date_format(now(),") && !lower.contains("str_to_date")
     {
         return Err(default_admission_error(
-            errors::binlog_unsafe_system_function(),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_BINLOG_UNSAFE_SYSTEM_FUNCTION
+                    .generate_with_stack_by_args(&[]),
+            ),
         ));
     }
     let name = info.name.original();
@@ -2746,7 +2782,9 @@ fn build_column(
     }
     if field_type.has_flag(FieldTypeFlags::PRI_KEY) && has_null_flag {
         return Err(default_admission_error(
-            errors::primary_cant_have_null(),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
+            ),
         ));
     }
 
@@ -3345,7 +3383,10 @@ fn persist_column_default(
                 && info.field_type.has_flag(FieldTypeFlags::PRI_KEY)
             {
                 return Err(default_admission_error(
-                    errors::primary_cant_have_null(),
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL
+                            .generate_with_stack_by_args(&[]),
+                    ),
                 ));
             }
             let zone = context.get_expr_ctx().get_eval_ctx().time_zone();

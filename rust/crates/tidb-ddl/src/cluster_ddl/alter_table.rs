@@ -489,8 +489,10 @@ pub(super) fn build_alter_table_job<S: MetaSnapshot>(
                     } else {
                         "TTL_JOB_INTERVAL"
                     };
-                    let error =
-                        tidb_ddl_build::errors::set_ttl_option_for_non_ttl_table(option);
+                    let error = tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                            .generate_with_stack_by_args(&[(option).to_string().into()]),
+                    );
                     return Err(DdlPlanError::from_mysql_error(error));
                 }
                 None => {}
@@ -952,9 +954,10 @@ fn partition_of(table: &TableInfo, physical_id: i64) -> bool {
 /// Go `tables.FindPartitionByName` for a partition-management statement.
 fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanError> {
     let Some(partitioning) = table.get_partition_info() else {
-        return Err(driver_refusal(
-            tidb_ddl_build::errors::partition_mgmt_on_nonpartitioned(),
-        ));
+        return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        )));
     };
     let name = partition.go_to_lower();
     let found = partitioning
@@ -965,7 +968,12 @@ fn find_partition_id(table: &TableInfo, partition: &str) -> Result<i64, DdlPlanE
         .find(|definition| definition.name.lowercase() == name)
         .map(|definition| definition.id);
     found.ok_or_else(|| {
-        driver_refusal(tidb_ddl_build::errors::unknown_partition(name, table.name.original().to_owned()))
+        driver_refusal(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION.generate_with_stack_by_args(&[
+                (name).to_string().into(),
+                (table.name.original().to_owned()).to_string().into(),
+            ]),
+        ))
     })
 }
 
@@ -1318,8 +1326,10 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
                 )
             };
             let set_ttl_option = |option: &str| {
-                let error =
-                    tidb_ddl_build::errors::set_ttl_option_for_non_ttl_table(option);
+                let error = tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                        .generate_with_stack_by_args(&[(option).to_string().into()]),
+                );
                 DdlPlanError::from_mysql_error(error)
             };
             if let Some(ttl_info) = ttl_info {

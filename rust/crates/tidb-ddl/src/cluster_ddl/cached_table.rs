@@ -43,7 +43,12 @@ pub fn check_cached_table_ddl(
             table.table_cache_status_type != tidb_model::TableCacheStatusType::DISABLE
         })
     };
-    let refused = |operation| Err(tidb_ddl_build::errors::opt_on_cache_table(operation));
+    let refused = |operation: &str| {
+        Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
+                .generate_with_stack_by_args(&[(operation).into()]),
+        ))
+    };
     match ddl.as_ref() {
         tidb_ast::DdlStmt::AlterTable(alter) => {
             if cached(&alter.name)

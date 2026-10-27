@@ -117,7 +117,10 @@ pub fn build_range_bounds_with_unsigned(
                 // Go `checkRangePartitionValue` strips a TRAILING `MAXVALUE`
                 // and then reports 1481 for any other one it meets.
                 if index + 1 != definitions.len() {
-                    return Err(errors::partition_max_value_not_last());
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_PARTITION_MAXVALUE
+                            .generate_with_stack_by_args(&[]),
+                    ));
                 }
                 RangeBound::MaxValue
             }
@@ -180,7 +183,10 @@ pub fn build_range_columns_bounds(
             .iter()
             .any(|candidate: &String| candidate.go_lower_eq(name))
         {
-            return Err(errors::partition_duplicate_field(name.clone()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION_FIELD
+                    .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+            ));
         }
         let offset = names
             .iter()
@@ -218,7 +224,10 @@ pub fn build_range_columns_bounds(
                         super::table_partition_list::fold_range_column_value(expr, field_type, ctx)?;
                     // Go `ErrNullInValuesLessThan` (`ddl/partition.go:1691`).
                     if value.is_null() {
-                        return Err(errors::partition_null_in_values_less_than());
+                        return Err(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::ERR_NULL_IN_VALUES_LESS_THAN
+                                .generate_with_stack_by_args(&[]),
+                        ));
                     }
                     Ok(RangeColumnBound::Value(value))
                 }
@@ -247,7 +256,9 @@ pub fn check_range_columns_strictly_increasing(
 ) -> Result<(), MysqlError> {
     for pair in less_than.windows(2) {
         if !range_columns_bound_increases(&pair[0], &pair[1], field_types)? {
-            return Err(errors::partition_range_not_increasing());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
+            ));
         }
     }
     Ok(())
@@ -317,7 +328,9 @@ pub fn check_strictly_increasing(
                 value > previous
             };
             if !increasing {
-                return Err(errors::partition_range_not_increasing());
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
+                ));
             }
         }
         previous = Some(value);

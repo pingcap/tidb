@@ -23,7 +23,6 @@
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 use tidb_hack::GoToLower;
 
 /// Go `model.ModifyType*`, in the order `onModifyColumn` dispatches them.
@@ -325,8 +324,10 @@ pub fn check_modify_types(
     check_type_change_supported(origin, to)?;
     let can_reorganize = modify_type_needs_reorganization(origin, to);
     if can_reorganize && origin.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
-        return Err(errors::unsupported_modify_column(
-            "this column has primary key flag",
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
+                ("this column has primary key flag").to_string().into(),
+            ]),
         ));
     }
     check_modify_types_charset_and_collation(origin, to, can_reorganize, column_name, indexed)
@@ -504,7 +505,16 @@ fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(),
         ) && to_code == FieldTypeCode::Duration);
 
     if refused {
-        return Err(errors::unsupported_modify_column_type(origin.compact_str(false), to.compact_str(false)));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
+                format!(
+                    "change from original type {} to {} is currently unsupported yet",
+                    (origin.compact_str(false)),
+                    (to.compact_str(false))
+                )
+                .into(),
+            ]),
+        ));
     }
     Ok(())
 }
@@ -585,7 +595,6 @@ pub fn check_modify_charset_and_collation(
 #[cfg(test)]
 mod type_change_gate_tests {
     use super::check_type_change_supported;
-    use crate::errors;
     use tidb_datatype::{FieldType, FieldTypeCode};
 
     /// Rule 4 (`field_type.go:1591-1594`, `TypeTiDBVectorFloat32` on either
@@ -597,16 +606,28 @@ mod type_change_gate_tests {
 
         assert_eq!(
             check_type_change_supported(&vector, &int),
-            Err(errors::unsupported_modify_column_type(
-                vector.compact_str(false),
-                int.compact_str(false)
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
+                    format!(
+                        "change from original type {} to {} is currently unsupported yet",
+                        (vector.compact_str(false)),
+                        (int.compact_str(false))
+                    )
+                    .into()
+                ])
             ))
         );
         assert_eq!(
             check_type_change_supported(&int, &vector),
-            Err(errors::unsupported_modify_column_type(
-                int.compact_str(false),
-                vector.compact_str(false)
+            Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_MODIFY_COLUMN.generate_with_stack_by_args(&[
+                    format!(
+                        "change from original type {} to {} is currently unsupported yet",
+                        (int.compact_str(false)),
+                        (vector.compact_str(false))
+                    )
+                    .into()
+                ])
             ))
         );
     }

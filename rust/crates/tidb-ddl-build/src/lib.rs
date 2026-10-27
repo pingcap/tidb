@@ -149,16 +149,20 @@ pub fn create_table_ttl_info(
             .iter()
             .any(|option| matches!(option, tidb_ast::TableOption::TtlEnable(_)))
         {
-            return Err(errors::set_ttl_option_for_non_ttl_table(
-                "TTL_ENABLE".to_owned(),
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                    .generate_with_stack_by_args(&[("TTL_ENABLE".to_owned()).to_string().into()]),
             ));
         }
         if options
             .iter()
             .any(|option| matches!(option, tidb_ast::TableOption::TtlJobInterval(_)))
         {
-            return Err(errors::set_ttl_option_for_non_ttl_table(
-                "TTL_JOB_INTERVAL".to_owned(),
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_SET_TTL_OPTION_FOR_NON_TTL_TABLE
+                    .generate_with_stack_by_args(&[("TTL_JOB_INTERVAL".to_owned())
+                        .to_string()
+                        .into()]),
             ));
         }
     }
@@ -268,7 +272,10 @@ pub fn set_temporary_type(
             if on_commit_delete {
                 Ok(tidb_model::TempTableType::GLOBAL)
             } else {
-                Err(errors::unsupported_on_commit_preserve())
+                Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_UNSUPPORTED_ON_COMMIT_PRESERVE
+                        .generate_with_stack_by_args(&[]),
+                ))
             }
         }
         tidb_ast::CreateTableTemporary::Local => Ok(tidb_model::TempTableType::LOCAL),
@@ -284,7 +291,10 @@ pub const MAX_IDENTIFIER_LENGTH: usize = 64;
 /// characters.
 pub fn check_too_long_identifier(name: &str) -> Result<(), MysqlError> {
     if name.chars().count() > MAX_IDENTIFIER_LENGTH {
-        return Err(errors::too_long_ident(name.to_owned()));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_TOO_LONG_IDENT
+                .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+        ));
     }
     Ok(())
 }

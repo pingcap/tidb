@@ -411,11 +411,12 @@ fn get_modifiable_column_job(
         if ttl.read().column_name.lowercase() == original_l
             && !new_col.field_type.code().is_type_time()
         {
-            return Err(driver_refusal(
-                tidb_ddl_build::errors::unsupported_column_in_ttl_config(
-                    new_col.name.original().to_owned(),
-                ),
-            ));
+            return Err(driver_refusal(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_COLUMN_IN_TTL_CONFIG
+                    .generate_with_stack_by_args(&[(new_col.name.original().to_owned())
+                        .to_string()
+                        .into()]),
+            )));
         }
     }
 

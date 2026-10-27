@@ -30,7 +30,6 @@
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags, UNSPECIFIED_LENGTH};
 use tidb_error::mysql::MysqlError;
 
-use crate::errors;
 use tidb_model::column::ColumnInfo;
 use tidb_model::index::{ColumnarIndexType, IndexColumn, IndexInfo};
 use tidb_model::table_info::TableInfo;
@@ -97,9 +96,7 @@ pub fn check_expression_index_auto_increment(
             .iter()
             .any(|dependency| dependency.go_lower_eq(auto))
     }) {
-        return Err(errors::expression_index_can_not_refer(
-            index_name.to_owned(),
-        ));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_EXPRESSION_INDEX_CAN_NOT_REFER.generate_with_stack_by_args(&[(index_name.to_owned()).to_string().into()])));
     }
     Ok(())
 }
@@ -523,7 +520,7 @@ pub fn build_index_columns(
                     && index_part_specifications.len() <= 1
             });
             let Some(ctx) = truncate else {
-                return Err(errors::too_long_key(sum_length, max_index_length));
+                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_TOO_LONG_KEY.generate_with_stack_by_args(&[(sum_length).into(), (max_index_length).into()])));
             };
             // Truncate the index length and warn in non-strict SQL mode.
             let col_len_per_uint = get_index_column_length(col, 1, columnar_index_type)?;
@@ -562,7 +559,7 @@ pub fn check_index_prefix_length(
     let idx_len = index_columns_len(columns, idx_columns, columnar_index_type)?;
     let max_index_length = max_index_length();
     if idx_len > max_index_length {
-        return Err(errors::too_long_key(idx_len, max_index_length));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_TOO_LONG_KEY.generate_with_stack_by_args(&[(idx_len).into(), (max_index_length).into()])));
     }
     Ok(())
 }
@@ -612,19 +609,17 @@ pub fn check_index_column(
         || (flen == 0 && (code.is_type_char() || code.is_type_varchar()))
     {
         if col.hidden {
-            return Err(errors::wrong_key_column_functional_index(
-                col.generated_expr_string.clone(),
-            ));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_WRONG_KEY_COLUMN_FUNCTIONAL_INDEX.generate_with_stack_by_args(&[(col.generated_expr_string.clone()).to_string().into()])));
         }
-        return Err(errors::wrong_key_column(col.name.original().to_owned()));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_WRONG_KEY_COLUMN.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
     }
 
     // JSON column cannot index.
     if code == FieldTypeCode::Json && !col.field_type.is_array() {
         if col.hidden {
-            return Err(errors::functional_index_on_json());
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ON_JSON_OR_GEOMETRY_FUNCTION.generate_with_stack_by_args(&[])));
         }
-        return Err(errors::json_used_in_key(col.name.original().to_owned()));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_JSON_USED_AS_KEY.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
     }
 
     if code == FieldTypeCode::VectorFloat32 {
@@ -635,28 +630,28 @@ pub fn check_index_column(
     if code.is_type_blob() {
         if index_column_len == UNSPECIFIED_LENGTH {
             if col.hidden {
-                return Err(errors::functional_index_on_blob());
+                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ON_BLOB.generate_with_stack_by_args(&[])));
             }
-            return Err(errors::blob_key_without_length(col.name.original().to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
         }
         if index_column_len == ERROR_LENGTH {
-            return Err(errors::key_part0(col.name.original().to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
         }
     }
 
     // Length can only be specified for specifiable types.
     if index_column_len != UNSPECIFIED_LENGTH && !code.is_type_prefixable() {
-        return Err(errors::incorrect_prefix_key());
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])));
     }
 
     // Key length must be shorter or equal to the column length.
     if index_column_len != UNSPECIFIED_LENGTH && code.is_type_char() {
         if flen < index_column_len {
-            return Err(errors::incorrect_prefix_key());
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])));
         }
         // Length must be non-zero for char.
         if index_column_len == ERROR_LENGTH {
-            return Err(errors::key_part0(col.name.original().to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[(col.name.original().to_owned()).to_string().into()])));
         }
     }
 
@@ -668,7 +663,7 @@ pub fn check_index_column(
     // Specified length must be shorter than the max length for prefix.
     let max_index_length = max_index_length();
     if index_column_len > max_index_length && !suppress_too_long_key_err {
-        return Err(errors::too_long_key(index_column_len, max_index_length));
+        return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_TOO_LONG_KEY.generate_with_stack_by_args(&[(index_column_len).into(), (max_index_length).into()])));
     }
     Ok(())
 }
@@ -787,7 +782,7 @@ mod index_column_tests {
     #[test]
     fn a_length_on_a_non_prefixable_type_is_1089() {
         let int = column("a", tidb_datatype::FieldType::new(FieldTypeCode::Long));
-        assert_eq!(check_index_column(&int, 3, false), Err(errors::incorrect_prefix_key()));
+        assert_eq!(check_index_column(&int, 3, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[]))));
         assert!(matches!(check_index_column(&int, UNSPECIFIED_LENGTH, false), Ok(())));
     }
 
@@ -796,10 +791,10 @@ mod index_column_tests {
     #[test]
     fn a_blob_key_part_must_carry_a_length() {
         let blob = column("a", tidb_datatype::FieldType::new(FieldTypeCode::Blob));
-        assert_eq!(check_index_column(&blob, UNSPECIFIED_LENGTH, false), Err(errors::blob_key_without_length("a")));
+        assert_eq!(check_index_column(&blob, UNSPECIFIED_LENGTH, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH.generate_with_stack_by_args(&[("a").to_string().into()]))));
         assert!(matches!(check_index_column(&blob, 5, false), Ok(())));
         // Zero is a different error from absent, and is checked first.
-        assert_eq!(check_index_column(&blob, 0, false), Err(errors::key_part0("a")));
+        assert_eq!(check_index_column(&blob, 0, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[("a").to_string().into()]))));
     }
 
     /// Captured: `create table e3 (a varchar(5), key idx(a(10)))` is refused,
@@ -808,8 +803,8 @@ mod index_column_tests {
     #[test]
     fn a_char_key_part_may_not_outrun_its_column() {
         let short = column("a", char_type(FieldTypeCode::Varchar, 5, "utf8mb4"));
-        assert_eq!(check_index_column(&short, 10, false), Err(errors::incorrect_prefix_key()));
-        assert_eq!(check_index_column(&short, 0, false), Err(errors::key_part0("a")));
+        assert_eq!(check_index_column(&short, 10, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[]))));
+        assert_eq!(check_index_column(&short, 0, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_KEY_PART0.generate_with_stack_by_args(&[("a").to_string().into()]))));
         assert!(matches!(check_index_column(&short, 3, false), Ok(())));
     }
 
@@ -841,7 +836,7 @@ mod index_column_tests {
     #[test]
     fn the_length_limit_counts_bytes_not_characters() {
         let wide = column("a", char_type(FieldTypeCode::Varchar, 2000, "utf8mb4"));
-        assert_eq!(check_index_column(&wide, 1000, false), Err(errors::too_long_key(4000, MAX_INDEX_LENGTH)));
+        assert_eq!(check_index_column(&wide, 1000, false), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_TOO_LONG_KEY.generate_with_stack_by_args(&[(4000).into(), (MAX_INDEX_LENGTH).into()]))));
         // The same 1000 characters fit in a single-byte charset.
         let narrow = column("a", char_type(FieldTypeCode::Varchar, 2000, "latin1"));
         assert!(matches!(check_index_column(&narrow, 1000, false), Ok(())));
@@ -862,7 +857,7 @@ mod index_column_tests {
             length: UNSPECIFIED_LENGTH,
             ..IndexColumn::default()
         };
-        assert_eq!(check_index_prefix_length(&columns, &[part("a"), part("b")], ColumnarIndexType::NA), Err(errors::too_long_key(4000, MAX_INDEX_LENGTH)));
+        assert_eq!(check_index_prefix_length(&columns, &[part("a"), part("b")], ColumnarIndexType::NA), Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_TOO_LONG_KEY.generate_with_stack_by_args(&[(4000).into(), (MAX_INDEX_LENGTH).into()]))));
         assert!(matches!(check_index_prefix_length(&columns, &[part("a"), part("b")], ColumnarIndexType::VECTOR), Ok(())));
     }
 }
@@ -959,7 +954,7 @@ pub fn reject_duplicate_index_columns(
     for part in parts {
         if let tidb_ast::IndexPart::Column { name, .. } = part {
             if !seen.insert(name.go_to_lower()) {
-                return Err(errors::duplicate_column_name(name.clone()));
+                return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS.generate_with_stack_by_args(&[(name.clone()).to_string().into()])));
             }
         }
     }
@@ -1031,9 +1026,7 @@ pub fn check_create_global_index(
             .iter()
             .all(|offset| crate::table_partition::key_part_covers(offsets, prefix_lengths, *offset))
         {
-            return Err(errors::partition_global_index_needed(
-                index_name.to_owned(),
-            ));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_util::dbterror::ERR_GLOBAL_INDEX_NOT_EXPLICITLY_SET.generate_with_stack_by_args(&[(index_name.to_owned()).to_string().into()])));
         }
     }
     Ok(())

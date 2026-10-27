@@ -56,7 +56,10 @@ pub fn check_drop_object(
             Err(errors::wrong_object(schema, name, "VIEW"))
         }
         DropObjectKind::Table if actual != DropObjectKind::Table => Ok(false),
-        DropObjectKind::Table if cached => Err(errors::opt_on_cache_table("Drop Table")),
+        DropObjectKind::Table if cached => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
+                .generate_with_stack_by_args(&[("Drop Table").into()]),
+        )),
         _ => Ok(true),
     }
 }
@@ -120,7 +123,12 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         source_is_view,
         is_alter,
     } = admission;
-    let occupied = || errors::table_exists(&format!("{to_db}.{to_name}"));
+    let occupied = || {
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                .generate_with_stack_by_args(&[(&format!("{to_db}.{to_name}")).into()]),
+        )
+    };
     if !source_exists {
         if !is_alter && target_exists {
             return Err(occupied());
@@ -140,17 +148,23 @@ pub fn check_rename(admission: RenameAdmission<'_>) -> Result<bool, MysqlError> 
         ));
     }
     if !target_schema_exists {
-        return Err(errors::error_on_rename_database_missing(
-            &format!("{from_db}.{from_name}"),
-            &format!("{to_db}.{to_name}"),
-            to_db,
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_ERROR_ON_RENAME.generate_with_stack_by_args(&[
+                (&format!("{from_db}.{from_name}")).into(),
+                (&format!("{to_db}.{to_name}")).into(),
+                168.into(),
+                format!("Database `{}` doesn't exist", (to_db)).into(),
+            ]),
         ));
     }
     if target_exists {
         return Err(occupied());
     }
     if to_name.go_to_lower().chars().count() > 64 {
-        return Err(errors::too_long_ident(to_name));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_TOO_LONG_IDENT
+                .generate_with_stack_by_args(&[(to_name).to_string().into()]),
+        ));
     }
     Ok(true)
 }
@@ -188,7 +202,10 @@ pub fn check_view_target(
     existing: Option<bool>,
 ) -> Result<(), MysqlError> {
     match existing {
-        Some(_) if !or_replace => Err(errors::table_exists(&format!("{database}.{name}"))),
+        Some(_) if !or_replace => Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_TABLE_EXISTS
+                .generate_with_stack_by_args(&[(&format!("{database}.{name}")).into()]),
+        )),
         Some(false) => Err(errors::wrong_object(database, name, "VIEW")),
         _ => Ok(()),
     }

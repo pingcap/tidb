@@ -397,9 +397,7 @@ impl AdmissibilityScan {
                 // multi-valued, admitted only as the whole expression.
                 self.cast_array |= cast.array;
                 if cast.array && !cast_array_allowed {
-                    self.fail(errors::not_supported_yet(
-                        "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions",
-                    ));
+                    self.fail(tidb_error::mysql::MysqlError::from_terror(&tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions").to_string().into()])));
                     return;
                 }
                 self.walk(&cast.expr);
@@ -505,7 +503,10 @@ impl AdmissibilityScan {
             args.len()
         };
         if tidb_expr::builtin_registry::verify_args_by_count(&name, count).is_err() {
-            self.fail(errors::wrong_param_count_to_native_fct(name));
+            self.fail(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::expression::ERR_INCORRECT_PARAMETER_COUNT
+                    .generate_with_stack_by_args(&[(name).to_string().into()]),
+            ));
             return false;
         }
         if !GA_FUNCTIONS.contains(&name.as_str()) {
@@ -533,21 +534,39 @@ impl AdmissibilityScan {
     fn verdict(self, name: &str) -> Result<(), MysqlError> {
         if self.illegal_func {
             return Err(match self.gen_type {
-                GenType::Column => errors::generated_column_function_not_allowed(name.to_owned()),
-                GenType::Index => errors::functional_index_function_not_allowed(name.to_owned()),
+                GenType::Column => tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                ),
+                GenType::Index => tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_FUNCTION_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                ),
             });
         }
         if self.agg_func {
-            return Err(errors::invalid_group_func_use());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_INVALID_GROUP_FUNC_USE
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         if self.row_val {
             return Err(match self.gen_type {
-                GenType::Column => errors::generated_column_row_value(name.to_owned()),
-                GenType::Index => errors::functional_index_row_value(name.to_owned()),
+                GenType::Column => tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_GENERATED_COLUMN_ROW_VALUE_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                ),
+                GenType::Index => tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ROW_VALUE_IS_NOT_ALLOWED
+                        .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+                ),
             });
         }
         if self.window_func {
-            return Err(errors::window_invalid_window_func_use(name.to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::plannererrors::ERR_WINDOW_INVALID_WINDOW_FUNC_USE
+                    .generate_with_stack_by_args(&[(name.to_owned()).to_string().into()]),
+            ));
         }
         if let Some(error) = self.other {
             return Err(error);
@@ -559,12 +578,13 @@ impl AdmissibilityScan {
                 .experimental
                 .allows_expression_index
         {
-            return Err(errors::unsafe_function_in_expression_index());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_UNSUPPORTED_EXPRESSION_INDEX
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
         if self.gen_type == GenType::Column && self.cast_array {
-            return Err(errors::not_supported_yet(
-                "Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions",
-            ));
+            return Err(tidb_error::mysql::MysqlError::from_terror(&tidb_error::plannererrors::ERR_NOT_SUPPORTED_YET.generate_with_stack_by_args(&[("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions").to_string().into()])));
         }
         Ok(())
     }
@@ -640,13 +660,20 @@ pub fn build_hidden_columns_with_like_default_escape(
         // to the ordinary identifier length limit, reported against the
         // hidden column rather than the index.
         if name.chars().count() > MAX_COLUMN_NAME_LENGTH {
-            return Err(errors::too_long_ident("hidden column".to_owned()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_TOO_LONG_IDENT.generate_with_stack_by_args(&[
+                    ("hidden column".to_owned()).to_string().into(),
+                ]),
+            ));
         }
         check_illegal_fn_4_generated(&tidb_hack::go_to_lower(index_name), GenType::Index, expr)?;
         // Go: the hidden column's name must not already be taken. Captured as
         // 1060 against a user column literally called `_V$_idxh_0`.
         if names.iter().any(|n| n.go_equal_fold(&name.go_to_lower())) {
-            return Err(errors::duplicate_column_name(name));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_COLUMN_EXISTS
+                    .generate_with_stack_by_args(&[(name).to_string().into()]),
+            ));
         }
 
         let resolver = TableColumnResolver::with_like_default_escape(
@@ -678,7 +705,10 @@ pub fn build_hidden_columns_with_like_default_escape(
         // checked on the BUILT expression so `((a))` and `(((a)))` are both
         // caught, exactly as Go's `expr.(*expression.Column)` is.
         if matches!(built_expr, tidb_expr::expression::Expression::Column(_)) {
-            return Err(errors::functional_index_on_field());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_FUNCTIONAL_INDEX_ON_FIELD
+                    .generate_with_stack_by_args(&[]),
+            ));
         }
 
         // Go takes the hidden column's type from `expr.GetType()`. Here the

@@ -123,7 +123,10 @@ pub fn plan_hash_partition_management(
     host: &mut dyn ReorgHost,
 ) -> Result<PartitionReorgPlan, MysqlError> {
     let Some(partition) = table.partition() else {
-        return Err(errors::partition_mgmt_on_nonpartitioned());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     };
     let hash_or_key = matches!(
         partition.kind,
@@ -163,19 +166,29 @@ pub fn plan_hash_partition_management(
             // Go's ErrCoalesceOnlyOnHashPartition fires on HASH and KEY
             // alike (oracle g-partition: COALESCE on a KEY table is ok).
             if !hash_or_key {
-                return Err(errors::coalesce_only_on_hash_partition());
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_COALESCE_ONLY_ON_HASH_PARTITION
+                        .generate_with_stack_by_args(&[]),
+                ));
             }
             if count < 1 {
-                return Err(errors::coalesce_partition_no_partition());
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::ast::ERR_COALESCE_PARTITION_NO_PARTITION
+                        .generate_with_stack_by_args(&[]),
+                ));
             }
             if count as usize >= existing.len() {
-                return Err(errors::drop_last_partition());
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
+                ));
             }
             (existing.len() - count as usize, &[][..])
         }
     };
     if count > crate::table_partition::MAX_PARTITIONS as usize {
-        return Err(errors::partition_too_many());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+        ));
     }
     let mut built = Vec::with_capacity(count);
     for ordinal in 0..count {
@@ -199,7 +212,10 @@ pub fn plan_hash_partition_management(
     let mut seen = std::collections::HashSet::with_capacity(built.len());
     for (name, _, _) in &built {
         if !seen.insert(crate::table_partition::go_to_lower(name)) {
-            return Err(errors::partition_same_name(name.clone()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION
+                    .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+            ));
         }
     }
     let mut definitions = built
@@ -297,10 +313,12 @@ pub fn plan_partition_change(
     action: &tidb_ast::AlterPartitionAction,
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<PartitionChange, MysqlError> {
-    let mut partition = table
-        .partition()
-        .cloned()
-        .ok_or_else(errors::partition_mgmt_on_nonpartitioned)?;
+    let mut partition = table.partition().cloned().ok_or_else(|| {
+        MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        )
+    })?;
     let mut query_rewrite = None;
     match action {
         tidb_ast::AlterPartitionAction::Add {
@@ -523,7 +541,10 @@ pub fn plan_drop_partitions(
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<Option<Vec<usize>>, MysqlError> {
     let Some(partition) = table.partition() else {
-        return Err(errors::partition_mgmt_on_nonpartitioned());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     };
     if !matches!(
         partition.kind,
@@ -532,11 +553,16 @@ pub fn plan_drop_partitions(
             | PartitionKind::List { .. }
             | PartitionKind::ListColumns { .. }
     ) {
-        return Err(errors::only_on_range_list_partition("DROP"));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
+                .generate_with_stack_by_args(&[("DROP").into()]),
+        ));
     }
     refuse_affinity(table, "DROP PARTITION")?;
     if partition.definitions.len() <= names.len() {
-        return Err(errors::drop_last_partition());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
+        ));
     }
     let mut ordinals = Vec::with_capacity(names.len());
     for name in names {
@@ -551,7 +577,10 @@ pub fn plan_drop_partitions(
                 );
                 return Ok(None);
             }
-            return Err(errors::drop_partition_non_existent());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_DROP_PARTITION_NON_EXISTENT
+                    .generate_with_stack_by_args(&["DROP".into()]),
+            ));
         };
         if ordinals.contains(&ordinal) {
             if if_exists {
@@ -562,7 +591,10 @@ pub fn plan_drop_partitions(
                 );
                 return Ok(None);
             }
-            return Err(errors::drop_partition_non_existent());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_DROP_PARTITION_NON_EXISTENT
+                    .generate_with_stack_by_args(&["DROP".into()]),
+            ));
         }
         ordinals.push(ordinal);
     }
@@ -637,12 +669,17 @@ pub fn plan_add_partitions(
 
     let added_kind = {
         let Some(partition) = table.partition() else {
-            return Err(errors::partition_mgmt_on_nonpartitioned());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            ));
         };
         if partition.definitions.len() + definitions.len()
             > crate::table_partition::MAX_PARTITIONS as usize
         {
-            return Err(errors::partition_too_many());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+            ));
         }
         for definition in definitions {
             let duplicate_existing = partition.definitions.iter().any(|old| {
@@ -664,7 +701,11 @@ pub fn plan_add_partitions(
                     );
                     return Ok(None);
                 }
-                return Err(errors::partition_same_name(definition.name.clone()));
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_SAME_NAME_PARTITION.generate_with_stack_by_args(&[
+                        (definition.name.clone()).to_string().into(),
+                    ]),
+                ));
             }
         }
 
@@ -815,7 +856,10 @@ pub fn plan_add_partitions(
                 // LESS THAN (20))` through -- Go answers 1493.
                 let mut current = match less_than.last() {
                     Some(RangeBound::MaxValue) => {
-                        return Err(errors::partition_max_value_not_last())
+                        return Err(tidb_error::mysql::MysqlError::from_terror(
+                            &tidb_util::dbterror::ERR_PARTITION_MAXVALUE
+                                .generate_with_stack_by_args(&[]),
+                        ))
                     }
                     Some(RangeBound::Value(value)) => Some(*value),
                     None => None,
@@ -826,7 +870,10 @@ pub fn plan_add_partitions(
                             if index == added.len() - 1 {
                                 break;
                             }
-                            return Err(errors::partition_max_value_not_last());
+                            return Err(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_util::dbterror::ERR_PARTITION_MAXVALUE
+                                    .generate_with_stack_by_args(&[]),
+                            ));
                         }
                         RangeBound::Value(value) => {
                             if let Some(previous) = current {
@@ -836,7 +883,10 @@ pub fn plan_add_partitions(
                                     *value > previous
                                 };
                                 if !increases {
-                                    return Err(errors::partition_range_not_increasing());
+                                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                                        &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING
+                                            .generate_with_stack_by_args(&[]),
+                                    ));
                                 }
                             }
                             current = Some(*value);
@@ -899,7 +949,10 @@ pub fn plan_add_partitions(
                 }
             }
             PartitionKind::Hash | PartitionKind::Key => {
-                return Err(errors::only_on_range_list_partition("ADD"));
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
+                        .generate_with_stack_by_args(&[("ADD").into()]),
+                ));
             }
         }
     };
@@ -989,7 +1042,10 @@ pub fn plan_first_partition_less_than(
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<(Vec<usize>, (String, String)), MysqlError> {
     let Some(partition) = table.partition() else {
-        return Err(errors::partition_mgmt_on_nonpartitioned());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     };
     let unsupported = |message: &str| MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, format!("Unsupported {message}"));
     let Some(interval) = crate::partition_interval::interval_from_table(partition, ctx) else {
@@ -1052,7 +1108,10 @@ pub fn plan_last_partition_less_than(
     ctx: &tidb_expr::metabuild::Context,
 ) -> Result<(Vec<PartitionDef>, PartitionKind, (String, String)), MysqlError> {
     let Some(partition) = table.partition() else {
-        return Err(errors::partition_mgmt_on_nonpartitioned());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     };
     refuse_affinity(table, "ADD PARTITION")?;
     let unsupported = |message: &str| MysqlError::terror(&tidb_util::dbterror::ERR_GENERAL_UNSUPPORTED_DDL, format!("Unsupported {message}"));
@@ -1316,7 +1375,10 @@ pub fn plan_reorganize_partition(
 ) -> Result<PartitionReorgPlan, MysqlError> {
     let (mut spec, source_ids, new_offset, clause) = {
         let Some(partition) = table.partition() else {
-            return Err(errors::partition_mgmt_on_nonpartitioned());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            ));
         };
         refuse_affinity(table, "REORGANIZE PARTITION")?;
         if !matches!(
@@ -1452,7 +1514,9 @@ pub fn plan_reorganize_partition(
                 _ => true,
             };
             if !same_end {
-                return Err(errors::partition_range_not_increasing());
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_RANGE_NOT_INCREASING.generate_with_stack_by_args(&[]),
+                ));
             }
         }
         host.resolve_placement(&mut spec.definitions[new_offset..new_offset + definitions.len()])?;
@@ -1520,7 +1584,9 @@ pub fn plan_alter_table_partitioning(
         // Go `checkAddPartitionOnTemporaryMode`, inside
         // `checkPartitionDefinitionConstraints`.
         if table.meta.temp_table_type != tidb_model::TempTableType::NONE {
-            return Err(errors::partition_no_temporary());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PARTITION_NO_TEMPORARY.generate_with_stack_by_args(&[]),
+            ));
         }
         if table
             .meta
@@ -1588,7 +1654,10 @@ pub fn plan_alter_table_partitioning(
 /// Go `RemovePartitioning`, planned against `table`.
 pub fn plan_remove_partitioning(table: &PartitionedTable<'_>) -> Result<PartitionReorgPlan, MysqlError> {
     let Some(partition) = table.partition() else {
-        return Err(errors::partition_mgmt_on_nonpartitioned());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        ));
     };
     refuse_affinity(table, "REMOVE PARTITIONING")?;
     let source_ids = partition

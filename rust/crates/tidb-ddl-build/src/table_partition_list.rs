@@ -57,7 +57,10 @@ pub fn build_list_columns_values(
                 .iter()
                 .any(|candidate: &String| candidate.go_lower_eq(name))
         {
-            return Err(errors::partition_duplicate_field(name.clone()));
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_SAME_NAME_PARTITION_FIELD
+                    .generate_with_stack_by_args(&[(name.clone()).to_string().into()]),
+            ));
         }
         let offset = names
             .iter()

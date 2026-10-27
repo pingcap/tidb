@@ -3327,7 +3327,10 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         probe.enable_cache().map_err(|error| {
             let error = match error {
                 tidb_table::kv_table::KvTableError::CacheTableUnsupported(operation) => {
-                    tidb_ddl_build::errors::opt_on_cache_table(operation)
+                    tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_util::dbterror::ERR_OPT_ON_CACHE_TABLE
+                            .generate_with_stack_by_args(&[(operation).into()]),
+                    )
                 }
                 other => tidb_ddl_build::errors::unsupported(format!(
                     "cache table size check failed: {other:?}"

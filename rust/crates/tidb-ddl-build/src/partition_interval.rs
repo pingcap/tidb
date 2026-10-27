@@ -198,11 +198,15 @@ pub fn generate_from_interval(
             break;
         }
         if ordinal == PARTITION_COUNT_LIMIT - 1 {
-            return Err(errors::partition_too_many());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+            ));
         }
     }
     if existing + definitions.len() > PARTITION_COUNT_LIMIT {
-        return Err(errors::partition_too_many());
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_TOO_MANY_PARTITIONS.generate_with_stack_by_args(&[]),
+        ));
     }
     Ok(definitions)
 }

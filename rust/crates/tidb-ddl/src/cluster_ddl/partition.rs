@@ -112,9 +112,10 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
         } => {
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
             let Some(partitioning) = stored.get_partition_info() else {
-                return Err(admission(
-                    tidb_ddl_build::errors::partition_mgmt_on_nonpartitioned(),
-                ));
+                return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                        .generate_with_stack_by_args(&[]),
+                )));
             };
             let partitioning = partitioning.read().clone_like_go();
             // Go `AddTablePartitions` refuses a table with AFFINITY before
@@ -257,9 +258,10 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
         } => {
             let (database_id, stored) = locate_table(&catalog, schema, table)?;
             let Some(partitioning) = stored.get_partition_info() else {
-                return Err(admission(
-                    tidb_ddl_build::errors::partition_mgmt_on_nonpartitioned(),
-                ));
+                return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                        .generate_with_stack_by_args(&[]),
+                )));
             };
             let definitions = partitioning.read().definitions.snapshot();
             // Go's `getTruncatedParts`: ALL, or each name once in statement
@@ -277,7 +279,13 @@ pub fn prepare_partition_job_submission<S: MetaSnapshot>(
                             .iter()
                             .position(|definition| definition.name.lowercase() == lower)
                         else {
-                            return Err(admission(tidb_ddl_build::errors::unknown_partition(lower, table.clone())));
+                            return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+                                &tidb_error::catalog::table::ERR_UNKNOWN_PARTITION
+                                    .generate_with_stack_by_args(&[
+                                        (lower).to_string().into(),
+                                        (table.clone()).to_string().into(),
+                                    ]),
+                            )));
                         };
                         if !positions.contains(&position) {
                             positions.push(position);
@@ -347,7 +355,10 @@ fn job_partition(
     info.partition.clone().ok_or_else(|| {
         cancel_ddl_job(
             active,
-            admission(tidb_ddl_build::errors::partition_mgmt_on_nonpartitioned()),
+            admission(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            )),
         )
     })
 }
@@ -934,18 +945,20 @@ pub(super) fn rollback_like_drop_partition<S: MetaSnapshot>(
 /// Go `CheckDropTablePartition`, against the table the job steps.
 fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), DdlPlanError> {
     let Some(partition) = info.get_partition_info() else {
-        return Err(admission(
-            tidb_ddl_build::errors::partition_mgmt_on_nonpartitioned(),
-        ));
+        return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                .generate_with_stack_by_args(&[]),
+        )));
     };
     let partition = partition.read();
     if !matches!(
         partition.partition_type,
         tidb_ast::PartitionType::RANGE | tidb_ast::PartitionType::LIST
     ) {
-        return Err(admission(
-            tidb_ddl_build::errors::only_on_range_list_partition("DROP"),
-        ));
+        return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_ONLY_ON_RANGE_LIST_PARTITION
+                .generate_with_stack_by_args(&[("DROP").into()]),
+        )));
     }
     if info.affinity.is_some() {
         return Err(coded_refusal(
@@ -955,7 +968,9 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
     }
     let definitions = partition.definitions.snapshot();
     if definitions.len() <= names.len() {
-        return Err(admission(tidb_ddl_build::errors::drop_last_partition()));
+        return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_DROP_LAST_PARTITION.generate_with_stack_by_args(&[]),
+        )));
     }
     let mut seen = std::collections::HashSet::new();
     for name in names {
@@ -963,9 +978,10 @@ fn check_drop_table_partition(info: &TableInfo, names: &[String]) -> Result<(), 
             .iter()
             .any(|definition| definition.name.lowercase() == name);
         if !found || !seen.insert(name.clone()) {
-            return Err(admission(
-                tidb_ddl_build::errors::drop_partition_non_existent(),
-            ));
+            return Err(admission(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_DROP_PARTITION_NON_EXISTENT
+                    .generate_with_stack_by_args(&["DROP".into()]),
+            )));
         }
     }
     Ok(())
@@ -1177,7 +1193,10 @@ pub(super) fn plan_persisted_truncate_table_partition_job_step<S: MetaSnapshot>(
     let Some(partition) = info.partition.clone() else {
         return Err(fault(
             active,
-            admission(tidb_ddl_build::errors::partition_mgmt_on_nonpartitioned()),
+            admission(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PARTITION_MGMT_ON_NONPARTITIONED
+                    .generate_with_stack_by_args(&[]),
+            )),
         ));
     };
     let database_id = active.job.schema_id;

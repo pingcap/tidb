@@ -234,7 +234,10 @@ pub fn build_create_sequence(
     // before DDL execution: empty identifiers and names whose final byte is a
     // space are rejected with ErrWrongTableName (1103).
     if name.is_empty() || name.as_bytes().last() == Some(&b' ') {
-        return Err(errors::wrong_table_name(name));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_WRONG_TABLE_NAME
+                .generate_with_stack_by_args(&[(name).to_string().into()]),
+        ));
     }
     let mut comment = String::new();
     for option in &create.table_options {
@@ -242,7 +245,14 @@ pub fn build_create_sequence(
             tidb_ast::TableOption::Comment(value) => comment = value.clone(),
             tidb_ast::TableOption::Engine(_) => {}
             _ => {
-                return Err(errors::sequence_unsupported_table_option(sequence_table_option_string_value(option)));
+                return Err(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_SEQUENCE_UNSUPPORTED_TABLE_OPTION
+                        .generate_with_stack_by_args(&[(sequence_table_option_string_value(
+                            option,
+                        ))
+                        .to_string()
+                        .into()]),
+                ));
             }
         }
     }

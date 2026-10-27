@@ -8364,7 +8364,10 @@ fn build_create_table_info<S: MetaSnapshot>(
         && !crate::foreign_key_build::get_table_referred_foreign_keys(catalog, schema, table)
             .is_empty()
     {
-        let error = tidb_ddl_build::errors::ttl_referenced_by_foreign_key();
+        let error = tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
+                .generate_with_stack_by_args(&[]),
+        );
         return Err(DdlPlanError::from_mysql_error(error));
     }
     // Go `CreateTable`: the built table's `checkTableForeignKeysValid`

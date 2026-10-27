@@ -98,10 +98,16 @@ pub fn check_column_default_value(
     }
     let empty = matches!(value.as_raw_bytes(), Some(bytes) if bytes.is_empty());
     if ctx.get_sql_mode().has_strict_mode() || !empty {
-        return Err(errors::blob_cant_have_default(column.to_owned()));
+        return Err(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
+                .generate_with_stack_by_args(&[(column.to_owned()).to_string().into()]),
+        ));
     }
     // Go `ctx.GetEvalCtx().AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))`.
-    let reported = errors::blob_cant_have_default(column);
+    let reported = tidb_error::mysql::MysqlError::from_terror(
+        &tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT
+            .generate_with_stack_by_args(&[(column).to_string().into()]),
+    );
     ctx.append_warning(tidb_util::context::WarnErr::Terror(
         tidb_util::dbterror::ERR_BLOB_CANT_HAVE_DEFAULT.generate(reported.message),
     ));
@@ -151,7 +157,9 @@ pub fn validate_column_default(
         // Go checks PRI before NOT NULL, so a table-level key is 1171 even
         // when the column also spelled NOT NULL.
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY) {
-            return Err(errors::primary_cant_have_null());
+            return Err(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_PRIMARY_CANT_HAVE_NULL.generate_with_stack_by_args(&[]),
+            ));
         }
         if field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL) {
             return Err(invalid());

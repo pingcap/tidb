@@ -54,8 +54,9 @@ impl tidb_ddl_build::partition_ddl::ReorgHost for AdmissionReorgHost {
                     .iter()
                     .find(|policy| policy.name.lowercase() == reference.name.lowercase())
                 else {
-                    return Err(tidb_ddl_build::errors::placement_policy_not_exists(
-                        reference.name.original(),
+                    return Err(tidb_error::mysql::MysqlError::from_terror(
+                        &tidb_error::catalog::infoschema::ERR_PLACEMENT_POLICY_NOT_EXISTS
+                            .generate_with_stack_by_args(&[(reference.name.original()).into()]),
                     ));
                 };
                 reference.id = found.id;

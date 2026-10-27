@@ -106,7 +106,15 @@ pub fn build_fk_info(
 ) -> Refusal<FKInfo> {
     let ref_parts = refer.parts.as_deref().unwrap_or(&[]);
     if keys.len() != ref_parts.len() {
-        return Err(refusal(errors::wrong_fk_def(fk_name.to_owned(), "Key reference and table reference don't match".to_owned())));
+        return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NOT_MATCH
+                .generate_with_stack_by_args(&[
+                    (fk_name.to_owned()).to_string().into(),
+                    ("Key reference and table reference don't match".to_owned())
+                        .to_string()
+                        .into(),
+                ]),
+        )));
     }
     let ref_table = refer
         .table
@@ -142,18 +150,43 @@ pub fn build_fk_info(
         }
         let name = part_column(key)?;
         let Some(column) = find_column_info(&table.columns, &name) else {
-            return Err(refusal(errors::foreign_key_child_column_missing(name)));
+            return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                    .generate_with_stack_by_args(&[(name).to_string().into()]),
+            )));
         };
         let column = column.read();
         if column.is_generated() {
             if !column.generated_stored {
-                return Err(refusal(errors::foreign_key_uses_virtual_column(fk_name.to_owned(), column.name.original().to_owned())));
+                return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
+                        .generate_with_stack_by_args(&[
+                            (fk_name.to_owned()).to_string().into(),
+                            (column.name.original().to_owned()).to_string().into(),
+                        ]),
+                )));
             }
             if matches!(on_update, 2 | 3 | 5) {
-                return Err(refusal(errors::wrong_fk_option_for_generated_column(format!("ON UPDATE {}", refer_opt_name(on_update)))));
+                return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
+                        .generate_with_stack_by_args(&[(format!(
+                            "ON UPDATE {}",
+                            refer_opt_name(on_update)
+                        ))
+                        .to_string()
+                        .into()]),
+                )));
             }
             if matches!(on_delete, 3 | 5) {
-                return Err(refusal(errors::wrong_fk_option_for_generated_column(format!("ON DELETE {}", refer_opt_name(on_delete)))));
+                return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_WRONG_FK_OPTION_FOR_GENERATED_COLUMN
+                        .generate_with_stack_by_args(&[(format!(
+                            "ON DELETE {}",
+                            refer_opt_name(on_delete)
+                        ))
+                        .to_string()
+                        .into()]),
+                )));
             }
         } else if base_cols.contains(column.name.lowercase())
             && (matches!(on_update, 2 | 3 | 5) || matches!(on_delete, 2 | 3 | 5))
@@ -162,7 +195,13 @@ pub fn build_fk_info(
         }
         if column.field_type.has_flag(FieldTypeFlags::NOT_NULL) && (on_delete == 3 || on_update == 3)
         {
-            return Err(refusal(errors::foreign_key_column_not_null(column.name.original().to_owned(), fk_name.to_owned())));
+            return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_COLUMN_NOT_NULL
+                    .generate_with_stack_by_args(&[
+                        (column.name.original().to_owned()).to_string().into(),
+                        (fk_name.to_owned()).to_string().into(),
+                    ]),
+            )));
         }
         cols.push(CiString::new(name));
     }
@@ -255,8 +294,14 @@ pub fn add_index_for_foreign_key(table: &mut TableInfo) -> Refusal<()> {
         }
         let mut columns = Vec::with_capacity(cols.len());
         for name in &cols {
-            let column = find_column_info(&table.columns, name.original())
-                .ok_or_else(|| refusal(errors::foreign_key_child_column_missing(name.original().to_owned())))?;
+            let column = find_column_info(&table.columns, name.original()).ok_or_else(|| {
+                refusal(tidb_error::mysql::MysqlError::from_terror(
+                    &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS
+                        .generate_with_stack_by_args(&[(name.original().to_owned())
+                            .to_string()
+                            .into()]),
+                ))
+            })?;
             let column = column.read();
             columns.push(IndexColumn {
                 name: column.name.clone(),
@@ -284,25 +329,51 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
         return Err(cannot_add());
     }
     if refer.ttl_info.is_some() {
-        return Err(refusal(errors::ttl_referenced_by_foreign_key()));
+        return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_UNSUPPORTED_TTL_REFERENCED_BY_FK
+                .generate_with_stack_by_args(&[]),
+        )));
     }
     if refer.partition.is_some() || table.partition.is_some() {
-        return Err(refusal(errors::foreign_key_on_partitioned()));
+        return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_ON_PARTITIONED
+                .generate_with_stack_by_args(&[]),
+        )));
     }
     let ref_cols = fk.ref_cols.snapshot();
     let cols = fk.cols.snapshot();
     for (i, ref_name) in ref_cols.iter().enumerate() {
         let Some(ref_col) = find_column_info(&refer.columns, ref_name.original()) else {
-            return Err(refusal(errors::foreign_key_referenced_column_missing(ref_name.original().to_owned(), fk.name.original().to_owned(), fk.ref_table.original().to_owned())));
+            return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NO_COLUMN_IN_PARENT
+                    .generate_with_stack_by_args(&[
+                        (ref_name.original().to_owned()).to_string().into(),
+                        (fk.name.original().to_owned()).to_string().into(),
+                        (fk.ref_table.original().to_owned()).to_string().into(),
+                    ]),
+            )));
         };
         let ref_col = ref_col.read();
         if ref_col.is_virtual_generated() {
-            return Err(refusal(errors::foreign_key_uses_virtual_column(fk.name.original().to_owned(), ref_name.original().to_owned())));
+            return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_CANNOT_USE_VIRTUAL_COLUMN
+                    .generate_with_stack_by_args(&[
+                        (fk.name.original().to_owned()).to_string().into(),
+                        (ref_name.original().to_owned()).to_string().into(),
+                    ]),
+            )));
         }
         let Some(col) = cols.get(i).and_then(|name| find_column_info(&table.columns, name.original()))
         else {
-            return Err(refusal(errors::foreign_key_child_column_missing(
-                cols.get(i).map(|n| n.original().to_owned()).unwrap_or_default(),
+            return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_KEY_COLUMN_DOES_NOT_EXITS.generate_with_stack_by_args(&[
+                    (cols
+                        .get(i)
+                        .map(|n| n.original().to_owned())
+                        .unwrap_or_default())
+                    .to_string()
+                    .into(),
+                ]),
             )));
         };
         let col = col.read();
@@ -312,7 +383,13 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
             || col.get_charset() != ref_col.get_charset()
             || col.get_collate() != ref_col.get_collate()
         {
-            return Err(refusal(errors::fk_incompatible_columns(col.name.original().to_owned(), ref_col.name.original().to_owned(), fk.name.original().to_owned())));
+            return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_FK_INCOMPATIBLE_COLUMNS.generate_with_stack_by_args(&[
+                    (col.name.original().to_owned()).to_string().into(),
+                    (ref_col.name.original().to_owned()).to_string().into(),
+                    (fk.name.original().to_owned()).to_string().into(),
+                ]),
+            )));
         }
         if ref_cols.len() == 1
             && ref_col.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0
@@ -322,7 +399,13 @@ pub fn check_table_foreign_key(refer: &TableInfo, table: &TableInfo, fk: &FKInfo
         }
     }
     if find_index_by_columns_for_foreign_key(refer, &refer.indices, &ref_cols).is_none() {
-        return Err(refusal(errors::foreign_key_no_index_in_parent(fk.name.original().to_owned(), fk.ref_table.original().to_owned())));
+        return Err(refusal(tidb_error::mysql::MysqlError::from_terror(
+            &tidb_error::catalog::infoschema::ERR_FOREIGN_KEY_NO_INDEX_IN_PARENT
+                .generate_with_stack_by_args(&[
+                    (fk.name.original().to_owned()).to_string().into(),
+                    (fk.ref_table.original().to_owned()).to_string().into(),
+                ]),
+        )));
     }
     Ok(())
 }

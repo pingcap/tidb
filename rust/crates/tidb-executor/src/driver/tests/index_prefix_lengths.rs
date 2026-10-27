@@ -38,7 +38,9 @@ fn a_length_on_a_type_that_has_no_prefix_is_1089() {
     ] {
         assert_eq!(
             create_error(sql).to_mysql_error(),
-            tidb_ddl_build::errors::incorrect_prefix_key(),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_INCORRECT_PREFIX_KEY.generate_with_stack_by_args(&[])
+            ),
             "{sql}"
         );
     }
@@ -57,7 +59,10 @@ fn a_blob_or_text_key_part_without_a_length_is_1170() {
     ] {
         assert_eq!(
             create_error(sql).to_mysql_error(),
-            tidb_ddl_build::errors::blob_key_without_length(column),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_BLOB_KEY_WITHOUT_LENGTH
+                    .generate_with_stack_by_args(&[(column).to_string().into()])
+            ),
             "{sql}"
         );
     }
@@ -75,7 +80,10 @@ fn a_zero_length_key_part_is_1391() {
     ] {
         assert_eq!(
             create_error(sql).to_mysql_error(),
-            tidb_ddl_build::errors::key_part0("a"),
+            tidb_error::mysql::MysqlError::from_terror(
+                &tidb_util::dbterror::ERR_KEY_PART0
+                    .generate_with_stack_by_args(&[("a").to_string().into()])
+            ),
             "{sql}"
         );
     }
@@ -88,7 +96,10 @@ fn a_zero_length_key_part_is_1391() {
 fn a_key_part_longer_than_the_limit_is_1071() {
     assert_eq!(
         create_error("CREATE TABLE t (a VARCHAR(2000), KEY idx (a(1000)))").to_mysql_error(),
-        tidb_ddl_build::errors::too_long_key(4000, 3072)
+        tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_TOO_LONG_KEY
+                .generate_with_stack_by_args(&[(4000).into(), (3072).into()])
+        )
     );
     // 1000 latin1 characters are 1000 bytes, so the length is legal and the
     // statement SUCCEEDS -- which is what proves the limit counts bytes

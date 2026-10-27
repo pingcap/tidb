@@ -748,7 +748,10 @@ impl KvTableBackfill for KvTable {
 #[must_use]
 pub fn index_backfill_error(error: KvTableError) -> tidb_error::mysql::MysqlError {
     match error {
-        KvTableError::DuplicateKeyName(name) => crate::errors::duplicate_key_name(name),
+        KvTableError::DuplicateKeyName(name) => tidb_error::mysql::MysqlError::from_terror(
+            &tidb_util::dbterror::ERR_DUP_KEY_NAME
+                .generate_with_stack_by_args(&[(name).to_string().into()]),
+        ),
         other => other.into_mysql_error(),
     }
 }
