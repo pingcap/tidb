@@ -204,6 +204,10 @@ func (rc *SnapClient) Close() {
 		if err := rc.restorer.Close(); err != nil {
 			log.Warn("failed to close file restorer")
 		}
+	} else if rc.importer != nil {
+		if err := rc.importer.Close(); err != nil {
+			log.Warn("failed to close file importer", zap.Error(err))
+		}
 	}
 
 	log.Info("Restore client closed")
