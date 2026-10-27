@@ -4665,10 +4665,16 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		}
 		failpoint.Return(finalizeFailure(errors.New("mock refresh materialized view error after data changes")))
 	})
-	confirmedSources, err := validateMVRefreshInput(kctx, refreshSctx, mviewID, refreshPlan, actualRefreshReadTSO,
-		refreshMode == ast.RefreshMaterializedViewModeFast, registeredLogs)
-	if err != nil {
-		return finalizeFailure(err)
+	var confirmedSources []model.MViewRefreshSource
+	if refreshMode == ast.RefreshMaterializedViewModeFast {
+		if err := validateMVFastRefreshInput(kctx, refreshSctx, mviewID, refreshPlan.(*plannercore.MViewDeltaMerge), actualRefreshReadTSO, registeredLogs); err != nil {
+			return finalizeFailure(err)
+		}
+	} else {
+		confirmedSources, err = validateMVCompleteRefreshInput(kctx, refreshSctx, mviewID, refreshPlan, actualRefreshReadTSO)
+		if err != nil {
+			return finalizeFailure(err)
+		}
 	}
 	refreshReadTSO := actualRefreshReadTSO
 	if boundedFastRefresh {
@@ -4932,7 +4938,7 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		}
 		failpoint.Return(uint64(0), errors.New("mock refresh materialized view out-of-place build error after load shadow"))
 	})
-	confirmedSources, err := validateMVRefreshInput(kctx, buildSctx, tblInfo.ID, buildPlan, buildReadTSO, false, nil)
+	confirmedSources, err := validateMVCompleteRefreshInput(kctx, buildSctx, tblInfo.ID, buildPlan, buildReadTSO)
 	if err != nil {
 		return 0, err
 	}

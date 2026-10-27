@@ -270,19 +270,6 @@ func (is *mviewRefreshSourceSnapshot) TableByID(ctx context.Context, id int64) (
 	return is.InfoSchema.TableByID(ctx, id)
 }
 
-func (is *mviewRefreshSourceSnapshot) TableByName(ctx context.Context, db, name pmodel.CIStr) (table.Table, error) {
-	tbl, err := is.InfoSchema.TableByName(ctx, db, name)
-	if err != nil {
-		return nil, err
-	}
-	for _, replacement := range is.replaced {
-		if replacement != nil && replacement.Meta().DBID == tbl.Meta().DBID && replacement.Meta().Name.L == name.L {
-			return replacement, nil
-		}
-	}
-	return tbl, nil
-}
-
 func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 	for _, method := range []string{"fast", "complete delta apply", "complete in place", "complete out of place"} {
 		for _, change := range []string{"source replaced", "eliminated source replaced", "log replaced", "missing log", "invalid owner", "planned input replaced"} {
@@ -325,6 +312,10 @@ func TestMViewRefreshSourceInfoSnapshotIdentity(t *testing.T) {
 					case "invalid owner":
 						newLog.MaterializedViewLog.BaseTableID++
 					case "planned input replaced":
+						if method == "fast" {
+							plan.(*plannercore.MViewDeltaMerge).MLogTableID += 10000
+							return
+						}
 						flat := plannercore.FlattenPhysicalPlan(plan, false)
 						var changed bool
 						for _, op := range flat.Main {

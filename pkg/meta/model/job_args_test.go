@@ -671,7 +671,7 @@ func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
 			OldMViewID:                         101,
 			ShadowTableID:                      202,
 			BuildReadTSO:                       (uint64(1) << 63) + 303,
-			BuildSources:                       []MViewRefreshSource{{SchemaID: 10, TableID: 20, MLogID: 30}, {SchemaID: 11, TableID: 21}},
+			BuildSources:                       []MViewRefreshSource{{TableID: 20, MLogID: 30}, {TableID: 21}},
 			ExpectedOldMViewRevision:           &expectedOldMViewRevision,
 			ExpectedLastSuccessReadTSO:         404,
 			ExpectedLastSuccessReadTSONull:     false,

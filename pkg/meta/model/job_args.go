@@ -819,9 +819,8 @@ func GetAlterMaterializedViewLogPurgeArgs(job *Job) (*AlterMaterializedViewLogPu
 // MViewRefreshSource records a physical input binding at a refresh computation snapshot.
 // MLogID is zero when the source has no materialized view log.
 type MViewRefreshSource struct {
-	SchemaID int64 `json:"schema_id"`
-	TableID  int64 `json:"table_id"`
-	MLogID   int64 `json:"mlog_id"`
+	TableID int64 `json:"table_id"`
+	MLogID  int64 `json:"mlog_id"`
 }
 
 // RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs is the arguments for

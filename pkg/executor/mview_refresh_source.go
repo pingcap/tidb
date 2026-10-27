@@ -40,9 +40,32 @@ func checkMVRefreshLogBaseline(sources []model.MViewRefreshSource, registered []
 	return nil
 }
 
-func validateMVRefreshInput(
+func validateMVFastRefreshInput(
+	ctx context.Context, sctx sessionctx.Context, mviewID int64, plan *plannercore.MViewDeltaMerge,
+	readTSO uint64, registered []int64,
+) error {
+	snapshotIS, err := domain.GetDomain(sctx).GetSnapshotInfoSchema(readTSO)
+	if err != nil {
+		return errors.Annotate(err, "refresh materialized view: cannot load computation snapshot schema")
+	}
+	failpoint.InjectCall("mvRefreshValidateInputSnapshot", readTSO, plan, &snapshotIS)
+	sources, err := mviewutil.ResolveRefreshSources(ctx, snapshotIS, mviewID)
+	if err != nil {
+		return err
+	}
+	if err := checkMVRefreshLogBaseline(sources, registered); err != nil {
+		return err
+	}
+	if !slices.ContainsFunc(sources, func(source model.MViewRefreshSource) bool {
+		return source.TableID == plan.BaseTableID && source.MLogID == plan.MLogTableID
+	}) {
+		return errors.New("refresh materialized view: planned source/log binding differs from the computation snapshot; retry refresh")
+	}
+	return nil
+}
+
+func validateMVCompleteRefreshInput(
 	ctx context.Context, sctx sessionctx.Context, mviewID int64, plan base.Plan, readTSO uint64,
-	fast bool, registered []int64,
 ) ([]model.MViewRefreshSource, error) {
 	if plan == nil || readTSO == 0 {
 		return nil, errors.New("refresh materialized view: computation snapshot or plan is missing")
@@ -56,45 +79,18 @@ func validateMVRefreshInput(
 	if err != nil {
 		return nil, err
 	}
-	if fast {
-		if err := checkMVRefreshLogBaseline(sources, registered); err != nil {
-			return nil, err
-		}
-	}
 	// COMPLETE does not consume input logs. Validate the sources still present
 	// in its plan, then register the logs resolved at the computation snapshot.
-	if err := checkMVRefreshPlanSources(plan, mviewID, sources, fast); err != nil {
+	if err := checkMVCompleteRefreshPlanSources(plan, mviewID, sources); err != nil {
 		return nil, err
-	}
-	if merge, ok := plan.(*plannercore.MViewDeltaMerge); ok && merge.FullUpdateSnapshot != nil {
-		// Bounded MIN/MAX probes use the requested upper bound, independently
-		// of the current MLog scan snapshot. Both must retain the same baseline.
-		historical, err := mviewutil.ResolveRefreshSources(ctx, merge.FullUpdateSnapshot.InfoSchema, mviewID)
-		if err != nil {
-			return nil, err
-		}
-		if !slices.Equal(historical, sources) {
-			return nil, errors.New("refresh materialized view fast: MIN/MAX snapshot input identities have changed; run COMPLETE refresh")
-		}
 	}
 	return sources, nil
 }
 
-func checkMVRefreshPlanSources(plan base.Plan, mviewID int64, sources []model.MViewRefreshSource, fast bool) error {
+func checkMVCompleteRefreshPlanSources(plan base.Plan, mviewID int64, sources []model.MViewRefreshSource) error {
 	allowed := map[int64]struct{}{mviewID: {}}
 	for _, source := range sources {
 		allowed[source.TableID] = struct{}{}
-		if fast {
-			allowed[source.MLogID] = struct{}{}
-		}
-	}
-	if merge, ok := plan.(*plannercore.MViewDeltaMerge); ok {
-		matched := slices.ContainsFunc(sources, func(source model.MViewRefreshSource) bool {
-			return source.TableID == merge.BaseTableID && source.MLogID == merge.MLogTableID
-		})
-		if !matched {
-			return errors.New("refresh materialized view: planned source/log binding differs from the computation snapshot; retry refresh")
-		}
 	}
 	flat := plannercore.FlattenPhysicalPlan(plan, false)
 	trees := append([]plannercore.FlatPlanTree{flat.Main}, flat.CTEs...)
@@ -112,13 +108,6 @@ func checkMVRefreshPlanSources(plan base.Plan, mviewID int64, sources []model.MV
 				tableInfo = p.TblInfo
 			}
 			if tableInfo != nil {
-				if fast {
-					for _, source := range sources {
-						if tableInfo.ID == source.MLogID && (tableInfo.MaterializedViewLog == nil || tableInfo.MaterializedViewLog.BaseTableID != source.TableID) {
-							return errors.New("refresh materialized view: planned log owner differs from the computation snapshot; retry refresh")
-						}
-					}
-				}
 				if _, ok := allowed[tableInfo.ID]; !ok {
 					return errors.Errorf("refresh materialized view: planned input table %d differs from the computation snapshot; retry refresh", tableInfo.ID)
 				}

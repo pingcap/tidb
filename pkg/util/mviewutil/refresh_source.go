@@ -93,14 +93,6 @@ func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewI
 			return nil, errors.Errorf("refresh materialized view: source %d is missing from the computation schema", id)
 		}
 		source := tbl.Meta()
-		db, ok := infoschema.SchemaByTable(is, source)
-		if !ok {
-			return nil, errors.Errorf("refresh materialized view: source schema is missing for %d", id)
-		}
-		named, err := is.TableByName(ctx, db.Name, source.Name)
-		if err != nil || named.Meta().ID != id {
-			return nil, errors.Errorf("refresh materialized view: source %d no longer has its planned name binding; retry refresh", id)
-		}
 		var log *model.TableInfo
 		if source.MaterializedViewBase != nil && source.MaterializedViewBase.MLogID != 0 {
 			mlog, ok := is.TableByID(ctx, source.MaterializedViewBase.MLogID)
@@ -108,12 +100,8 @@ func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewI
 				return nil, errors.Errorf("refresh materialized view: log %d is missing from the computation schema", source.MaterializedViewBase.MLogID)
 			}
 			log = mlog.Meta()
-			logDB, ok := infoschema.SchemaByTable(is, log)
-			if !ok || logDB.ID != db.ID {
-				return nil, errors.New("refresh materialized view: source and log schemas differ")
-			}
 		}
-		binding, err := RefreshSourceBinding(db.ID, source, log)
+		binding, err := RefreshSourceBinding(source, log)
 		if err != nil {
 			return nil, err
 		}
@@ -127,8 +115,8 @@ func ResolveRefreshSources(ctx context.Context, is infoschema.InfoSchema, mviewI
 }
 
 // RefreshSourceBinding validates a source's forward and reverse MLog ownership.
-func RefreshSourceBinding(schemaID int64, source, log *model.TableInfo) (model.MViewRefreshSource, error) {
-	binding := model.MViewRefreshSource{SchemaID: schemaID, TableID: source.ID}
+func RefreshSourceBinding(source, log *model.TableInfo) (model.MViewRefreshSource, error) {
+	binding := model.MViewRefreshSource{TableID: source.ID}
 	if source.MaterializedViewBase != nil {
 		binding.MLogID = source.MaterializedViewBase.MLogID
 	}
