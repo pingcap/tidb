@@ -48,6 +48,9 @@ type inflightInner struct {
 	// list is set before done is closed, and stays nil if the read didn't
 	// finish.
 	list *chunk.List
+	// err is published along with list before done is closed. Waiters must
+	// return the owner's failure rather than starting another inner read.
+	err error
 }
 
 type outerRow struct {
@@ -660,9 +663,9 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	if e.useCache { // look up the cache
 		atomic.AddInt64(&e.cacheAccessCounter, 1)
 		failpoint.Inject("parallelApplyGetCachePanic", nil)
-		value, inflight, isOwner, err := e.getCachedOrInflight(key)
-		if err != nil {
-			return err
+		value, inflight, isOwner, cacheErr := e.getCachedOrInflight(key)
+		if cacheErr != nil {
+			return cacheErr
 		}
 		if value != nil {
 			e.innerList[id] = value
@@ -671,9 +674,19 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 		}
 		if isOwner {
 			owned = inflight
-			defer e.finishInflight(key, owned)
+			defer func() {
+				if r := recover(); r != nil {
+					owned.err = util.GetRecoverError(r)
+					e.finishInflight(key, owned)
+					// Preserve the existing worker panic reporting path.
+					panic(r)
+				}
+				owned.err = err
+				e.finishInflight(key, owned)
+			}()
 		} else {
 			// Another worker is reading the same inner rows: wait for them.
+			failpoint.InjectCall("parallelApplyWaitForInflight")
 			select {
 			case <-inflight.done:
 			case <-e.exit:
@@ -682,12 +695,18 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 			case <-ctx.Done():
 				return ctx.Err()
 			}
+			if inflight.err != nil {
+				return inflight.err
+			}
 			if inflight.list != nil {
 				e.innerList[id] = inflight.list
 				atomic.AddInt64(&e.cacheHitCounter, 1)
 				return nil
 			}
-			// That read didn't finish, so read the rows here.
+			// The owner stopped during executor shutdown without a complete
+			// result. Do not start another read while Close is draining workers.
+			e.innerList[id] = chunk.NewList(exec.RetTypes(e.innerExecs[id]), e.InitCap(), e.MaxChunkSize())
+			return nil
 		}
 	}
 
@@ -776,7 +795,8 @@ func (e *ParallelNestedLoopApplyExec) getCachedOrInflight(key []byte) (value *ch
 }
 
 // finishInflight unregisters the reader of key and wakes the workers waiting
-// for it. The rows are already in the cache, so later lookups find them there.
+// for it. The owner has published either its completed list or its error before
+// closing done. A completed list can be shared even if it did not fit the cache.
 func (e *ParallelNestedLoopApplyExec) finishInflight(key []byte, inflight *inflightInner) {
 	e.inflightMu.Lock()
 	delete(e.inflight, string(key))

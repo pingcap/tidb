@@ -1110,8 +1110,12 @@ func TestParallelApplyCacheSharesInflightInner(t *testing.T) {
 	}
 	tk.MustExec("set tidb_enable_parallel_apply = false")
 	expected := make([][][]any, 0, len(queries))
-	for _, sql := range queries {
-		expected = append(expected, tk.MustQuery(sql).Sort().Rows())
+	for i, sql := range queries {
+		result := tk.MustQuery(sql)
+		if i == 0 {
+			result.Sort()
+		}
+		expected = append(expected, result.Rows())
 	}
 
 	tk.MustExec("set tidb_enable_parallel_apply = true")
@@ -1124,7 +1128,11 @@ func TestParallelApplyCacheSharesInflightInner(t *testing.T) {
 	}()
 	for i, sql := range queries {
 		checkApplyPlan(t, tk, sql, 4)
-		tk.MustQuery(sql).Sort().Check(expected[i])
+		result := tk.MustQuery(sql)
+		if i == 0 {
+			result.Sort()
+		}
+		result.Check(expected[i])
 		// Every outer row after the first of its value either waits for the
 		// read already running or finds its rows in the cache: 30 of 40.
 		var applyLine string
