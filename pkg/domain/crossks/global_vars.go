@@ -41,13 +41,21 @@ const globalVarCacheRefreshInterval = 30 * time.Second
 // which have no Domain to read global variables, and only read them. Like the
 // sysvar cache of a Domain, it loads the variables through a session of the
 // pool, but it never applies them to this instance. It loads them on the first
-// read, and then reloads them in the background periodically and when a TiDB
-// of the keyspace notifies a change, keeping the old values if a reload fails.
-// A runtime that never reads them never queries.
+// read, and then starts to reload them in the background periodically and when
+// a TiDB of the keyspace notifies a change, keeping the old values if a reload
+// fails. A runtime that never reads them never queries or watches etcd.
 type globalVarCache struct {
-	ctx  context.Context
-	ks   string
-	pool util.SessionPool
+	ctx     context.Context
+	ks      string
+	pool    util.SessionPool
+	wg      *util.WaitGroupWrapper
+	etcdCli *clientv3.Client
+
+	// refreshMu protects refreshStarted and closed, so that the refresh loop
+	// never starts after the runtime begins to wait for its goroutines.
+	refreshMu      sync.Mutex
+	refreshStarted bool
+	closed         bool
 
 	// loadMu serializes loads, so that an earlier load cannot overwrite a later one.
 	loadMu sync.Mutex
@@ -57,8 +65,11 @@ type globalVarCache struct {
 
 var _ variable.GlobalVarAccessor = (*globalVarCache)(nil)
 
-func newGlobalVarCache(ctx context.Context, ks string, pool util.SessionPool) *globalVarCache {
-	return &globalVarCache{ctx: ctx, ks: ks, pool: pool}
+func newGlobalVarCache(
+	ctx context.Context, ks string, pool util.SessionPool,
+	wg *util.WaitGroupWrapper, etcdCli *clientv3.Client,
+) *globalVarCache {
+	return &globalVarCache{ctx: ctx, ks: ks, pool: pool, wg: wg, etcdCli: etcdCli}
 }
 
 func (c *globalVarCache) get(name string) (value string, found bool, err error) {
@@ -67,6 +78,7 @@ func (c *globalVarCache) get(name string) (value string, found bool, err error) 
 		if global, err = c.load(); err != nil {
 			return "", false, err
 		}
+		c.startRefresh()
 	}
 	value, found = global[name]
 	return value, found, nil
@@ -128,9 +140,29 @@ func (c *globalVarCache) query(sql string, args ...any) ([]chunk.Row, error) {
 	return rows, err
 }
 
-// refreshLoop reloads a loaded cache until ctx is done. It follows
+// startRefresh starts the refresh loop once, unless the runtime is closing.
+func (c *globalVarCache) startRefresh() {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	if c.refreshStarted || c.closed || c.ctx.Err() != nil {
+		return
+	}
+	c.refreshStarted = true
+	c.wg.RunWithLog(c.refreshLoop)
+}
+
+// close stops the refresh loop from starting. It must be called before the
+// runtime waits for its goroutines.
+func (c *globalVarCache) close() {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	c.closed = true
+}
+
+// refreshLoop reloads the cache until ctx is done. It follows
 // Domain.LoadSysVarCacheLoop.
-func (c *globalVarCache) refreshLoop(etcdCli *clientv3.Client) {
+func (c *globalVarCache) refreshLoop() {
+	etcdCli := c.etcdCli
 	logger := logutil.BgLogger().With(zap.String("targetKS", c.ks))
 	var watchCh clientv3.WatchChan
 	if etcdCli != nil {
@@ -159,9 +191,6 @@ func (c *globalVarCache) refreshLoop(etcdCli *clientv3.Client) {
 			continue
 		}
 		count = 0
-		if c.loaded() == nil {
-			continue
-		}
 		if _, err := c.load(); err != nil {
 			logger.Warn("reload global variable cache failed", zap.Error(err))
 		}

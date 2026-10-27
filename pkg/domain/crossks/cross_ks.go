@@ -321,7 +321,6 @@ func (*Manager) createSessionManager(
 		ServerStateSyncer: serverStateSyncer,
 	})
 
-	globalVars := newGlobalVarCache(ctx, ks, sessPool)
 	mgr := &SessionManager{
 		ctx:               ctx,
 		cancel:            cancel,
@@ -333,21 +332,18 @@ func (*Manager) createSessionManager(
 		infoCache:         infoCache,
 		isSyncer:          isSyncer,
 		sessPool:          sessPool,
-		globalVars:        globalVars,
 		coordinator:       coordinator,
 		isValidator:       isValidator,
 		svrInfoSyncer:     svrInfoSyncer,
 		ddlClient:         ddlClient,
 	}
 
+	mgr.globalVarCache = newGlobalVarCache(ctx, ks, sessPool, &mgr.wg, etcdCli)
 	mgr.wg.RunWithLog(func() {
 		svrInfoSyncer.ServerInfoSyncLoop(store, mgr.exitCh)
 	})
 	mgr.wg.RunWithLog(func() {
 		isSyncer.SyncLoop(ctx)
-	})
-	mgr.wg.RunWithLog(func() {
-		globalVars.refreshLoop(etcdCli)
 	})
 	mgr.wg.RunWithLog(func() {
 		isSyncer.MDLCheckLoop(ctx)
@@ -497,7 +493,7 @@ type SessionManager struct {
 	infoCache         *infoschema.InfoCache
 	isSyncer          *issyncer.Syncer
 	sessPool          util.DestroyableSessionPool
-	globalVars        *globalVarCache
+	globalVarCache    *globalVarCache
 	coordinator       *schemaCoordinator
 	isValidator       validatorapi.Validator
 	svrInfoSyncer     *serverinfo.Syncer
@@ -517,7 +513,7 @@ func (m *SessionManager) InfoCache() *infoschema.InfoCache {
 // GlobalVarAccessor returns the global variable accessor of the sessions of
 // the runtime.
 func (m *SessionManager) GlobalVarAccessor() variable.GlobalVarAccessor {
-	return m.globalVars
+	return m.globalVarCache
 }
 
 // SysSessionPool returns the session pool used by the session manager.
@@ -539,6 +535,9 @@ func (m *SessionManager) close() {
 	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
 	logger.Info("close cross keyspace session manager")
 	m.sessPool.Close()
+	if m.globalVarCache != nil {
+		m.globalVarCache.close()
+	}
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()

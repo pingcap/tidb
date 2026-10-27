@@ -486,6 +486,8 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	require.Same(t, sessMgr.Store(), handle.Store())
 	require.Same(t, sessMgr.SysSessionPool(), handle.SysSessionPool())
 	t.Run("read global variables of target keyspace", func(t *testing.T) {
+		// A runtime that has not read a global variable does not refresh them.
+		require.False(t, sessMgr.GlobalVarRefreshStarted())
 		tk := testkit.NewTestKit(t, targetStore)
 		pool := handle.SysSessionPool()
 		resource, err := pool.Get()
@@ -507,6 +509,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		defer tk.MustExec("set global cte_max_recursion_depth = default")
 		notify()
 		requireGlobalVar(vardef.CTEMaxRecursionDepth, "7")
+		require.True(t, sessMgr.GlobalVarRefreshStarted())
 		// A value that does not fit the variable takes the default.
 		tk.MustExec("update mysql.global_variables set variable_value = 'abc' where variable_name = 'cte_max_recursion_depth'")
 		notify()
