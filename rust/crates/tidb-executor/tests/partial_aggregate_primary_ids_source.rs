@@ -181,7 +181,8 @@ fn count_over_primary() -> PushdownPartialAggregate {
     let mut output_type = FieldType::new(FieldTypeCode::LongLong);
     output_type.set_flen(21);
     output_type.set_decimal(0);
-    let mut input = tidb_expr::column::Column::new(1, output_type.clone());
+    // Go's `COUNT(a)` argument is the column itself, with `a`'s type.
+    let mut input = tidb_expr::column::Column::new(1, binary_pk_column().field_type);
     input.index = 0;
     PushdownPartialAggregate::Global {
         functions: vec![tidb_executor::remote_scan::PushdownAggregateFunction {

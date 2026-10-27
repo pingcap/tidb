@@ -364,9 +364,7 @@ fn invalid_partition_state(state: SchemaState) -> DdlPlanError {
 
 /// The placement policies a bundle reads.
 fn bundle_error(error: tidb_placement::PlacementError) -> DdlPlanError {
-    DdlPlanError::Admission(DdlAdmissionError::plain(format!(
-        "building placement rules: {error}"
-    )))
+    DdlPlanError::Admission(DdlAdmissionError::plain(error.to_string()))
 }
 
 /// Go `alterTablePartitionBundles`: the table's bundle over its partitions

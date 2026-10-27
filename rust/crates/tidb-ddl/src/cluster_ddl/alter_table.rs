@@ -1198,7 +1198,7 @@ pub(super) fn plan_persisted_alter_table_job_step<S: MetaSnapshot>(
     let mut label_steps = Vec::new();
     let mut affinity_groups = crate::ddl_affinity::AffinityGroupUpdate::default();
     let placement_error = |error: tidb_placement::PlacementError| {
-        DdlPlanError::plain_refusal(format!("building placement rules: {error}"))
+        DdlPlanError::plain_refusal(error.to_string())
     };
     match active.job.type_ {
         ActionType::ACTION_MODIFY_TABLE_COMMENT => {

@@ -6841,8 +6841,10 @@ mod remote_cursor_tests {
                 assert_eq!(offsets, [1, 0]);
                 assert_eq!(request.topn_offsets()[0], 0);
                 assert_eq!(request.narrowed_output(), Some(vec![1]));
-                assert_eq!(request.handle_index(), Some(0));
+                // Go `ColumnsToProto`: the `ExtraHandleID` column is the
+                // one marked `PkHandle`.
                 assert_eq!(request.column_ids()[1], EXTRA_HANDLE_COLUMN_ID);
+                assert_eq!(request.handle_index(), Some(1));
                 drop(cursor);
                 assert!(capture.closed.load(std::sync::atomic::Ordering::SeqCst));
             }

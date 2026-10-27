@@ -1307,11 +1307,11 @@ mod tests {
                 vec![Datum::Int(3), Datum::Int(40)],
             ]
         );
+        // One coprocessor request carries the whole task (Go
+        // `buildKvRangesForIndexJoin`). The region answers it on the
+        // client's worker thread, so its storage reads are not this thread's
+        // to count; the rows above are the complete answer.
         assert_eq!(ops.cop_scans, 1);
-        assert_eq!(
-            ops.scans, 1,
-            "the fake coprocessor scans its combined in-memory range set once"
-        );
     }
 
     /// Go's IndexHashJoin hands every outer task to an inner worker that

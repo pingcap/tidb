@@ -1663,7 +1663,7 @@ fn rebuilt_bundles_for_policy(
 ) -> Result<Vec<tidb_placement::Bundle>, DdlPlanError> {
     let bundle = tidb_placement::new_bundle_from_options(Some(settings)).map_err(|error| {
         DdlPlanError::Admission(DdlAdmissionError::plain(
-            format!("building placement rules: {error}"),
+            error.to_string(),
         ))
     })?;
     let names = |reference: &Option<tidb_model::GoShared<tidb_model::PolicyRefInfo>>| {
@@ -8469,7 +8469,7 @@ fn apply_create_table<S: MetaSnapshot>(
         *placement_bundles =
             tidb_placement::new_full_table_bundles(&policies, info).map_err(|error| {
                 DdlPlanError::Admission(DdlAdmissionError::plain(
-                    format!("building placement rules: {error}"),
+                    error.to_string(),
                 ))
             })?;
     }
@@ -8592,7 +8592,7 @@ fn apply_truncate_table<S: MetaSnapshot>(
         *placement_bundles =
             tidb_placement::new_full_table_bundles(&policies, &info).map_err(|error| {
                 DdlPlanError::Admission(DdlAdmissionError::plain(
-                    format!("building placement rules: {error}"),
+                    error.to_string(),
                 ))
             })?;
     }

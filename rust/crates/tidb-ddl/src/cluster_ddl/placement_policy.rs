@@ -36,7 +36,7 @@ fn policy_not_exists(name: &str) -> DdlPlanError {
 fn check_policy_validation(settings: &tidb_model::PlacementSettings) -> Result<(), DdlPlanError> {
     tidb_placement::new_bundle_from_options(Some(settings))
         .map(|_| ())
-        .map_err(|error| DdlPlanError::plain_refusal(format!("building placement rules: {error}")))
+        .map_err(|error| DdlPlanError::plain_refusal(error.to_string()))
 }
 
 /// Go `CheckPlacementPolicyNotInUseFromInfoSchema`: no database, table or

@@ -479,12 +479,18 @@ fn policy_cache_and_dependency_alter_seen_by_tables_drop_blocked_until_last_use(
 
     // Alter the policy: every referencing table sees the new settings
     // (they reference by id), while the stored reference is unchanged.
-    tk.must_exec("alter placement policy x primary_region=\"r3\" regions=\"r3,r4\" schedule=\"ALWAYS\"");
+    // Go's `NewBundleFromOptions` knows only EVEN and MAJORITY_IN_PRIMARY,
+    // and its error reaches the client unchanged (captured from Go).
+    tk.must_get_err_msg(
+        "alter placement policy x primary_region=\"r3\" regions=\"r3,r4\" schedule=\"ALWAYS\"",
+        "invalid placement option: unsupported schedule ALWAYS",
+    );
+    tk.must_exec("alter placement policy x primary_region=\"r3\" regions=\"r3,r4\" schedule=\"MAJORITY_IN_PRIMARY\"");
     let (id_after, _, primary_region, regions, schedule) = policy_summary(&tk, "x");
     assert_eq!(id_after, x_id, "alter keeps the policy id");
     assert_eq!(primary_region, "r3");
     assert_eq!(regions, "r3,r4");
-    assert_eq!(schedule, "ALWAYS");
+    assert_eq!(schedule, "MAJORITY_IN_PRIMARY");
     for name in ["t", "t2"] {
         let reference = stored_table(&tk, name)
             .placement_policy()

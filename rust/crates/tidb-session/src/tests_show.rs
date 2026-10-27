@@ -3009,6 +3009,11 @@ fn inspection_and_storage_stats_tables_answer_as_go() {
 
 /// The `information_schema` tables Go serves that this tier now serves too,
 /// as Go answers them in a store without PD. Captured from Go TiDB.
+///
+/// Go fills CLUSTER_HARDWARE / CLUSTER_LOAD / CLUSTER_SYSTEMINFO by asking the
+/// diagnostics service at each TiDB's status address (Go testkit's default,
+/// 10080); the capture had nothing serving it. When something does (a local
+/// playground), both servers answer its rows instead.
 #[test]
 fn remaining_information_schema_tables_answer_as_go() {
     let mut session = Session::new();
@@ -3017,10 +3022,26 @@ fn remaining_information_schema_tables_answer_as_go() {
         let error = session.run(sql).unwrap_err().to_mysql_error();
         (error.code, error.message)
     };
+    let status_served = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], 10080)),
+        std::time::Duration::from_millis(200),
+    )
+    .is_ok();
+    for server_info in ["CLUSTER_HARDWARE", "CLUSTER_LOAD", "CLUSTER_SYSTEMINFO"] {
+        let got = rows(
+            &mut session,
+            &format!("select * from information_schema.{server_info}"),
+        );
+        if status_served {
+            assert!(
+                !got.is_empty() && got.iter().all(|row| row[0] == "tidb"),
+                "{server_info}: {got:?}"
+            );
+        } else {
+            assert!(got.is_empty(), "{server_info}: {got:?}");
+        }
+    }
     for empty in [
-        "CLUSTER_HARDWARE",
-        "CLUSTER_LOAD",
-        "CLUSTER_SYSTEMINFO",
         "COLUMN_STATISTICS",
         "FILES",
         "OPTIMIZER_TRACE",
