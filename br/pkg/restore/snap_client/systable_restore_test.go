@@ -203,7 +203,7 @@ func TestRestoreSystemSchemasUpgradeOperateViewPrivilege(t *testing.T) {
 	cluster := mc
 	ctx := context.Background()
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 	defer client.Close()
