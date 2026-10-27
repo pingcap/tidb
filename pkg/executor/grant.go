@@ -598,7 +598,7 @@ func (e *GrantExec) grantTableLevel(ctx context.Context, priv *ast.PrivElem, use
 
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	err = composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName)
+	err = composeTablePrivUpdateForGrant(internalSession, sql, priv.Priv, user.User.Username, user.User.Hostname, dbName, tblName, tbl)
 	if err != nil {
 		return err
 	}
@@ -678,7 +678,7 @@ func composeDBPrivUpdate(sql *strings.Builder, priv mysql.PrivilegeType, value s
 }
 
 // composeTablePrivUpdateForGrant composes update stmt assignment list for table scope privilege update.
-func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string) error {
+func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl string, target table.Table) error {
 	var newTablePriv, newColumnPriv []string
 	if priv != mysql.AllPriv {
 		currTablePriv, currColumnPriv, err := getTablePriv(ctx, name, host, db, tbl)
@@ -693,7 +693,7 @@ func composeTablePrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builder
 			newColumnPriv = addToSet(newColumnPriv, priv.SetString())
 		}
 	} else {
-		tablePrivs, columnPrivs := tablePrivsForGrantTarget(ctx, db, tbl)
+		tablePrivs, columnPrivs := tablePrivsForGrantTarget(target)
 		for _, p := range tablePrivs {
 			newTablePriv = addToSet(newTablePriv, p.SetString())
 		}
@@ -887,24 +887,22 @@ func validateGrantOnSpecialMViewObject(tblInfo *model.TableInfo, privs []*ast.Pr
 		return errors.Errorf("cannot grant privileges on materialized view shadow table %s", tblInfo.Name.O)
 	}
 
-	allowed := isSafeMViewTableGrantPriv
 	objectType := "materialized view"
 	if tblInfo.MaterializedViewLog != nil {
-		allowed = isSafeMLogTableGrantPriv
 		objectType = "materialized view log"
 	}
 	for _, priv := range privs {
 		if len(priv.Cols) > 0 && priv.Priv != mysql.SelectPriv && priv.Priv != mysql.UsagePriv {
 			return errors.Errorf("cannot grant %s column privilege on %s %s", priv.Priv.String(), objectType, tblInfo.Name.O)
 		}
-		if len(priv.Cols) == 0 && !allowed(priv.Priv) {
+		if len(priv.Cols) == 0 && !isSafeMViewObjectGrantPriv(priv.Priv) {
 			return errors.Errorf("cannot grant %s privilege on %s %s", priv.Priv.String(), objectType, tblInfo.Name.O)
 		}
 	}
 	return nil
 }
 
-func isSafeMViewTableGrantPriv(priv mysql.PrivilegeType) bool {
+func isSafeMViewObjectGrantPriv(priv mysql.PrivilegeType) bool {
 	switch priv {
 	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv:
 		return true
@@ -913,36 +911,18 @@ func isSafeMViewTableGrantPriv(priv mysql.PrivilegeType) bool {
 	}
 }
 
-func isSafeMLogTableGrantPriv(priv mysql.PrivilegeType) bool {
-	switch priv {
-	case mysql.AllPriv, mysql.UsagePriv, mysql.GrantPriv:
-		return true
-	default:
-		return materializedViewTablePrivs.Has(priv)
-	}
-}
-
-func tablePrivsForGrantTarget(ctx sessionctx.Context, db string, tbl string) (tablePrivs, columnPrivs mysql.Privileges) {
-	allColumnPrivs := mysql.AllColumnPrivs
-	allTablePrivs := mysql.AllTablePrivs
-	is, ok := ctx.GetInfoSchema().(infoschema.InfoSchema)
-	if !ok {
-		return allTablePrivs, allColumnPrivs
-	}
-	tableInfo, err := is.TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tbl))
-	if err != nil {
-		return allTablePrivs, allColumnPrivs
+func tablePrivsForGrantTarget(target table.Table) (tablePrivs, columnPrivs mysql.Privileges) {
+	if target == nil {
+		return mysql.AllTablePrivs, mysql.AllColumnPrivs
 	}
 
-	meta := tableInfo.Meta()
+	meta := target.Meta()
 	switch {
-	case meta.MaterializedView != nil:
-		return materializedViewTablePrivs, nil
-	case meta.MaterializedViewLog != nil:
+	case meta.MaterializedView != nil || meta.MaterializedViewLog != nil:
 		return materializedViewTablePrivs, nil
 	case meta.MaterializedViewShadow != nil:
 		return nil, nil
 	default:
-		return allTablePrivs, allColumnPrivs
+		return mysql.AllTablePrivs, mysql.AllColumnPrivs
 	}
 }
