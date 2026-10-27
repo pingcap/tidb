@@ -69,6 +69,7 @@ go_test(
         "//pkg/ddl/serverstate",
         "//pkg/ddl/session",
         "//pkg/ddl/systable",
+        "//pkg/ddl/util",
         "//pkg/domain/sqlsvrapi",
         "//pkg/dxf/framework/storage",
         "//pkg/executor/importer",

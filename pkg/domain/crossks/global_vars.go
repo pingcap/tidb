@@ -17,79 +17,182 @@ package crossks
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
-// globalVarReader reads the global variables of a keyspace for the sessions of
-// its runtime, which have no Domain to cache them. It reads through a session
-// of its own, which takes the defaults for its own lookups, so a read never
-// reads again.
-type globalVarReader struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	mu     sync.Mutex
-	// pool holds the reading session.
-	pool util.DestroyableSessionPool
+// globalVarCacheRefreshInterval is the same as the sysvar cache of a Domain.
+const globalVarCacheRefreshInterval = 30 * time.Second
+
+// globalVarCache caches the global variables of a keyspace for the sessions of
+// its runtime, which have no Domain to cache them. Like the sysvar cache of a
+// Domain, it reloads them periodically and when a TiDB of the keyspace notifies
+// a change, but it never applies them to this instance.
+type globalVarCache struct {
+	ks      string
+	factory pools.Factory
+	ctx     context.Context
+	cancel  context.CancelFunc
+
+	// sessMu serializes the use of se, which reads the tables of the keyspace.
+	// It is created on first use, as creating a session needs the runtime to be
+	// registered. Its own lookups take the defaults, so a load never loads again.
+	sessMu sync.Mutex
+	se     sessionctx.Context
+	closed bool
+
+	mu     sync.RWMutex
+	global map[string]string
 }
 
-func newGlobalVarReader(factory pools.Factory, getCallback, putCallback, destroyCallback func(pools.Resource)) *globalVarReader {
+func newGlobalVarCache(ks string, factory pools.Factory) *globalVarCache {
 	ctx, cancel := context.WithCancel(context.Background())
-	factory = withGlobalVars(factory, func(vars *variable.SessionVars) variable.GlobalVarAccessor {
-		return defaultGlobalVars{vars.GlobalVarsAccessor}
-	})
-	return &globalVarReader{
-		ctx:    ctx,
-		cancel: cancel,
-		pool:   util.NewSessionPool(1, factory, getCallback, putCallback, destroyCallback),
-	}
+	return &globalVarCache{ks: ks, factory: factory, ctx: ctx, cancel: cancel}
 }
 
-// wrap makes the sessions that factory creates read global variables through r.
-func (r *globalVarReader) wrap(factory pools.Factory) pools.Factory {
+// wrap makes the sessions that factory creates read global variables from c.
+func (c *globalVarCache) wrap(factory pools.Factory) pools.Factory {
 	return withGlobalVars(factory, func(vars *variable.SessionVars) variable.GlobalVarAccessor {
-		return &keyspaceGlobalVars{GlobalVarAccessor: vars.GlobalVarsAccessor, vars: vars, reader: r}
+		return &keyspaceGlobalVars{GlobalVarAccessor: vars.GlobalVarsAccessor, vars: vars, cache: c}
 	})
 }
 
-func (r *globalVarReader) read(table, name string) (value string, found bool, err error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	resource, err := r.pool.Get()
-	if err != nil {
-		return "", false, errors.Trace(err)
+func (c *globalVarCache) get(name string) (value string, found bool, err error) {
+	c.mu.RLock()
+	loaded := c.global != nil
+	value, found = c.global[name]
+	c.mu.RUnlock()
+	if loaded {
+		return value, found, nil
 	}
-	defer r.pool.Put(resource)
-	sctx, ok := resource.(sessionctx.Context)
-	if !ok {
-		return "", false, errors.Errorf("unexpected session type %T", resource)
-	}
-	ctx := kv.WithInternalSourceType(r.ctx, kv.InternalTxnSysVar)
-	rows, fields, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx,
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		"SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, table, name)
-	if err != nil {
+	if err = c.load(); err != nil {
 		return "", false, err
 	}
-	if len(rows) == 0 {
-		return "", false, nil
-	}
-	d := rows[0].GetDatum(0, &fields[0].Column.FieldType)
-	value, err = d.ToString()
-	return value, true, err
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	value, found = c.global[name]
+	return value, found, nil
 }
 
-func (r *globalVarReader) close() {
-	r.cancel()
-	r.pool.Close()
+// load reloads the cache. It updates the cache while holding the session, so
+// that an earlier load cannot overwrite a later one.
+func (c *globalVarCache) load() error {
+	return c.withSession(func(se sessionctx.Context) error {
+		ctx := kv.WithInternalSourceType(c.ctx, kv.InternalTxnSysVar)
+		rows, _, err := se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx,
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			"SELECT variable_name, variable_value FROM %n.%n", mysql.SystemDB, mysql.GlobalVariablesTable)
+		if err != nil {
+			return err
+		}
+		tableContents := make(map[string]string, len(rows))
+		for _, row := range rows {
+			tableContents[row.GetString(0)] = row.GetString(1)
+		}
+		_, global := variable.SysVarCacheValues(tableContents)
+		c.mu.Lock()
+		c.global = global
+		c.mu.Unlock()
+		return nil
+	})
+}
+
+func (c *globalVarCache) readTiDBTable(name string) (value string, found bool, err error) {
+	err = c.withSession(func(se sessionctx.Context) error {
+		ctx := kv.WithInternalSourceType(c.ctx, kv.InternalTxnSysVar)
+		rows, _, err := se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx,
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			"SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?", mysql.SystemDB, mysql.TiDBTable, name)
+		if err != nil || len(rows) == 0 {
+			return err
+		}
+		value, found = rows[0].GetString(0), true
+		return nil
+	})
+	return value, found, err
+}
+
+func (c *globalVarCache) withSession(fn func(sessionctx.Context) error) error {
+	c.sessMu.Lock()
+	defer c.sessMu.Unlock()
+	if c.closed {
+		return errors.Errorf("global variables of keyspace %s are closed", c.ks)
+	}
+	if c.se == nil {
+		resource, err := withGlobalVars(c.factory, func(vars *variable.SessionVars) variable.GlobalVarAccessor {
+			return defaultGlobalVars{vars.GlobalVarsAccessor}
+		})()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		se, ok := resource.(sessionctx.Context)
+		if !ok {
+			resource.Close()
+			return errors.Errorf("unexpected session type %T", resource)
+		}
+		c.se = se
+	}
+	return fn(c.se)
+}
+
+// refreshLoop reloads the cache until ctx is done, and closes the cache then.
+func (c *globalVarCache) refreshLoop(ctx context.Context, etcdCli *clientv3.Client) {
+	defer c.close()
+	logger := logutil.BgLogger().With(zap.String("targetKS", c.ks))
+	var watchCh clientv3.WatchChan
+	if etcdCli != nil {
+		watchCh = etcdCli.Watch(ctx, ddlutil.SysVarCacheKey)
+	}
+	var count int
+	for {
+		ok := true
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok = <-watchCh:
+		case <-time.After(globalVarCacheRefreshInterval):
+		}
+		if !ok {
+			logger.Warn("global variable cache watch channel closed")
+			watchCh = etcdCli.Watch(ctx, ddlutil.SysVarCacheKey)
+			count++
+			if count > 10 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Duration(count) * time.Second):
+				}
+			}
+			continue
+		}
+		count = 0
+		if err := c.load(); err != nil {
+			logger.Warn("reload global variable cache failed", zap.Error(err))
+		}
+	}
+}
+
+func (c *globalVarCache) close() {
+	c.cancel()
+	c.sessMu.Lock()
+	defer c.sessMu.Unlock()
+	c.closed = true
+	if r, ok := c.se.(pools.Resource); ok {
+		r.Close()
+	}
+	c.se = nil
 }
 
 func withGlobalVars(factory pools.Factory, accessor func(*variable.SessionVars) variable.GlobalVarAccessor) pools.Factory {
@@ -106,27 +209,27 @@ func withGlobalVars(factory pools.Factory, accessor func(*variable.SessionVars) 
 	}
 }
 
-// keyspaceGlobalVars reads global variables from the tables of the keyspace,
-// and leaves the other methods to the session.
+// keyspaceGlobalVars reads global variables of the keyspace from the cache and
+// mysql.tidb, and leaves the other methods to the session.
 type keyspaceGlobalVars struct {
 	variable.GlobalVarAccessor
-	vars   *variable.SessionVars
-	reader *globalVarReader
+	vars  *variable.SessionVars
+	cache *globalVarCache
 }
 
 // GetGlobalSysVar implements variable.GlobalVarAccessor. Like
-// session.GetGlobalSysVar, it returns the default when the keyspace has no
-// value or the value does not fit the variable, but returns an error when the
-// read fails.
+// session.GetGlobalSysVar, it returns the default when the value does not fit
+// the variable, but returns an error when the cache fails to load.
 func (g *keyspaceGlobalVars) GetGlobalSysVar(name string) (string, error) {
 	sv := variable.GetSysVar(name)
 	if sv == nil {
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	value, found, err := g.reader.read(mysql.GlobalVariablesTable, name)
+	value, found, err := g.cache.get(name)
 	if err != nil {
 		return "", err
 	}
+	// A variable registered after the last load is not cached yet.
 	if !found {
 		return sv.Value, nil
 	}
@@ -139,7 +242,7 @@ func (g *keyspaceGlobalVars) GetGlobalSysVar(name string) (string, error) {
 
 // GetTiDBTableValue implements variable.GlobalVarAccessor.
 func (g *keyspaceGlobalVars) GetTiDBTableValue(name string) (string, error) {
-	value, found, err := g.reader.read(mysql.TiDBTable, name)
+	value, found, err := g.cache.readTiDBTable(name)
 	if err != nil {
 		return "", err
 	}
@@ -149,7 +252,7 @@ func (g *keyspaceGlobalVars) GetTiDBTableValue(name string) (string, error) {
 	return value, nil
 }
 
-// defaultGlobalVars is the accessor of the reading session.
+// defaultGlobalVars is the accessor of the session that loads the cache.
 type defaultGlobalVars struct {
 	variable.GlobalVarAccessor
 }
@@ -165,5 +268,5 @@ func (defaultGlobalVars) GetGlobalSysVar(name string) (string, error) {
 
 // GetTiDBTableValue implements variable.GlobalVarAccessor.
 func (defaultGlobalVars) GetTiDBTableValue(name string) (string, error) {
-	return "", errors.Errorf("%s is not read by the global variable reader", name)
+	return "", errors.Errorf("%s is not read by the session that loads global variables", name)
 }

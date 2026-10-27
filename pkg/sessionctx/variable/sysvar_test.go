@@ -2473,3 +2473,25 @@ func TestSkipInitIsUsed(t *testing.T) {
 		}
 	}
 }
+
+func TestSysVarCacheValues(t *testing.T) {
+	RegisterSysVar(&SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "test_cache_session_var", Value: "a"})
+	RegisterSysVar(&SysVar{Scope: vardef.ScopeGlobal, Name: "test_cache_global_var", Value: "b"})
+	RegisterSysVar(&SysVar{Scope: vardef.ScopeGlobal, Name: "test_cache_config_var", Value: "c", IsInitedFromConfig: true})
+	defer func() {
+		UnregisterSysVar("test_cache_session_var")
+		UnregisterSysVar("test_cache_global_var")
+		UnregisterSysVar("test_cache_config_var")
+	}()
+
+	session, global := SysVarCacheValues(map[string]string{
+		"test_cache_session_var": "x",
+		"test_cache_global_var":  "y",
+		"test_cache_config_var":  "z",
+	})
+	require.Equal(t, "x", session["test_cache_session_var"])
+	require.Equal(t, "x", global["test_cache_session_var"])
+	require.NotContains(t, session, "test_cache_global_var")
+	require.Equal(t, "y", global["test_cache_global_var"])
+	require.Equal(t, "c", global["test_cache_config_var"])
+}
