@@ -43,8 +43,10 @@ import (
 type QuerySource struct {
 	ReadTS        uint64
 	SchemaVersion int64
-	Timestamp     int64
-	Keyspace      string
+	// Timestamp is the Unix time in seconds when the query is captured, which
+	// the encoder takes as the timestamp of the query chunks.
+	Timestamp int64
+	Keyspace  string
 	// Tables lists the included source tables.
 	Tables []SourceTable
 	// SessionStates are the states of the submitting session.
@@ -142,8 +144,8 @@ func (q *QuerySource) BuildMinimalInfoSchema(
 	return b.Build(q.ReadTS), nil
 }
 
-// newQueryParser returns a parser configured like the one that the planner
-// parses a view definition with.
+// newQueryParser returns a parser with the parser config of the session, like
+// the one the planner parses statements and view definitions with.
 func newQueryParser(sctx sessionctx.Context) *parser.Parser {
 	p := parser.New()
 	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
