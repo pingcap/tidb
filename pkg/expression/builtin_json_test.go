@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -887,6 +888,57 @@ func TestJSONKeys(t *testing.T) {
 	}
 }
 
+func TestTiDBJSONFlatten(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.TiDBJSONFlatten]
+	tbl := []struct {
+		input    any
+		expected any
+	}{
+		{nil, nil},
+		{`{}`, `[]`},
+		{`{"cells": {"ccf_1": {"state": "error", "errorCode": [1, 7]}}}`,
+			`["$.cells.ccf_1.errorCode=1", "$.cells.ccf_1.errorCode=7", "$.cells.ccf_1.state=\"error\""]`},
+		{`{"a": "7", "b": 7}`, `["$.a=\"7\"", "$.b=7"]`},
+	}
+	for _, tt := range tbl {
+		args := types.MakeDatums(tt.input)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		if tt.expected == nil {
+			require.True(t, d.IsNull())
+			continue
+		}
+		expected, err := types.ParseBinaryJSONFromString(tt.expected.(string))
+		require.NoError(t, err)
+		require.Equal(t, 0, types.CompareBinaryJSON(expected, d.GetMysqlJSON()), "input %v got %s", tt.input, d.GetMysqlJSON())
+	}
+
+	// With max_length, long entries are shortened to exactly max_length characters.
+	long := `{"a": "` + strings.Repeat("x", 100) + `"}`
+	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(long, 64)))
+	require.NoError(t, err)
+	d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	entry, err := d.GetMysqlJSON().ArrayGetElem(0).Unquote()
+	require.NoError(t, err)
+	require.Len(t, entry, 64)
+	require.True(t, strings.HasPrefix(entry, `$.a="xxx`))
+	require.Equal(t, byte('#'), entry[64-33])
+
+	// A NULL max_length returns NULL; one below 64 is an error.
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(long, nil)))
+	require.NoError(t, err)
+	d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.True(t, d.IsNull())
+	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(long, 63)))
+	require.NoError(t, err)
+	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	require.Error(t, err)
+}
 func TestJSONDepth(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.JSONDepth]
