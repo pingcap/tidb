@@ -14,9 +14,9 @@
 
 #![allow(missing_docs)]
 
+use tidb_mysql::consts::DEFAULT_AUTH_PLUGINS;
 use tidb_server::{
     AuthPluginAdmission, AuthPluginDescriptor, AuthPluginRegistry, AuthPluginRegistryError,
-    ClientPluginSelection, ClientPluginSelectionRequest, DEFAULT_AUTH_PLUGINS,
 };
 
 #[test]
@@ -140,94 +140,4 @@ fn plugin_admission_classifies_builtin_custom_and_unknown_names() {
         AuthPluginAdmission::Unsupported("future_auth".to_owned())
     );
     assert!(!unknown.is_supported());
-}
-
-#[test]
-fn client_selection_preserves_fallback_switch_and_legacy_outcomes() {
-    // Source: pkg/server/conn.go:952-1047 and pkg/server/conn_test.go:1564-1771.
-    // The Go connection path first permits tidb_session_token, then falls
-    // back to native password for an empty user-plugin row, maps
-    // tidb_auth_token to mysql_clear_password, switches when the advertised
-    // names differ, and rejects non-native plugins for legacy clients.
-    let registry = AuthPluginRegistry::validate([AuthPluginDescriptor::complete("custom_auth")
-        .with_required_client_side_plugin("custom_client")])
-    .expect("valid custom plugin");
-
-    assert_eq!(
-        registry.select_client_plugin(&ClientPluginSelectionRequest::new(
-            "caching_sha2_password",
-            "tidb_session_token",
-            Some("custom_auth".to_owned()),
-            true,
-        )),
-        ClientPluginSelection::SessionTokenPassthrough
-    );
-    assert_eq!(
-        registry.select_client_plugin(&ClientPluginSelectionRequest::new(
-            "caching_sha2_password",
-            "caching_sha2_password",
-            None,
-            true,
-        )),
-        ClientPluginSelection::NativePasswordFallback {
-            client_plugin: "mysql_native_password".to_owned()
-        }
-    );
-    assert_eq!(
-        registry.select_client_plugin(&ClientPluginSelectionRequest::new(
-            "caching_sha2_password",
-            "caching_sha2_password",
-            None,
-            false,
-        )),
-        ClientPluginSelection::Keep {
-            plugin: "mysql_native_password".to_owned()
-        }
-    );
-    assert_eq!(
-        registry.select_client_plugin(&ClientPluginSelectionRequest::new(
-            "mysql_native_password",
-            "mysql_native_password",
-            Some("custom_auth".to_owned()),
-            true,
-        )),
-        ClientPluginSelection::Switch {
-            server_plugin: "custom_auth".to_owned(),
-            client_plugin: "custom_client".to_owned()
-        }
-    );
-    assert_eq!(
-        registry.select_client_plugin(&ClientPluginSelectionRequest::new(
-            "mysql_native_password",
-            "mysql_native_password",
-            Some("tidb_auth_token".to_owned()),
-            true,
-        )),
-        ClientPluginSelection::Switch {
-            server_plugin: "mysql_clear_password".to_owned(),
-            client_plugin: "mysql_clear_password".to_owned()
-        }
-    );
-    assert_eq!(
-        registry.select_client_plugin(&ClientPluginSelectionRequest::new(
-            "mysql_native_password",
-            "mysql_native_password",
-            Some("custom_auth".to_owned()),
-            false,
-        )),
-        ClientPluginSelection::RejectLegacyClient {
-            required_plugin: "custom_auth".to_owned()
-        }
-    );
-    assert_eq!(
-        registry.select_client_plugin(&ClientPluginSelectionRequest::new(
-            "mysql_native_password",
-            "mysql_native_password",
-            Some("future_auth".to_owned()),
-            true,
-        )),
-        ClientPluginSelection::UnsupportedServerPlugin {
-            plugin: "future_auth".to_owned()
-        }
-    );
 }

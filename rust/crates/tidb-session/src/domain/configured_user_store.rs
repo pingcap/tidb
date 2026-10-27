@@ -33,17 +33,18 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::privilege::{
-    check_hashing_password, login_plugin_verification, AccountLockout, LoginPluginVerification,
-    PrivilegeRegistry,
-};
+use crate::privilege::{check_password_for_plugin, AccountLockout, PrivilegeRegistry};
 use crate::GlobalSysvars;
+use tidb_mysql::consts::{
+    AuthCachingSha2Password, AuthLDAPSASL, AuthLDAPSimple, AuthNativePassword, AuthSocket,
+    AuthTiDBAuthToken, AuthTiDBSM3Password,
+};
 
 use crate::domain::auth_identity::{
     IdentityCatalog, IdentityLookupPolicy, IdentityLookupRequest, IdentityLookupResult,
     MatchedIdentity, DEFAULT_AUTH_PLUGIN,
 };
-use crate::domain::native_password::{verify_candidate, NativePasswordHash};
+use crate::domain::native_password::NativePasswordHash;
 use crate::domain::secure_transport::{SecureTransportError, SecureTransportPolicy, TransportKind};
 
 /// Canonical identity established after either ordinary account/password
@@ -437,18 +438,14 @@ impl ConfiguredUserStore {
         self.len() == 0
     }
 
-    /// Go's `checkAuthPlugin` (`server/conn.go` line 939): the
-    /// `mysql.user.plugin` of the account the client's `(user, host)`
-    /// resolves to, which is what decides which plugin the connection is
-    /// SWITCHED to before any password is compared.
-    ///
-    /// `None` for an unknown account or one with no plugin column, which is
-    /// Go's "no user plugin set, assuming MySQL Native Password" -- and is
-    /// also why an unknown username cannot be probed by watching which
-    /// auth-switch the server sends. In skip-grant mode every request returns
-    /// native password before any row read, matching Go's fixed bypass plugin.
+    /// Go `MatchIdentity` + `AuthPluginForUser` (`GetAuthPluginForConnection`),
+    /// which `checkAuthPlugin` (`server/conn.go:939`) reads before any auth
+    /// exchange: `None` when no account matches the user and host -- Go
+    /// answers 1045 at once -- else the plugin the connection is switched to,
+    /// empty for "no user plugin set, assuming MySQL Native Password". In
+    /// skip-grant mode every request is native password.
     #[must_use]
-    pub fn auth_plugin_for(&self, username: &str, remote_host: &str) -> Option<String> {
+    pub fn match_identity_plugin(&self, username: &str, remote_host: &str) -> Option<String> {
         if self.identity_policy.skip_with_grant() {
             return Some(DEFAULT_AUTH_PLUGIN.to_owned());
         }
@@ -462,9 +459,21 @@ impl ConfiguredUserStore {
         let IdentityLookupResult::Matched(identity) = catalog.resolve(&request, &[]) else {
             return None;
         };
-        self.accounts
-            .plugin(identity.username(), identity.host())
-            .filter(|plugin| !plugin.is_empty())
+        let (authentication_string, plugin, _) = self
+            .accounts
+            .login_credentials(identity.username(), identity.host())?;
+        Some(
+            crate::privilege::auth_plugin_for_connection(&plugin, &authentication_string)
+                .to_owned(),
+        )
+    }
+
+    /// Go `writeInitialHandshake`'s advertised plugin:
+    /// `@@global.default_authentication_plugin`.
+    pub fn default_authentication_plugin(&self) -> String {
+        self.global_vars
+            .get("default_authentication_plugin")
+            .unwrap_or_else(|_| DEFAULT_AUTH_PLUGIN.to_owned())
     }
 
     /// Resolves and verifies one native-password response against the LIVE
@@ -476,12 +485,11 @@ impl ConfiguredUserStore {
     /// An ordinary successful result contains the canonical stored host
     /// pattern; a bypass result deliberately keeps the client-supplied host.
     ///
-    /// A passwordless NATIVE account (empty `authentication_string`)
-    /// authenticates only on an empty auth response, which is what a client
-    /// sends when the user supplies no password. Which verifier runs at all
-    /// is chosen by the account's `mysql.user.plugin`
-    /// ([`login_plugin_verification`]), because most plugins ALSO store an
-    /// empty `authentication_string` without being passwordless.
+    /// A passwordless account (empty `authentication_string`) authenticates
+    /// only on an empty auth response, which is what a client sends when the
+    /// user supplies no password -- except the plugins Go verifies outside
+    /// its password arms (`auth_socket`, `tidb_auth_token`, LDAP), which
+    /// store an empty string without being passwordless.
     ///
     /// The failed-login lockout and password-expiry checks run in Go's order
     /// (`pkg/session.(*session).Auth`): the auto-lock window is checked and
@@ -606,138 +614,105 @@ impl ConfiguredUserStore {
                 .into_iter()
                 .map(|(user, host)| MatchedIdentity::new(&user, &host)),
         );
+        // Go `session.Auth`: an identity `MatchIdentity` cannot find is
+        // access denied before anything else.
         let identity = match catalog.resolve(&request, &[]) {
-            IdentityLookupResult::Matched(identity) => Some(identity),
+            IdentityLookupResult::Matched(identity) => identity,
             IdentityLookupResult::Bypassed(_) => unreachable!("ordinary resolution cannot bypass"),
-            IdentityLookupResult::NotFound => None,
+            IdentityLookupResult::NotFound => return Err(AuthenticationFailure::AccessDenied),
         };
+        let (user, host) = (identity.username(), identity.host());
         // Go runs `verifyAccountAutoLock` before `ConnectionVerification`,
         // which is what makes a locked account report 3955 rather than 1045
         // even when the password that arrived was correct -- and what
         // auto-unlocks an account whose `PASSWORD_LOCK_TIME` has run out, so
         // the very next correct password works.
-        if let Some(identity) = identity.as_ref() {
-            self.apply_login_policy(
-                identity.username(),
-                identity.host(),
-                crate::privilege::LoginPolicyAction::Verify,
-            )?;
-        }
-        // A ROLE is a `mysql.user` row with `account_locked = 'Y'` and an
-        // empty password, so without this it would be the most loginable
-        // account on the server. Go refuses a locked account at the same
-        // point, before any password comparison, with a distinct errno
-        // (3118) rather than the generic access-denied (1045) an unknown
-        // user or bad password gets.
-        if identity
-            .as_ref()
-            .is_some_and(|identity| self.accounts.is_role(identity.username(), identity.host()))
-        {
-            return Err(AuthenticationFailure::AccountLocked);
-        }
-        // Go's `checkSSL` runs on the matched account's `mysql.global_priv`
-        // row before the password is compared, and reports the generic
-        // access-denied on failure.
-        if identity.as_ref().is_some_and(|identity| {
-            !self.accounts.admits_account_tls_peer(
-                identity.username(),
-                identity.host(),
-                is_tls,
-                admission.verified_client_certificate,
-                admission.tls_peer.as_ref(),
-            )
-        }) {
+        self.apply_login_policy(user, host, crate::privilege::LoginPolicyAction::Verify)?;
+        // Go `ConnectionVerification` from here. `checkSSL` runs on the
+        // matched account's `mysql.global_priv` row before the password is
+        // compared, and reports the generic access-denied on failure.
+        if !self.accounts.admits_account_tls_peer(
+            user,
+            host,
+            is_tls,
+            admission.verified_client_certificate,
+            admission.tls_peer.as_ref(),
+        ) {
             return Err(AuthenticationFailure::AccessDenied);
         }
-        let credentials = identity.as_ref().and_then(|identity| {
-            self.accounts
-                .login_credentials(identity.username(), identity.host())
-        });
-        // Go validates the primary's shape before either password. A malformed
-        // native hash cannot be rescued by a retained secondary password.
-        let verified = match credentials.as_ref() {
-            None => verify_candidate(None, salt, response),
-            Some((primary, plugin, secondary)) => {
-                let verification = login_plugin_verification(plugin);
-                let valid_primary = primary.is_empty()
-                    || match verification {
-                        LoginPluginVerification::NativeHash => {
-                            primary.len() == (tidb_mysql::consts::PWDHashLen as usize + 1)
-                                && tidb_parser::auth::decode_password(primary).is_ok()
-                        }
-                        LoginPluginVerification::HashingPlugin(_) => {
-                            primary.len()
-                                == if plugin == tidb_mysql::consts::AuthTiDBSM3Password {
-                                    tidb_mysql::consts::SM3PWDHashLen as usize
-                                } else {
-                                    tidb_mysql::consts::SHAPWDHashLen as usize
-                                }
-                        }
-                        _ => true,
-                    };
-                if !valid_primary {
-                    return Err(AuthenticationFailure::AccessDenied);
-                }
-                // Go skips the account's own plugin for a session token, and a
-                // token that does not verify is no wrong password.
-                if session_token {
-                    if let Err(error) = tidb_sessionstates::validate_session_token(response, username)
-                    {
-                        tidb_log::warn(
-                            "verify session token failed",
-                            &[
-                                tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
-                                tidb_log::Field::new("error", tidb_log::Value::Str(error)),
-                            ],
-                        );
-                        return Err(AuthenticationFailure::AccessDenied);
-                    }
-                }
-                let check = |encoded: &str| {
-                    if encoded.is_empty() {
-                        return false;
-                    }
-                    match verification {
-                        LoginPluginVerification::NativeHash => {
-                            tidb_parser::auth::decode_password(encoded).is_ok_and(|hash| {
-                                tidb_parser::auth::check_scrambled_password(salt, &hash, response)
-                            })
-                        }
-                        LoginPluginVerification::HashingPlugin(plugin) => {
-                            check_hashing_password(encoded, response, plugin)
-                        }
-                        _ => false,
-                    }
-                };
-                match verification {
-                    _ if session_token => true,
-                    LoginPluginVerification::Deny => false,
-                    LoginPluginVerification::PasswordlessOnly => {
-                        primary.is_empty() && response.is_empty()
-                    }
-                    _ => {
-                        (primary.is_empty() && response.is_empty())
-                            || check(primary)
-                            || secondary.as_deref().is_some_and(check)
-                    }
-                }
+        let (primary, plugin, secondary) = self
+            .accounts
+            .login_credentials(user, host)
+            .expect("a matched identity has its account row");
+        // A stored string that is not its plugin's hash shape is refused
+        // before any password.
+        if !crate::privilege::is_valid_hash(&plugin, &primary) {
+            return Err(AuthenticationFailure::AccessDenied);
+        }
+        if session_token {
+            // Go skips the account's own plugin for a session token, and a
+            // token that does not verify is no wrong password.
+            if let Err(error) = tidb_sessionstates::validate_session_token(response, username) {
+                tidb_log::warn(
+                    "verify session token failed",
+                    &[
+                        tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
+                        tidb_log::Field::new("error", tidb_log::Value::Str(error)),
+                    ],
+                );
+                return Err(AuthenticationFailure::AccessDenied);
             }
-        };
-        let Some(identity) = identity else {
-            // No such account: the verifier ran against a dummy hash above
-            // purely so an unknown user costs the same as a known one.
+        } else if plugin == AuthTiDBAuthToken || plugin == AuthLDAPSASL || plugin == AuthLDAPSimple
+        {
+            // Go verifies a JWT against `GlobalJWKS` and binds to the LDAP
+            // server; this server has neither configured, which Go answers
+            // with access denied.
             return Err(AuthenticationFailure::AccessDenied);
-        };
-        if !verified {
-            // Go bumps the counter only when the failure was a WRONG
-            // PASSWORD (`info.FailedDueToWrongPassword`), which by this point
-            // is the only way to get here.
-            self.apply_login_policy(
-                identity.username(),
-                identity.host(),
-                crate::privilege::LoginPolicyAction::Failure,
-            )?;
-            return Err(AuthenticationFailure::AccessDenied);
+        } else if plugin == AuthSocket {
+            // The response is the peer's OS user, which must be the
+            // account's user or its authentication string.
+            if response != user.as_bytes() && response != primary.as_bytes() {
+                return Err(AuthenticationFailure::AccessDenied);
+            }
+        } else if !primary.is_empty() || !response.is_empty() {
+            // The password plugins. Deliberately reachable with an EMPTY
+            // stored primary when the client supplied a password, so a
+            // retained secondary can still authenticate; a passwordless login
+            // (empty primary AND empty response) never enters here.
+            if plugin != AuthNativePassword
+                && plugin != AuthCachingSha2Password
+                && plugin != AuthTiDBSM3Password
+            {
+                tidb_log::warn(
+                    "unknown authentication plugin",
+                    &[
+                        tidb_log::Field::new("authUser", tidb_log::Value::Str(user.to_owned())),
+                        tidb_log::Field::new("plugin", tidb_log::Value::Str(plugin.clone())),
+                    ],
+                );
+                return Err(AuthenticationFailure::AccessDenied);
+            }
+            let primary_ok = check_password_for_plugin(&plugin, &primary, salt, response);
+            // A malformed stored native primary is a wrong password that no
+            // secondary can rescue.
+            let verified = match primary_ok {
+                Err(_) if plugin == AuthNativePassword => false,
+                Ok(true) => true,
+                _ => secondary.as_deref().is_some_and(|secondary| {
+                    check_password_for_plugin(&plugin, secondary, salt, response).unwrap_or(false)
+                }),
+            };
+            if !verified {
+                // Go's `FailedDueToWrongPassword`: the only failure that
+                // counts toward `FAILED_LOGIN_ATTEMPTS`.
+                self.apply_login_policy(user, host, crate::privilege::LoginPolicyAction::Failure)?;
+                return Err(AuthenticationFailure::AccessDenied);
+            }
+        }
+        // Login to a locked account is not allowed: a ROLE is a `mysql.user`
+        // row with `account_locked = 'Y'` and an empty password.
+        if self.accounts.is_role(user, host) {
+            return Err(AuthenticationFailure::AccountLocked);
         }
         // Go reads the global `default_password_lifetime` for an account
         // whose own `Password_lifetime` is NULL. `default_password_lifetime`
@@ -756,17 +731,9 @@ impl ConfiguredUserStore {
         let in_sandbox_mode = !session_token
             && self
                 .accounts
-                .check_password_expired(
-                    identity.username(),
-                    identity.host(),
-                    default_password_lifetime,
-                )
+                .check_password_expired(user, host, default_password_lifetime)
                 .map_err(|_| AuthenticationFailure::PasswordExpired)?;
-        self.apply_login_policy(
-            identity.username(),
-            identity.host(),
-            crate::privilege::LoginPolicyAction::Success,
-        )?;
+        self.apply_login_policy(user, host, crate::privilege::LoginPolicyAction::Success)?;
         Ok(AuthenticatedIdentity {
             identity,
             in_sandbox_mode,

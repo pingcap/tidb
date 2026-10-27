@@ -160,6 +160,33 @@ impl ClientSocket {
     }
 
 
+    /// Go `linux.GetSockUID` + `user.LookupId(uid)`: the OS user of the
+    /// process on the other end of a Unix-domain socket (`SO_PEERCRED` on
+    /// Linux, `LOCAL_PEERCRED` elsewhere, as Go's `sys_linux.go` and
+    /// `sys_other.go`).
+    pub fn peer_os_user(&self) -> io::Result<String> {
+        #[cfg(unix)]
+        if let Self::Unix(stream) = self {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let uid =
+                nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::PeerCredentials)
+                    .map_err(io::Error::from)?
+                    .uid();
+            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+            let uid =
+                nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::LocalPeerCred)
+                    .map_err(io::Error::from)?
+                    .uid();
+            return nix::unistd::User::from_uid(nix::unistd::Uid::from_raw(uid))
+                .map_err(io::Error::from)?
+                .map(|user| user.name)
+                .ok_or_else(|| io::Error::other(format!("user: unknown userid {uid}")));
+        }
+        Err(io::Error::other(
+            "Expected UNIX socket, but got something else",
+        ))
+    }
+
     /// Reads without consuming (`MSG_PEEK`), as `TcpStream::peek`.
     pub fn peek(&self, buffer: &mut [u8]) -> io::Result<usize> {
         match self {

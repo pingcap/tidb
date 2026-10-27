@@ -302,13 +302,17 @@ These were compared field by field and match. Do not re-audit them.
    NUL-terminated legacy form, optional database, plugin name, the 1 MiB
    connection-attributes hard limit, and the trailing zstd level
    (`handshake.rs:387-479`).
-7. **Auth-plugin switch trigger.** Rust switches to `mysql_native_password`
-   when the client advertised `CLIENT_PLUGIN_AUTH` and named a different plugin
-   (`mysql_connection.rs:553-564`); Go does the same for an account with no
-   stored plugin (`conn.go:checkAuthPlugin`, the
-   `resp.AuthPlugin != mysql.AuthNativePassword && resp.Capability&mysql.ClientPluginAuth > 0`
-   arm). A `caching_sha2_password` client (MySQL 8 default) is switched
-   identically.
+7. **Auth-plugin selection.** `check_auth_plugin` (`mysql_connection.rs`) is
+   Go's `checkAuthPlugin` (`conn.go:939`): a `tidb_session_token` passes
+   through, an identity no account matches is refused with 1045 before any
+   exchange, `auth_socket` is answered with the peer's OS user on a Unix socket
+   and refused elsewhere, an account with no plugin to switch to
+   (`GetAuthPluginForConnection`'s empty answer) switches a non-native client
+   to `mysql_native_password`, `tidb_auth_token` is asked for as
+   `mysql_clear_password`, and a pre-plugin client meets
+   `ErrNotSupportedAuthMode`. The greeting advertises
+   `@@default_authentication_plugin`, and the switch request names the
+   client-side plugin `authSwitchRequest` does.
 8. **Binary-row null bitmap.** `encode_binary_result_row`
    (`rust/crates/tidb-protocol/src/prepared_statement.rs:765-807`) uses
    `(n + 7 + 2) / 8` bytes, the `mysql.OKHeader` prefix, and bit `i + 2` in

@@ -45,10 +45,9 @@ use crate::connection_writers::{
 use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
     negotiate_capabilities, parse_response_header, parse_response_with_global_sysvars,
-    InitialHandshake, AUTH_NATIVE_PASSWORD, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS,
-    CLIENT_CONNECT_WITH_DB, CLIENT_FOUND_ROWS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
-    CLIENT_SECURE_CONNECTION, CLIENT_SSL, CLIENT_TRANSACTIONS, CLIENT_ZSTD_COMPRESSION_ALGORITHM,
-    DEFAULT_COLLATION_ID,
+    InitialHandshake, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB,
+    CLIENT_FOUND_ROWS, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
+    CLIENT_SSL, CLIENT_TRANSACTIONS, CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
@@ -61,7 +60,6 @@ use crate::sql_node::{
     PreparedGeneral, QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
 };
 use crate::wire_status::{WireStatus, SERVER_STATUS_CURSOR_EXISTS, SERVER_STATUS_LAST_ROW_SEND};
-use tidb_session::privilege::plugin_needs_cleartext;
 
 /// Carries one client SQL payload's bytes for `@@character_set_client`.
 ///
@@ -1030,6 +1028,103 @@ pub(crate) struct MysqlConnectionRuntime<'a> {
     pub(crate) tls: Option<&'a MysqlServerTls>,
 }
 
+/// What Go `checkAuthPlugin` does with the connection after reading the
+/// account's plugin.
+enum AuthPluginDecision {
+    /// Keep the response the client sent.
+    Keep,
+    /// Send an auth switch to this server-side plugin and use its answer.
+    Switch(String),
+    /// `auth_socket`: the response is the peer process's OS user.
+    SocketUser,
+}
+
+/// Go `checkAuthPlugin`'s refusals.
+enum AuthPluginRefusal {
+    /// `ErrAccessDenied`: no account matches, or `auth_socket` off a Unix
+    /// socket.
+    AccessDenied,
+    /// `ErrNotSupportedAuthMode`: a client without plugin support for an
+    /// account on another plugin.
+    NotSupportedAuthMode,
+}
+
+/// Go `clientConn.checkAuthPlugin` (`server/conn.go:939`): `server_plugin` is
+/// `cc.authPlugin`, `client_plugin` is `resp.AuthPlugin`, which a switch
+/// rewrites.
+fn check_auth_plugin(
+    server_plugin: &str,
+    client_plugin: &mut String,
+    plugin_auth: bool,
+    users: &ConfiguredUserStore,
+    user: &str,
+    peer: &PeerAddress,
+) -> Result<AuthPluginDecision, AuthPluginRefusal> {
+    use tidb_mysql::consts::{
+        AuthMySQLClearPassword, AuthNativePassword, AuthSocket, AuthTiDBAuthToken,
+        AuthTiDBSessionToken,
+    };
+    // `tidb_session_token` is always permitted and skips the stored plugin.
+    if client_plugin == AuthTiDBSessionToken {
+        return Ok(AuthPluginDecision::Keep);
+    }
+    let Some(user_plugin) = users.match_identity_plugin(user, &peer.host()) else {
+        return Err(AuthPluginRefusal::AccessDenied);
+    };
+    if user_plugin == AuthSocket {
+        if !peer.is_unix_socket() {
+            return Err(AuthPluginRefusal::AccessDenied);
+        }
+        AuthSocket.clone_into(client_plugin);
+        return Ok(AuthPluginDecision::SocketUser);
+    }
+    if user_plugin.is_empty() {
+        // No user plugin set, assuming MySQL Native Password.
+        if client_plugin != AuthNativePassword && plugin_auth {
+            AuthNativePassword.clone_into(client_plugin);
+            return Ok(AuthPluginDecision::Switch(AuthNativePassword.to_owned()));
+        }
+        return Ok(AuthPluginDecision::Keep);
+    }
+    if server_plugin != user_plugin || server_plugin != client_plugin.as_str() {
+        let user_plugin = if user_plugin == AuthTiDBAuthToken {
+            AuthMySQLClearPassword.to_owned()
+        } else {
+            user_plugin
+        };
+        if plugin_auth {
+            client_plugin.clone_from(&user_plugin);
+            return Ok(AuthPluginDecision::Switch(user_plugin));
+        }
+        if user_plugin != AuthNativePassword {
+            // MySQL 5.1 and older don't support authentication plugins yet.
+            return Err(AuthPluginRefusal::NotSupportedAuthMode);
+        }
+    }
+    Ok(AuthPluginDecision::Keep)
+}
+
+/// An authentication refusal: the error packet, then the connection's end.
+#[allow(clippy::too_many_arguments)]
+fn rejected_login<O: ConnectionPacketOutput + ?Sized>(
+    output: &mut O,
+    sequence: u8,
+    code: u16,
+    state: [u8; 5],
+    message: impl AsRef<[u8]>,
+    protocol_41: bool,
+    connection_id: u64,
+    commands: ConnectionCommandCounts,
+) -> Result<ConnectionReport, MysqlConnectionError> {
+    write_error(output, sequence, code, state, message, protocol_41)?;
+    Ok(ConnectionReport {
+        connection_id,
+        queries: 0,
+        commands,
+        exit: ConnectionExit::AuthenticationRejected,
+    })
+}
+
 pub(crate) fn serve_mysql_connection_with_runtime<F: QuerySessionFactory>(
     stream: ClientSocket,
     peer_addr: PeerAddress,
@@ -1127,6 +1222,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         SERVER_CAPABILITIES
     };
     let salt = generate_handshake_salt();
+    // Go `writeInitialHandshake`: the server advertises
+    // `@@global.default_authentication_plugin` (`cc.authPlugin`).
+    let server_plugin = users.default_authentication_plugin();
     let handshake = InitialHandshake {
         connection_id: u32::try_from(connection_id).unwrap_or(u32::MAX),
         salt: salt.to_vec(),
@@ -1136,7 +1234,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // one word, and only this one: the handshake precedes any session.
         status_flags: WireStatus::AUTOCOMMIT.bits(),
         server_version: tidb_mysql::runtime_versions().server_version,
-        auth_plugin: AUTH_NATIVE_PASSWORD.to_owned(),
+        auth_plugin: server_plugin.clone(),
     };
     output
         .write_all(
@@ -1158,20 +1256,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     if auth_payload.len() >= 2 {
         let capability = u16::from_le_bytes([auth_payload[0], auth_payload[1]]);
         if u32::from(capability) & CLIENT_PROTOCOL_41 == 0 {
-            write_error(
+            return rejected_login(
                 &mut output,
                 2,
                 tidb_error::mysql::errcode::ErrNotSupportedAuthMode,
                 *b"08004",
                 tidb_error::mysql::errname::ErrNotSupportedAuthMode.raw,
                 false,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
     }
     // Go's `clientConn.handshake`: the common header is parsed first, and a
@@ -1199,20 +1293,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             // malformed packets are 1105/`malform packet error`, while the
             // connection-attribute hard limit retains its explicit text.
             let message = error.client_error_message();
-            write_error(
+            return rejected_login(
                 &mut output,
                 reply_sequence,
                 ER_UNKNOWN_ERROR,
                 *b"HY000",
                 message.as_bytes(),
                 true,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
     };
     let zstd_level = response.zstd_level;
@@ -1240,123 +1330,190 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             .with_verified_client_certificate(socket.has_verified_client_certificate())
             .with_tls_peer(socket.verified_tls_peer()),
         Err(_) => {
-            write_error(
+            return rejected_login(
                 &mut output,
                 reply_sequence,
                 ER_SECURE_TRANSPORT_REQUIRED,
                 *b"HY000",
                 SECURE_TRANSPORT_REQUIRED_MESSAGE,
                 response.capability & CLIENT_PROTOCOL_41 != 0,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
     };
     let capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
         Ok(capabilities) => capabilities,
         Err(_error) => {
-            write_error(
+            return rejected_login(
                 &mut output,
                 reply_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
                 access_denied_message(&response_user, &peer_addr.host(), &response.auth),
                 response.capability & CLIENT_PROTOCOL_41 != 0,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
     };
     let protocol_41 = capabilities & CLIENT_PROTOCOL_41 != 0;
     if !protocol_41 {
-        write_error(
+        return rejected_login(
             &mut output,
             reply_sequence,
             ER_ACCESS_DENIED_ERROR,
             *b"28000",
             access_denied_message(&response_user, &peer_addr.host(), &response.auth),
             protocol_41,
-        )?;
-        return Ok(ConnectionReport {
             connection_id,
-            queries: 0,
-            commands: *commands,
-            exit: ConnectionExit::AuthenticationRejected,
-        });
+            *commands,
+        );
     }
-    // Go `handleAuthPlugin`: a client without plugin support speaks
-    // `mysql_native_password`, and `checkAuthPlugin` (`server/conn.go` line
-    // 939) always permits `tidb_session_token`, skipping the stored user
-    // plugin: the response is the token a migrated session presents.
-    let client_plugin = if capabilities & CLIENT_PLUGIN_AUTH != 0 {
-        String::from_utf8_lossy(response.auth_plugin.as_bytes()).into_owned()
-    } else {
-        AUTH_NATIVE_PASSWORD.to_owned()
-    };
-    let session_token = client_plugin == crate::auth_plugin_registry::AUTH_TIDB_SESSION_TOKEN;
-    // Otherwise the ACCOUNT's `mysql.user.plugin` -- not the plugin the
-    // client offered -- decides what this connection speaks. An account
-    // with no plugin (or none at all) is Go's "assuming MySQL Native
-    // Password".
-    let account_plugin = users
-        .auth_plugin_for(&response_user, &peer_addr.host())
-        .unwrap_or_else(|| AUTH_NATIVE_PASSWORD.to_owned());
-    // Go switches when the server's advertised plugin differs from EITHER
-    // the account's or the client's. This server always advertises
-    // `mysql_native_password`, so that reduces to these two disjuncts.
-    let (auth_response, response_sequence) = if !session_token
-        && capabilities & CLIENT_PLUGIN_AUTH != 0
-        && (account_plugin != AUTH_NATIVE_PASSWORD
-            || (!response.auth_plugin.is_empty()
-                && response.auth_plugin.as_bytes() != AUTH_NATIVE_PASSWORD.as_bytes()))
-    {
-        let request = AuthSwitchRequest::new(&account_plugin, salt.to_vec())
-            .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
-        write_payload(&mut output, reply_sequence, &request.encode_payload())?;
-        reader.set_sequence(reply_sequence + 1);
-        (reader.read_packet()?, reply_sequence + 2)
-    } else {
-        (response.auth, reply_sequence)
-    };
-    // Go's `authSha`/`authSM3` (`server/conn.go` lines 761 and 799), which
-    // are one function twice: TiDB implements NEITHER the cached fast path
-    // NOR the RSA public-key exchange, so it unconditionally answers
-    // `fastAuthFail` and reads the CLEARTEXT password the client then sends
-    // over what it believes is a secure channel. The reply is NUL-trimmed
-    // exactly as Go's `bytes.Trim(data, "\x00")` does.
-    //
-    // An EMPTY response skips the exchange entirely -- Go's own carve-out
-    // for issue 40831, because asking a passwordless client for a full
-    // authentication confuses it.
-    let (auth_response, response_sequence) =
-        if !session_token && plugin_needs_cleartext(&account_plugin) && !auth_response.is_empty() {
-            write_payload(
+    // Go `handleAuthPlugin` -> `checkAuthPlugin` (`server/conn.go:721`,
+    // `:939`). This server registers no extension auth plugin, so Go's
+    // `cc.extensions` is the empty registry.
+    let extensions = crate::auth_plugin_registry::AuthPluginRegistry::default();
+    let plugin_auth = capabilities & CLIENT_PLUGIN_AUTH != 0;
+    let mut client_plugin = String::from_utf8_lossy(response.auth_plugin.as_bytes()).into_owned();
+    let mut auth_response = response.auth.clone();
+    let mut response_sequence = reply_sequence;
+    let new_auth = match check_auth_plugin(
+        &server_plugin,
+        &mut client_plugin,
+        plugin_auth,
+        users,
+        &response_user,
+        &peer_addr,
+    ) {
+        Ok(AuthPluginDecision::Keep) => None,
+        Ok(AuthPluginDecision::Switch(plugin)) => {
+            // Go `authSwitchRequest`.
+            let request =
+                AuthSwitchRequest::new(extensions.client_plugin_name(&plugin), salt.to_vec())
+                    .map_err(|error| MysqlConnectionError::Handshake(error.to_string()))?;
+            write_payload(&mut output, response_sequence, &request.encode_payload())?;
+            reader.set_sequence(response_sequence + 1);
+            let data = reader.read_packet()?;
+            response_sequence += 2;
+            Some(data)
+        }
+        // Go: the peer process's OS user is the `auth_socket` response.
+        Ok(AuthPluginDecision::SocketUser) => match stream_for_watch.peer_os_user() {
+            Ok(user) => Some(user.into_bytes()),
+            Err(error) => {
+                return rejected_login(
+                    &mut output,
+                    response_sequence,
+                    ER_UNKNOWN_ERROR,
+                    *b"HY000",
+                    error.to_string(),
+                    protocol_41,
+                    connection_id,
+                    *commands,
+                )
+            }
+        },
+        Err(AuthPluginRefusal::AccessDenied) => {
+            return rejected_login(
                 &mut output,
                 response_sequence,
-                &[SHA2_FAST_AUTH_COMMAND, SHA2_FAST_AUTH_FAIL],
-            )?;
-            reader.set_sequence(response_sequence + 1);
-            let cleartext = reader.read_packet()?;
-            let start = cleartext
-                .iter()
-                .position(|byte| *byte != 0)
-                .unwrap_or(cleartext.len());
-            let end = cleartext
-                .iter()
-                .rposition(|byte| *byte != 0)
-                .map_or(start, |last| last + 1);
-            (cleartext[start..end].to_vec(), response_sequence + 2)
-        } else {
-            (auth_response, response_sequence)
-        };
+                ER_ACCESS_DENIED_ERROR,
+                *b"28000",
+                access_denied_message(&response_user, &peer_addr.host(), &response.auth),
+                protocol_41,
+                connection_id,
+                *commands,
+            )
+        }
+        Err(AuthPluginRefusal::NotSupportedAuthMode) => {
+            return rejected_login(
+                &mut output,
+                response_sequence,
+                tidb_error::mysql::errcode::ErrNotSupportedAuthMode,
+                *b"08004",
+                tidb_error::mysql::errname::ErrNotSupportedAuthMode
+                    .raw
+                    .to_owned(),
+                protocol_41,
+                connection_id,
+                *commands,
+            )
+        }
+    };
+    if let Some(data) = new_auth.filter(|data| !data.is_empty()) {
+        auth_response = data;
+    }
+    if !plugin_auth {
+        // MySQL 5.1 and older clients don't support authentication plugins.
+        client_plugin = tidb_mysql::consts::AuthNativePassword.to_owned();
+    }
+    // Go `readOptionalSSLRequestAndHandshakeResponse`: the response plugin's
+    // own exchange. `authSha`/`authSM3` implement neither the cached fast
+    // path nor the RSA key exchange: they always answer `fastAuthFail` and
+    // read the cleartext, NUL-trimmed; an empty response skips the exchange
+    // (issue 40831).
+    match client_plugin.as_str() {
+        tidb_mysql::consts::AuthCachingSha2Password | tidb_mysql::consts::AuthTiDBSM3Password => {
+            if !auth_response.is_empty() {
+                write_payload(
+                    &mut output,
+                    response_sequence,
+                    &[SHA2_FAST_AUTH_COMMAND, SHA2_FAST_AUTH_FAIL],
+                )?;
+                reader.set_sequence(response_sequence + 1);
+                let cleartext = reader.read_packet()?;
+                let start = cleartext
+                    .iter()
+                    .position(|byte| *byte != 0)
+                    .unwrap_or(cleartext.len());
+                let end = cleartext
+                    .iter()
+                    .rposition(|byte| *byte != 0)
+                    .map_or(start, |last| last + 1);
+                auth_response = cleartext[start..end].to_vec();
+                response_sequence += 2;
+            }
+        }
+        tidb_mysql::consts::AuthNativePassword
+        | tidb_mysql::consts::AuthSocket
+        | tidb_mysql::consts::AuthTiDBSessionToken
+        | tidb_mysql::consts::AuthTiDBAuthToken
+        | tidb_mysql::consts::AuthMySQLClearPassword
+        | tidb_mysql::consts::AuthLDAPSASL
+        | tidb_mysql::consts::AuthLDAPSimple => {}
+        other if extensions.get(other).is_some() => {}
+        _ => {
+            return rejected_login(
+                &mut output,
+                response_sequence,
+                ER_UNKNOWN_ERROR,
+                *b"HY000",
+                "Unknown auth plugin".to_owned(),
+                protocol_41,
+                connection_id,
+                *commands,
+            )
+        }
+    }
+    // Go `openSessionAndDoAuth`: `auth_socket` is refused off a Unix socket.
+    if !peer_addr.is_unix_socket() && client_plugin == tidb_mysql::consts::AuthSocket {
+        let error = tidb_error::server_errors::ERR_ACCESS_DENIED_NO_PASSWORD
+            .generate_with_stack_by_args(&[
+                tidb_error::mysql::FormatArg::from(response_user.as_str()),
+                tidb_error::mysql::FormatArg::from(peer_addr.host()),
+            ]);
+        return rejected_login(
+            &mut output,
+            response_sequence,
+            tidb_error::tidb::errcode::ErrAccessDeniedNoPassword,
+            *b"28000",
+            error.message().to_owned(),
+            protocol_41,
+            connection_id,
+            *commands,
+        );
+    }
     // The process-wide transport rule already ran before plugin selection.
     // This call consumes that proof and applies only the matched account's
     // own REQUIRE clause plus ordinary/bypassed identity authentication.
@@ -1373,73 +1530,57 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // Go refuses this one BEFORE authenticating, with its own errno,
         // because it is a property of the connection and not of the account.
         Err(AuthenticationFailure::SecureTransportRequired) => {
-            write_error(
+            return rejected_login(
                 &mut output,
                 response_sequence,
                 ER_SECURE_TRANSPORT_REQUIRED,
                 *b"HY000",
                 SECURE_TRANSPORT_REQUIRED_MESSAGE,
                 protocol_41,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
         Err(AuthenticationFailure::AccountLocked) => {
-            write_error(
+            return rejected_login(
                 &mut output,
                 response_sequence,
                 ER_ACCOUNT_HAS_BEEN_LOCKED,
                 *b"HY000",
                 account_locked_message(&response_user, &peer_addr.host()),
                 protocol_41,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
         // Go's 3955: the account auto-locked itself after too many
         // consecutive wrong passwords, and the message names the lock time
         // remaining.
         Err(AuthenticationFailure::AutoLocked(lockout)) => {
-            write_error(
+            return rejected_login(
                 &mut output,
                 response_sequence,
                 ER_USER_ACCESS_DENIED_BLOCKED_BY_PASSWORD_LOCK,
                 *b"HY000",
                 lockout.message(),
                 protocol_41,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
         // Go's 1862: the password verified but has expired, and the server
         // is not admitting expired logins into a sandbox session.
         Err(AuthenticationFailure::PasswordExpired) => {
-            write_error(
+            return rejected_login(
                 &mut output,
                 response_sequence,
                 ER_MUST_CHANGE_PASSWORD_LOGIN,
                 *b"HY000",
                 tidb_session::privilege::PasswordExpiredLogin.message(),
                 protocol_41,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
         Err(AuthenticationFailure::Storage(error)) => {
             if !error.is_result_undetermined() {
@@ -1460,20 +1601,16 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             });
         }
         Err(AuthenticationFailure::AccessDenied) => {
-            write_error(
+            return rejected_login(
                 &mut output,
                 response_sequence,
                 ER_ACCESS_DENIED_ERROR,
                 *b"28000",
                 access_denied_message(&response_user, &peer_addr.host(), &auth_response),
                 protocol_41,
-            )?;
-            return Ok(ConnectionReport {
                 connection_id,
-                queries: 0,
-                commands: *commands,
-                exit: ConnectionExit::AuthenticationRejected,
-            });
+                *commands,
+            );
         }
     };
     // The KILL handle is bound to this connection's own socket, so a `KILL`
@@ -3305,5 +3442,225 @@ mod connection_alive_tests {
         let mut byte = [0_u8; 1];
         assert_eq!(std::io::Read::read(&mut &probe.socket, &mut byte).unwrap(), 1);
         assert_eq!(&byte, b"x");
+    }
+}
+
+#[cfg(test)]
+mod check_auth_plugin_tests {
+    use tidb_session::domain::client_socket::PeerAddress;
+    use tidb_session::privilege::{
+        encode_password_for_plugin, PluginCredential, PrivilegeRegistry,
+    };
+
+    use super::{check_auth_plugin, AuthPluginDecision, AuthPluginRefusal};
+    use crate::auth_plugin_registry::AuthPluginRegistry;
+    use crate::configured_user_store::ConfiguredUserStore;
+
+    fn tcp() -> PeerAddress {
+        PeerAddress::Tcp("127.0.0.1:4000".parse().expect("address"))
+    }
+
+    fn store() -> ConfiguredUserStore {
+        // The bootstrapped table holds the passwordless `root`@`%`.
+        let accounts = PrivilegeRegistry::default();
+        let sha2 = encode_password_for_plugin("caching_sha2_password", &PluginCredential::By("p"))
+            .expect("hash");
+        assert!(accounts.create_user_with_plugin("sha2", "%", &sha2, "caching_sha2_password"));
+        assert!(accounts.create_user_with_plugin(
+            "ldap",
+            "%",
+            "uid=ldap,dc=example,dc=com",
+            "authentication_ldap_simple"
+        ));
+        assert!(accounts.create_user_with_plugin("tok", "%", "", "tidb_auth_token"));
+        assert!(accounts.create_user_with_plugin("sock", "%", "", "auth_socket"));
+        ConfiguredUserStore::from_accounts(accounts)
+    }
+
+    /// Runs Go's `checkAuthPlugin` and returns the decision with the
+    /// response plugin it leaves behind.
+    fn check(
+        users: &ConfiguredUserStore,
+        server_plugin: &str,
+        client_plugin: &str,
+        plugin_auth: bool,
+        user: &str,
+        peer: PeerAddress,
+    ) -> (Result<AuthPluginDecision, AuthPluginRefusal>, String) {
+        let mut client_plugin = client_plugin.to_owned();
+        let decision = check_auth_plugin(
+            server_plugin,
+            &mut client_plugin,
+            plugin_auth,
+            users,
+            user,
+            &peer,
+        );
+        (decision, client_plugin)
+    }
+
+    /// Go `TestAuthPlugin2` (`server/conn_test.go:2040`): an account with no
+    /// plugin to switch to (root, no password) is switched to native password
+    /// when the client named none.
+    #[test]
+    fn a_passwordless_account_switches_to_native_password() {
+        let users = store();
+        let (decision, plugin) = check(
+            &users,
+            "mysql_native_password",
+            "",
+            true,
+            "root",
+            PeerAddress::Unix,
+        );
+        assert!(
+            matches!(decision, Ok(AuthPluginDecision::Switch(p)) if p == "mysql_native_password")
+        );
+        assert_eq!(plugin, "mysql_native_password");
+        // The client already speaks native password: nothing to switch.
+        let (decision, _) = check(
+            &users,
+            "caching_sha2_password",
+            "mysql_native_password",
+            true,
+            "root",
+            tcp(),
+        );
+        assert!(matches!(decision, Ok(AuthPluginDecision::Keep)));
+    }
+
+    /// Go `TestLDAPAuthSwitch` (`server/conn_test.go:2501`): an LDAP simple
+    /// account is switched to its plugin, which the client is asked for as
+    /// `mysql_clear_password`.
+    #[test]
+    fn an_ldap_account_switches_to_cleartext() {
+        let users = store();
+        let (decision, plugin) = check(
+            &users,
+            "mysql_native_password",
+            "",
+            true,
+            "ldap",
+            PeerAddress::Unix,
+        );
+        assert!(
+            matches!(&decision, Ok(AuthPluginDecision::Switch(p)) if p == "authentication_ldap_simple")
+        );
+        assert_eq!(plugin, "authentication_ldap_simple");
+        let extensions = AuthPluginRegistry::default();
+        assert_eq!(
+            extensions.client_plugin_name(&plugin),
+            "mysql_clear_password"
+        );
+        assert_eq!(
+            extensions.client_plugin_name("authentication_ldap_sasl"),
+            "authentication_ldap_sasl_client"
+        );
+    }
+
+    #[test]
+    fn the_account_plugin_selects_the_switch() {
+        let users = store();
+        let (decision, plugin) = check(
+            &users,
+            "mysql_native_password",
+            "mysql_native_password",
+            true,
+            "sha2",
+            tcp(),
+        );
+        assert!(
+            matches!(decision, Ok(AuthPluginDecision::Switch(p)) if p == "caching_sha2_password")
+        );
+        assert_eq!(plugin, "caching_sha2_password");
+        // Server, client and account agree.
+        let (decision, _) = check(
+            &users,
+            "caching_sha2_password",
+            "caching_sha2_password",
+            true,
+            "sha2",
+            tcp(),
+        );
+        assert!(matches!(decision, Ok(AuthPluginDecision::Keep)));
+        // `tidb_auth_token` is asked for in cleartext.
+        let (decision, plugin) = check(
+            &users,
+            "mysql_native_password",
+            "mysql_native_password",
+            true,
+            "tok",
+            tcp(),
+        );
+        assert!(
+            matches!(decision, Ok(AuthPluginDecision::Switch(p)) if p == "mysql_clear_password")
+        );
+        assert_eq!(plugin, "mysql_clear_password");
+    }
+
+    /// MySQL 5.1 and older clients cannot switch: native password still
+    /// works, any other account plugin is `ErrNotSupportedAuthMode`.
+    #[test]
+    fn a_client_without_plugin_auth_cannot_switch() {
+        let users = store();
+        let (decision, _) = check(&users, "mysql_native_password", "", false, "root", tcp());
+        assert!(matches!(decision, Ok(AuthPluginDecision::Keep)));
+        let (decision, _) = check(&users, "mysql_native_password", "", false, "sha2", tcp());
+        assert!(matches!(
+            decision,
+            Err(AuthPluginRefusal::NotSupportedAuthMode)
+        ));
+    }
+
+    /// No account matches: access denied before any exchange; a session token
+    /// is always permitted and verified later.
+    #[test]
+    fn an_unknown_user_is_refused_unless_it_presents_a_session_token() {
+        let users = store();
+        let (decision, _) = check(
+            &users,
+            "mysql_native_password",
+            "mysql_native_password",
+            true,
+            "nobody",
+            tcp(),
+        );
+        assert!(matches!(decision, Err(AuthPluginRefusal::AccessDenied)));
+        let (decision, plugin) = check(
+            &users,
+            "mysql_native_password",
+            "tidb_session_token",
+            true,
+            "nobody",
+            tcp(),
+        );
+        assert!(matches!(decision, Ok(AuthPluginDecision::Keep)));
+        assert_eq!(plugin, "tidb_session_token");
+    }
+
+    /// `auth_socket` answers with the peer's OS user, and only on a Unix
+    /// socket.
+    #[test]
+    fn auth_socket_needs_a_unix_socket() {
+        let users = store();
+        let (decision, _) = check(
+            &users,
+            "mysql_native_password",
+            "mysql_native_password",
+            true,
+            "sock",
+            tcp(),
+        );
+        assert!(matches!(decision, Err(AuthPluginRefusal::AccessDenied)));
+        let (decision, plugin) = check(
+            &users,
+            "mysql_native_password",
+            "mysql_native_password",
+            true,
+            "sock",
+            PeerAddress::Unix,
+        );
+        assert!(matches!(decision, Ok(AuthPluginDecision::SocketUser)));
+        assert_eq!(plugin, "auth_socket");
     }
 }

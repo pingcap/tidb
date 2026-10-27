@@ -88,7 +88,6 @@ pub use auth_identity::{
 };
 pub use auth_plugin_registry::{
     AuthPluginAdmission, AuthPluginDescriptor, AuthPluginRegistry, AuthPluginRegistryError,
-    ClientPluginSelection, ClientPluginSelectionRequest, DEFAULT_AUTH_PLUGINS,
 };
 pub use cluster_privileges::{registry_from_cluster, LoadedRegistry, SkippedGrant};
 use cluster_boot::run_cluster_session_node_with_spill;
@@ -102,8 +101,7 @@ pub use handshake::{
     negotiate_capabilities, parse_response, parse_response_body,
     parse_response_body_into_with_attrs_state, parse_response_body_with_attrs_state,
     parse_response_header, parse_response_header_into, parse_response_with_attrs_state,
-    parse_response_with_global_sysvars, AuthHandshake, AuthHandshakePacket, AuthHandshakePhase,
-    AuthHandshakeRequest, AuthPluginAction, ConnectionAttrsState, HandshakeError,
+    parse_response_with_global_sysvars, ConnectionAttrsState, HandshakeError,
     HandshakeResponseHeader, InitialHandshake, DEFAULT_CONNECT_ATTRS_SIZE,
 };
 pub use handshake_response::{HandshakeResponse41, WireString};

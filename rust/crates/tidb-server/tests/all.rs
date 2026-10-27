@@ -18,6 +18,7 @@
 mod auth_exchange_source;
 mod auth_identity_source;
 mod auth_plugin_registry_source;
+mod auth_socket_login_source;
 mod concurrent_mysql_sessions_source;
 mod configured_user_store_source;
 mod distsql_streaming_response_source;

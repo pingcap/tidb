@@ -133,7 +133,9 @@ fn skip_grant_table_bypasses_rows_and_passwords_but_not_secure_transport() {
     assert!(identity.privilege_bypassed());
     assert!(!identity.in_sandbox_mode());
     assert_eq!(
-        store.auth_plugin_for("unknown", "192.0.2.7").as_deref(),
+        store
+            .match_identity_plugin("unknown", "192.0.2.7")
+            .as_deref(),
         Some("mysql_native_password")
     );
 }
@@ -561,14 +563,17 @@ fn default_password_lifetime_ages_out_a_password_expire_default_account() {
 /// ```
 ///
 /// Three of those five carry an EMPTY `authentication_string` while being
-/// anything but passwordless, and none is locked. Go denies each over a
-/// network connection: `server/conn.go` around line 988 refuses
-/// `auth_socket` off a Unix socket outright, and
+/// anything but passwordless, and none is locked.
 /// `privileges.ConnectionVerification` (`privileges.go` around lines 670,
-/// 690 and 699) denies an empty token and requires an LDAP bind. All three
-/// report `ErrAccessDenied` (1045), which is
-/// [`AuthenticationFailure::AccessDenied`] here -- deliberately the same
-/// answer a wrong password gets.
+/// 690 and 699) denies an empty token and requires an LDAP bind, reporting
+/// `ErrAccessDenied` (1045), which is [`AuthenticationFailure::AccessDenied`]
+/// here -- deliberately the same answer a wrong password gets.
+///
+/// `auth_socket` is the connection's business: `checkAuthPlugin`
+/// (`server/conn.go:988`) refuses it off a Unix socket before any exchange,
+/// and on one the response is the peer's OS user, which
+/// `ConnectionVerification` (`privileges.go:703`) accepts when it is the
+/// account's user or its authentication string.
 #[test]
 fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
     let file = AuthFile::new(&format!("bob\t%\tmysql_native_password\t{ABC_HASH}\n"));
@@ -594,7 +599,6 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
     // The three plugins whose handshake this tier cannot run. Each row is
     // exactly what the capture above shows a real TiDB stores.
     for plugin in [
-        "auth_socket",
         "tidb_auth_token",
         "authentication_ldap_simple",
         "authentication_ldap_sasl",
@@ -607,6 +611,36 @@ fn a_non_native_plugin_is_refused_rather_than_treated_as_passwordless() {
                 "{plugin} must never authenticate over a network connection"
             );
         }
+    }
+
+    // `auth_socket`: only the peer's OS user named as the account's user, or
+    // as its authentication string, passes -- which for an empty string Go
+    // compares as is (the wire never answers with an empty OS user).
+    assert!(accounts.create_user_with_plugin("sock", "%", "", "auth_socket"));
+    assert!(accounts.create_user_with_plugin("mapped", "%", "osuser", "auth_socket"));
+    for (user, response) in [
+        ("sock", &right[..]),
+        ("mapped", b"other"),
+        ("mapped", b""),
+    ] {
+        assert_eq!(
+            store.authenticate_native(user, "localhost", &SOURCE_SALT, response),
+            Err(AuthenticationFailure::AccessDenied),
+            "{user} must not log in as OS user {response:?}"
+        );
+    }
+    for (user, response) in [
+        ("sock", &b"sock"[..]),
+        ("sock", b""),
+        ("mapped", b"mapped"),
+        ("mapped", b"osuser"),
+    ] {
+        assert!(
+            store
+                .authenticate_native(user, "localhost", &SOURCE_SALT, response)
+                .is_ok(),
+            "{user} logs in as OS user {response:?}"
+        );
     }
 
     // A malformed stored hashing credential is denied, while an empty
@@ -810,4 +844,26 @@ fn admission_policy_batch_secondary_sm3_and_non_password_plugins() {
             )
             .is_err());
     }
+}
+
+/// Go `ConnectionVerification` (`privileges.go:761`) checks
+/// `account_locked` only after the password arms: a locked account answers
+/// 3118 for its right password, and a wrong one is the ordinary 1045 that
+/// counts toward `FAILED_LOGIN_ATTEMPTS`.
+#[test]
+fn a_locked_account_compares_the_password_first() {
+    let store =
+        ConfiguredUserStore::parse(&format!("alice\t%\tmysql_native_password\t{ABC_HASH}\n"))
+            .expect("catalog");
+    assert!(store.accounts().set_locked("alice", "%", true));
+    let right = scramble(b"abc", &SOURCE_SALT);
+    let wrong = scramble(b"abd", &SOURCE_SALT);
+    assert_eq!(
+        store.authenticate_native("alice", "127.0.0.1", &SOURCE_SALT, &right),
+        Err(AuthenticationFailure::AccountLocked)
+    );
+    assert_eq!(
+        store.authenticate_native("alice", "127.0.0.1", &SOURCE_SALT, &wrong),
+        Err(AuthenticationFailure::AccessDenied)
+    );
 }

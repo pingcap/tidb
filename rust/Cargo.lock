@@ -4463,6 +4463,7 @@ dependencies = [
  "ctrlc",
  "fail",
  "futures",
+ "nix",
  "openssl",
  "prometheus 0.14.0",
  "prost 0.14.4",

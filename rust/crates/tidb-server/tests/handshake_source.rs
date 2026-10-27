@@ -18,10 +18,9 @@ use std::io::Cursor;
 
 use tidb_protocol::PacketReader;
 use tidb_server::handshake::{
-    negotiate_capabilities, parse_response, parse_response_header, AuthHandshake,
-    AuthHandshakePacket, AuthHandshakePhase, AuthPluginAction, AUTH_NATIVE_PASSWORD,
-    CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41,
-    CLIENT_SECURE_CONNECTION, CLIENT_SSL, DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
+    negotiate_capabilities, parse_response, parse_response_header, CLIENT_CONNECT_ATTRS,
+    CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
+    CLIENT_SSL, DEFAULT_COLLATION_ID, SERVER_STATUS_AUTOCOMMIT,
 };
 use tidb_server::handshake::{HandshakeError, InitialHandshake};
 
@@ -171,124 +170,4 @@ fn response_parser_reports_malformed_lengths_without_panicking() {
     malformed_attrs.extend_from_slice(b"root\0\0");
     malformed_attrs.extend_from_slice(&[0xfc, 0xff]);
     assert!(parse_response(&malformed_attrs).is_err());
-}
-
-#[test]
-fn auth_handshake_preserves_raw_response_and_defers_identity_plugin_selection() {
-    // Source: pkg/server/conn.go:593-714, 721-755, 939-1040.  Parsing and
-    // capability intersection are separate from user lookup/password
-    // verification; the raw auth response remains available to that owner.
-    let capability = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH;
-    let mut packet = response_header(capability, 45);
-    packet.extend_from_slice(b"root\0");
-    packet.push(3);
-    packet.extend_from_slice(b"abc");
-    packet.extend_from_slice(b"mysql_native_password\0");
-    let raw_packet = packet.clone();
-
-    let mut handshake = AuthHandshake::new(capability, AUTH_NATIVE_PASSWORD);
-    let request = match handshake.receive_packet(&packet).expect("auth response") {
-        AuthHandshakePacket::Authentication(request) => request,
-        AuthHandshakePacket::TlsRequest { .. } => panic!("full response became TLS request"),
-    };
-    assert_eq!(request.raw_packet, raw_packet);
-    assert_eq!(request.response.auth, b"abc");
-    assert_eq!(request.negotiated_capability, capability);
-    assert_eq!(
-        handshake.phase(),
-        &AuthHandshakePhase::AuthenticationPending(request.clone())
-    );
-    assert_eq!(
-        handshake
-            .auth_plugin_action(None)
-            .expect("matching advertised plugin"),
-        AuthPluginAction::UseClientPlugin
-    );
-    assert_eq!(
-        handshake
-            .auth_plugin_action(Some("caching_sha2_password"))
-            .expect("identity plugin switch"),
-        AuthPluginAction::RequestSwitch {
-            plugin: "caching_sha2_password".to_owned()
-        }
-    );
-}
-
-#[test]
-fn auth_handshake_models_legacy_plugin_fallback_without_authentication() {
-    // Source: pkg/server/conn.go:749-755 and 1007-1040.  A legacy client
-    // falls back only to mysql_native_password; a configured non-native
-    // plugin is an explicit unsupported boundary, not a fake success.
-    let capability = CLIENT_PROTOCOL_41 | CLIENT_SECURE_CONNECTION;
-    let mut packet = response_header(capability, 0);
-    packet.extend_from_slice(b"root\0");
-    packet.push(0);
-
-    let mut handshake = AuthHandshake::new(capability, AUTH_NATIVE_PASSWORD);
-    handshake.receive_packet(&packet).expect("legacy response");
-    assert_eq!(
-        handshake.auth_plugin_action(None).expect("native fallback"),
-        AuthPluginAction::NativePasswordFallback
-    );
-    assert_eq!(
-        handshake
-            .auth_plugin_action(Some(AUTH_NATIVE_PASSWORD))
-            .expect("native fallback"),
-        AuthPluginAction::NativePasswordFallback
-    );
-    assert_eq!(
-        handshake
-            .auth_plugin_action(Some("caching_sha2_password"))
-            .expect("legacy rejection"),
-        AuthPluginAction::RejectLegacyClient {
-            required_plugin: "caching_sha2_password".to_owned()
-        }
-    );
-}
-
-#[test]
-fn auth_handshake_requires_transport_owner_for_ssl_request() {
-    // Source: pkg/server/conn.go:627-655.  The parser recognizes an exact
-    // SSLRequest and exposes the bytes; it does not pretend to perform TLS.
-    let capability = CLIENT_PROTOCOL_41 | CLIENT_SSL;
-    let packet = response_header(capability, 45);
-    let mut handshake = AuthHandshake::new(capability, AUTH_NATIVE_PASSWORD);
-
-    let tls = match handshake.receive_packet(&packet).expect("SSLRequest") {
-        AuthHandshakePacket::TlsRequest {
-            negotiated_capability,
-            collation,
-            raw_packet,
-        } => {
-            assert_eq!(negotiated_capability, capability);
-            assert_eq!(collation, 45);
-            assert_eq!(raw_packet, packet);
-            raw_packet
-        }
-        AuthHandshakePacket::Authentication(_) => panic!("SSLRequest parsed as auth response"),
-    };
-    assert_eq!(
-        handshake.phase(),
-        &AuthHandshakePhase::TlsRequested {
-            negotiated_capability: capability,
-            collation: 45,
-        }
-    );
-    assert!(matches!(
-        handshake.receive_packet(&tls),
-        Err(tidb_server::handshake::HandshakeError::InvalidState(_))
-    ));
-    handshake
-        .tls_established()
-        .expect("transport TLS transition");
-
-    let response_capability = capability | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH;
-    let mut response = response_header(response_capability, 45);
-    response.extend_from_slice(b"root\0");
-    response.push(0);
-    response.extend_from_slice(b"mysql_native_password\0");
-    assert!(matches!(
-        handshake.receive_packet(&response),
-        Ok(AuthHandshakePacket::Authentication(_))
-    ));
 }

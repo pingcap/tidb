@@ -54,88 +54,76 @@ pub fn is_create_user_plugin(plugin: &str) -> bool {
     CREATE_USER_PLUGINS.contains(&plugin)
 }
 
-/// How a login over a NETWORK connection may be verified for an account
-/// whose `mysql.user.plugin` is `plugin`.
-///
-/// Go picks the wire plugin from the account row (`server/conn.go`'s
-/// `checkAuthPlugin`, around line 1027, auth-switches the client to
-/// `userplugin`) and then dispatches on that same row in
-/// `privileges.ConnectionVerification` (`privileges.go` around line 666).
-/// This tier's wire front end always auth-switches to
-/// `mysql_native_password`, so the account's plugin cannot select a
-/// handshake -- but it MUST still select the verifier, because most of
-/// Go's plugin arms accept credentials a native scramble can never carry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoginPluginVerification {
-    /// Compare the client's `mysql_native_password` scramble against the
-    /// stored native hash, and accept an empty response for an empty
-    /// stored string. Go's `mysql.AuthNativePassword` arm.
-    NativeHash,
-    /// Re-derive the stored SHA-crypt envelope from the CLEARTEXT the client
-    /// sent and compare -- Go's `caching_sha2_password` and
-    /// `tidb_sm3_password` arms, which share one
-    /// [`check_hashing_password`] driven by SHA-256 or SM3.
-    ///
-    /// The payload is the plugin name, because the two plugins differ only
-    /// in that digest.
-    HashingPlugin(&'static str),
-    /// Only a passwordless login -- empty stored string AND empty client
-    /// response -- can succeed.
-    ///
-    /// Go reaches its password arms only through
-    /// `else if len(pwd) > 0 || len(authentication) > 0`, so an account with
-    /// an empty `authentication_string` that receives an empty response
-    /// authenticates whatever its plugin is; this arm reproduces exactly
-    /// that, and denies the rest because Go's `default` arm -- an
-    /// authentication plugin it does not know -- logs "unknown
-    /// authentication plugin" and denies.
-    PasswordlessOnly,
-    /// No network login can succeed, whatever the client sends.
-    ///
-    /// `auth_socket` is refused outright off a Unix socket
-    /// (`server/conn.go` around line 988, and again at line 878);
-    /// `tidb_auth_token` needs a JWT this tier has no JWKS for
-    /// (`privileges.go` around line 670, which also denies an empty token);
-    /// and both LDAP plugins need a bind against a directory server
-    /// (`privileges.go` around lines 690 and 699). All three report Go's
-    /// generic `ErrAccessDenied` (1045).
-    Deny,
-}
-
-/// Selects the verifier Go's `ConnectionVerification` would use for an
-/// account whose `mysql.user.plugin` column holds `plugin`.
-///
-/// An empty `plugin` is Go's "no user plugin set" case (`server/conn.go`
-/// around line 1008), which assumes `mysql_native_password`.
+/// Go `UserPrivileges.isValidHash` for the built-in plugins (this server
+/// registers no extension auth plugin): whether an account's stored
+/// `authentication_string` has its plugin's hash shape. An empty string is
+/// always valid; a plugin Go does not know is never valid with a string.
 #[must_use]
-pub fn login_plugin_verification(plugin: &str) -> LoginPluginVerification {
-    if plugin.is_empty() || plugin == AuthNativePassword {
-        LoginPluginVerification::NativeHash
+pub fn is_valid_hash(plugin: &str, authentication_string: &str) -> bool {
+    if authentication_string.is_empty() {
+        return true;
+    }
+    if plugin == AuthNativePassword {
+        authentication_string.len() == PWDHashLen as usize + 1
     } else if plugin == AuthCachingSha2Password {
-        LoginPluginVerification::HashingPlugin(AuthCachingSha2Password)
+        authentication_string.len() == SHAPWDHashLen as usize
     } else if plugin == AuthTiDBSM3Password {
-        LoginPluginVerification::HashingPlugin(AuthTiDBSM3Password)
-    } else if plugin == AuthSocket
-        || plugin == AuthTiDBAuthToken
-        || plugin == AuthLDAPSimple
-        || plugin == AuthLDAPSASL
-    {
-        LoginPluginVerification::Deny
+        authentication_string.len() == SM3PWDHashLen as usize
     } else {
-        // Any plugin name this tier does not know -- Go's `default` arm.
-        LoginPluginVerification::PasswordlessOnly
+        plugin == AuthSocket
+            || plugin == AuthTiDBAuthToken
+            || plugin == AuthLDAPSimple
+            || plugin == AuthLDAPSASL
     }
 }
 
-/// Whether an account on `plugin` needs the CLEARTEXT password rather than a
-/// `mysql_native_password` scramble, which is what makes the wire front end
-/// run Go's `authSha`/`authSM3` full-authentication exchange for it.
+/// Go `UserPrivileges.GetAuthPluginForConnection` after its skip-grant arm:
+/// the plugin `checkAuthPlugin` switches the connection to. LDAP and
+/// `tidb_auth_token` keep theirs; an account with no authentication string
+/// has none (a native-compatible empty password), except `auth_socket`, whose
+/// empty string means the OS user maps one-to-one; an invalid hash is Go's
+/// error, which `checkAuthPlugin` only logs, so it has none either.
 #[must_use]
-pub fn plugin_needs_cleartext(plugin: &str) -> bool {
-    matches!(
-        login_plugin_verification(plugin),
-        LoginPluginVerification::HashingPlugin(_)
-    )
+pub fn auth_plugin_for_connection<'a>(plugin: &'a str, authentication_string: &str) -> &'a str {
+    if plugin == AuthTiDBAuthToken || plugin == AuthLDAPSASL || plugin == AuthLDAPSimple {
+        return plugin;
+    }
+    if authentication_string.is_empty() && plugin != AuthSocket {
+        return "";
+    }
+    if is_valid_hash(plugin, authentication_string) {
+        plugin
+    } else {
+        ""
+    }
+}
+
+/// Go `checkPasswordForPlugin` (`privileges.go:613`): whether the client's
+/// `authentication` matches a password plugin's `stored` hash -- a native
+/// scramble against the stage-two hash, or the cleartext re-hashed for
+/// `caching_sha2_password` / `tidb_sm3_password`. An empty stored hash never
+/// matches; one that does not decode is the error.
+pub fn check_password_for_plugin(
+    plugin: &str,
+    stored: &str,
+    salt: &[u8],
+    authentication: &[u8],
+) -> Result<bool, tidb_parser::auth::AuthError> {
+    if stored.is_empty() {
+        return Ok(false);
+    }
+    if plugin == AuthNativePassword {
+        let hash = tidb_parser::auth::decode_password(stored)?;
+        Ok(tidb_parser::auth::check_scrambled_password(
+            salt,
+            &hash,
+            authentication,
+        ))
+    } else if plugin == AuthCachingSha2Password || plugin == AuthTiDBSM3Password {
+        tidb_parser::auth::check_hashing_password_bytes(stored.as_bytes(), authentication, plugin)
+    } else {
+        Ok(false)
+    }
 }
 
 /// One account specification's `IDENTIFIED WITH <plugin> [BY '<password>' |

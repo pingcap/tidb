@@ -1148,7 +1148,7 @@ fn a_caching_sha2_password_account_creates_and_then_logs_in() {
 /// rejects the NEXT login with a distinct errno -- 3118, not the generic
 /// 1045 a bad password or unknown user gets -- matching Go's
 /// `pkg/privilege/privileges.ConnectionVerification`, which checks
-/// `record.AccountLocked` before ever comparing the password
+/// `record.AccountLocked` once the password has verified
 /// (`mysql.ErrAccountHasBeenLocked`: `"Access denied for user '%s'@'%s'.
 /// Account is locked."`). `ACCOUNT UNLOCK` restores the same login
 /// immediately, over the same live registry a new connection reads.

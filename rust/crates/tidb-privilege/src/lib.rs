@@ -121,17 +121,9 @@ struct UserRecord {
     is_role: bool,
     /// Go's `mysql.user.plugin`: the account's configured authentication
     /// plugin, defaulting to `mysql_native_password` when `CREATE USER`
-    /// wrote no `IDENTIFIED WITH` clause. An account may be created and
-    /// shown with any plugin `IDENTIFIED WITH` accepts (see
-    /// `plugin::CREATE_USER_PLUGINS`), and this column SELECTS THE LOGIN
-    /// VERIFIER exactly as Go's does -- see [`login_plugin_verification`],
-    /// which the wire front end's login path
-    /// (`ConfiguredUserStore::authenticate_native`) consults before it
-    /// compares anything. This matters because the plugins whose real
-    /// handshake this tier cannot speak (`auth_socket`, `tidb_auth_token`,
-    /// both LDAP forms) all store an EMPTY `auth_string`, so verifying them
-    /// the native way would admit them with an empty password; they are
-    /// refused instead, which is also Go's answer over TCP.
+    /// wrote no `IDENTIFIED WITH` clause or the stored column is empty. It
+    /// selects both the plugin `checkAuthPlugin` switches the connection to
+    /// and `ConnectionVerification`'s verifier.
     plugin: String,
     /// Go's `mysql.user.user_attributes -> '$.Password_locking'`: the
     /// `FAILED_LOGIN_ATTEMPTS`/`PASSWORD_LOCK_TIME` policy AND the runtime

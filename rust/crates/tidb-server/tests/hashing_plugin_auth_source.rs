@@ -296,24 +296,39 @@ fn the_two_hashing_plugins_do_not_accept_each_other_s_hashes() {
     }
 }
 
-/// Go's issue-40831 carve-out: a PASSWORDLESS hashing account gets no
-/// `fastAuthFail` at all, because the exchange makes no sense without a
-/// password and confuses real clients. The login succeeds directly.
+/// Go `GetAuthPluginForConnection`: a hashing account with no
+/// `authentication_string` has no plugin to switch to, so a native client
+/// logs in with its empty response directly.
 #[test]
-fn a_passwordless_hashing_account_skips_the_full_auth_exchange() {
+fn a_passwordless_hashing_account_needs_no_switch() {
     let (address, factory, worker) = serve(store_with("bare", CACHING_SHA2, None));
     let mut wire = open(address, "bare", NATIVE, b"");
+    wire.reader.set_sequence(2);
+    assert_eq!(
+        wire.reader.read_packet().unwrap()[0],
+        0,
+        "the empty response must reach the OK packet, with no auth switch",
+    );
+    write_packet(&mut wire.client, 0, &[COM_QUIT]);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+    assert_eq!(factory.contexts.lock().unwrap().len(), 1);
+}
+
+/// Go's issue-40831 carve-out: an EMPTY response gets no `fastAuthFail` at
+/// all, because the full exchange makes no sense without a password and
+/// confuses real clients; the account's password then refuses it.
+#[test]
+fn an_empty_hashing_response_skips_the_full_auth_exchange() {
+    let (address, factory, worker) = serve(store_with("pw", CACHING_SHA2, Some("secret")));
+    let mut wire = open(address, "pw", NATIVE, b"");
     let switch = AuthSwitchRequest::parse_payload(&wire.reader.read_packet().unwrap()).unwrap();
     assert_eq!(switch.client_plugin, CACHING_SHA2);
     // An empty answer to the switch: no password.
     write_packet(&mut wire.client, 3, b"");
     wire.reader.set_sequence(4);
-    assert_eq!(
-        wire.reader.read_packet().unwrap()[0],
-        0,
-        "an empty response must reach the OK packet, never a fastAuthFail",
-    );
-    write_packet(&mut wire.client, 0, &[COM_QUIT]);
-    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
-    assert_eq!(factory.contexts.lock().unwrap().len(), 1);
+    let reply = wire.reader.read_packet().unwrap();
+    assert_eq!(reply[0], 0xff, "never a fastAuthFail: {reply:?}");
+    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1045);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::AuthenticationRejected);
+    assert!(factory.contexts.lock().unwrap().is_empty());
 }
