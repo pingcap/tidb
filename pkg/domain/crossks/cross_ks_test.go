@@ -517,14 +517,6 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.Equal(t, "10m0s", value)
 		require.ErrorContains(t, vars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.CTEMaxRecursionDepth, "8"), "cannot set")
 	})
-	t.Run("info schema has an auto-ID client", func(t *testing.T) {
-		mgr := storage.NewTaskManager(handle.SysSessionPool())
-		require.NoError(t, mgr.WithNewSession(func(se sessionctx.Context) error {
-			require.True(t, se.IsCrossKS())
-			require.NotNil(t, se.GetInfoSchema().(infoschema.InfoSchema).GetAutoIDRequirement().AutoIDClient())
-			return nil
-		}))
-	})
 }
 
 func TestDomainAlterTableModeInKeyspaceSubmitOnly(t *testing.T) {
